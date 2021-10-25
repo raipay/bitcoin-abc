@@ -39,6 +39,7 @@
 #include <net_permissions.h>
 #include <net_processing.h>
 #include <netbase.h>
+#include <network.h>
 #include <node/blockstorage.h>
 #include <node/caches.h>
 #include <node/chainstate.h>
@@ -252,6 +253,10 @@ void Shutdown(NodeContext &node) {
 
 #if ENABLE_CHRONIK
     chronik::Stop();
+#endif
+
+#if ENABLE_NNG
+    StopNngInterface();
 #endif
 
     StopTorControl();
@@ -1297,6 +1302,26 @@ void SetupServerArgs(NodeContext &node) {
                              DEFAULT_HTTP_SERVER_TIMEOUT),
                    ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
                    OptionsCategory::RPC);
+#if ENABLE_NNG
+    argsman.AddArg("-nngrpc=<url>",
+                   "Bind to given url to listen for NNG RPC connections. URL "
+                   "has to be prefixed by tcp:// or ipc://, which also "
+                   "determines the transport that will be used",
+                   false, OptionsCategory::NNG_INTERFACE);
+    argsman.AddArg(
+        "-nngpub=<url>",
+        "Bind to given url to listen for NNG PubSub connections. URL "
+        "has to be prefixed by tcp:// or ipc://, which also "
+        "determines the transport that will be used",
+        false, OptionsCategory::NNG_INTERFACE);
+    argsman.AddArg(
+        "-nngpubmsg=<messagetype>",
+        strprintf("Enable publishing <messagetype> on the NNG PubSub "
+                  "interface. Can be specified multiple times to enable "
+                  "multiple message types. Available message types are: %s",
+                  Join(AVAILABLE_PUB_MESSAGES, ", ")),
+        ArgsManager::ALLOW_ANY, OptionsCategory::NNG_INTERFACE);
+#endif
 
 #if HAVE_DECL_FORK
     argsman.AddArg("-daemon",
@@ -2667,6 +2692,12 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         if (!chronik::Start(config, node, fReindexChronik)) {
             return false;
         }
+    }
+#endif
+
+#if ENABLE_NNG
+    if (!StartNngInterface(node, chainparams.GetConsensus())) {
+        return false;
     }
 #endif
 

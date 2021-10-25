@@ -234,6 +234,9 @@ set(ENABLE_CHRONIK ${BUILD_BITCOIN_CHRONIK})
 # Activate ZeroMQ
 set(ENABLE_ZMQ ${BUILD_BITCOIN_ZMQ})
 
+# Activate NNG
+set(ENABLE_NNG ${BUILD_BITCOIN_NNG})
+
 # Try to find libqrencode
 # Only used in the wallet GUI
 if(ENABLE_QRCODE AND BUILD_BITCOIN_WALLET AND BUILD_BITCOIN_QT)

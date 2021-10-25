@@ -24,6 +24,7 @@ from .script import (
     OP_CHECKSIG,
     OP_DUP,
     OP_EQUALVERIFY,
+    OP_EQUAL,
     OP_HASH160,
     OP_RETURN,
     OP_TRUE,

@@ -11,6 +11,7 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
 option(BUILD_BITCOIN_WALLET "Activate the wallet functionality" ON)
 option(BUILD_BITCOIN_ZMQ "Activate the ZeroMQ functionalities" ON)
+option(BUILD_BITCOIN_NNG "Activate the NNG functionalities" ON)
 option(BUILD_BITCOIN_CLI "Build bitcoin-cli" ON)
 option(BUILD_BITCOIN_TX "Build bitcoin-tx" ON)
 option(BUILD_BITCOIN_QT "Build bitcoin-qt" ON)
@@ -79,6 +80,7 @@ native_add_cmake_flags(
 	"-DBUILD_BITCOIN_CHRONIK=OFF"
 	"-DBUILD_BITCOIN_QT=OFF"
 	"-DBUILD_BITCOIN_ZMQ=OFF"
+	"-DBUILD_BITCOIN_NNG=OFF"
 	"-DENABLE_QRCODE=OFF"
 	"-DENABLE_NATPMP=OFF"
 	"-DENABLE_UPNP=OFF"
@@ -746,6 +748,11 @@ if(BUILD_BITCOIN_ZMQ)
 	# FIXME: This is needed because of an unwanted dependency:
 	# zmqpublishnotifier.cpp -> blockstorage.h -> txdb.h -> dbwrapper.h -> leveldb/db.h
 	target_link_libraries(zmq leveldb)
+endif()
+
+if(BUILD_BITCOIN_NNG)
+	add_subdirectory(nng_interface)
+	target_link_libraries(server nng_interface)
 endif()
 
 # RPC client support

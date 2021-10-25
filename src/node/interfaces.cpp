@@ -370,6 +370,7 @@ namespace {
             : m_notifications(std::move(notifications)) {}
         virtual ~NotificationsProxy() = default;
         void TransactionAddedToMempool(const CTransactionRef &tx,
+                                       const std::vector<Coin> &spent_coins,
                                        uint64_t mempool_sequence) override {
             m_notifications->transactionAddedToMempool(tx, mempool_sequence);
         }

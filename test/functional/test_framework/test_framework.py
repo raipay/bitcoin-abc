@@ -337,7 +337,8 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         )
 
         # Add test dir to sys.path (to access generated modules)
-        sys.path.append(os.path.join(config["environment"]["BUILDDIR"], "test"))
+        sys.path.append(os.path.join(config['environment']['BUILDDIR'], "test"))
+        sys.path.append(config["environment"]["BUILDDIR"] + '/src/nng_interface')
 
         # Set up temp directory and start logging
         if self.options.tmpdir:
@@ -1014,6 +1015,25 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         if not self.is_zmq_compiled():
             raise SkipTest("bitcoind has not been built with zmq enabled.")
 
+    def skip_if_no_py3_pynng(self):
+        """Attempt to import the pynng package and skip the test if the import fails."""
+        try:
+            import pynng  # noqa
+        except ImportError:
+            raise SkipTest("pynng module not available.")
+
+    def skip_if_no_py3_flatbuffers(self):
+        """Attempt to import the flatbuffers package and skip the test if the import fails."""
+        try:
+            import flatbuffers  # noqa
+        except ImportError:
+            raise SkipTest("flatbuffers module not available.")
+
+    def skip_if_no_bitcoind_nng_interface(self):
+        """Skip the running test if bitcoind has not been compiled with NNG interface support."""
+        if not self.is_nng_interface_compiled():
+            raise SkipTest("bitcoind has not been built with NNG interface support endabled.")
+
     def skip_if_no_wallet(self):
         """Skip the running test if wallet has not been compiled."""
         if not self.is_wallet_compiled():
@@ -1057,3 +1077,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
     def is_usdt_compiled(self):
         """Checks whether the USDT tracepoints were compiled."""
         return self.config["components"].getboolean("ENABLE_USDT_TRACEPOINTS")
+
+    def is_nng_interface_compiled(self):
+        """Checks whether the NNG inferface module was compiled."""
+        return self.config["components"].getboolean("ENABLE_NNG")

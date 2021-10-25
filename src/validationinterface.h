@@ -8,6 +8,7 @@
 
 #include <primitives/transaction.h> // CTransaction(Ref)
 #include <sync.h>
+#include <coins.h>
 
 #include <functional>
 #include <memory>
@@ -103,8 +104,10 @@ protected:
      *
      * Called on a background thread.
      */
-    virtual void TransactionAddedToMempool(const CTransactionRef &tx,
-                                           uint64_t mempool_sequence) {}
+    virtual void
+    TransactionAddedToMempool(const CTransactionRef &tx,
+                              const std::vector<Coin> &spent_coins,
+                              uint64_t mempool_sequence) {}
 
     /**
      * Notifies listeners of a transaction leaving mempool.
@@ -224,6 +227,7 @@ public:
     void UpdatedBlockTip(const CBlockIndex *, const CBlockIndex *,
                          bool fInitialDownload);
     void TransactionAddedToMempool(const CTransactionRef &,
+                                   const std::vector<Coin> &,
                                    uint64_t mempool_sequence);
     void TransactionRemovedFromMempool(const CTransactionRef &,
                                        MemPoolRemovalReason,

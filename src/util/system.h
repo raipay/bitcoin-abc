@@ -128,6 +128,7 @@ enum class OptionsCategory {
     COMMANDS,
     REGISTER_COMMANDS,
     AVALANCHE,
+    NNG_INTERFACE,
 
     // Always the last option to avoid printing these in the help
     HIDDEN,

@@ -969,8 +969,15 @@ MemPoolAccept::AcceptSingleTransaction(const CTransactionRef &ptx,
         return MempoolAcceptResult::Failure(ws.m_state);
     }
 
+    std::vector<Coin> spent_coins;
+    spent_coins.reserve(ptx->vin.size());
+    for (const CTxIn &input : ptx->vin) {
+        Coin coin;
+        m_view.GetCoin(input.prevout, coin);
+        spent_coins.push_back(coin);
+    }
     GetMainSignals().TransactionAddedToMempool(
-        ptx, m_pool.GetAndIncrementSequence());
+        ptx, spent_coins, m_pool.GetAndIncrementSequence());
 
     return MempoolAcceptResult::Success(ws.m_vsize, ws.m_base_fees);
 }

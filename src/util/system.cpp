@@ -734,6 +734,9 @@ std::string ArgsManager::GetHelpMessage() const {
             case OptionsCategory::CHRONIK:
                 usage += HelpMessageGroup("Chronik options:");
                 break;
+            case OptionsCategory::NNG_INTERFACE:
+                usage += HelpMessageGroup("NNG Interface:");
+                break;
             default:
                 break;
         }
