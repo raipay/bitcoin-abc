@@ -38,6 +38,7 @@
 #include <net_processing.h>
 #include <netbase.h>
 #include <network.h>
+#include <nng_interface/nng_interface.h>
 #include <node/blockstorage.h>
 #include <node/context.h>
 #include <node/ui_interface.h>
@@ -221,6 +222,10 @@ void Shutdown(NodeContext &node) {
     if (node.connman) {
         node.connman->Stop();
     }
+
+#if ENABLE_NNG
+    StopNngInterface();
+#endif
 
     StopTorControl();
 
@@ -1282,6 +1287,26 @@ void SetupServerArgs(NodeContext &node) {
                              DEFAULT_HTTP_SERVER_TIMEOUT),
                    ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
                    OptionsCategory::RPC);
+#if ENABLE_NNG
+    argsman.AddArg("-nngrpc=<url>",
+                   "Bind to given url to listen for NNG RPC connections. URL "
+                   "has to be prefixed by tcp:// or ipc://, which also "
+                   "determines the transport that will be used",
+                   false, OptionsCategory::NNG_INTERFACE);
+    argsman.AddArg(
+        "-nngpub=<url>",
+        "Bind to given url to listen for NNG PubSub connections. URL "
+        "has to be prefixed by tcp:// or ipc://, which also "
+        "determines the transport that will be used",
+        false, OptionsCategory::NNG_INTERFACE);
+    argsman.AddArg(
+        "-nngpubmsg=<messagetype>",
+        strprintf("Enable publishing <messagetype> on the NNG PubSub "
+                  "interface. Can be specified multiple times to enable "
+                  "multiple message types. Available message types are: %s",
+                  Join(AVAILABLE_PUB_MESSAGES, ", ")),
+        ArgsManager::ALLOW_ANY, OptionsCategory::NNG_INTERFACE);
+#endif
 
 #if HAVE_DECL_DAEMON
     argsman.AddArg("-daemon",
@@ -2818,6 +2843,12 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     // Encoded addresses using cashaddr instead of base58.
     // We do this by default to avoid confusion with BTC addresses.
     config.SetCashAddrEncoding(args.GetBoolArg("-usecashaddr", true));
+
+#if ENABLE_NNG
+    if (!StartNngInterface(node, chainparams.GetConsensus())) {
+        return false;
+    }
+#endif
 
     // Step 8: load indexers
     if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {

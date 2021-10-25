@@ -27,6 +27,7 @@ protected:
 
     // CValidationInterface
     void TransactionAddedToMempool(const CTransactionRef &tx,
+                                   const std::vector<Coin> &spent_coins,
                                    uint64_t mempool_sequence) override;
     void TransactionRemovedFromMempool(const CTransactionRef &tx,
                                        MemPoolRemovalReason reason,
