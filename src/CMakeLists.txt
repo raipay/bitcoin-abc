@@ -15,6 +15,7 @@ option(BUILD_BITCOIN_CLI "Build bitcoin-cli" ON)
 option(BUILD_BITCOIN_TX "Build bitcoin-tx" ON)
 option(BUILD_BITCOIN_QT "Build bitcoin-qt" ON)
 option(BUILD_BITCOIN_SEEDER "Build bitcoin-seeder" ON)
+option(BUILD_BITCOIN_CHRONIK "Activate the Chronik indexer" ON)
 option(BUILD_LIBBITCOINCONSENSUS "Build the bitcoinconsenus shared library" ON)
 option(ENABLE_BIP70 "Enable BIP70 (payment protocol) support in GUI" ON)
 option(ENABLE_HARDENING "Harden the executables" ON)
@@ -75,6 +76,7 @@ native_add_cmake_flags(
 	"-DBUILD_BITCOIN_WALLET=OFF"
 	"-DBUILD_BITCOIN_QT=OFF"
 	"-DBUILD_BITCOIN_ZMQ=OFF"
+	"-DBUILD_BITCOIN_CHRONIK=OFF"
 	"-DENABLE_QRCODE=OFF"
 	"-DENABLE_UPNP=OFF"
 	"-DUSE_JEMALLOC=OFF"
@@ -696,6 +698,13 @@ target_link_libraries(rpcclient univalue util)
 # bitcoin-seeder
 if(BUILD_BITCOIN_SEEDER)
 	add_subdirectory(seeder)
+endif()
+
+if(BUILD_BITCOIN_CHRONIK)
+	add_subdirectory(corrosion)
+	add_subdirectory(chronik)
+
+	target_link_libraries(server chronik)
 endif()
 
 # bitcoin-cli

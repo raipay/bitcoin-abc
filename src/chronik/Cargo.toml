@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "chronik_cxxbridge",
+]
+
+[profile.release]
+debug = true

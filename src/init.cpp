@@ -79,6 +79,10 @@
 #include <zmq/zmqrpc.h>
 #endif
 
+#if ENABLE_CHRONIK
+#include <chronik/chronik_cpp/chronik.h>
+#endif
+
 #ifndef WIN32
 #include <attributes.h>
 #include <cerrno>
@@ -2340,6 +2344,10 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
                 _("Unable to start HTTP server. See debug log for details."));
         }
     }
+
+#if ENABLE_CHRONIK
+    StartChronik();
+#endif
 
     // Step 5: verify wallet database integrity
     for (const auto &client : node.chain_clients) {
