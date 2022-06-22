@@ -57,8 +57,8 @@ chronik_bridge::Coin BridgeCoin(const Coin &coin) {
         coin.GetHeight() == 0x7fff'ffff ? -1 : coin.GetHeight();
     return {
         .tx_output = BridgeTxOutput(coin.GetTxOut()),
-        .is_coinbase = coin.IsCoinBase(),
         .height = nHeight,
+        .is_coinbase = coin.IsCoinBase(),
     };
 }
 
