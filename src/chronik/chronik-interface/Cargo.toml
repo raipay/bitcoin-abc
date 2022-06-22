@@ -1,0 +1,9 @@
+[package]
+name = "chronik-interface"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
+
+cxx = "1.0"

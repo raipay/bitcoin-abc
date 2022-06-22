@@ -231,6 +231,10 @@ void Shutdown(NodeContext &node) {
         node.connman->Stop();
     }
 
+#if ENABLE_CHRONIK
+    StopChronik();
+#endif
+
     StopTorControl();
 
     // After everything has been shut down, but before things get flushed, stop
@@ -2345,10 +2349,6 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         }
     }
 
-#if ENABLE_CHRONIK
-    StartChronik();
-#endif
-
     // Step 5: verify wallet database integrity
     for (const auto &client : node.chain_clients) {
         if (!client->verify()) {
@@ -2886,6 +2886,11 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
             /* cache size */ 0, false, fReindex);
         g_coin_stats_index->Start();
     }
+
+#if ENABLE_CHRONIK
+    StartChronik(config, chainparams.GetConsensus(), node);
+#endif
+
     // Step 9: load wallet
     for (const auto &client : node.chain_clients) {
         if (!client->load()) {

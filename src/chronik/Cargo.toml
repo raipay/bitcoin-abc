@@ -1,6 +1,11 @@
 [workspace]
 members = [
     "chronik_cxxbridge",
+    "chronik-bitcoind-rpc",
+    "chronik-http",
+    "chronik-indexer",
+    "chronik-interface",
+    "chronik-rocksdb",
 ]
 
 [profile.release]

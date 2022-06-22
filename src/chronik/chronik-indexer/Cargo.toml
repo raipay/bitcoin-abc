@@ -1,0 +1,41 @@
+[package]
+name = "chronik-indexer"
+version = "0.1.0"
+authors = ["Tobias Ruck <ruck.tobias@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+chronik-rocksdb = { path = "../chronik-rocksdb" }
+chronik-interface = { path = "../chronik-interface" }
+chronik-bitcoind-rpc = { path = "../chronik-bitcoind-rpc" }
+
+bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
+bitcoinsuite-slp = { path = "../../bitcoinsuite/bitcoinsuite-slp" }
+bitcoinsuite-bitcoind-nng = { path="../../bitcoinsuite/bitcoinsuite-bitcoind-nng" }
+bitcoinsuite-bitcoind = { path="../../bitcoinsuite/bitcoinsuite-bitcoind" }
+bitcoinsuite-test-utils = { path = "../../bitcoinsuite/bitcoinsuite-test-utils" }
+
+# Async
+tokio = { version = "1.14", features = ["full"] }
+
+hex = "0.4"
+json = "0.12"
+
+# For parallelizing tx processing
+rayon = "1.5"
+
+# Error handling
+thiserror = "1.0"
+bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
+
+[dev-dependencies]
+pretty_assertions = "1.0"
+
+# For ipc named pipes
+tempdir = "0.3"
+
+bitcoinsuite-test-utils-blockchain = { path = "../../bitcoinsuite/bitcoinsuite-test-utils-blockchain" }
+bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }
+
+# Fast hashing (not cryptographic)
+seahash = "4.1"

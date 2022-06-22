@@ -4,7 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
+bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
+
+chronik-interface = { path = "../chronik-interface" }
+chronik-indexer = { path = "../chronik-indexer" }
+chronik-rocksdb = { path = "../chronik-rocksdb" }
+chronik-http = { path = "../chronik-http" }
+
 cxx = "1.0"
+
+tokio = { version = "1.14", features = ["full"] }
 
 [build-dependencies]
 cxx-build = "1.0"
