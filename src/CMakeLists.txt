@@ -10,6 +10,7 @@ set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
 option(BUILD_BITCOIN_WALLET "Activate the wallet functionality" ON)
+option(BUILD_BITCOIN_CHRONIK "Activate the Chronik indexer" OFF)
 option(BUILD_BITCOIN_ZMQ "Activate the ZeroMQ functionalities" ON)
 option(BUILD_BITCOIN_CLI "Build bitcoin-cli" ON)
 option(BUILD_BITCOIN_TX "Build bitcoin-tx" ON)
@@ -73,6 +74,7 @@ endif(CCACHE)
 include(NativeExecutable)
 native_add_cmake_flags(
 	"-DBUILD_BITCOIN_WALLET=OFF"
+	"-DBUILD_BITCOIN_CHRONIK=OFF"
 	"-DBUILD_BITCOIN_QT=OFF"
 	"-DBUILD_BITCOIN_ZMQ=OFF"
 	"-DENABLE_QRCODE=OFF"
@@ -677,6 +679,11 @@ if(BUILD_BITCOIN_WALLET)
 	install_manpages(bitcoin-wallet)
 else()
 	target_sources(server PRIVATE dummywallet.cpp)
+endif()
+
+# Chronik indexer is in the rust folder
+if(BUILD_BITCOIN_CHRONIK)
+	add_subdirectory(rust)
 endif()
 
 # ZeroMQ
