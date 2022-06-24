@@ -701,7 +701,6 @@ if(BUILD_BITCOIN_SEEDER)
 endif()
 
 if(BUILD_BITCOIN_CHRONIK)
-	add_subdirectory(corrosion)
 	add_subdirectory(chronik)
 
 	target_link_libraries(server chronik)

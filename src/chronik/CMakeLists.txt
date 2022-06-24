@@ -10,6 +10,8 @@ else()
     message(FATAL_ERROR "hardcoded platformchecks not supported outside windows-gnu and linux-gnu")
 endif()
 
+find_package(Corrosion 0.2.0 REQUIRED)
+
 corrosion_import_crate(MANIFEST_PATH "chronik_cxxbridge/Cargo.toml")
 
 set(CXXBRIDGE_BINARY_FOLDER ${CMAKE_BINARY_DIR}/cargo/build/${Rust_CARGO_TARGET}/cxxbridge) 
