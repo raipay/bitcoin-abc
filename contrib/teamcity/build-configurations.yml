@@ -460,6 +460,15 @@ builds:
       - - check-source-control-tools
     timeout: 600
 
+  check-rust-test-suite:
+    runOnDiffRegex:
+      - src/rust/
+    cmake_flags:
+      - '-DBUILD_BITCOIN_CHRONIK=ON'
+    targets:
+      - - check-rust-test-suite
+    timeout: 200
+
   gitian-linux:
     templates:
       - gitian_builds
