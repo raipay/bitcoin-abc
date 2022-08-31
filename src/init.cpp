@@ -39,7 +39,6 @@
 #include <net_permissions.h>
 #include <net_processing.h>
 #include <netbase.h>
-#include <network.h>
 #include <node/blockstorage.h>
 #include <node/caches.h>
 #include <node/chainstate.h>
@@ -79,6 +78,10 @@
 
 #if ENABLE_CHRONIK
 #include <chronik-cpp/chronik.h>
+#endif
+
+#if ENABLE_NNG
+#include <nng_interface/nng_interface.h>
 #endif
 
 #if ENABLE_ZMQ

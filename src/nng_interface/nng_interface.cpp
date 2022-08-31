@@ -260,11 +260,12 @@ NngRpcErrorCode NngRpcServer::HandleMsg(flatbuffers::FlatBufferBuilder &fbb,
 }
 
 template <typename T>
-NngRpcErrorCode GetBlockIndex(const T *request, CBlockIndex *&block_index) {
+NngRpcErrorCode GetBlockIndex(const T *request, CBlockIndex *&block_index,
+                              ChainstateManager &chainman) {
     switch (request->block_id_type()) {
         case NngInterface::BlockIdentifier_Height: {
             int32_t height = request->block_id_as_Height()->height();
-            block_index = ::ChainActive().Tip()->GetAncestor(height);
+            block_index = chainman.ActiveTip()->GetAncestor(height);
             break;
         }
         case NngInterface::BlockIdentifier_Hash: {
@@ -273,7 +274,7 @@ NngRpcErrorCode GetBlockIndex(const T *request, CBlockIndex *&block_index) {
             const std::vector<uint8_t> blockhash(hash->data()->begin(),
                                                  hash->data()->end());
             LOCK(cs_main);
-            block_index = g_chainman.m_blockman.LookupBlockIndex(
+            block_index = chainman.m_blockman.LookupBlockIndex(
                 BlockHash(uint256(blockhash)));
             break;
         }
@@ -428,7 +429,7 @@ NngRpcServer::GetBlock(flatbuffers::FlatBufferBuilder &fbb,
     LOCK(cs_main);
     NngRpcErrorCode code;
     CBlockIndex *pindex;
-    if ((code = GetBlockIndex(request, pindex)) !=
+    if ((code = GetBlockIndex(request, pindex, *m_node.chainman)) !=
         NngRpcErrorCode::NO_RPC_ERROR) {
         return code;
     }
@@ -445,7 +446,7 @@ NngRpcErrorCode
 NngRpcServer::GetBlockRange(flatbuffers::FlatBufferBuilder &fbb,
                             const NngInterface::GetBlockRangeRequest *request) {
     LOCK(cs_main);
-    const int32_t chain_height = ::ChainActive().Height();
+    const int32_t chain_height = m_node.chainman->ActiveChain().Height();
     const int32_t start_height = request->start_height();
     uint32_t num_blocks = request->num_blocks();
     int32_t end_height = start_height + num_blocks - 1;
@@ -456,7 +457,7 @@ NngRpcServer::GetBlockRange(flatbuffers::FlatBufferBuilder &fbb,
 
     CBlockIndex *pindex = nullptr;
     if (start_height >= 0) {
-        pindex = ::ChainActive().Tip()->GetAncestor(end_height);
+        pindex = m_node.chainman->ActiveTip()->GetAncestor(end_height);
     } else {
         num_blocks = 0;
     }
