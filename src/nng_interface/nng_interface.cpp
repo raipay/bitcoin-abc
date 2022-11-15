@@ -5,7 +5,6 @@
 #include <array>
 #include <optional>
 
-#include <blockdb.h>
 #include <chainparams.h>
 #include <consensus/validation.h>
 #include <logging.h>

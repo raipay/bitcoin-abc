@@ -568,7 +568,7 @@ FILE *OpenBlockFile(const FlatFilePos &pos, bool fReadOnly) {
 }
 
 /** Open an undo file (rev?????.dat) */
-static FILE *OpenUndoFile(const FlatFilePos &pos, bool fReadOnly) {
+FILE *OpenUndoFile(const FlatFilePos &pos, bool fReadOnly) {
     return UndoFileSeq().Open(pos, fReadOnly);
 }
 
