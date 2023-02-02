@@ -178,6 +178,10 @@ UniValue blockToJSON(BlockManager &blockman, const CBlock &block,
                   (int)::GetSerializeSize(
                       Using<MitraCBlockFormatter<SechetIntFormatter>>(block),
                       PROTOCOL_VERSION));
+    result.pushKV("denSize",
+                  (int)::GetSerializeSize(
+                      Using<MitraCBlockFormatter<DenIntFormatter>>(block),
+                      PROTOCOL_VERSION));
 
     UniValue txs(UniValue::VARR);
     if (txDetails) {

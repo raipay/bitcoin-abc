@@ -6,6 +6,7 @@
 #include <streams.h>
 #include <util/strencodings.h>
 
+#include <test/lcg.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -439,6 +440,311 @@ BOOST_AUTO_TEST_CASE(example_sechet_serialize) {
     WriteSechetInt(ss, 0xffff'ffff'ffff'ffff);
     BOOST_CHECK_EQUAL(HexStr(ss), "ffffffffffffffffff");
     ss.clear();
+}
+
+BOOST_AUTO_TEST_CASE(example_den_deserialize) {
+    CDataStream ss(SER_DISK, 0);
+
+    ss.write("\x20", 1);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x20);
+    ss.clear();
+
+    ss.write("\x80\x00", 2);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x80);
+    ss.clear();
+
+    ss.write("\xbf\xff", 2);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x3fff + 0x80);
+    ss.clear();
+
+    ss.write("\xdf\xff\xff", 3);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x1fffff + 0x4080);
+    ss.clear();
+
+    ss.write("\xef\xff\xff\xff", 4);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x0fffffff + 0x204080);
+    ss.clear();
+
+    ss.write("\xf7\xff\xff\xff\xff", 5);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x07ffffffff + 0x10204080);
+    ss.clear();
+
+    ss.write("\xfb\xff\xff\xff\xff\xff", 6);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x03ffffffffff + 0x0810204080);
+    ss.clear();
+
+    ss.write("\xfd\xff\xff\xff\xff\xff\xff", 7);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x01ffffffffffff + 0x040810204080);
+    ss.clear();
+
+    ss.write("\xfe\xff\xff\xff\xff\xff\xff\xff", 8);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x00ffffffffffffff + 0x02040810204080);
+    ss.clear();
+
+    ss.write("\xff\xfe\xfd\xfb\xf7\xef\xdf\xbf\x7f", 9);
+    BOOST_CHECK_EQUAL(ReadDenInt(ss), 0x00ffffffffffffffff);
+}
+
+BOOST_AUTO_TEST_CASE(example_den_serialize) {
+    CDataStream ss(SER_DISK, 0);
+
+    WriteDenInt(ss, 0x20);
+    BOOST_CHECK_EQUAL(HexStr(ss), "20");
+    ss.clear();
+
+    WriteDenInt(ss, 0x7f);
+    BOOST_CHECK_EQUAL(HexStr(ss), "7f");
+    ss.clear();
+
+    WriteDenInt(ss, 0xfe + 0x80);
+    BOOST_CHECK_EQUAL(HexStr(ss), "80fe");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0000'00ffULL + 0x80ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "80ff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0000'01ffULL + 0x80ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "81ff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0000'03ffULL + 0x80ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "83ff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0000'07ffULL + 0x80ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "87ff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0000'0fffULL + 0x80ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "8fff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0000'1fffULL + 0x80ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "9fff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0000'3fffULL + 0x80ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "bfff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0000'7fffULL + 0x4080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "c07fff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0000'ffffULL + 0x4080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "c0ffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0001'ffffULL + 0x4080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "c1ffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0003'ffffULL + 0x4080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "c3ffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0007'ffffULL + 0x4080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "c7ffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'000f'ffffULL + 0x4080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "cfffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'001f'ffffULL + 0x4080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "dfffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'003f'ffffULL + 0x204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "e03fffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'007f'ffffULL + 0x204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "e07fffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'00ff'ffffULL + 0x204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "e0ffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'01ff'ffffULL + 0x204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "e1ffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'03ff'ffffULL + 0x204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "e3ffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'07ff'ffffULL + 0x204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "e7ffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'0fff'ffffULL + 0x204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "efffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'1fff'ffffULL + 0x10204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f01fffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'3fff'ffffULL + 0x10204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f03fffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'7fff'ffffULL + 0x10204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f07fffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0000'ffff'ffffULL + 0x10204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f0ffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0001'ffff'ffffULL + 0x10204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f1ffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0003'ffff'ffffULL + 0x10204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f3ffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0007'ffff'ffffULL + 0x10204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f7ffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'000f'ffff'ffffULL + 0x0810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f80fffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'001f'ffff'ffffULL + 0x0810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f81fffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'003f'ffff'ffffULL + 0x0810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f83fffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'007f'ffff'ffffULL + 0x0810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f87fffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'00ff'ffff'ffffULL + 0x0810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f8ffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'01ff'ffff'ffffULL + 0x0810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "f9ffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'03ff'ffff'ffffULL + 0x0810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fbffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'07ff'ffff'ffffULL + 0x040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fc07ffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'0fff'ffff'ffffULL + 0x040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fc0fffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'1fff'ffff'ffffULL + 0x040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fc1fffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'3fff'ffff'ffffULL + 0x040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fc3fffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'7fff'ffff'ffffULL + 0x040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fc7fffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0000'ffff'ffff'ffffULL + 0x040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fcffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0001'ffff'ffff'ffffULL + 0x040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fdffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0003'ffff'ffff'ffffULL + 0x02040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fe03ffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0007'ffff'ffff'ffffULL + 0x02040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fe07ffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x000f'ffff'ffff'ffffULL + 0x02040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fe0fffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x001f'ffff'ffff'ffffULL + 0x02040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fe1fffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x003f'ffff'ffff'ffffULL + 0x02040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fe3fffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x007f'ffff'ffff'ffffULL + 0x02040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "fe7fffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x00ff'ffff'ffff'ffffULL + 0x02040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "feffffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x01ff'ffff'ffff'ffffULL + 0x0102040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "ff01ffffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x03ff'ffff'ffff'ffffULL + 0x0102040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "ff03ffffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x07ff'ffff'ffff'ffffULL + 0x0102040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "ff07ffffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x0fff'ffff'ffff'ffffULL + 0x0102040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "ff0fffffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x1fff'ffff'ffff'ffffULL + 0x0102040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "ff1fffffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x3fff'ffff'ffff'ffffULL + 0x0102040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "ff3fffffffffffffff");
+    ss.clear();
+    
+    WriteDenInt(ss, 0x7fff'ffff'ffff'ffffULL + 0x0102040810204080ULL);
+    BOOST_CHECK_EQUAL(HexStr(ss), "ff7fffffffffffffff");
+    ss.clear();
+}
+
+BOOST_AUTO_TEST_CASE(rng_roundtrip) {
+    MMIXLinearCongruentialGenerator lcg;
+    CDataStream ss(SER_DISK, 0);
+
+    for (int i = 0; i < 1000000; ++i) {
+        uint64_t bits = (uint64_t(lcg.next()) << 32) | lcg.next();
+        bits >>= lcg.next() % 64;
+
+        WriteRuckInt(ss, bits);
+        BOOST_CHECK_EQUAL(ReadRuckInt(ss), bits);
+        ss.clear();
+
+        WriteSechetInt(ss, bits);
+        BOOST_CHECK_EQUAL(ReadSechetInt(ss), bits);
+        ss.clear();
+
+        WriteDenInt(ss, bits);
+        BOOST_CHECK_EQUAL(ReadDenInt(ss), bits);
+        ss.clear();
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
