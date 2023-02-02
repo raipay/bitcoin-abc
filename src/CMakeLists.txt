@@ -309,6 +309,8 @@ add_subdirectory(leveldb)
 add_subdirectory(secp256k1)
 add_subdirectory(univalue)
 
+find_library(LZ4_LIBRARY lz4)
+
 # Find the git root, and returns the full path to the .git/logs/HEAD file if
 # it exists.
 function(find_git_head_logs_file RESULT)
@@ -643,6 +645,7 @@ target_link_libraries(server
 	bitcoinconsensus
 	leveldb
 	memenv
+	${LZ4_LIBRARY}
 )
 
 link_event(server event)

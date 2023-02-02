@@ -48,6 +48,8 @@
 #include <memory>
 #include <mutex>
 
+#include <lz4.h>
+
 using node::BlockManager;
 using node::CCoinsStats;
 using node::CoinStatsHashType;
@@ -170,6 +172,10 @@ UniValue blockToJSON(BlockManager &blockman, const CBlock &block,
     UniValue result = blockheaderToJSON(tip, blockindex);
 
     result.pushKV("size", (int)::GetSerializeSize(block, PROTOCOL_VERSION));
+    result.pushKV("bitcoinSize",
+                  (int)::GetSerializeSize(
+                      Using<MitraCBlockFormatter<CompactSizeFormatter<true>>>(block),
+                      PROTOCOL_VERSION));
     result.pushKV("ruckSize",
                   (int)::GetSerializeSize(
                       Using<MitraCBlockFormatter<RuckIntFormatter>>(block),
@@ -182,6 +188,22 @@ UniValue blockToJSON(BlockManager &blockman, const CBlock &block,
                   (int)::GetSerializeSize(
                       Using<MitraCBlockFormatter<DenIntFormatter>>(block),
                       PROTOCOL_VERSION));
+
+    uint64_t totalCompressedSize = 0;
+    CDataStream ss(SER_DISK, 0);
+    std::vector<char> compressData;
+    for (const CTransactionRef &tx : block.vtx) {
+        ss << tx;
+        compressData.resize(LZ4_compressBound(ss.size()));
+        int compressSize = LZ4_compress_default(ss.data(), compressData.data(),
+                                                ss.size(), compressData.size());
+        if (compressSize == 0) {
+            throw JSONRPCError(RPC_MISC_ERROR, "Compression failed");
+        }
+        totalCompressedSize += compressSize;
+        ss.clear();
+    }
+    result.pushKV("lz4Size", totalCompressedSize);
 
     UniValue txs(UniValue::VARR);
     if (txDetails) {
