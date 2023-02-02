@@ -19,6 +19,7 @@
 #include <hash.h>
 #include <index/blockfilterindex.h>
 #include <index/coinstatsindex.h>
+#include <mitra/serialize.h>
 #include <net.h>
 #include <net_processing.h>
 #include <node/blockstorage.h>
@@ -169,6 +170,15 @@ UniValue blockToJSON(BlockManager &blockman, const CBlock &block,
     UniValue result = blockheaderToJSON(tip, blockindex);
 
     result.pushKV("size", (int)::GetSerializeSize(block, PROTOCOL_VERSION));
+    result.pushKV("ruckSize",
+                  (int)::GetSerializeSize(
+                      Using<MitraCBlockFormatter<RuckIntFormatter>>(block),
+                      PROTOCOL_VERSION));
+    result.pushKV("sechetSize",
+                  (int)::GetSerializeSize(
+                      Using<MitraCBlockFormatter<SechetIntFormatter>>(block),
+                      PROTOCOL_VERSION));
+
     UniValue txs(UniValue::VARR);
     if (txDetails) {
         CBlockUndo blockUndo;
@@ -2506,7 +2516,7 @@ template <typename T> static inline bool SetHasKeys(const std::set<T> &set) {
 }
 template <typename T, typename Tk, typename... Args>
 static inline bool SetHasKeys(const std::set<T> &set, const Tk &key,
-                              const Args &...args) {
+                              const Args &... args) {
     return (set.count(key) != 0) || SetHasKeys(set, args...);
 }
 
