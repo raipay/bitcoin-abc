@@ -166,6 +166,20 @@ UniValue blockheaderToJSON(const CBlockIndex *tip,
     return result;
 }
 
+template<class Formatter>
+size_t compressedSize(const CTransactionRef &tx) {
+    CDataStream ss(SER_DISK, 0);
+    std::vector<char> compressData;
+    ss << Using<Formatter>(tx);
+    compressData.resize(LZ4_compressBound(ss.size()));
+    int compressSize = LZ4_compress_default(ss.data(), compressData.data(),
+                                            ss.size(), compressData.size());
+    if (compressSize == 0) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Compression failed");
+    }
+    return compressSize;
+}
+
 UniValue blockToJSON(BlockManager &blockman, const CBlock &block,
                      const CBlockIndex *tip, const CBlockIndex *blockindex,
                      bool txDetails) {
@@ -189,21 +203,23 @@ UniValue blockToJSON(BlockManager &blockman, const CBlock &block,
                       Using<MitraCBlockFormatter<DenIntFormatter>>(block),
                       PROTOCOL_VERSION));
 
-    uint64_t totalCompressedSize = 0;
-    CDataStream ss(SER_DISK, 0);
-    std::vector<char> compressData;
+    uint64_t lz4Normal = 0;
+    uint64_t lz4Bitcoin = 0;
+    uint64_t lz4Ruck = 0;
+    uint64_t lz4Sechet = 0;
+    uint64_t lz4Den = 0;
     for (const CTransactionRef &tx : block.vtx) {
-        ss << tx;
-        compressData.resize(LZ4_compressBound(ss.size()));
-        int compressSize = LZ4_compress_default(ss.data(), compressData.data(),
-                                                ss.size(), compressData.size());
-        if (compressSize == 0) {
-            throw JSONRPCError(RPC_MISC_ERROR, "Compression failed");
-        }
-        totalCompressedSize += compressSize;
-        ss.clear();
+        lz4Normal += compressedSize<DefaultFormatter>(tx);
+        lz4Bitcoin += compressedSize<MitraCTxRefFormatter<CompactSizeFormatter<true>>>(tx);
+        lz4Ruck += compressedSize<MitraCTxRefFormatter<RuckIntFormatter>>(tx);
+        lz4Sechet += compressedSize<MitraCTxRefFormatter<SechetIntFormatter>>(tx);
+        lz4Den += compressedSize<MitraCTxRefFormatter<DenIntFormatter>>(tx);
     }
-    result.pushKV("lz4Size", totalCompressedSize);
+    result.pushKV("lz4NormalSize", lz4Normal);
+    result.pushKV("lz4BitcoinSize", lz4Bitcoin);
+    result.pushKV("lz4RuckSize", lz4Ruck);
+    result.pushKV("lz4SechetSize", lz4Sechet);
+    result.pushKV("lz4DenSize", lz4Den);
 
     UniValue txs(UniValue::VARR);
     if (txDetails) {
