@@ -164,9 +164,9 @@ checksum = "f8fe8f5a8a398345e52358e18ff07cc17a568fbca5c6f73873d3a62056309603"
 
 [[package]]
 name = "bindgen"
-version = "0.60.1"
+version = "0.64.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "062dddbc1ba4aca46de6338e2bf87771414c335f7b2f2036e8f3e9befebf88e6"
+checksum = "c4243e6031260db77ede97ad86c27e501d646a27ab57b59a574f725d98ab1fb4"
 dependencies = [
  "bitflags",
  "cexpr",
@@ -179,6 +179,7 @@ dependencies = [
  "regex",
  "rustc-hash",
  "shlex",
+ "syn",
 ]
 
 [[package]]
@@ -289,6 +290,7 @@ dependencies = [
  "abc-rust-lint",
  "async-trait",
  "axum",
+ "chronik-indexer",
  "chronik-util",
  "futures",
  "hyper",
@@ -318,8 +320,11 @@ version = "0.1.0"
 dependencies = [
  "abc-rust-error",
  "abc-rust-lint",
+ "bitcoinsuite-core",
  "chronik-bridge",
+ "chronik-db",
  "chronik-http",
+ "chronik-indexer",
  "chronik-util",
  "cxx",
  "cxx-build",
@@ -838,9 +843,8 @@ dependencies = [
 
 [[package]]
 name = "librocksdb-sys"
-version = "0.8.0+7.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "611804e4666a25136fcc5f8cf425ab4d26c7f74ea245ffe92ea23b85b6420b5d"
+version = "0.10.0+7.9.2"
+source = "git+https://github.com/rust-rocksdb/rust-rocksdb.git?rev=a6103ef#a6103ef311c96e14ee19b36832a373a0954f946b"
 dependencies = [
  "bindgen",
  "bzip2-sys",
@@ -1100,9 +1104,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.40"
+version = "1.0.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd96a1e8ed2596c337f8eae5f24924ec83f5ad5ab21ea8e455d3566c69fbcaf7"
+checksum = "5d727cae5b39d21da60fa540906919ad737832fe0b1c165da3a34d6548c849d6"
 dependencies = [
  "unicode-ident",
 ]
@@ -1265,9 +1269,8 @@ dependencies = [
 
 [[package]]
 name = "rocksdb"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e9562ea1d70c0cc63a34a22d977753b50cca91cc6b6527750463bd5dd8697bc"
+version = "0.20.1"
+source = "git+https://github.com/rust-rocksdb/rust-rocksdb.git?rev=a6103ef#a6103ef311c96e14ee19b36832a373a0954f946b"
 dependencies = [
  "libc",
  "librocksdb-sys",
@@ -1467,9 +1470,9 @@ checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
 name = "syn"
-version = "1.0.98"
+version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c50aef8a904de4c23c788f104b7dddc7d6f79c647c7c8ce4cc8f73eb0ca773dd"
+checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
 dependencies = [
  "proc-macro2",
  "quote",
