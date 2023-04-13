@@ -27,8 +27,6 @@ std::atomic_bool fReindex(false);
 bool fPruneMode = false;
 uint64_t nPruneTarget = 0;
 
-static FILE *OpenUndoFile(const FlatFilePos &pos, bool fReadOnly = false);
-
 static FlatFileSeq BlockFileSeq();
 static FlatFileSeq UndoFileSeq();
 

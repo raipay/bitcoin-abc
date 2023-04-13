@@ -114,7 +114,7 @@ class NngRpcServer {
     nng_socket m_sock;
     std::vector<NngRpcWorker> m_workers;
     const Consensus::Params &m_consensus;
-    const NodeContext &m_node;
+    const node::NodeContext &m_node;
 
     NngRpcErrorCode GetBlock(flatbuffers::FlatBufferBuilder &builder,
                              const NngInterface::GetBlockRequest *request);
@@ -135,7 +135,8 @@ class NngRpcServer {
                                const NngInterface::GetMempoolRequest *request);
 
 public:
-    NngRpcServer(const Consensus::Params &consensus, const NodeContext &node)
+    NngRpcServer(const Consensus::Params &consensus,
+                 const node::NodeContext &node)
         : m_consensus(consensus), m_node(node) {}
 
     NngRpcErrorCode HandleMsg(flatbuffers::FlatBufferBuilder &builder,
@@ -402,7 +403,7 @@ CreateFbsBlock(flatbuffers::FlatBufferBuilder &fbb, const CBlock &block,
     CBlockUndo block_undo;
     if (pindex->nHeight) { // Genesis block doesn't have undo data
         nUndoPos = GetFirstUndoOffset(block, pindex);
-        if (!UndoReadFromDisk(block_undo, pindex)) {
+        if (!node::UndoReadFromDisk(block_undo, pindex)) {
             return 0;
         }
     }
@@ -433,7 +434,7 @@ NngRpcServer::GetBlock(flatbuffers::FlatBufferBuilder &fbb,
         return code;
     }
     CBlock block;
-    if (!ReadBlockFromDisk(block, pindex, m_consensus)) {
+    if (!node::ReadBlockFromDisk(block, pindex, m_consensus)) {
         return NngRpcErrorCode::BLOCK_DATA_CORRUPTED;
     }
     fbb.Finish(NngInterface::CreateGetBlockResponse(
@@ -465,7 +466,7 @@ NngRpcServer::GetBlockRange(flatbuffers::FlatBufferBuilder &fbb,
     for (auto block_fbs = blocks_fbs.rbegin();
          block_fbs != blocks_fbs.rend() && pindex != nullptr; ++block_fbs) {
         CBlock block;
-        if (!ReadBlockFromDisk(block, pindex, m_consensus)) {
+        if (!node::ReadBlockFromDisk(block, pindex, m_consensus)) {
             return NngRpcErrorCode::BLOCK_DATA_CORRUPTED;
         }
         *block_fbs = CreateFbsBlock(fbb, block, pindex);
@@ -480,7 +481,7 @@ NngRpcErrorCode
 NngRpcServer::GetBlockSlice(flatbuffers::FlatBufferBuilder &fbb,
                             const NngInterface::GetBlockSliceRequest *request) {
     const FlatFilePos filePos(request->file_num(), request->data_pos());
-    CAutoFile file(OpenBlockFile(filePos, true), SER_DISK, CLIENT_VERSION);
+    CAutoFile file(node::OpenBlockFile(filePos, true), SER_DISK, CLIENT_VERSION);
     std::vector<uint8_t> data(request->num_bytes());
     try {
         file.read((char *)data.data(), request->num_bytes());
@@ -496,7 +497,7 @@ NngRpcErrorCode
 NngRpcServer::GetUndoSlice(flatbuffers::FlatBufferBuilder &fbb,
                            const NngInterface::GetUndoSliceRequest *request) {
     const FlatFilePos filePos(request->file_num(), request->undo_pos());
-    CAutoFile file(OpenUndoFile(filePos, true), SER_DISK, CLIENT_VERSION);
+    CAutoFile file(node::OpenUndoFile(filePos, true), SER_DISK, CLIENT_VERSION);
     std::vector<uint8_t> data(request->num_bytes());
     try {
         file.read((char *)data.data(), request->num_bytes());
@@ -518,7 +519,7 @@ NngRpcServer::GetMempool(flatbuffers::FlatBufferBuilder &fbb,
         for (const CTxIn &input : entry.GetSharedTx()->vin) {
             spent_coins_map[input.prevout] = Coin();
         }
-        FindCoins(m_node, spent_coins_map);
+        node::FindCoins(m_node, spent_coins_map);
         std::vector<Coin> spent_coin;
         spent_coin.reserve(spent_coins_map.size());
         for (const CTxIn &input : entry.GetSharedTx()->vin) {
@@ -646,7 +647,8 @@ private:
 std::unique_ptr<NngRpcServer> g_rpc_server;
 std::unique_ptr<NngPubServer> g_pub_server;
 
-bool RunRpcServer(const NodeContext &node, const Consensus::Params &consensus) {
+bool RunRpcServer(const node::NodeContext &node,
+                  const Consensus::Params &consensus) {
     if (gArgs.IsArgSet("-nngrpc")) {
         std::string rpc_url = gArgs.GetArg("-nngrpc", "");
         g_rpc_server = std::make_unique<NngRpcServer>(consensus, node);
@@ -688,7 +690,7 @@ bool RunPubServer() {
     return true;
 }
 
-bool StartNngInterface(const NodeContext &node,
+bool StartNngInterface(const node::NodeContext &node,
                        const Consensus::Params &consensus) {
     if (!RunRpcServer(node, consensus)) {
         return false;

@@ -892,8 +892,17 @@ bool MemPoolAccept::SubmitPackage(
         if (m_pool.exists(ws.m_ptx->GetId())) {
             results.emplace(ws.m_ptx->GetId(), MempoolAcceptResult::Success(
                                                    ws.m_vsize, ws.m_base_fees));
+            
+            std::vector<Coin> spent_coins;
+            spent_coins.reserve(ws.m_ptx->vin.size());
+            for (const CTxIn &input : ws.m_ptx->vin) {
+                Coin coin;
+                m_view.GetCoin(input.prevout, coin);
+                spent_coins.push_back(coin);
+            }
+
             GetMainSignals().TransactionAddedToMempool(
-                ws.m_ptx, m_pool.GetAndIncrementSequence());
+                ws.m_ptx, spent_coins, m_pool.GetAndIncrementSequence());
         } else {
             all_submitted = false;
             ws.m_state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY,

@@ -2,7 +2,9 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+namespace node {
 struct NodeContext;
+}
 namespace Consensus {
 struct Params;
 }
@@ -19,6 +21,6 @@ const std::vector<std::string> AVAILABLE_PUB_MESSAGES = {
     MSG_BLKCONNECTED, MSG_BLKDISCONCTD, MSG_CHAINSTFLUSH,
 };
 
-bool StartNngInterface(const NodeContext &node,
+bool StartNngInterface(const node::NodeContext &node,
                        const Consensus::Params &consensus);
 void StopNngInterface();
