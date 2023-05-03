@@ -14,6 +14,7 @@ use axum::{
     routing, Extension, Router,
 };
 use bitcoinsuite_core::tx::TxId;
+use bitcoinsuite_slp::slpv2;
 use chronik_indexer::indexer::ChronikIndexer;
 use chronik_proto::proto;
 use hyper::server::conn::AddrIncoming;
@@ -63,6 +64,10 @@ pub enum ChronikServerError {
     /// Query is not a txid
     #[error("400: Not a txid: {0}")]
     NotTxId(String),
+
+    /// Query is not a token_id
+    #[error("400: Not a token_id: {0}")]
+    NotTokenId(String),
 
     /// Block not found in DB
     #[error("404: Block not found: {0}")]
@@ -133,6 +138,7 @@ impl ChronikServer {
                 "/script/:type/:payload/utxos",
                 routing::get(handle_script_utxos),
             )
+            .route("/slpv2/token-info/:token_id", routing::get(handle_token_info))
             .route("/ws", routing::get(handle_ws))
             .fallback(handlers::handle_not_found)
             .layer(Extension(indexer))
@@ -154,6 +160,15 @@ async fn handle_block_range(
     let indexer = indexer.read().await;
     let blocks = indexer.blocks();
     Ok(Protobuf(blocks.by_range(start_height, end_height)?))
+}
+
+async fn handle_token_info(
+    Path(token_id): Path<String>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+) -> Result<Protobuf<proto::Slpv2TokenInfo>, ReportError> {
+    let indexer = indexer.read().await;
+    let token_id = token_id.parse::<slpv2::TokenId>().wrap_err(NotTokenId(token_id))?;
+    Ok(Protobuf(indexer.txs().slpv2_token_info(&token_id)?))
 }
 
 async fn handle_block(

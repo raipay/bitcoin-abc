@@ -172,6 +172,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
 
 [[package]]
+name = "bimap"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "230c5f1ca6a325a32553f8640d31ac9b49f2411e901e427570154868b46da4f7"
+
+[[package]]
 name = "bindgen"
 version = "0.64.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -205,6 +211,17 @@ dependencies = [
  "bytes",
  "hex",
  "hex-literal",
+ "thiserror",
+]
+
+[[package]]
+name = "bitcoinsuite-slp"
+version = "0.1.0"
+dependencies = [
+ "abc-rust-lint",
+ "bitcoinsuite-core",
+ "bytes",
+ "itertools",
  "thiserror",
 ]
 
@@ -292,9 +309,14 @@ version = "0.1.0"
 dependencies = [
  "abc-rust-error",
  "abc-rust-lint",
+ "bimap",
  "bitcoinsuite-core",
+ "bitcoinsuite-slp",
+ "bytes",
+ "chronik-util",
  "fastrand",
  "hex",
+ "itertools",
  "postcard",
  "pretty_assertions",
  "rocksdb",
@@ -302,6 +324,7 @@ dependencies = [
  "serde",
  "tempdir",
  "thiserror",
+ "topo_sort",
 ]
 
 [[package]]
@@ -313,6 +336,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bitcoinsuite-core",
+ "bitcoinsuite-slp",
  "chronik-db",
  "chronik-indexer",
  "chronik-proto",
@@ -332,6 +356,7 @@ dependencies = [
  "abc-rust-error",
  "abc-rust-lint",
  "bitcoinsuite-core",
+ "bitcoinsuite-slp",
  "chronik-bridge",
  "chronik-db",
  "chronik-proto",
@@ -1744,6 +1769,12 @@ dependencies = [
  "tokio",
  "tungstenite",
 ]
+
+[[package]]
+name = "topo_sort"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "156552d3c80df430aaac98c605a4e0eb7da8d06029cce2d40b4a6b095a34b37e"
 
 [[package]]
 name = "tower"

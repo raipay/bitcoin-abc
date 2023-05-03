@@ -17,7 +17,7 @@ use crate::{
     groups::{ScriptHistoryWriter, ScriptUtxoWriter},
     io::{
         BlockStatsWriter, BlockWriter, MetadataWriter, SpentByWriter, TxWriter,
-    },
+    }, slpv2::io::Slpv2Writer,
 };
 
 // All column family names used by Chronik should be defined here
@@ -43,6 +43,9 @@ pub const CF_SCRIPT_HISTORY: &str = "script_history";
 pub const CF_SCRIPT_UTXO: &str = "script_utxo";
 /// Column family to store which outputs have been spent by which tx inputs.
 pub const CF_SPENT_BY: &str = "spent_by";
+pub const CF_SLPV2_GENESIS_DATA: &str = "slpv2_genesis_data";
+pub const CF_SLPV2_TOKEN_META: &str = "slpv2_token_meta";
+pub const CF_SLPV2_TX_DATA: &str = "slpv2_tx_data";
 /// Column family for the tx data.
 pub const CF_TX: &str = "tx";
 
@@ -82,6 +85,7 @@ impl Db {
         ScriptHistoryWriter::add_cfs(&mut cfs);
         ScriptUtxoWriter::add_cfs(&mut cfs);
         SpentByWriter::add_cfs(&mut cfs);
+        Slpv2Writer::add_cfs(&mut cfs);
         Self::open_with_cfs(path, cfs)
     }
 

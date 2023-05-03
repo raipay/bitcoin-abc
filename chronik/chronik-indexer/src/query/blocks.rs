@@ -17,6 +17,7 @@ use chronik_db::{
         SpentByReader, TxNum, TxReader,
     },
     mem::Mempool,
+    slpv2::io::Slpv2Reader,
 };
 use chronik_proto::proto;
 use thiserror::Error;
@@ -174,6 +175,7 @@ impl<'a> QueryBlocks<'a> {
         let block_reader = BlockReader::new(self.db)?;
         let tx_reader = TxReader::new(self.db)?;
         let spent_by_reader = SpentByReader::new(self.db)?;
+        let slpv2_reader = Slpv2Reader::new(self.db)?;
         let db_block = match hash_or_height.parse::<HashOrHeight>()? {
             HashOrHeight::Hash(hash) => block_reader.by_hash(&hash)?,
             HashOrHeight::Height(height) => block_reader.by_height(height)?,
@@ -207,6 +209,7 @@ impl<'a> QueryBlocks<'a> {
                 self.mempool.spent_by().outputs_spent(&db_tx.entry.txid),
                 tx_num,
             )?;
+            let slpv2 = slpv2_reader.tx_data_by_tx_num(tx_num)?;
             txs.push(make_tx_proto(
                 &Tx::from(tx),
                 &outputs_spent,
@@ -214,6 +217,7 @@ impl<'a> QueryBlocks<'a> {
                 db_tx.entry.is_coinbase,
                 Some(&db_block),
                 self.avalanche,
+                slpv2.as_ref(),
             ));
         }
         let total_num_txs = (tx_range.end - tx_range.start) as usize;

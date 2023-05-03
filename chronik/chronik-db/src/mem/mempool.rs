@@ -11,8 +11,10 @@ use bitcoinsuite_core::tx::{Tx, TxId};
 use thiserror::Error;
 
 use crate::{
+    db::Db,
     groups::{MempoolScriptHistory, MempoolScriptUtxos, ScriptGroup},
     mem::MempoolSpentBy,
+    slpv2::mem::MempoolSlpv2,
 };
 
 /// Mempool of the indexer. This stores txs from the node again, but having a
@@ -24,6 +26,7 @@ pub struct Mempool {
     script_history: MempoolScriptHistory,
     script_utxos: MempoolScriptUtxos,
     spent_by: MempoolSpentBy,
+    slpv2: MempoolSlpv2,
 }
 
 /// Transaction in the mempool.
@@ -57,16 +60,19 @@ impl Mempool {
             script_history: MempoolScriptHistory::new(script_group.clone()),
             script_utxos: MempoolScriptUtxos::new(script_group),
             spent_by: MempoolSpentBy::default(),
+            slpv2: MempoolSlpv2::default(),
         }
     }
 
     /// Insert tx into the mempool.
-    pub fn insert(&mut self, mempool_tx: MempoolTx) -> Result<()> {
+    pub fn insert(&mut self, mempool_tx: MempoolTx, db: &Db) -> Result<()> {
         let txid = mempool_tx.tx.txid();
         self.script_history.insert(&mempool_tx);
         self.script_utxos
             .insert(&mempool_tx, |txid| self.txs.contains_key(txid))?;
         self.spent_by.insert(&mempool_tx)?;
+        self.slpv2
+            .insert(db, &mempool_tx, |txid| self.txs.contains_key(txid))?;
         if self.txs.insert(txid, mempool_tx).is_some() {
             return Err(DuplicateTx(txid).into());
         }
@@ -83,6 +89,7 @@ impl Mempool {
         self.script_utxos
             .remove(&mempool_tx, |txid| self.txs.contains_key(txid))?;
         self.spent_by.remove(&mempool_tx)?;
+        self.slpv2.remove(&txid);
         Ok(mempool_tx)
     }
 
@@ -92,6 +99,7 @@ impl Mempool {
             self.script_history.remove(&mempool_tx);
             self.script_utxos.remove_mined(&mempool_tx);
             self.spent_by.remove(&mempool_tx)?;
+            self.slpv2.remove(txid);
             return Ok(Some(mempool_tx));
         }
         Ok(None)
@@ -115,5 +123,9 @@ impl Mempool {
     /// Which tx outputs have been spent by tx in the mempool.
     pub fn spent_by(&self) -> &MempoolSpentBy {
         &self.spent_by
+    }
+
+    pub fn slpv2(&self) -> &MempoolSlpv2 {
+        &self.slpv2
     }
 }

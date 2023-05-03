@@ -153,6 +153,9 @@ class ChronikClient:
     def script(self, script_type: str, script_payload: str) -> ChronikScriptClient:
         return ChronikScriptClient(self, script_type, script_payload)
 
+    def slpv2_token_info(self, token_id: str):
+        return self._request_get(f'/slpv2/token-info/{token_id}', pb.Slpv2TokenInfo)
+
     def ws(self, *, timeout=None) -> ChronikWs:
         ws = websocket.WebSocket()
         ws.connect(f'ws://{self.host}:{self.port}/ws', timeout=timeout)

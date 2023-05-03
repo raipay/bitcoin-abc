@@ -78,6 +78,9 @@ message Tx {
     uint32 size = 11;
     // Whether this tx is a coinbase tx
     bool is_coinbase = 12;
+    repeated Slpv2Section slpv2_sections = 13;
+    repeated string slpv2_errors = 14;
+    repeated bytes slpv2_burn_token_ids = 15;
 }
 
 // UTXO of a script.
@@ -92,6 +95,7 @@ message ScriptUtxo {
     int64 value = 5;
     // Whether the UTXO has been finalized by Avalanche.
     bool is_final = 10;
+    Slpv2Token slpv2 = 11;
 }
 
 // COutPoint, points to a coin being spent by an input.
@@ -122,6 +126,7 @@ message TxInput {
     int64 value = 4;
     // nSequence of the input.
     uint32 sequence_no = 5;
+    Slpv2Token slpv2 = 8;
 }
 
 // CTxOut, creates a new coin.
@@ -132,6 +137,7 @@ message TxOutput {
     bytes output_script = 2;
     // Which tx and input spent this output, if any.
     SpentBy spent_by = 4;
+    Slpv2Token slpv2 = 5;
 }
 
 // Data about a block which a Tx is in.
@@ -144,6 +150,49 @@ message BlockMetadata {
     int64 timestamp = 3;
     // Whether the block has been finalized by Avalanche.
     bool is_final = 4;
+}
+
+message Slpv2TokenInfo {
+    bytes token_id = 1;
+    Slpv2TokenType token_type = 2;
+    Slpv2GenesisData genesis_data = 3;
+    BlockMetadata block = 4;
+    int64 time_first_seen = 5;
+}
+
+message Slpv2Section {
+    bytes token_id = 1;
+    Slpv2TokenType token_type = 2;
+    Slpv2SectionType section_type = 3;
+    int64 intentional_burn_amount = 4;
+}
+
+enum Slpv2TokenType {
+    SLPV2_TOKEN_TYPE_INVALID = 0;
+    SLPV2_TOKEN_TYPE_STANDARD = 200;
+}
+
+enum Slpv2SectionType {
+    SLPV2_UNKNOWN = 0;
+    SLPV2_GENESIS = 1;
+    SLPV2_SEND = 2;
+    SLPV2_MINT = 3;
+}
+
+message Slpv2GenesisData {
+    bytes token_ticker = 1;
+    bytes token_name = 2;
+    bytes url = 3;
+    bytes data = 4;
+    bytes auth_pubkey = 5;
+    uint32 decimals = 6;
+}
+
+message Slpv2Token {
+    uint32 section_idx = 1;
+    bytes token_id = 2;
+    int64 amount = 3;
+    bool is_mint_baton = 4;
 }
 
 // Page with txs

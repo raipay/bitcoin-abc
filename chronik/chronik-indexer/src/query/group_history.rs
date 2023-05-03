@@ -14,6 +14,7 @@ use chronik_db::{
     group::Group,
     io::{BlockReader, GroupHistoryReader, SpentByReader, TxNum, TxReader},
     mem::{Mempool, MempoolGroupHistory},
+    slpv2::io::Slpv2Reader,
 };
 use chronik_proto::proto;
 use chronik_util::log;
@@ -269,6 +270,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                 false,
                 None,
                 self.avalanche,
+                self.mempool.slpv2().tx_data(txid),
             ));
         }
 
@@ -351,6 +353,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                         false,
                         None,
                         self.avalanche,
+                        self.mempool.slpv2().tx_data(txid),
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?,
@@ -367,6 +370,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
         let tx_reader = TxReader::new(self.db)?;
         let block_reader = BlockReader::new(self.db)?;
         let spent_by_reader = SpentByReader::new(self.db)?;
+        let slpv2_reader = Slpv2Reader::new(self.db)?;
         let block_tx =
             tx_reader.tx_by_tx_num(tx_num)?.ok_or(MissingDbTx(tx_num))?;
         let block = block_reader
@@ -383,6 +387,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
             self.mempool.spent_by().outputs_spent(&block_tx.entry.txid),
             tx_num,
         )?;
+        let slpv2 = slpv2_reader.tx_data_by_tx_num(tx_num)?;
         Ok(make_tx_proto(
             &Tx::from(tx),
             &outputs_spent,
@@ -390,6 +395,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
             block_tx.entry.is_coinbase,
             Some(&block),
             self.avalanche,
+            slpv2.as_ref(),
         ))
     }
 }

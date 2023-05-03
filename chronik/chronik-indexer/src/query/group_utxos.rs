@@ -13,11 +13,15 @@ use chronik_db::{
     group::Group,
     io::{GroupUtxoReader, TxNum, TxReader},
     mem::{Mempool, MempoolGroupUtxos},
+    slpv2::io::Slpv2Reader,
 };
 use chronik_proto::proto;
 use thiserror::Error;
 
-use crate::{avalanche::Avalanche, query::make_outpoint_proto};
+use crate::{
+    avalanche::Avalanche,
+    query::{make_outpoint_proto, make_slpv2_token_proto},
+};
 
 static EMPTY_MEMBER_UTXOS: BTreeSet<OutPoint> = BTreeSet::new();
 
@@ -71,6 +75,7 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
     ) -> Result<Vec<proto::ScriptUtxo>> {
         let tx_reader = TxReader::new(self.db)?;
         let utxo_reader = GroupUtxoReader::<G>::new(self.db)?;
+        let slpv2_reader = Slpv2Reader::new(self.db)?;
         let member_ser = self.group.ser_member(&member);
 
         // Read UTXO entries from DB and mempool
@@ -107,6 +112,8 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
                 }
             }
 
+            let slpv2_tx_data = slpv2_reader.tx_data_by_tx_num(tx_num)?;
+
             let outpoint = OutPoint { txid, out_idx };
             utxos.push(proto::ScriptUtxo {
                 outpoint: Some(make_outpoint_proto(&outpoint)),
@@ -114,10 +121,16 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
                 is_coinbase: db_tx.entry.is_coinbase,
                 value: db_utxo.value,
                 is_final: self.avalanche.is_final_height(db_tx.block_height),
+                slpv2: slpv2_tx_data.and_then(|tx_data| {
+                    Some(make_slpv2_token_proto(
+                        &tx_data,
+                        tx_data.outputs[out_idx as usize].as_ref()?,
+                    ))
+                }),
             });
         }
 
-        // Add DB UTXOs
+        // Add mempool UTXOs
         for &mempool_outpoint in mempool_utxos {
             let mempool_tx = self
                 .mempool
@@ -134,6 +147,17 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
                 is_coinbase: false,
                 value: output.value,
                 is_final: false,
+                slpv2: self
+                    .mempool
+                    .slpv2()
+                    .tx_data(&mempool_outpoint.txid)
+                    .and_then(|tx_data| {
+                        Some(make_slpv2_token_proto(
+                            tx_data,
+                            tx_data.outputs[mempool_outpoint.out_idx as usize]
+                                .as_ref()?,
+                        ))
+                    }),
             });
         }
 

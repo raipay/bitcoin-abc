@@ -9,11 +9,13 @@ use bitcoinsuite_core::{
     ser::BitcoinSer,
     tx::{Tx, TxId},
 };
+use bitcoinsuite_slp::slpv2;
 use chronik_bridge::ffi;
 use chronik_db::{
     db::Db,
     io::{BlockReader, SpentByReader, TxReader},
     mem::Mempool,
+    slpv2::io::Slpv2Reader,
 };
 use chronik_proto::proto;
 use thiserror::Error;
@@ -41,6 +43,9 @@ pub enum QueryTxError {
     #[error("404: Transaction {0} not found in the index")]
     TxNotFound(TxId),
 
+    #[error("404: Transaction {0} is not an SLPv2 GENESIS")]
+    TxNotSlpv2Genesis(TxId),
+
     /// Transaction in DB without block
     #[error("500: Inconsistent DB: {0} has no block")]
     DbTxHasNoBlock(TxId),
@@ -65,6 +70,7 @@ impl<'a> QueryTxs<'a> {
                 false,
                 None,
                 self.avalanche,
+                self.mempool.slpv2().tx_data(&txid),
             )),
             None => {
                 let tx_reader = TxReader::new(self.db)?;
@@ -74,6 +80,7 @@ impl<'a> QueryTxs<'a> {
                 let tx_entry = block_tx.entry;
                 let block_reader = BlockReader::new(self.db)?;
                 let spent_by_reader = SpentByReader::new(self.db)?;
+                let slpv2_reader = Slpv2Reader::new(self.db)?;
                 let block = block_reader
                     .by_height(block_tx.block_height)?
                     .ok_or(DbTxHasNoBlock(txid))?;
@@ -89,6 +96,7 @@ impl<'a> QueryTxs<'a> {
                     self.mempool.spent_by().outputs_spent(&txid),
                     tx_num,
                 )?;
+                let slpv2 = slpv2_reader.tx_data_by_tx_num(tx_num)?;
                 Ok(make_tx_proto(
                     &Tx::from(tx),
                     &outputs_spent,
@@ -96,6 +104,7 @@ impl<'a> QueryTxs<'a> {
                     tx_entry.is_coinbase,
                     Some(&block),
                     self.avalanche,
+                    slpv2.as_ref(),
                 ))
             }
         }
@@ -121,5 +130,100 @@ impl<'a> QueryTxs<'a> {
             }
         };
         Ok(proto::RawTx { raw_tx })
+    }
+
+    pub fn slpv2_token_info(
+        &self,
+        token_id: &slpv2::TokenId,
+    ) -> Result<proto::Slpv2TokenInfo> {
+        let genesis_txid = TxId::from(token_id.to_bytes());
+        match self.mempool.tx(&genesis_txid) {
+            Some(mempool_tx) => {
+                let tx_data = self
+                    .mempool
+                    .slpv2()
+                    .tx_data(&genesis_txid)
+                    .ok_or(TxNotSlpv2Genesis(genesis_txid))?;
+                let section = tx_data
+                    .sections
+                    .get(0)
+                    .ok_or(TxNotSlpv2Genesis(genesis_txid))?;
+                let genesis_data = self
+                    .mempool
+                    .slpv2()
+                    .genesis_data(&genesis_txid)
+                    .ok_or(TxNotSlpv2Genesis(genesis_txid))?;
+                Ok(proto::Slpv2TokenInfo {
+                    token_id: token_id.to_vec(),
+                    token_type: match section.meta.token_type {
+                        slpv2::TokenType::Standard => {
+                            proto::Slpv2TokenType::Standard as _
+                        }
+                    },
+                    genesis_data: Some(proto::Slpv2GenesisData {
+                        token_ticker: genesis_data.token_ticker.to_vec(),
+                        token_name: genesis_data.token_name.to_vec(),
+                        url: genesis_data.url.to_vec(),
+                        data: genesis_data.data.to_vec(),
+                        auth_pubkey: genesis_data.auth_pubkey.to_vec(),
+                        decimals: genesis_data.decimals as u32,
+                    }),
+                    block: None,
+                    time_first_seen: mempool_tx.time_first_seen,
+                })
+            }
+            None => {
+                let block_reader = BlockReader::new(self.db)?;
+                let tx_reader = TxReader::new(self.db)?;
+                let slpv2_reader = Slpv2Reader::new(self.db)?;
+
+                let (tx_num, block_tx) = tx_reader
+                    .tx_and_num_by_txid(&genesis_txid)?
+                    .ok_or(TxNotFound(genesis_txid))?;
+                let (tx_data, db_tx_data) = slpv2_reader
+                    .tx_data_and_db_by_tx_num(tx_num)?
+                    .ok_or(TxNotSlpv2Genesis(genesis_txid))?;
+                let section = tx_data
+                    .sections
+                    .get(0)
+                    .ok_or(TxNotSlpv2Genesis(genesis_txid))?;
+                let db_section = db_tx_data
+                    .sections
+                    .get(0)
+                    .ok_or(TxNotSlpv2Genesis(genesis_txid))?;
+                if section.section_type != slpv2::SectionType::GENESIS {
+                    return Err(TxNotSlpv2Genesis(genesis_txid).into());
+                }
+                let genesis_data = slpv2_reader
+                    .genesis_data_by_token_num(db_section.token_num)?
+                    .ok_or(TxNotSlpv2Genesis(genesis_txid))?;
+                let block = block_reader
+                    .by_height(block_tx.block_height)?
+                    .ok_or(DbTxHasNoBlock(genesis_txid))?;
+                Ok(proto::Slpv2TokenInfo {
+                    token_id: token_id.to_vec(),
+                    token_type: match section.meta.token_type {
+                        slpv2::TokenType::Standard => {
+                            proto::Slpv2TokenType::Standard as _
+                        }
+                    },
+                    genesis_data: Some(proto::Slpv2GenesisData {
+                        token_ticker: genesis_data.token_ticker.to_vec(),
+                        token_name: genesis_data.token_name.to_vec(),
+                        url: genesis_data.url.to_vec(),
+                        data: genesis_data.data.to_vec(),
+                        auth_pubkey: genesis_data.auth_pubkey.to_vec(),
+                        decimals: genesis_data.decimals as u32,
+                    }),
+                    block: Some(proto::BlockMetadata {
+                        hash: block.hash.to_vec(),
+                        height: block.height,
+                        timestamp: block.timestamp,
+                        is_final: self.avalanche.is_final_height(block.height),
+                    }),
+                    time_first_seen: block_tx.entry.time_first_seen,
+                })
+            }
+        }
     }
 }

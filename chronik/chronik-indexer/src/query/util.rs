@@ -13,6 +13,7 @@ use bitcoinsuite_core::{
     ser::BitcoinSer,
     tx::{OutPoint, SpentBy, Tx, TxId},
 };
+use bitcoinsuite_slp::slpv2;
 use chronik_db::io::{
     BlockHeight, DbBlock, SpentByEntry, SpentByReader, TxNum, TxReader,
 };
@@ -51,6 +52,7 @@ pub(crate) fn make_tx_proto(
     is_coinbase: bool,
     block: Option<&DbBlock>,
     avalanche: &Avalanche,
+    slpv2_tx_data: Option<&slpv2::TxData>,
 ) -> proto::Tx {
     proto::Tx {
         txid: tx.txid().to_vec(),
@@ -58,7 +60,8 @@ pub(crate) fn make_tx_proto(
         inputs: tx
             .inputs
             .iter()
-            .map(|input| {
+            .enumerate()
+            .map(|(input_idx, input)| {
                 let coin = input.coin.as_ref();
                 let (output_script, value) = coin
                     .map(|coin| {
@@ -71,6 +74,12 @@ pub(crate) fn make_tx_proto(
                     output_script,
                     value,
                     sequence_no: input.sequence,
+                    slpv2: slpv2_tx_data.and_then(|tx_data| {
+                        Some(make_slpv2_token_proto(
+                            tx_data,
+                            tx_data.inputs[input_idx].as_ref()?,
+                        ))
+                    }),
                 }
             })
             .collect(),
@@ -84,6 +93,12 @@ pub(crate) fn make_tx_proto(
                 spent_by: outputs_spent
                     .spent_by(output_idx as u32)
                     .map(|spent_by| make_spent_by_proto(&spent_by)),
+                slpv2: slpv2_tx_data.and_then(|tx_data| {
+                    Some(make_slpv2_token_proto(
+                        tx_data,
+                        tx_data.outputs[output_idx].as_ref()?,
+                    ))
+                }),
             })
             .collect(),
         lock_time: tx.locktime,
@@ -96,6 +111,9 @@ pub(crate) fn make_tx_proto(
         time_first_seen,
         size: tx.ser_len() as u32,
         is_coinbase,
+        slpv2_sections: slpv2_sections(slpv2_tx_data),
+        slpv2_errors: slpv2_errors(tx, slpv2_tx_data),
+        slpv2_burn_token_ids: slpv2_burn_token_ids(slpv2_tx_data),
     }
 }
 
@@ -110,6 +128,103 @@ fn make_spent_by_proto(spent_by: &SpentBy) -> proto::SpentBy {
     proto::SpentBy {
         txid: spent_by.txid.to_vec(),
         input_idx: spent_by.input_idx,
+    }
+}
+
+pub(crate) fn make_slpv2_token_proto(
+    tx_data: &slpv2::TxData,
+    token_output: &slpv2::TokenOutputData,
+) -> proto::Slpv2Token {
+    proto::Slpv2Token {
+        token_id: tx_data.sections[token_output.section_idx]
+            .meta
+            .token_id
+            .to_vec(),
+        section_idx: token_output.section_idx as u32,
+        amount: token_output.amount,
+        is_mint_baton: token_output.is_mint_baton,
+    }
+}
+
+pub(crate) fn slpv2_token_type(
+    token_type: slpv2::TokenType,
+) -> proto::Slpv2TokenType {
+    match token_type {
+        slpv2::TokenType::Standard => proto::Slpv2TokenType::Standard,
+    }
+}
+
+fn slpv2_section_type(
+    section_type: slpv2::SectionType,
+) -> proto::Slpv2SectionType {
+    match section_type {
+        slpv2::SectionType::GENESIS => proto::Slpv2SectionType::Slpv2Genesis,
+        slpv2::SectionType::MINT => proto::Slpv2SectionType::Slpv2Mint,
+        slpv2::SectionType::SEND => proto::Slpv2SectionType::Slpv2Send,
+    }
+}
+
+fn slpv2_sections(
+    slpv2_tx_data: Option<&slpv2::TxData>,
+) -> Vec<proto::Slpv2Section> {
+    match slpv2_tx_data {
+        Some(slpv2_tx_data) => slpv2_tx_data
+            .sections
+            .iter()
+            .map(|section| proto::Slpv2Section {
+                token_id: section.meta.token_id.to_vec(),
+                token_type: slpv2_token_type(section.meta.token_type) as _,
+                section_type: slpv2_section_type(section.section_type) as _,
+                intentional_burn_amount: section.intentional_burn_amount,
+            })
+            .collect(),
+        None => vec![],
+    }
+}
+
+fn slpv2_errors(tx: &Tx, slpv2_tx_data: Option<&slpv2::TxData>) -> Vec<String> {
+    let parsed = slpv2::parse_tx(tx);
+    let parse_error = parsed.first_err;
+    let (mut tx_data, process_error) =
+        slpv2::TxData::process_parsed(&parsed.parsed, tx);
+    let actual_inputs = match slpv2_tx_data {
+        Some(actual_tx_data) => actual_tx_data.inputs().collect::<Vec<_>>(),
+        None => vec![None; tx.inputs.len()],
+    };
+    let mismatches = slpv2::verify(&mut tx_data, &actual_inputs);
+
+    let mut errors = Vec::new();
+    if let Some(parse_error) = parse_error {
+        let error = format!(
+            "Parse error at section index {}: {parse_error}",
+            parsed.parsed.sections.len()
+        );
+        if parse_error.should_ignore() {
+            errors.push(format!("[IGNORED] {error}"));
+        } else {
+            errors.push(error);
+        }
+    }
+    if let Some(process_error) = process_error {
+        errors.push(format!(
+            "Process error at section index {}: {process_error}",
+            tx_data.sections.len()
+        ));
+    }
+    for mismatch in mismatches {
+        errors.push(mismatch.to_string());
+    }
+    errors
+}
+
+fn slpv2_burn_token_ids(slpv2_tx_data: Option<&slpv2::TxData>) -> Vec<Vec<u8>> {
+    match slpv2_tx_data {
+        Some(tx_data) => tx_data
+            .burn_token_ids
+            .iter()
+            .map(|token_id| token_id.to_vec())
+            .collect(),
+        None => vec![],
     }
 }
 
