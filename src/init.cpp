@@ -296,6 +296,10 @@ void Shutdown(NodeContext &node) {
     // generate CValidationInterface callbacks, flush them...
     GetMainSignals().FlushBackgroundCallbacks();
 
+#if ENABLE_CHRONIK
+    //chronik::Stop();
+#endif
+
     // Stop and delete all indexes only after flushing background callbacks.
     if (g_txindex) {
         g_txindex->Stop();
