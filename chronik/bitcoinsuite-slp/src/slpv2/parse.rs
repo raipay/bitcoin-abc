@@ -37,6 +37,9 @@ pub enum ParseError {
     #[error("Failed parsing pushdata: {0}")]
     DataError(#[from] DataError),
 
+    #[error("Leftover bytes: {0:?}")]
+    LeftoverBytes(Bytes),
+
     #[error("No outputs")]
     NoOutputs,
 
@@ -123,12 +126,16 @@ fn parse_section(
     }
     let token_type = parse_token_type(pushdata)?;
     let tx_type = read_var_bytes(pushdata)?;
-    Ok(match tx_type.as_ref() {
+    let section = match tx_type.as_ref() {
         GENESIS => parse_genesis(txid, token_type, pushdata)?,
         MINT => parse_mint(token_type, pushdata)?,
         SEND => parse_send(token_type, pushdata)?,
         _ => return Err(UnknownTxType(tx_type)),
-    })
+    };
+    if !pushdata.is_empty() {
+        return Err(LeftoverBytes(pushdata.split_off(0)));
+    }
+    Ok(section)
 }
 
 fn parse_genesis(
