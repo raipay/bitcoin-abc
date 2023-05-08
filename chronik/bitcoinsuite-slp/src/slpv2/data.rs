@@ -7,9 +7,16 @@ use bitcoinsuite_core::tx::Tx;
 use thiserror::Error;
 
 use crate::slpv2::{
-    Amount, Genesis, Mint, MintData, ParseError, Parsed, Section,
-    SectionVariant, Send, TokenId, TokenMeta, TokenType,
+    Amount, Genesis, MintData, ParseError, Parsed, Section, SectionVariant,
+    Send, TokenId, TokenMeta, TokenType,
 };
+
+#[derive(Clone, Debug, Default)]
+pub struct TxSpec {
+    pub sections: Vec<SectionData>,
+    pub burn_token_ids: Vec<TokenId>,
+    pub outputs: Vec<Option<TokenOutputData>>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct TxData {
@@ -37,6 +44,7 @@ pub struct Token<'a> {
 pub struct SectionData {
     pub meta: TokenMeta,
     pub section_type: SectionType,
+    pub expected_input_sum: Amount,
     pub intentional_burn_amount: Amount,
 }
 
@@ -49,9 +57,6 @@ pub struct TokenOutputData {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ProcessError {
-    #[error("Too few inputs, expected {expected} but got {actual}")]
-    TooFewInputs { expected: usize, actual: usize },
-
     #[error("Too few outputs, expected {expected} but got {actual}")]
     TooFewOutputs { expected: usize, actual: usize },
 
@@ -59,17 +64,6 @@ pub enum ProcessError {
         "GENESIS must be the first section, but found GENESIS at index {0}"
     )]
     GenesisMustBeFirst(usize),
-
-    #[error(
-        "Mismatched token input and output sum for {token_id} at section index {section_idx}: Input sum {input_sum} != output sum {output_sum} (+optional burn {burn_amount})"
-    )]
-    MismatchedInputOutputSum {
-        section_idx: usize,
-        token_id: TokenId,
-        input_sum: Amount,
-        output_sum: Amount,
-        burn_amount: Amount,
-    },
 
     #[error("Duplicate token_id {token_id}, found in section {prev_section_idx} and {section_idx}")]
     DuplicateTokenId {
@@ -96,15 +90,14 @@ pub enum ProcessError {
 
 use self::ProcessError::*;
 
-impl TxData {
+impl TxSpec {
     pub fn process_parsed(
         parsed: &Parsed,
         tx: &Tx,
-    ) -> (TxData, Option<ProcessError>) {
-        let mut tx_data = TxData {
+    ) -> (TxSpec, Option<ProcessError>) {
+        let mut tx_data = TxSpec {
             sections: vec![],
             burn_token_ids: vec![],
-            inputs: vec![None; tx.inputs.len()],
             outputs: vec![None; tx.outputs.len()],
         };
         for section in &parsed.sections {
@@ -152,6 +145,7 @@ impl TxData {
         self.sections.push(SectionData {
             meta,
             section_type: SectionType::GENESIS,
+            expected_input_sum: 0,
             intentional_burn_amount: 0,
         });
         Ok(())
@@ -160,26 +154,15 @@ impl TxData {
     fn process_mint(
         &mut self,
         meta: TokenMeta,
-        mint: &Mint,
+        mint: &MintData,
     ) -> Result<(), ProcessError> {
-        if self.inputs.len() <= mint.input_baton_idx {
-            return Err(TooFewInputs {
-                expected: mint.input_baton_idx + 1,
-                actual: self.inputs.len(),
-            });
-        };
-        self.check_non_overlapping(&self.inputs, mint.input_baton_idx, None)?;
-        self.check_mint_outputs(&mint.mint_data)?;
+        self.check_mint_outputs(mint)?;
 
-        self.inputs[mint.input_baton_idx] = Some(TokenOutputData {
-            section_idx: self.sections.len(),
-            amount: 0,
-            is_mint_baton: true,
-        });
-        self.process_mint_outputs(&mint.mint_data);
+        self.process_mint_outputs(mint);
         self.sections.push(SectionData {
             meta,
             section_type: SectionType::MINT,
+            expected_input_sum: 0,
             intentional_burn_amount: 0,
         });
         Ok(())
@@ -190,27 +173,11 @@ impl TxData {
         meta: TokenMeta,
         send: &Send,
     ) -> Result<(), ProcessError> {
-        let input_sum =
-            self.check_send_amounts(&send.input_amounts, &self.inputs, false)?;
         let output_sum =
-            self.check_send_amounts(&send.output_amounts, &self.outputs, true)?;
+            self.check_send_amounts(&send.output_amounts, &self.outputs)?;
 
         let burn_amount = send.intentional_burn_amount.unwrap_or_default();
-        if input_sum != output_sum + burn_amount {
-            return Err(MismatchedInputOutputSum {
-                section_idx: self.sections.len(),
-                token_id: meta.token_id,
-                burn_amount,
-                input_sum,
-                output_sum,
-            });
-        }
 
-        Self::process_send_amounts(
-            self.sections.len(),
-            &send.input_amounts,
-            &mut self.inputs,
-        );
         Self::process_send_amounts(
             self.sections.len(),
             &send.output_amounts,
@@ -219,6 +186,7 @@ impl TxData {
         self.sections.push(SectionData {
             meta,
             section_type: SectionType::SEND,
+            expected_input_sum: output_sum + burn_amount,
             intentional_burn_amount: burn_amount,
         });
         Ok(())
@@ -291,27 +259,18 @@ impl TxData {
         &self,
         amounts: &[Amount],
         tokens: &[Option<TokenOutputData>],
-        is_outputs: bool,
     ) -> Result<Amount, ProcessError> {
-        let skip = if is_outputs { 1 } else { 0 };
-        if tokens.len() < amounts.len() + skip {
-            if is_outputs {
-                return Err(TooFewOutputs {
-                    expected: amounts.len() + 1,
-                    actual: tokens.len(),
-                });
-            } else {
-                return Err(TooFewInputs {
-                    expected: amounts.len(),
-                    actual: tokens.len(),
-                });
-            }
+        if tokens.len() < amounts.len() + 1 {
+            return Err(TooFewOutputs {
+                expected: amounts.len() + 1,
+                actual: tokens.len(),
+            });
         }
         let mut sum = 0;
         for (idx, &amount) in amounts.iter().enumerate() {
             sum += amount;
             if amount > 0 {
-                self.check_non_overlapping(tokens, idx + skip, Some(amount))?;
+                self.check_non_overlapping(tokens, idx + 1, amount)?;
             }
         }
         Ok(sum)
@@ -338,27 +297,16 @@ impl TxData {
         &self,
         tokens: &[Option<TokenOutputData>],
         idx: usize,
-        amount: Option<Amount>,
+        amount: Amount,
     ) -> Result<(), ProcessError> {
         if let Some(token) = &tokens[idx] {
             let prev_token = self.token(token).to_static();
-            match amount {
-                Some(amount) => {
-                    return Err(OverlappingAmount {
-                        prev_token,
-                        section_idx: self.sections.len(),
-                        amount_idx: idx,
-                        amount,
-                    });
-                }
-                None => {
-                    return Err(OverlappingMintBaton {
-                        prev_token,
-                        section_idx: self.sections.len(),
-                        baton_idx: idx,
-                    });
-                }
-            }
+            return Err(OverlappingAmount {
+                prev_token,
+                section_idx: self.sections.len(),
+                amount_idx: idx,
+                amount,
+            });
         }
         Ok(())
     }
@@ -376,6 +324,53 @@ impl TxData {
             amount: token_output.amount,
             is_mint_baton: token_output.is_mint_baton,
         }
+    }
+
+    pub fn burn_token_ids(&mut self, token_ids: &BTreeSet<TokenId>) {
+        let mut remaining_sections = Vec::with_capacity(
+            self.sections.len().saturating_sub(token_ids.len()),
+        );
+        let mut replace_token_idx = vec![None; self.sections.len()];
+        let sections = std::mem::take(&mut self.sections);
+        for (idx, section) in sections.into_iter().enumerate() {
+            if !token_ids.contains(&section.meta.token_id) {
+                replace_token_idx[idx] = Some(remaining_sections.len());
+                remaining_sections.push(section);
+            }
+        }
+        for entry in self.outputs.iter_mut() {
+            if let Some(data) = entry {
+                match replace_token_idx[data.section_idx] {
+                    Some(token_idx) => data.section_idx = token_idx,
+                    None => *entry = None,
+                }
+            }
+        }
+        self.sections = remaining_sections;
+        self.burn_token_ids.extend(token_ids.iter().cloned());
+    }
+}
+
+impl TxData {
+    pub fn from_spec_and_inputs(
+        tx_spec: TxSpec,
+        input_tokens: &[Option<Token<'_>>],
+    ) -> Self {
+        let mut tx_data = TxData {
+            sections: tx_spec.sections,
+            burn_token_ids: tx_spec.burn_token_ids,
+            inputs: Vec::with_capacity(input_tokens.len()),
+            outputs: tx_spec.outputs,
+        };
+        for input_token in input_tokens {
+            match input_token {
+                Some(token) => {
+                    tx_data.inputs.push(Some(tx_data.token_output_data(token)));
+                },
+                None => tx_data.inputs.push(None),
+            }
+        }
+        tx_data
     }
 
     pub fn token_output_data(&self, token: &Token<'_>) -> TokenOutputData {
@@ -410,30 +405,18 @@ impl TxData {
             .map(|output| output.as_ref().map(|output| self.token(output)))
     }
 
-    pub fn burn_token_ids(&mut self, token_ids: &BTreeSet<TokenId>, actual_inputs: &[Option<Token<'_>>]) {
-        let mut remaining_sections = Vec::with_capacity(
-            self.sections.len().saturating_sub(token_ids.len()),
-        );
-        let mut replace_token_idx = vec![None; self.sections.len()];
-        let sections = std::mem::take(&mut self.sections);
-        for (idx, section) in sections.into_iter().enumerate() {
-            if !token_ids.contains(&section.meta.token_id) {
-                replace_token_idx[idx] = Some(remaining_sections.len());
-                remaining_sections.push(section);
-            }
-        }
-        for entry in self.outputs.iter_mut() {
-            if let Some(data) = entry {
-                match replace_token_idx[data.section_idx] {
-                    Some(token_idx) => data.section_idx = token_idx,
-                    None => *entry = None,
-                }
-            }
-        }
-        self.sections = remaining_sections;
-        self.burn_token_ids.extend(token_ids.iter().cloned());
-        for (input_idx, token) in actual_inputs.iter().enumerate() {
-            self.inputs[input_idx] = token.as_ref().map(|token| self.token_output_data(token));
+    pub fn token(&self, token_output: &TokenOutputData) -> Token<'_> {
+        Token {
+            token_id: Cow::Borrowed(
+                if token_output.section_idx < self.sections.len() {
+                    &self.sections[token_output.section_idx].meta.token_id
+                } else {
+                    &self.burn_token_ids
+                        [token_output.section_idx - self.sections.len()]
+                },
+            ),
+            amount: token_output.amount,
+            is_mint_baton: token_output.is_mint_baton,
         }
     }
 }

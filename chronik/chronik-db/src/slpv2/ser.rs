@@ -36,6 +36,7 @@ struct SerTxData {
 struct SerTxSection {
     token_num: TokenNum,
     section_type: SerSectionType,
+    expected_input_sum: i64,
     intentional_burn_amount: i64,
 }
 
@@ -72,6 +73,7 @@ pub fn ser_tx_data(tx_data: &DbTxData) -> Result<Vec<u8>> {
                     slpv2::SectionType::MINT => SerSectionType::MINT,
                     slpv2::SectionType::SEND => SerSectionType::SEND,
                 },
+                expected_input_sum: section.expected_input_sum,
                 intentional_burn_amount: section.intentional_burn_amount,
             })
             .collect(),
@@ -103,6 +105,7 @@ pub fn deser_tx_data(data: &[u8]) -> Result<DbTxData> {
                     SerSectionType::MINT => slpv2::SectionType::MINT,
                     SerSectionType::SEND => slpv2::SectionType::SEND,
                 },
+                expected_input_sum: section.expected_input_sum,
                 intentional_burn_amount: section.intentional_burn_amount,
             })
             .collect(),

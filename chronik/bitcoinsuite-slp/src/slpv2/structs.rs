@@ -27,7 +27,7 @@ pub struct Section {
 #[derive(Debug)]
 pub enum SectionVariant {
     Genesis(Genesis),
-    Mint(Mint),
+    Mint(MintData),
     Send(Send),
 }
 
@@ -48,12 +48,6 @@ pub struct Genesis {
 }
 
 #[derive(Clone, Debug)]
-pub struct Mint {
-    pub input_baton_idx: usize,
-    pub mint_data: MintData,
-}
-
-#[derive(Clone, Debug)]
 pub struct MintData {
     pub amounts: Vec<Amount>,
     pub num_batons: usize,
@@ -61,7 +55,6 @@ pub struct MintData {
 
 #[derive(Clone, Debug)]
 pub struct Send {
-    pub input_amounts: Vec<Amount>,
     pub output_amounts: Vec<Amount>,
     pub intentional_burn_amount: Option<Amount>,
 }

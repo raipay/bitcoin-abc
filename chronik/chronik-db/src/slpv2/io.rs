@@ -291,6 +291,7 @@ impl<'a> Slpv2Reader<'a> {
                     .fetch_token_meta(section.token_num)?
                     .ok_or(TokenNumNotFound(section.token_num))?,
                 section_type: section.section_type,
+                expected_input_sum: section.expected_input_sum,
                 intentional_burn_amount: section.intentional_burn_amount,
             });
         }

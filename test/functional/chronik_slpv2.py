@@ -66,7 +66,7 @@ def slpv2_genesis(
 
 def slpv2_mint(
     token_id: bytes,
-    input_baton_idx: int,
+    #input_baton_idx: int,
     mint_amounts: List[int],
     num_batons: int,
 ) -> bytes:
@@ -79,7 +79,7 @@ def slpv2_mint(
 
     result.extend(token_id)
 
-    result.append(input_baton_idx)
+    #result.append(input_baton_idx)
 
     result.append(len(mint_amounts))
     for amount in mint_amounts:
@@ -92,7 +92,7 @@ def slpv2_mint(
 
 def slpv2_send(
     token_id: bytes,
-    input_amounts: List[int],
+    #input_amounts: List[int],
     output_amounts: List[int],
     intentional_burn_amount = None
 ) -> bytes:
@@ -105,9 +105,9 @@ def slpv2_send(
 
     result.extend(token_id)
 
-    result.append(len(input_amounts))
-    for amount in input_amounts:
-        result.extend(amount.to_bytes(6, 'little'))
+    #result.append(len(input_amounts))
+    #for amount in input_amounts:
+    #    result.extend(amount.to_bytes(6, 'little'))
 
     result.append(len(output_amounts))
     for amount in output_amounts:
@@ -161,7 +161,7 @@ class ChronikTxTest(BitcoinTestFramework):
                 mint_amounts = [10, 20, 30, 0],
                 num_batons = 2,
             )])),
-            CTxOut(5000, P2SH_OP_TRUE),
+            CTxOut(10000, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),
             CTxOut(coinvalue - 100000, P2SH_OP_TRUE),
@@ -183,7 +183,7 @@ class ChronikTxTest(BitcoinTestFramework):
         mint_tx.vout = [
             CTxOut(0, CScript([OP_RETURN, OP_RESERVED, slpv2_mint(
                 token_id=bytes.fromhex(genesis_txid)[::-1],
-                input_baton_idx = 0,
+                #input_baton_idx = 0,
                 mint_amounts = [5, 0],
                 num_batons = 1,
             )])),
@@ -205,10 +205,10 @@ class ChronikTxTest(BitcoinTestFramework):
         send_tx.vout = [
             CTxOut(0, CScript([OP_RETURN, OP_RESERVED, slpv2_send(
                 token_id=bytes.fromhex(genesis_txid)[::-1],
-                input_amounts=[10, 5],
+                #input_amounts=[10, 5],
                 output_amounts=[3, 12],
             )])),
-            CTxOut(546, P2SH_OP_TRUE),
+            CTxOut(5000, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),
         ]
 
@@ -262,14 +262,15 @@ class ChronikTxTest(BitcoinTestFramework):
                 ),
                 slpv2_mint(
                     token_id=bytes.fromhex(genesis2_txid)[::-1],
-                    input_baton_idx = 1,
+                    #input_baton_idx = 1,
                     mint_amounts = [0, 5, 0],
                     num_batons = 1,
                 ),
                 slpv2_send(
                     token_id=bytes.fromhex(genesis_txid)[::-1],
-                    input_amounts=[3],
-                    output_amounts=[0, 0, 0, 0, 1, 2],
+                    #input_amounts=[3],
+                    output_amounts=[0, 0, 0, 0, 1, 1],
+                    intentional_burn_amount=1,
                 ),
             ])),
             CTxOut(546, P2SH_OP_TRUE),

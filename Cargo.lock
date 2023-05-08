@@ -221,7 +221,9 @@ dependencies = [
  "abc-rust-lint",
  "bitcoinsuite-core",
  "bytes",
+ "hex",
  "itertools",
+ "pretty_assertions",
  "thiserror",
 ]
 

@@ -40,7 +40,7 @@ impl MempoolSlpv2 {
             return Ok(());
         }
         let (mut tx_data, error) =
-            slpv2::TxData::process_parsed(&parsed.parsed, &tx.tx);
+            slpv2::TxSpec::process_parsed(&parsed.parsed, &tx.tx);
         log!("Tx {} processed = {:#?}, error = {:?}\n", tx.tx.txid(), tx_data, error);
         let mut tx_data_inputs =
             HashMap::<TxId, Option<Cow<'_, slpv2::TxData>>>::new();
@@ -68,6 +68,7 @@ impl MempoolSlpv2 {
         let burns = slpv2::verify(&mut tx_data, &actual_inputs);
         log!("Tx {} verified = {:#?}, burns = {:?}\n", tx.tx.txid(), tx_data, burns);
         if !tx_data.sections.is_empty() {
+            let tx_data = slpv2::TxData::from_spec_and_inputs(tx_data, &actual_inputs);
             self.valid_txs.insert(tx.tx.txid(), tx_data);
             if let slpv2::SectionVariant::Genesis(genesis) = &parsed.parsed.sections[0].variant {
                 self.genesis_data.insert(tx.tx.txid(), genesis.data.clone());

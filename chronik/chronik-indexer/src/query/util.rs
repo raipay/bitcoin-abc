@@ -136,10 +136,7 @@ pub(crate) fn make_slpv2_token_proto(
     token_output: &slpv2::TokenOutputData,
 ) -> proto::Slpv2Token {
     proto::Slpv2Token {
-        token_id: tx_data.sections[token_output.section_idx]
-            .meta
-            .token_id
-            .to_vec(),
+        token_id: tx_data.token(token_output).token_id.to_vec(),
         section_idx: token_output.section_idx as u32,
         amount: token_output.amount,
         is_mint_baton: token_output.is_mint_baton,
@@ -186,7 +183,7 @@ fn slpv2_errors(tx: &Tx, slpv2_tx_data: Option<&slpv2::TxData>) -> Vec<String> {
     let parsed = slpv2::parse_tx(tx);
     let parse_error = parsed.first_err;
     let (mut tx_data, process_error) =
-        slpv2::TxData::process_parsed(&parsed.parsed, tx);
+        slpv2::TxSpec::process_parsed(&parsed.parsed, tx);
     let actual_inputs = match slpv2_tx_data {
         Some(actual_tx_data) => actual_tx_data.inputs().collect::<Vec<_>>(),
         None => vec![None; tx.inputs.len()],

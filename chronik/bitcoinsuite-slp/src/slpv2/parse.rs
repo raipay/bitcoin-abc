@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::{
     empp,
     slpv2::{
-        Amount, Genesis, GenesisData, Mint, MintData, ParseData,
+        Amount, Genesis, GenesisData, MintData, ParseData,
         Parsed, Section, SectionVariant, Send, TokenId, TokenMeta, TokenType,
     },
 };
@@ -169,17 +169,13 @@ fn parse_mint(
     pushdata: &mut Bytes,
 ) -> Result<Section, ParseError> {
     let token_id: [u8; 32] = read_array(pushdata)?;
-    let input_baton_idx = read_size(pushdata)?;
     let mint_data = parse_mint_data(pushdata)?;
     Ok(Section {
         meta: TokenMeta {
             token_id: TokenId::from(token_id),
             token_type,
         },
-        variant: SectionVariant::Mint(Mint {
-            input_baton_idx,
-            mint_data,
-        }),
+        variant: SectionVariant::Mint(mint_data),
     })
 }
 
@@ -188,7 +184,6 @@ fn parse_send(
     pushdata: &mut Bytes,
 ) -> Result<Section, ParseError> {
     let token_id: [u8; 32] = read_array(pushdata)?;
-    let input_amounts = read_amounts(pushdata)?;
     let output_amounts = read_amounts(pushdata)?;
     let mut intentional_burn_amount = None;
     if !pushdata.is_empty() {
@@ -209,7 +204,6 @@ fn parse_send(
             token_type,
         },
         variant: SectionVariant::Send(Send {
-            input_amounts,
             output_amounts,
             intentional_burn_amount,
         }),
