@@ -343,6 +343,7 @@ impl ChronikIndexer {
         let script_utxo_writer =
             ScriptUtxoWriter::new(&self.db, self.script_group.clone())?;
         let spent_by_writer = SpentByWriter::new(&self.db)?;
+        let slpv2_writer = Slpv2Writer::new(&self.db)?;
         block_writer.delete(&mut batch, &block.db_block)?;
         let first_tx_num = tx_writer.delete(&mut batch, &block.block_txs)?;
         let index_txs =
@@ -351,6 +352,7 @@ impl ChronikIndexer {
         script_history_writer.delete(&mut batch, &index_txs)?;
         script_utxo_writer.delete(&mut batch, &index_txs)?;
         spent_by_writer.delete(&mut batch, &index_txs)?;
+        slpv2_writer.delete(&mut batch, &index_txs)?;
         self.avalanche.disconnect_block(block.db_block.height)?;
         self.db.write_batch(batch)?;
         let subs = self.subs.get_mut();
