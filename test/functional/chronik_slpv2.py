@@ -169,6 +169,7 @@ class ChronikTxTest(BitcoinTestFramework):
             CTxOut(546, P2SH_OP_TRUE),
         ]
 
+        print('validate genesis', chronik.validate_tx(genesis_tx.serialize()).ok())
         genesis_txid = node.sendrawtransaction(genesis_tx.serialize().hex())
         print('genesis', chronik.tx(genesis_txid).ok())
         print('info', chronik.slpv2_token_info(genesis_txid).ok())
@@ -283,6 +284,8 @@ class ChronikTxTest(BitcoinTestFramework):
 
         print(multi_tx.vout[0].scriptPubKey)
         print(len(multi_tx.vout[0].scriptPubKey))
+
+        print('validate multi', chronik.validate_tx(multi_tx.serialize()).ok())
 
         multi_txid = node.sendrawtransaction(multi_tx.serialize().hex())
         print('multi', chronik.tx(multi_txid).ok())

@@ -7,9 +7,10 @@
 use abc_rust_error::{Result, WrapErr};
 use bitcoinsuite_core::{
     ser::BitcoinSer,
-    tx::{Tx, TxId},
+    tx::{OutPoint, Tx, TxId, TxMut, Coin},
 };
 use bitcoinsuite_slp::slpv2;
+use bytes::Bytes;
 use chronik_bridge::ffi;
 use chronik_db::{
     db::Db,
@@ -22,7 +23,7 @@ use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, OutputsSpent},
+    query::{make_tx_proto, validate_slpv2_tx, OutputsSpent},
 };
 
 /// Struct for querying txs from the db/mempool.
@@ -53,6 +54,10 @@ pub enum QueryTxError {
     /// Reading failed, likely corrupted block data
     #[error("500: Reading {0} failed")]
     ReadFailure(TxId),
+
+    ///
+    #[error("400: Missing input: {0:?}")]
+    MissingInput(OutPoint),
 }
 
 use self::QueryTxError::*;
@@ -130,6 +135,62 @@ impl<'a> QueryTxs<'a> {
             }
         };
         Ok(proto::RawTx { raw_tx })
+    }
+
+    pub fn validate_tx(&self, raw_tx: Vec<u8>) -> Result<proto::Tx> {
+        let mut bytes = Bytes::from(raw_tx);
+        let mut tx = TxMut::deser(&mut bytes)?;
+        for input in tx.inputs.iter_mut() {
+            if let Some(input_tx) = self.mempool.tx(&input.prev_out.txid) {
+                let output = input_tx
+                    .tx
+                    .outputs
+                    .get(input.prev_out.out_idx as usize)
+                    .ok_or(MissingInput(input.prev_out))?;
+                input.coin = Some(Coin {
+                    output: output.clone(),
+                    height: -1,
+                    is_coinbase: false,
+                });
+                continue;
+            }
+            let tx_reader = TxReader::new(self.db)?;
+            let block_reader = BlockReader::new(self.db)?;
+            let block_tx = tx_reader
+                .tx_by_txid(&input.prev_out.txid)?
+                .ok_or(MissingInput(input.prev_out))?;
+            let block = block_reader
+                .by_height(block_tx.block_height)?
+                .ok_or(DbTxHasNoBlock(input.prev_out.txid))?;
+            let input_tx = ffi::load_tx(
+                block.file_num,
+                block_tx.entry.data_pos,
+                block_tx.entry.undo_pos,
+            )
+            .wrap_err(ReadFailure(input.prev_out.txid))?;
+            let input_tx = Tx::from(input_tx);
+            let output = input_tx
+                .outputs
+                .get(input.prev_out.out_idx as usize)
+                .ok_or(MissingInput(input.prev_out))?;
+            input.coin = Some(Coin {
+                output: output.clone(),
+                height: block.height,
+                is_coinbase: block_tx.entry.is_coinbase,
+            });
+        }
+        // TODO: Don't use "0000...0000" txid
+        let tx = Tx::with_txid(TxId::default(), tx);
+        let tx_data = validate_slpv2_tx(&tx, self.mempool, self.db)?;
+        Ok(make_tx_proto(
+            &tx,
+            &OutputsSpent::default(),
+            0,
+            false,
+            None,
+            self.avalanche,
+            tx_data.as_ref(),
+        ))
     }
 
     pub fn slpv2_token_info(

@@ -4,7 +4,7 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import http.client
-from typing import Union
+from typing import Union, Optional
 
 import chronik_pb2 as pb
 import websocket
@@ -105,11 +105,17 @@ class ChronikClient:
         self.timeout = timeout
 
     def _request_get(self, path: str, pb_type):
+        return self._request('GET', path, None, pb_type)
+
+    def _request(self, method: str, path: str, body: Optional[bytes], pb_type):
         kwargs = {}
         if self.timeout is not None:
             kwargs['timeout'] = self.timeout
         client = http.client.HTTPConnection(self.host, self.port, **kwargs)
-        client.request('GET', path)
+        headers = {}
+        if body is not None:
+            headers['Content-Type'] = self.CONTENT_TYPE
+        client.request(method, path, body, headers)
         response = client.getresponse()
         content_type = response.getheader('Content-Type')
         body = response.read()
@@ -149,6 +155,9 @@ class ChronikClient:
 
     def raw_tx(self, txid: str) -> bytes:
         return self._request_get(f'/raw-tx/{txid}', pb.RawTx)
+
+    def validate_tx(self, raw_tx: bytes) -> bytes:
+        return self._request('POST', f'/validate-tx', pb.RawTx(raw_tx=raw_tx).SerializeToString(), pb.Tx)
 
     def script(self, script_type: str, script_payload: str) -> ChronikScriptClient:
         return ChronikScriptClient(self, script_type, script_payload)

@@ -4,12 +4,11 @@ use std::{
 };
 
 use abc_rust_error::Result;
-use bitcoinsuite_core::{tx::{OutPoint, Tx, TxId}, error};
+use bitcoinsuite_core::tx::TxId;
 use bitcoinsuite_slp::slpv2;
-use chronik_util::log;
 use thiserror::Error;
 
-use crate::{db::Db, io::TxReader, slpv2::io::Slpv2Reader, mem::MempoolTx};
+use crate::{db::Db, io::TxReader, mem::MempoolTx, slpv2::io::Slpv2Reader};
 
 #[derive(Debug, Default)]
 pub struct MempoolSlpv2 {
@@ -35,13 +34,11 @@ impl MempoolSlpv2 {
         is_mempool_tx: impl Fn(&TxId) -> bool,
     ) -> Result<()> {
         let parsed = slpv2::parse_tx(&tx.tx);
-        log!("Tx {} parsed {:#?}\n", tx.tx.txid(), parsed);
         if parsed.parsed.sections.is_empty() {
             return Ok(());
         }
         let (mut tx_data, error) =
             slpv2::TxSpec::process_parsed(&parsed.parsed, &tx.tx);
-        log!("Tx {} processed = {:#?}, error = {:?}\n", tx.tx.txid(), tx_data, error);
         let mut tx_data_inputs =
             HashMap::<TxId, Option<Cow<'_, slpv2::TxData>>>::new();
         let mut actual_inputs = Vec::with_capacity(tx.tx.inputs.len());
@@ -50,7 +47,7 @@ impl MempoolSlpv2 {
                 tx_data_inputs.entry(input.prev_out.txid)
             {
                 let tx_data =
-                    self.get_tx_data(db, entry.key(), &is_mempool_tx)?;
+                    self.tx_data_or_read(db, entry.key(), &is_mempool_tx)?;
                 entry.insert(tx_data);
             }
         }
@@ -66,11 +63,13 @@ impl MempoolSlpv2 {
             );
         }
         let burns = slpv2::verify(&mut tx_data, &actual_inputs);
-        log!("Tx {} verified = {:#?}, burns = {:?}\n", tx.tx.txid(), tx_data, burns);
         if !tx_data.sections.is_empty() {
-            let tx_data = slpv2::TxData::from_spec_and_inputs(tx_data, &actual_inputs);
+            let tx_data =
+                slpv2::TxData::from_spec_and_inputs(tx_data, &actual_inputs);
             self.valid_txs.insert(tx.tx.txid(), tx_data);
-            if let slpv2::SectionVariant::Genesis(genesis) = &parsed.parsed.sections[0].variant {
+            if let slpv2::SectionVariant::Genesis(genesis) =
+                &parsed.parsed.sections[0].variant
+            {
                 self.genesis_data.insert(tx.tx.txid(), genesis.data.clone());
             }
         }
@@ -82,11 +81,11 @@ impl MempoolSlpv2 {
         self.genesis_data.remove(txid);
     }
 
-    fn get_tx_data(
+    pub fn tx_data_or_read(
         &self,
         db: &Db,
         txid: &TxId,
-        is_mempool_tx: &impl Fn(&TxId) -> bool,
+        is_mempool_tx: impl Fn(&TxId) -> bool,
     ) -> Result<Option<Cow<'_, slpv2::TxData>>> {
         let tx_reader = TxReader::new(db)?;
         let slp_reader = Slpv2Reader::new(db)?;

@@ -359,6 +359,7 @@ dependencies = [
  "abc-rust-lint",
  "bitcoinsuite-core",
  "bitcoinsuite-slp",
+ "bytes",
  "chronik-bridge",
  "chronik-db",
  "chronik-proto",

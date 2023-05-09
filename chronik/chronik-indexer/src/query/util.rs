@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 use std::{
+    borrow::Cow,
     collections::{hash_map::Entry, BTreeMap, HashMap},
     str::FromStr,
 };
@@ -13,9 +14,11 @@ use bitcoinsuite_core::{
     ser::BitcoinSer,
     tx::{OutPoint, SpentBy, Tx, TxId},
 };
-use bitcoinsuite_slp::slpv2;
-use chronik_db::io::{
-    BlockHeight, DbBlock, SpentByEntry, SpentByReader, TxNum, TxReader,
+use bitcoinsuite_slp::slpv2::{self};
+use chronik_db::{
+    db::Db,
+    io::{BlockHeight, DbBlock, SpentByEntry, SpentByReader, TxNum, TxReader},
+    mem::Mempool,
 };
 use chronik_proto::proto;
 use thiserror::Error;
@@ -254,6 +257,7 @@ impl FromStr for HashOrHeight {
 
 /// Helper struct for querying which tx outputs have been spent by DB or mempool
 /// txs.
+#[derive(Default)]
 pub(crate) struct OutputsSpent<'a> {
     spent_by_mempool: Option<&'a BTreeMap<u32, SpentBy>>,
     spent_by_blocks: Vec<SpentByEntry>,
@@ -317,4 +321,44 @@ impl<'a> OutputsSpent<'a> {
             input_idx: entry.input_idx,
         })
     }
+}
+
+pub fn validate_slpv2_tx(
+    tx: &Tx,
+    mempool: &Mempool,
+    db: &Db,
+) -> Result<Option<slpv2::TxData>> {
+    let parsed = slpv2::parse_tx(&tx);
+    if parsed.parsed.sections.is_empty() {
+        return Ok(None);
+    }
+    let (mut tx_spec, error) =
+        slpv2::TxSpec::process_parsed(&parsed.parsed, &tx);
+    let mut tx_data_inputs =
+        HashMap::<TxId, Option<Cow<'_, slpv2::TxData>>>::new();
+    let mut actual_inputs = Vec::with_capacity(tx.inputs.len());
+    for input in &tx.inputs {
+        if let Entry::Vacant(entry) = tx_data_inputs.entry(input.prev_out.txid)
+        {
+            let tx_data =
+                mempool.slpv2().tx_data_or_read(db, entry.key(), |txid| {
+                    mempool.tx(txid).is_some()
+                })?;
+            entry.insert(tx_data);
+        }
+    }
+    for input in &tx.inputs {
+        let tx_spec_input = &tx_data_inputs[&input.prev_out.txid];
+        actual_inputs.push(
+            tx_spec_input
+                .as_ref()
+                .and_then(|tx_spec| {
+                    tx_spec.outputs().nth(input.prev_out.out_idx as usize)
+                })
+                .flatten(),
+        );
+    }
+    slpv2::verify(&mut tx_spec, &actual_inputs);
+    let tx_data = slpv2::TxData::from_spec_and_inputs(tx_spec, &actual_inputs);
+    Ok(Some(tx_data))
 }
