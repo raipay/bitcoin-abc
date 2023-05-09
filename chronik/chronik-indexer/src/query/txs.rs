@@ -16,14 +16,14 @@ use chronik_db::{
     db::Db,
     io::{BlockReader, SpentByReader, TxReader},
     mem::Mempool,
-    slpv2::io::Slpv2Reader,
+    slpv2::io::Slpv2Reader, slp::io::SlpReader,
 };
 use chronik_proto::proto;
 use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, validate_slpv2_tx, OutputsSpent},
+    query::{make_tx_proto, validate_slpv2_tx, OutputsSpent, validate_slp_tx},
 };
 
 /// Struct for querying txs from the db/mempool.
@@ -75,6 +75,7 @@ impl<'a> QueryTxs<'a> {
                 false,
                 None,
                 self.avalanche,
+                validate_slp_tx(&tx.tx, self.mempool, self.db)?,
                 self.mempool.slpv2().tx_data(&txid),
             )),
             None => {
@@ -85,6 +86,7 @@ impl<'a> QueryTxs<'a> {
                 let tx_entry = block_tx.entry;
                 let block_reader = BlockReader::new(self.db)?;
                 let spent_by_reader = SpentByReader::new(self.db)?;
+                let slp_reader = SlpReader::new(self.db)?;
                 let slpv2_reader = Slpv2Reader::new(self.db)?;
                 let block = block_reader
                     .by_height(block_tx.block_height)?
@@ -95,20 +97,23 @@ impl<'a> QueryTxs<'a> {
                     tx_entry.undo_pos,
                 )
                 .wrap_err(ReadFailure(txid))?;
+                let tx = Tx::from(tx);
                 let outputs_spent = OutputsSpent::query(
                     &spent_by_reader,
                     &tx_reader,
                     self.mempool.spent_by().outputs_spent(&txid),
                     tx_num,
                 )?;
+                let slp = slp_reader.tx_data_by_tx_num(tx_num)?;
                 let slpv2 = slpv2_reader.tx_data_by_tx_num(tx_num)?;
                 Ok(make_tx_proto(
-                    &Tx::from(tx),
+                    &tx,
                     &outputs_spent,
                     tx_entry.time_first_seen,
                     tx_entry.is_coinbase,
                     Some(&block),
                     self.avalanche,
+                    validate_slp_tx(&tx, self.mempool, self.db)?,
                     slpv2.as_ref(),
                 ))
             }
@@ -181,7 +186,7 @@ impl<'a> QueryTxs<'a> {
         }
         // TODO: Don't use "0000...0000" txid
         let tx = Tx::with_txid(TxId::default(), tx);
-        let tx_data = validate_slpv2_tx(&tx, self.mempool, self.db)?;
+        let slpv2_tx_data = validate_slpv2_tx(&tx, self.mempool, self.db)?;
         Ok(make_tx_proto(
             &tx,
             &OutputsSpent::default(),
@@ -189,7 +194,8 @@ impl<'a> QueryTxs<'a> {
             false,
             None,
             self.avalanche,
-            tx_data.as_ref(),
+            validate_slp_tx(&tx, self.mempool, self.db)?,
+            slpv2_tx_data.as_ref(),
         ))
     }
 

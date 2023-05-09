@@ -14,7 +14,7 @@ use bitcoinsuite_core::{
     ser::BitcoinSer,
     tx::{OutPoint, SpentBy, Tx, TxId},
 };
-use bitcoinsuite_slp::slpv2::{self};
+use bitcoinsuite_slp::{slp, slpv2};
 use chronik_db::{
     db::Db,
     io::{BlockHeight, DbBlock, SpentByEntry, SpentByReader, TxNum, TxReader},
@@ -55,6 +55,7 @@ pub(crate) fn make_tx_proto(
     is_coinbase: bool,
     block: Option<&DbBlock>,
     avalanche: &Avalanche,
+    slp_tx_data: Option<Result<slp::TxData, String>>,
     slpv2_tx_data: Option<&slpv2::TxData>,
 ) -> proto::Tx {
     proto::Tx {
@@ -77,6 +78,19 @@ pub(crate) fn make_tx_proto(
                     output_script,
                     value,
                     sequence_no: input.sequence,
+                    slp_token: slp_tx_data.as_ref().and_then(|tx_data| {
+                        Some(make_slp_token_proto(
+                            tx_data.as_ref().ok()?.input_tokens.get(input_idx)?,
+                        ))
+                    }),
+                    slp_burn: slp_tx_data.as_ref().and_then(|tx_data| {
+                        let tx_data = tx_data.as_ref().ok()?;
+                        let burn = tx_data.slp_burns.get(input_idx)?.as_ref()?;
+                        Some(proto::SlpBurn {
+                            token: Some(make_slp_token_proto(&burn.token)),
+                            token_id: burn.token_id.to_vec(),
+                        })
+                    }),
                     slpv2: slpv2_tx_data.and_then(|tx_data| {
                         Some(make_slpv2_token_proto(
                             tx_data,
@@ -96,6 +110,11 @@ pub(crate) fn make_tx_proto(
                 spent_by: outputs_spent
                     .spent_by(output_idx as u32)
                     .map(|spent_by| make_spent_by_proto(&spent_by)),
+                slp_token: slp_tx_data.as_ref().and_then(|tx_data| {
+                    Some(make_slp_token_proto(
+                        tx_data.as_ref().ok()?.output_tokens.get(output_idx)?,
+                    ))
+                }),
                 slpv2: slpv2_tx_data.and_then(|tx_data| {
                     Some(make_slpv2_token_proto(
                         tx_data,
@@ -114,9 +133,14 @@ pub(crate) fn make_tx_proto(
         time_first_seen,
         size: tx.ser_len() as u32,
         is_coinbase,
+        slp_tx_data: slp_tx_data.as_ref().and_then(|slp| slp.as_ref().ok().map(make_slp_tx_data)),
+        slp_error_msg: slp_tx_data
+            .and_then(|msg| msg.err().map(|msg| msg.to_string()))
+            .unwrap_or_default(),
         slpv2_sections: slpv2_sections(slpv2_tx_data),
         slpv2_errors: slpv2_errors(tx, slpv2_tx_data),
         slpv2_burn_token_ids: slpv2_burn_token_ids(slpv2_tx_data),
+        network: proto::Network::Xec as _,
     }
 }
 
@@ -131,6 +155,47 @@ fn make_spent_by_proto(spent_by: &SpentBy) -> proto::SpentBy {
     proto::SpentBy {
         txid: spent_by.txid.to_vec(),
         input_idx: spent_by.input_idx,
+    }
+}
+
+pub(crate) fn make_slp_meta(slp_tx_data: &slp::TxData) -> proto::SlpMeta {
+    proto::SlpMeta {
+        token_id: slp_tx_data.token_id.to_vec(),
+        token_type: match slp_tx_data.token_type {
+            slp::TokenType::Fungible => proto::SlpTokenType::Fungible,
+            slp::TokenType::Nft1Group => proto::SlpTokenType::Nft1Group,
+            slp::TokenType::Nft1Child => proto::SlpTokenType::Nft1Child,
+            slp::TokenType::Unknown => {
+                proto::SlpTokenType::UnknownTokenType
+            }
+        } as _,
+        tx_type: match slp_tx_data.tx_type {
+            slp::TxTypeVariant::Genesis => proto::SlpTxType::Genesis,
+            slp::TxTypeVariant::Send => proto::SlpTxType::Send,
+            slp::TxTypeVariant::Mint => proto::SlpTxType::Mint,
+            slp::TxTypeVariant::Burn => proto::SlpTxType::Burn,
+            slp::TxTypeVariant::Unknown => proto::SlpTxType::UnknownTxType,
+        } as _,
+        group_token_id: match &slp_tx_data.group_token_id {
+            Some(group_token_id) => group_token_id.to_vec(),
+            None => vec![],
+        },
+    }
+}
+
+pub(crate) fn make_slp_tx_data(slp_tx_data: &slp::TxData) -> proto::SlpTxData {
+    proto::SlpTxData {
+        genesis_info: None,
+        slp_meta: Some(make_slp_meta(slp_tx_data)),
+    }
+}
+
+pub(crate) fn make_slp_token_proto(
+    token_output: &slp::Token,
+) -> proto::SlpToken {
+    proto::SlpToken {
+        amount: token_output.amount,
+        is_mint_baton: token_output.is_mint_baton,
     }
 }
 
@@ -320,6 +385,49 @@ impl<'a> OutputsSpent<'a> {
             txid: *txid,
             input_idx: entry.input_idx,
         })
+    }
+}
+
+pub fn validate_slp_tx(
+    tx: &Tx,
+    mempool: &Mempool,
+    db: &Db,
+) -> Result<Option<Result<slp::TxData, String>>> {
+    let parsed = match slp::parse_tx(&tx) {
+        Ok(parsed) => parsed,
+        Err(err) if err.should_ignore() => return Ok(None),
+        Err(err) => return Ok(Some(Err(err.to_string()))),
+    };
+    let mut tx_data_inputs =
+        HashMap::<TxId, Option<Cow<'_, slp::TxData>>>::new();
+    let mut actual_inputs = Vec::with_capacity(tx.inputs.len());
+    for input in &tx.inputs {
+        if let Entry::Vacant(entry) = tx_data_inputs.entry(input.prev_out.txid)
+        {
+            let tx_data =
+                mempool.slp().tx_data_or_read(db, entry.key(), |txid| {
+                    mempool.tx(txid).is_some()
+                })?;
+            entry.insert(tx_data);
+        }
+    }
+    for input in &tx.inputs {
+        let tx_spec_input = &tx_data_inputs[&input.prev_out.txid];
+        actual_inputs.push(tx_spec_input.as_ref().and_then(|tx_data| {
+            tx_data
+                .output_tokens
+                .get(input.prev_out.out_idx as usize)
+                .map(|token| slp::SlpSpentOutput {
+                    token_id: tx_data.token_id,
+                    token_type: tx_data.token_type,
+                    token: *token,
+                    group_token_id: tx_data.group_token_id.clone(),
+                })
+        }));
+    }
+    match slp::validate(&parsed, &actual_inputs) {
+        Ok(tx_data) => Ok(Some(Ok(tx_data))),
+        Err(err) => Ok(Some(Err(err.to_string()))),
     }
 }
 

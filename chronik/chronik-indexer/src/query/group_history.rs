@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, OutputsSpent},
+    query::{make_tx_proto, OutputsSpent, validate_slp_tx},
 };
 
 /// Smallest allowed page size
@@ -270,6 +270,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                 false,
                 None,
                 self.avalanche,
+                validate_slp_tx(&entry.tx, self.mempool, self.db)?,
                 self.mempool.slpv2().tx_data(txid),
             ));
         }
@@ -353,6 +354,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                         false,
                         None,
                         self.avalanche,
+                        validate_slp_tx(&entry.tx, self.mempool, self.db)?,
                         self.mempool.slpv2().tx_data(txid),
                     ))
                 })
@@ -381,6 +383,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
             block_tx.entry.data_pos,
             block_tx.entry.undo_pos,
         )?;
+        let tx = Tx::from(tx);
         let outputs_spent = OutputsSpent::query(
             &spent_by_reader,
             &tx_reader,
@@ -389,12 +392,13 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
         )?;
         let slpv2 = slpv2_reader.tx_data_by_tx_num(tx_num)?;
         Ok(make_tx_proto(
-            &Tx::from(tx),
+            &tx,
             &outputs_spent,
             block_tx.entry.time_first_seen,
             block_tx.entry.is_coinbase,
             Some(&block),
             self.avalanche,
+            validate_slp_tx(&tx, self.mempool, self.db)?,
             slpv2.as_ref(),
         ))
     }

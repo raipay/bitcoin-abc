@@ -24,7 +24,7 @@ use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, HashOrHeight, OutputsSpent},
+    query::{make_tx_proto, HashOrHeight, OutputsSpent, validate_slp_tx},
 };
 
 const MAX_BLOCKS_PAGE_SIZE: usize = 500;
@@ -203,6 +203,7 @@ impl<'a> QueryBlocks<'a> {
                 db_tx.entry.undo_pos,
             )
             .wrap_err(ReadFailure(db_tx.entry.txid))?;
+            let tx = Tx::from(tx);
             let outputs_spent = OutputsSpent::query(
                 &spent_by_reader,
                 &tx_reader,
@@ -211,12 +212,13 @@ impl<'a> QueryBlocks<'a> {
             )?;
             let slpv2 = slpv2_reader.tx_data_by_tx_num(tx_num)?;
             txs.push(make_tx_proto(
-                &Tx::from(tx),
+                &tx,
                 &outputs_spent,
                 db_tx.entry.time_first_seen,
                 db_tx.entry.is_coinbase,
                 Some(&db_block),
                 self.avalanche,
+                validate_slp_tx(&tx, self.mempool, self.db)?,
                 slpv2.as_ref(),
             ));
         }

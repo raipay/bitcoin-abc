@@ -139,7 +139,7 @@ impl ChronikServer {
                 "/script/:type/:payload/utxos",
                 routing::get(handle_script_utxos),
             )
-            .route("/slpv2/token-info/:token_id", routing::get(handle_token_info))
+            .route("/slpv2/token-info/:token_id", routing::get(handle_slpv2_token_info))
             .route("/ws", routing::get(handle_ws))
             .fallback(handlers::handle_not_found)
             .layer(Extension(indexer))
@@ -163,7 +163,7 @@ async fn handle_block_range(
     Ok(Protobuf(blocks.by_range(start_height, end_height)?))
 }
 
-async fn handle_token_info(
+async fn handle_slpv2_token_info(
     Path(token_id): Path<String>,
     Extension(indexer): Extension<ChronikIndexerRef>,
 ) -> Result<Protobuf<proto::Slpv2TokenInfo>, ReportError> {

@@ -4,5 +4,6 @@
 
 abc_rust_lint::lint! {
     pub mod empp;
+    pub mod slp;
     pub mod slpv2;
 }

@@ -13,6 +13,7 @@ use chronik_db::{
     group::Group,
     io::{GroupUtxoReader, TxNum, TxReader},
     mem::{Mempool, MempoolGroupUtxos},
+    slp::io::SlpReader,
     slpv2::io::Slpv2Reader,
 };
 use chronik_proto::proto;
@@ -20,7 +21,10 @@ use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_outpoint_proto, make_slpv2_token_proto},
+    query::{
+        make_outpoint_proto, make_slp_meta, make_slp_token_proto,
+        make_slpv2_token_proto,
+    },
 };
 
 static EMPTY_MEMBER_UTXOS: BTreeSet<OutPoint> = BTreeSet::new();
@@ -75,6 +79,7 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
     ) -> Result<Vec<proto::ScriptUtxo>> {
         let tx_reader = TxReader::new(self.db)?;
         let utxo_reader = GroupUtxoReader::<G>::new(self.db)?;
+        let slp_reader = SlpReader::new(self.db)?;
         let slpv2_reader = Slpv2Reader::new(self.db)?;
         let member_ser = self.group.ser_member(&member);
 
@@ -112,6 +117,7 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
                 }
             }
 
+            let slp_tx_data = slp_reader.tx_data_by_tx_num(tx_num)?;
             let slpv2_tx_data = slpv2_reader.tx_data_by_tx_num(tx_num)?;
 
             let outpoint = OutPoint { txid, out_idx };
@@ -121,12 +127,19 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
                 is_coinbase: db_tx.entry.is_coinbase,
                 value: db_utxo.value,
                 is_final: self.avalanche.is_final_height(db_tx.block_height),
+                slp_meta: slp_tx_data.as_ref().map(make_slp_meta),
+                slp_token: slp_tx_data.as_ref().and_then(|tx_data| {
+                    Some(make_slp_token_proto(
+                        tx_data.output_tokens.get(out_idx as usize)?,
+                    ))
+                }),
                 slpv2: slpv2_tx_data.and_then(|tx_data| {
                     Some(make_slpv2_token_proto(
                         &tx_data,
                         tx_data.outputs[out_idx as usize].as_ref()?,
                     ))
                 }),
+                network: proto::Network::Xec as _,
             });
         }
 
@@ -141,12 +154,22 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
                 .outputs
                 .get(mempool_outpoint.out_idx as usize)
                 .ok_or(MempoolTxOutputsOutOfBounds(mempool_outpoint))?;
+            let slp_tx_data =
+                self.mempool.slp().tx_data(&mempool_outpoint.txid);
             utxos.push(proto::ScriptUtxo {
                 outpoint: Some(make_outpoint_proto(&mempool_outpoint)),
                 block_height: -1,
                 is_coinbase: false,
                 value: output.value,
                 is_final: false,
+                slp_meta: slp_tx_data.map(make_slp_meta),
+                slp_token: slp_tx_data.as_ref().and_then(|tx_data| {
+                    Some(make_slp_token_proto(
+                        tx_data
+                            .output_tokens
+                            .get(mempool_outpoint.out_idx as usize)?,
+                    ))
+                }),
                 slpv2: self
                     .mempool
                     .slpv2()
@@ -158,6 +181,7 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
                                 .as_ref()?,
                         ))
                     }),
+                network: proto::Network::Xec as _,
             });
         }
 
