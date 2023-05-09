@@ -5,7 +5,7 @@
 use crate::{
     script::Script,
     ser::{BitcoinSer, BitcoinSerializer},
-    tx::TxId,
+    tx::TxId, error::DataError,
 };
 
 /// CTransaction, a Bitcoin transaction.
@@ -145,11 +145,24 @@ impl BitcoinSer for TxMut {
         self.outputs.ser_to(bytes);
         self.locktime.ser_to(bytes);
     }
+
+    fn deser(data: &mut bytes::Bytes) -> Result<Self, DataError> {
+        Ok(TxMut {
+            version: BitcoinSer::deser(data)?,
+            inputs: BitcoinSer::deser(data)?,
+            outputs: BitcoinSer::deser(data)?,
+            locktime: BitcoinSer::deser(data)?,
+        })
+    }
 }
 
 impl BitcoinSer for Tx {
     fn ser_to<S: BitcoinSerializer>(&self, bytes: &mut S) {
         TxMut::ser_to(self, bytes)
+    }
+
+    fn deser(_data: &mut bytes::Bytes) -> Result<Self, DataError> {
+        unimplemented!()
     }
 }
 
@@ -157,6 +170,13 @@ impl BitcoinSer for OutPoint {
     fn ser_to<S: BitcoinSerializer>(&self, bytes: &mut S) {
         self.txid.ser_to(bytes);
         self.out_idx.ser_to(bytes);
+    }
+
+    fn deser(data: &mut bytes::Bytes) -> Result<Self, DataError> {
+        Ok(OutPoint {
+            txid: BitcoinSer::deser(data)?,
+            out_idx: BitcoinSer::deser(data)?,
+        })
     }
 }
 
@@ -166,6 +186,15 @@ impl BitcoinSer for TxInput {
         self.script.ser_to(bytes);
         self.sequence.ser_to(bytes);
     }
+
+    fn deser(data: &mut bytes::Bytes) -> Result<Self, DataError> {
+        Ok(TxInput {
+            prev_out: BitcoinSer::deser(data)?,
+            script: BitcoinSer::deser(data)?,
+            sequence: BitcoinSer::deser(data)?,
+            coin: None,
+        })
+    }
 }
 
 impl BitcoinSer for TxOutput {
@@ -173,10 +202,19 @@ impl BitcoinSer for TxOutput {
         self.value.ser_to(bytes);
         self.script.ser_to(bytes);
     }
+
+    fn deser(data: &mut bytes::Bytes) -> Result<Self, DataError> {
+        Ok(TxOutput {
+            value: BitcoinSer::deser(data)?,
+            script: BitcoinSer::deser(data)?,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
+
     use crate::{
         script::Script,
         ser::BitcoinSer,
@@ -186,6 +224,9 @@ mod tests {
     fn verify_ser(tx: TxMut, ser: &[u8]) {
         assert_eq!(tx.ser().as_ref(), ser);
         assert_eq!(tx.ser_len(), ser.len());
+        let mut bytes = Bytes::copy_from_slice(ser);
+        assert_eq!(tx, TxMut::deser(&mut bytes).unwrap());
+
         let tx = Tx::with_txid(TxId::from([12; 32]), tx);
         assert_eq!(tx.ser().as_ref(), ser);
         assert_eq!(tx.ser_len(), ser.len());
