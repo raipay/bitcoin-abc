@@ -24,6 +24,7 @@ use chronik_db::{
         TxEntry, TxWriter,
     },
     mem::{Mempool, MempoolTx},
+    slp::io::SlpWriter,
     slpv2::io::Slpv2Writer,
 };
 use chronik_util::{log, log_chronik};
@@ -301,17 +302,18 @@ impl ChronikIndexer {
         let script_utxo_writer =
             ScriptUtxoWriter::new(&self.db, self.script_group.clone())?;
         let spent_by_writer = SpentByWriter::new(&self.db)?;
+        let slp_writer = SlpWriter::new(&self.db)?;
         let slpv2_writer = Slpv2Writer::new(&self.db)?;
         block_writer.insert(&mut batch, &block.db_block)?;
         let first_tx_num = tx_writer.insert(&mut batch, &block.block_txs)?;
         let index_txs =
             prepare_indexed_txs(&self.db, first_tx_num, &block.txs)?;
-        log!("size of {} at {} = {} B\n", block.db_block.hash, block.db_block.height, block.size);
         block_stats_writer
             .insert(&mut batch, height, block.size, &index_txs)?;
         script_history_writer.insert(&mut batch, &index_txs)?;
         script_utxo_writer.insert(&mut batch, &index_txs)?;
         spent_by_writer.insert(&mut batch, &index_txs)?;
+        slp_writer.insert(&mut batch, &index_txs)?;
         slpv2_writer.insert(&mut batch, &index_txs)?;
         self.db.write_batch(batch)?;
         for tx in &block.block_txs.txs {
@@ -343,6 +345,7 @@ impl ChronikIndexer {
         let script_utxo_writer =
             ScriptUtxoWriter::new(&self.db, self.script_group.clone())?;
         let spent_by_writer = SpentByWriter::new(&self.db)?;
+        let slp_writer = SlpWriter::new(&self.db)?;
         let slpv2_writer = Slpv2Writer::new(&self.db)?;
         block_writer.delete(&mut batch, &block.db_block)?;
         let first_tx_num = tx_writer.delete(&mut batch, &block.block_txs)?;
@@ -352,6 +355,7 @@ impl ChronikIndexer {
         script_history_writer.delete(&mut batch, &index_txs)?;
         script_utxo_writer.delete(&mut batch, &index_txs)?;
         spent_by_writer.delete(&mut batch, &index_txs)?;
+        slp_writer.delete(&mut batch, &index_txs)?;
         slpv2_writer.delete(&mut batch, &index_txs)?;
         self.avalanche.disconnect_block(block.db_block.height)?;
         self.db.write_batch(batch)?;
