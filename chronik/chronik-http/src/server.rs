@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::{net::SocketAddr, sync::Arc};
 
 use abc_rust_error::{Result, WrapErr};
+use axum::routing::MethodFilter;
 use axum::{
     extract::{Path, Query, WebSocketUpgrade},
     response::IntoResponse,
@@ -116,6 +117,16 @@ impl ChronikServer {
 
     fn make_router(indexer: ChronikIndexerRef) -> Router {
         Router::new()
+            .route(
+                "/broadcast-tx",
+                routing::post(handle_broadcast_tx)
+                    .on(MethodFilter::OPTIONS, handle_post_options),
+            )
+            .route(
+                "/broadcast-txs",
+                routing::post(handle_broadcast_txs)
+                    .on(MethodFilter::OPTIONS, handle_post_options),
+            )
             .route("/blockchain-info", routing::get(handle_blockchain_info))
             .route("/block/:hash_or_height", routing::get(handle_block))
             .route("/block-txs/:hash_or_height", routing::get(handle_block_txs))
@@ -139,11 +150,45 @@ impl ChronikServer {
                 "/script/:type/:payload/utxos",
                 routing::get(handle_script_utxos),
             )
-            .route("/slpv2/token-info/:token_id", routing::get(handle_slpv2_token_info))
+            .route(
+                "/slpv2/token-info/:token_id",
+                routing::get(handle_slpv2_token_info),
+            )
             .route("/ws", routing::get(handle_ws))
             .fallback(handlers::handle_not_found)
             .layer(Extension(indexer))
     }
+}
+
+async fn handle_broadcast_tx(
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Protobuf(broadcast_request): Protobuf<proto::BroadcastTxRequest>,
+) -> Result<Protobuf<proto::BroadcastTxResponse>, ReportError> {
+    let indexer = indexer.read().await;
+    let broadcast = indexer.broadcast();
+    let txids =
+        broadcast.broadcast_txs(vec![broadcast_request.raw_tx.into()])?;
+    Ok(Protobuf(proto::BroadcastTxResponse {
+        txid: txids[0].to_vec(),
+    }))
+}
+
+async fn handle_broadcast_txs(
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Protobuf(broadcast_request): Protobuf<proto::BroadcastTxsRequest>,
+) -> Result<Protobuf<proto::BroadcastTxsResponse>, ReportError> {
+    let indexer = indexer.read().await;
+    let broadcast = indexer.broadcast();
+    let txids = broadcast.broadcast_txs(
+        broadcast_request
+            .raw_txs
+            .into_iter()
+            .map(|raw_tx| raw_tx.into())
+            .collect(),
+    )?;
+    Ok(Protobuf(proto::BroadcastTxsResponse {
+        txids: txids.iter().map(|txid| txid.to_vec()).collect(),
+    }))
 }
 
 async fn handle_blockchain_info(
@@ -168,7 +213,9 @@ async fn handle_slpv2_token_info(
     Extension(indexer): Extension<ChronikIndexerRef>,
 ) -> Result<Protobuf<proto::Slpv2TokenInfo>, ReportError> {
     let indexer = indexer.read().await;
-    let token_id = token_id.parse::<slpv2::TokenId>().wrap_err(NotTokenId(token_id))?;
+    let token_id = token_id
+        .parse::<slpv2::TokenId>()
+        .wrap_err(NotTokenId(token_id))?;
     Ok(Protobuf(indexer.txs().slpv2_token_info(&token_id)?))
 }
 
@@ -283,4 +330,12 @@ async fn handle_ws(
     Extension(indexer): Extension<ChronikIndexerRef>,
 ) -> impl IntoResponse {
     ws.on_upgrade(|ws| handle_subscribe_socket(ws, indexer))
+}
+
+async fn handle_post_options(
+) -> Result<http::Response<axum::body::Body>, ReportError> {
+    http::Response::builder()
+        .header("Allow", "OPTIONS, HEAD, POST")
+        .body(axum::body::Body::empty())
+        .map_err(|err| ReportError(err.into()))
 }

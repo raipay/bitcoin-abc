@@ -104,7 +104,6 @@ impl<'a> QueryTxs<'a> {
                     self.mempool.spent_by().outputs_spent(&txid),
                     tx_num,
                 )?;
-                let slp = slp_reader.tx_data_by_tx_num(tx_num)?;
                 let slpv2 = slpv2_reader.tx_data_by_tx_num(tx_num)?;
                 Ok(make_tx_proto(
                     &tx,
@@ -195,7 +194,7 @@ impl<'a> QueryTxs<'a> {
             None,
             self.avalanche,
             validate_slp_tx(&tx, self.mempool, self.db)?,
-            slpv2_tx_data.as_ref(),
+            slpv2_tx_data.as_ref().map(|(tx_data, _)| tx_data),
         ))
     }
 

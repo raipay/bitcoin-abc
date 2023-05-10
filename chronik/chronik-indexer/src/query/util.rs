@@ -435,7 +435,7 @@ pub fn validate_slpv2_tx(
     tx: &Tx,
     mempool: &Mempool,
     db: &Db,
-) -> Result<Option<slpv2::TxData>> {
+) -> Result<Option<(slpv2::TxData, Vec<slpv2::MismatchError>)>> {
     let parsed = slpv2::parse_tx(&tx);
     if parsed.parsed.sections.is_empty() {
         return Ok(None);
@@ -466,7 +466,7 @@ pub fn validate_slpv2_tx(
                 .flatten(),
         );
     }
-    slpv2::verify(&mut tx_spec, &actual_inputs);
+    let mismatches = slpv2::verify(&mut tx_spec, &actual_inputs);
     let tx_data = slpv2::TxData::from_spec_and_inputs(tx_spec, &actual_inputs);
-    Ok(Some(tx_data))
+    Ok(Some((tx_data, mismatches)))
 }

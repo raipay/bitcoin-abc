@@ -14,11 +14,15 @@
 #include <node/blockstorage.h>
 #include <node/coin.h>
 #include <node/context.h>
+#include <node/transaction.h>
 #include <node/ui_interface.h>
 #include <shutdown.h>
 #include <streams.h>
 #include <undo.h>
+#include <util/error.h>
 #include <validation.h>
+
+#include <memory>
 
 chronik_bridge::OutPoint BridgeOutPoint(const COutPoint &outpoint) {
     return {
@@ -193,7 +197,8 @@ ChronikBridge::lookup_block_index(std::array<uint8_t, 32> hash) const {
 std::unique_ptr<CBlock>
 ChronikBridge::load_block(const CBlockIndex &bindex) const {
     CBlock block;
-    if (!node::ReadBlockFromDisk(block, &bindex, m_consensus)) {
+    if (!node::ReadBlockFromDisk(block, &bindex,
+                                 m_config.GetChainParams().GetConsensus())) {
         throw std::runtime_error("Reading block data failed");
     }
     return std::make_unique<CBlock>(std::move(block));
@@ -227,10 +232,27 @@ const CBlockIndex &ChronikBridge::find_fork(const CBlockIndex &index) const {
     return *fork;
 }
 
+std::array<uint8_t, 32>
+ChronikBridge::broadcast_tx(rust::Slice<const uint8_t> raw_tx,
+                            int64_t max_fee) const {
+    std::vector<uint8_t> vec = chronik::util::FromRustSlice(raw_tx);
+    CDataStream stream{vec, SER_NETWORK, PROTOCOL_VERSION};
+    CMutableTransaction tx;
+    stream >> tx;
+    CTransactionRef tx_ref = std::make_shared<CTransaction>(tx);
+    std::string err;
+    TransactionError error =
+        node::BroadcastTransaction(m_node, m_config, tx_ref, err,
+                                   max_fee * Amount::satoshi(), true, false);
+    if (error != TransactionError::OK) {
+        throw std::runtime_error(err.c_str());
+    }
+    return chronik::util::HashToArray(tx_ref->GetId());
+}
+
 std::unique_ptr<ChronikBridge> make_bridge(const Config &config,
                                            const node::NodeContext &node) {
-    return std::make_unique<ChronikBridge>(
-        config.GetChainParams().GetConsensus(), node);
+    return std::make_unique<ChronikBridge>(config, node);
 }
 
 chronik_bridge::Block bridge_block(const CBlock &block,

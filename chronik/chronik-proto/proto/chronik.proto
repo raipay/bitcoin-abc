@@ -352,6 +352,7 @@ enum UtxoStateVariant {
     NO_SUCH_OUTPUT = 3;
 }
 
+/*
 message Subscription {
     string script_type = 1;
     bytes payload = 2;
@@ -393,6 +394,7 @@ message MsgBlockConnected {
 message MsgBlockDisconnected {
     bytes block_hash = 1;
 }
+*/
 
 // Subscription to WebSocket updates.
 message WsSub {

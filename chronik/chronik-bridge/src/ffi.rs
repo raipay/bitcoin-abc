@@ -207,6 +207,12 @@ mod ffi_inner {
             block_index: &CBlockIndex,
         ) -> Result<&CBlockIndex>;
 
+        fn broadcast_tx(
+            self: &ChronikBridge,
+            raw_tx: &[u8],
+            max_fee: i64,
+        ) -> Result<[u8; 32]>;
+
         /// Bridge bitcoind's classes to the shared struct [`Block`].
         fn bridge_block(
             block: &CBlock,
@@ -244,3 +250,8 @@ mod ffi_inner {
         fn abort_node(msg: &str, user_msg: &str);
     }
 }
+
+#[allow(unsafe_code)]
+unsafe impl Send for ChronikBridge {}
+#[allow(unsafe_code)]
+unsafe impl Sync for ChronikBridge {}

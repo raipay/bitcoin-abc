@@ -65,13 +65,14 @@ fn try_setup_chronik(
         .collect::<Result<Vec<_>>>()?;
     log!("Starting Chronik bound to {:?}\n", hosts);
     let bridge = chronik_bridge::ffi::make_bridge(config, node);
-    let bridge_ref = expect_unique_ptr("make_bridge", &bridge);
+    let bridge = Arc::new(bridge);
     let mut indexer = ChronikIndexer::setup(ChronikIndexerParams {
         datadir_net: params.datadir_net.into(),
         wipe_db: params.wipe_db,
         fn_compress_script: compress_script,
+        bridge: Arc::clone(&bridge),
     })?;
-    indexer.resync_indexer(bridge_ref)?;
+    indexer.resync_indexer()?;
     let indexer = Arc::new(RwLock::new(indexer));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -87,7 +88,7 @@ fn try_setup_chronik(
         ok_or_abort_node("ChronikServer::serve", server.serve().await);
     });
     let chronik = Box::new(Chronik {
-        bridge: Arc::new(bridge),
+        bridge,
         indexer,
         _runtime: runtime,
     });

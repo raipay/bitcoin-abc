@@ -4,7 +4,7 @@
 
 //! Module containing [`ChronikIndexer`] to index blocks and txs.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use abc_rust_error::{Result, WrapErr};
 use bitcoinsuite_core::{
@@ -33,7 +33,10 @@ use tokio::sync::RwLock;
 
 use crate::{
     avalanche::Avalanche,
-    query::{QueryBlocks, QueryGroupHistory, QueryGroupUtxos, QueryTxs},
+    query::{
+        QueryBlocks, QueryBroadcast, QueryGroupHistory, QueryGroupUtxos,
+        QueryTxs,
+    },
     subs::{BlockMsg, BlockMsgType, Subs},
     subs_group::TxMsgType,
 };
@@ -49,16 +52,22 @@ pub struct ChronikIndexerParams {
     pub wipe_db: bool,
     /// Function ptr to compress scripts.
     pub fn_compress_script: FnCompressScript,
+    pub bridge: Arc<cxx::UniquePtr<ffi::ChronikBridge>>,
+}
+
+fn _assert_send<T: Send>() {}
+fn _assert_indexer_send() {
+    _assert_send::<ChronikIndexer>();
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
-#[derive(Debug)]
 pub struct ChronikIndexer {
     db: Db,
     mempool: Mempool,
     script_group: ScriptGroup,
     avalanche: Avalanche,
     subs: RwLock<Subs>,
+    bridge: Arc<cxx::UniquePtr<ffi::ChronikBridge>>,
 }
 
 /// Block to be indexed by Chronik.
@@ -159,14 +168,14 @@ impl ChronikIndexer {
             script_group: script_group.clone(),
             avalanche: Avalanche::default(),
             subs: RwLock::new(Subs::new(script_group)),
+            bridge: params.bridge,
         })
     }
 
     /// Resync Chronik index to the node
-    pub fn resync_indexer(
-        &mut self,
-        bridge: &ffi::ChronikBridge,
-    ) -> Result<()> {
+    pub fn resync_indexer(&mut self) -> Result<()> {
+        let bridge = Arc::clone(&self.bridge);
+        let bridge = expect_unique_ptr("bridge", bridge.as_ref());
         let block_reader = BlockReader::new(&self.db)?;
         let indexer_tip = block_reader.tip()?;
         let Ok(node_tip_index) = bridge.get_chain_tip() else {
@@ -386,6 +395,14 @@ impl ChronikIndexer {
         Ok(())
     }
 
+    pub fn broadcast(&self) -> QueryBroadcast<'_> {
+        QueryBroadcast {
+            db: &self.db,
+            mempool: &self.mempool,
+            bridge: &self.bridge,
+        }
+    }
+
     /// Return [`QueryBlocks`] to read blocks from the DB.
     pub fn blocks(&self) -> QueryBlocks<'_> {
         QueryBlocks {
@@ -519,12 +536,28 @@ impl std::fmt::Debug for ChronikIndexerParams {
             .field("datadir_net", &self.datadir_net)
             .field("wipe_db", &self.wipe_db)
             .field("fn_compress_script", &"..")
+            .field("bridge", &"..")
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ChronikIndexer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChronikIndexer")
+            .field("db", &self.db)
+            .field("mempool", &self.mempool)
+            .field("script_group", &self.script_group)
+            .field("avalanche", &self.avalanche)
+            .field("subs", &self.subs)
+            .field("bridge", &"..")
             .finish()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use abc_rust_error::Result;
     use bitcoinsuite_core::block::BlockHash;
     use chronik_db::{
@@ -547,6 +580,7 @@ mod tests {
             datadir_net: datadir_net.clone(),
             wipe_db: false,
             fn_compress_script: prefix_mock_compress,
+            bridge: Arc::new(cxx::UniquePtr::null()),
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
@@ -616,6 +650,7 @@ mod tests {
             datadir_net: dir.path().to_path_buf(),
             wipe_db: false,
             fn_compress_script: prefix_mock_compress,
+            bridge: Arc::new(cxx::UniquePtr::null()),
         };
 
         // Setting up DB first time sets the schema version
