@@ -84,13 +84,15 @@ impl QueryBroadcast<'_> {
             if let Some((_, mismatches)) =
                 validate_slpv2_tx(&tx, self.mempool, self.db)?
             {
-                return Err(Slpv2Mismatches(
-                    mismatches
-                        .into_iter()
-                        .map(|mismatch| mismatch.to_string())
-                        .collect(),
-                )
-                .into());
+                if !mismatches.is_empty() {
+                    return Err(Slpv2Mismatches(
+                        mismatches
+                            .into_iter()
+                            .map(|mismatch| mismatch.to_string())
+                            .collect(),
+                    )
+                    .into());
+                }
             }
         }
 
