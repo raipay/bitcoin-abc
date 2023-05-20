@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bytes::Bytes;
 
-use crate::slpv2::{self, TokenId, DEFAULT_TOKEN_TYPE};
+use crate::slpv2::{TokenId, DEFAULT_TOKEN_TYPE, SectionType, ParseError};
 
 pub type Amount = i64;
 
@@ -56,20 +56,32 @@ pub struct MintData {
 #[derive(Clone, Debug)]
 pub struct Send(pub Vec<Amount>);
 
-#[derive(Debug, Default)]
-pub struct Parsed {
-    pub sections: Vec<Section>,
+#[derive(Debug)]
+pub enum ParsedPushdata {
+    Section(Section),
+    IntentionalBurn(IntentionalBurn),
+    Error(ParseError),
 }
 
-#[derive(Debug)]
-pub struct ParseData {
-    pub parsed: Parsed,
-    pub first_err: Option<slpv2::ParseError>,
+#[derive(Clone, Debug, Default)]
+pub struct IntentionalBurn {
+    pub token_id: TokenId,
+    pub amount: Amount,
 }
 
 pub struct TokenAmount<'a> {
     pub token_id: &'a TokenId,
     pub amount: Amount,
+}
+
+impl SectionVariant {
+    pub fn section_type(&self) -> SectionType {
+        match self {
+            SectionVariant::Genesis(_) => SectionType::GENESIS,
+            SectionVariant::Mint(_) => SectionType::MINT,
+            SectionVariant::Send(_) => SectionType::SEND,
+        }
+    }
 }
 
 impl MintData {

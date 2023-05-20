@@ -2,8 +2,7 @@ use std::{borrow::Cow, collections::HashMap};
 
 use abc_rust_error::Result;
 use bimap::BiMap;
-use bitcoinsuite_slp::slpv2::{self, SectionVariant};
-use itertools::Itertools;
+use bitcoinsuite_slp::slpv2;
 use thiserror::Error;
 use topo_sort::TopoSort;
 
@@ -17,8 +16,7 @@ use crate::{
 };
 
 pub struct BatchProcessor<'tx> {
-    parsed_txs: HashMap<TxNum, (&'tx IndexTx<'tx>, slpv2::ParseData)>,
-    bad_txs: Vec<(TxNum, &'tx IndexTx<'tx>, slpv2::ParseError)>,
+    parsed_txs: HashMap<TxNum, (&'tx IndexTx<'tx>, Vec<slpv2::ParsedPushdata>)>,
     has_any_genesis: bool,
     valid: HashMap<TxNum, slpv2::TxData>,
 }
@@ -50,27 +48,29 @@ use self::BatchError::*;
 
 impl<'tx> BatchProcessor<'tx> {
     pub fn prepare(txs: &'tx [IndexTx<'tx>]) -> Self {
-        let (parsed_txs, bad_txs): (HashMap<_, _>, Vec<_>) = txs
+        let parsed_txs = txs
             .iter()
             .filter_map(|tx| {
-                let parsed = slpv2::parse_tx(&tx.tx);
-                match (parsed.parsed.sections.is_empty(), &parsed.first_err) {
-                    (true, None) => None,
-                    (true, Some(err)) => {
-                        Some(Err((tx.tx_num, tx, parsed.first_err.unwrap())))
-                    }
-                    (false, _) => Some(Ok((tx.tx_num, (tx, parsed)))),
+                let parsed = slpv2::parse_tx(&tx.tx).ok()?;
+                if parsed.iter().any(|pushdata| {
+                    matches!(pushdata, slpv2::ParsedPushdata::Error(_))
+                }) {
+                    return Some((tx.tx_num, (tx, parsed)));
                 }
+                None
             })
-            .partition_result();
+            .collect::<HashMap<_, _>>();
         let has_any_genesis = parsed_txs.values().any(|(_, data)| {
-            data.parsed.sections.iter().any(|section| {
-                matches!(section.variant, SectionVariant::Genesis(_))
+            data.iter().any(|pushdata| match pushdata {
+                slpv2::ParsedPushdata::Section(section) => {
+                    section.variant.section_type()
+                        == slpv2::SectionType::GENESIS
+                }
+                _ => false,
             })
         });
         BatchProcessor {
             parsed_txs,
-            bad_txs,
             has_any_genesis,
             valid: HashMap::new(),
         }
@@ -92,7 +92,7 @@ impl<'tx> BatchProcessor<'tx> {
         let mut new_tx_data = Vec::new();
         for tx_num in topo_sort.into_nodes() {
             let tx_num = tx_num.map_err(|_| Cycle)?;
-            let (tx, parsed) = self.parsed_txs.get(&tx_num).unwrap();
+            let (tx, parsed) = self.parsed_txs.remove(&tx_num).unwrap();
             let inputs = if tx.is_coinbase {
                 vec![]
             } else {
@@ -108,26 +108,21 @@ impl<'tx> BatchProcessor<'tx> {
                 }
                 inputs
             };
-            let (tx_spec, error) =
-                slpv2::TxSpec::process_parsed(&parsed.parsed, tx.tx);
-            let (tx_data, burns) = slpv2::verify(tx_spec, &inputs);
+            let tx_spec = slpv2::TxSpec::process_parsed_pushdata(parsed, tx.tx);
+            let (tx_data, burns) = slpv2::verify(tx_spec.sections, tx_spec.outputs, &inputs);
             if tx_data.sections.is_empty() {
                 continue;
             }
-            for section in &parsed.parsed.sections {
-                if let slpv2::SectionVariant::Genesis(genesis) =
-                    &section.variant
-                {
-                    db_data
-                        .token_ids
-                        .insert(db_data.next_token_num, section.meta.token_id);
-                    new_tokens.push((
-                        db_data.next_token_num,
-                        section.meta.clone(),
-                        genesis.data.clone(),
-                    ));
-                    db_data.next_token_num += 1;
-                }
+            if let Some((meta, genesis_data)) = tx_spec.genesis_data {
+                db_data
+                    .token_ids
+                    .insert(db_data.next_token_num, meta.token_id);
+                new_tokens.push((
+                    db_data.next_token_num,
+                    meta.clone(),
+                    genesis_data,
+                ));
+                db_data.next_token_num += 1;
             }
             let mut db_sections = Vec::with_capacity(tx_data.sections.len());
             for section in &tx_data.sections {
@@ -147,7 +142,8 @@ impl<'tx> BatchProcessor<'tx> {
                     token_num,
                     section_type: section.section_type,
                     required_input_sum: section.required_input_sum,
-                    burn_amount: (input_sum - section.required_input_sum).max(0),
+                    burn_amount: (input_sum - section.required_input_sum)
+                        .max(0),
                 });
             }
             let mut db_burn_token_nums =

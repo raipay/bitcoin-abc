@@ -34,11 +34,11 @@ impl MempoolSlpv2 {
         is_mempool_tx: impl Fn(&TxId) -> bool,
     ) -> Result<()> {
         let parsed = slpv2::parse_tx(&tx.tx);
-        if parsed.parsed.sections.is_empty() {
-            return Ok(());
-        }
-        let (tx_spec, error) =
-            slpv2::TxSpec::process_parsed(&parsed.parsed, &tx.tx);
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
+            Err(_) => return Ok(()),
+        };
+        let tx_spec = slpv2::TxSpec::process_parsed_pushdata(parsed, &tx.tx);
         let mut tx_data_inputs =
             HashMap::<TxId, Option<Cow<'_, slpv2::TxData>>>::new();
         let mut actual_inputs = Vec::with_capacity(tx.tx.inputs.len());
@@ -62,13 +62,14 @@ impl MempoolSlpv2 {
                     .flatten(),
             );
         }
-        let (tx_data, burns) = slpv2::verify(tx_spec, &actual_inputs);
+        let (tx_data, burns) =
+            slpv2::verify(tx_spec.sections, tx_spec.outputs, &actual_inputs);
         if !tx_data.sections.is_empty() {
             self.valid_txs.insert(tx.tx.txid(), tx_data);
-            if let slpv2::SectionVariant::Genesis(genesis) =
-                &parsed.parsed.sections[0].variant
+            if let Some((meta, genesis_data)) =
+                tx_spec.genesis_data
             {
-                self.genesis_data.insert(tx.tx.txid(), genesis.data.clone());
+                self.genesis_data.insert(tx.tx.txid(), genesis_data);
             }
         }
         Ok(())

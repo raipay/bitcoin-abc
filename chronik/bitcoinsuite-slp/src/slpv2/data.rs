@@ -4,14 +4,18 @@ use bitcoinsuite_core::tx::Tx;
 use thiserror::Error;
 
 use crate::slpv2::{
-    Amount, Genesis, MintData, Parsed, Section, SectionVariant, Send, TokenId,
-    TokenMeta,
+    Amount, Genesis, GenesisData, IntentionalBurn, MintData, ParseError,
+    ParsedPushdata, Section, SectionVariant, Send, TokenId, TokenMeta,
 };
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct TxSpec {
     pub sections: Vec<SectionData>,
     pub outputs: Vec<Option<TokenOutputData>>,
+    pub intentional_burns: Vec<IntentionalBurn>,
+    pub parse_errors: Vec<(usize, ParseError)>,
+    pub process_errors: Vec<(usize, ProcessError)>,
+    pub genesis_data: Option<(TokenMeta, GenesisData)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -50,7 +54,7 @@ pub struct TokenOutputData {
     pub is_mint_baton: bool,
 }
 
-#[derive(Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 pub enum ProcessError {
     #[error("Too few outputs, expected {expected} but got {actual}")]
     TooFewOutputs { expected: usize, actual: usize },
@@ -64,6 +68,13 @@ pub enum ProcessError {
     DuplicateTokenId {
         prev_section_idx: usize,
         section_idx: usize,
+        token_id: TokenId,
+    },
+
+    #[error("Duplicate intentional burn token_id {token_id}, found in burn #{prev_burn_idx} and #{burn_idx}")]
+    DuplicateIntentionalBurnTokenId {
+        prev_burn_idx: usize,
+        burn_idx: usize,
         token_id: TokenId,
     },
 
@@ -86,25 +97,46 @@ pub enum ProcessError {
 use self::ProcessError::*;
 
 impl TxSpec {
-    pub fn process_parsed(
-        parsed: &Parsed,
+    pub fn process_parsed_pushdata(
+        parsed: Vec<ParsedPushdata>,
         tx: &Tx,
-    ) -> (TxSpec, Option<ProcessError>) {
+    ) -> TxSpec {
         let mut tx_data = TxSpec {
             sections: vec![],
             outputs: vec![None; tx.outputs.len()],
+            intentional_burns: vec![],
+            parse_errors: vec![],
+            process_errors: vec![],
+            genesis_data: None,
         };
-        for section in &parsed.sections {
-            if let Err(err) = tx_data.process_section(section) {
-                return (tx_data, Some(err));
+        for (pushdata_idx, pushdata) in parsed.into_iter().enumerate() {
+            if let Err(err) = tx_data.process_pushdata(pushdata_idx, pushdata) {
+                tx_data.process_errors.push((pushdata_idx, err));
             }
         }
-        (tx_data, None)
+        tx_data
+    }
+
+    fn process_pushdata(
+        &mut self,
+        pushdata_idx: usize,
+        pushdata: ParsedPushdata,
+    ) -> Result<(), ProcessError> {
+        match pushdata {
+            ParsedPushdata::Section(section) => self.process_section(section),
+            ParsedPushdata::IntentionalBurn(intentional_burn) => {
+                self.process_intentional_burn(intentional_burn)
+            }
+            ParsedPushdata::Error(err) => {
+                self.parse_errors.push((pushdata_idx, err));
+                Ok(())
+            }
+        }
     }
 
     fn process_section(
         &mut self,
-        section: &Section,
+        section: Section,
     ) -> Result<(), ProcessError> {
         let meta = section.meta.clone();
         for (prev_section_idx, prev_section) in self.sections.iter().enumerate()
@@ -117,7 +149,7 @@ impl TxSpec {
                 });
             }
         }
-        match &section.variant {
+        match section.variant {
             SectionVariant::Genesis(genesis) => {
                 self.process_genesis(meta, genesis)
             }
@@ -126,10 +158,29 @@ impl TxSpec {
         }
     }
 
+    fn process_intentional_burn(
+        &mut self,
+        intentional_burn: IntentionalBurn,
+    ) -> Result<(), ProcessError> {
+        for (prev_burn_idx, prev_burn) in
+            self.intentional_burns.iter().enumerate()
+        {
+            if prev_burn.token_id == intentional_burn.token_id {
+                return Err(DuplicateIntentionalBurnTokenId {
+                    prev_burn_idx,
+                    burn_idx: self.sections.len(),
+                    token_id: intentional_burn.token_id,
+                });
+            }
+        }
+        self.intentional_burns.push(intentional_burn);
+        Ok(())
+    }
+
     fn process_genesis(
         &mut self,
         meta: TokenMeta,
-        genesis: &Genesis,
+        genesis: Genesis,
     ) -> Result<(), ProcessError> {
         if !self.sections.is_empty() {
             return Err(GenesisMustBeFirst(self.sections.len()));
@@ -137,21 +188,22 @@ impl TxSpec {
         self.check_mint_outputs(&genesis.mint_data)?;
         self.process_mint_outputs(&genesis.mint_data);
         self.sections.push(SectionData {
-            meta,
+            meta: meta.clone(),
             section_type: SectionType::GENESIS,
             required_input_sum: 0,
         });
+        self.genesis_data = Some((meta, genesis.data));
         Ok(())
     }
 
     fn process_mint(
         &mut self,
         meta: TokenMeta,
-        mint: &MintData,
+        mint: MintData,
     ) -> Result<(), ProcessError> {
-        self.check_mint_outputs(mint)?;
+        self.check_mint_outputs(&mint)?;
 
-        self.process_mint_outputs(mint);
+        self.process_mint_outputs(&mint);
         self.sections.push(SectionData {
             meta,
             section_type: SectionType::MINT,
@@ -163,7 +215,7 @@ impl TxSpec {
     fn process_send(
         &mut self,
         meta: TokenMeta,
-        send: &Send,
+        send: Send,
     ) -> Result<(), ProcessError> {
         let output_sum = self.check_send_amounts(&send.0, &self.outputs)?;
 
@@ -308,24 +360,26 @@ impl TxSpec {
             is_mint_baton: token_output.is_mint_baton,
         }
     }
+}
 
-    pub fn into_tx_data(
-        mut self,
+impl TxData {
+    pub fn new(
+        sections: Vec<SectionData>,
+        outputs: Vec<Option<TokenOutputData>>,
         inputs: &[Option<Token<'_>>],
         burn_token_ids: Vec<TokenId>,
-    ) -> TxData {
+    ) -> Self {
         let mut remaining_sections = Vec::with_capacity(
-            self.sections.len().saturating_sub(burn_token_ids.len()),
+            sections.len().saturating_sub(burn_token_ids.len()),
         );
-        let mut replace_token_idx = vec![None; self.sections.len()];
-        for (idx, section) in self.sections.into_iter().enumerate() {
+        let mut replace_token_idx = vec![None; sections.len()];
+        for (idx, section) in sections.into_iter().enumerate() {
             if !burn_token_ids.contains(&section.meta.token_id) {
                 replace_token_idx[idx] = Some(remaining_sections.len());
                 remaining_sections.push(section);
             }
         }
-        let mut outputs = self
-            .outputs
+        let outputs = outputs
             .into_iter()
             .map(|entry| {
                 entry.and_then(|mut data| {
@@ -354,9 +408,7 @@ impl TxSpec {
             outputs,
         }
     }
-}
 
-impl TxData {
     pub fn token_output_data(&self, token: &Token<'_>) -> TokenOutputData {
         get_token_output_data(&self.sections, &self.burn_token_ids, token)
     }

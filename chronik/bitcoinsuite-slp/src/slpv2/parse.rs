@@ -10,8 +10,8 @@ use thiserror::Error;
 use crate::{
     empp,
     slpv2::{
-        Genesis, GenesisData, MintData, ParseData, Parsed, Section,
-        SectionVariant, Send, TokenId, TokenMeta, TokenType,
+        Genesis, GenesisData, IntentionalBurn, MintData, ParsedPushdata,
+        Section, SectionVariant, Send, TokenId, TokenMeta, TokenType,
     },
 };
 
@@ -37,9 +37,6 @@ pub enum ParseError {
     #[error("Leftover bytes: {0:?}")]
     LeftoverBytes(Bytes),
 
-    #[error("No outputs")]
-    NoOutputs,
-
     #[error("Invalid LOKAD_ID: {0:?}")]
     InvalidLokadId(LokadId),
 
@@ -60,6 +57,9 @@ pub enum ParseError {
 
     #[error("Burn amount must be non-zero")]
     ZeroBurnAmount,
+
+    #[error("Unexpected section")]
+    UnexpectedSection(Bytes),
 }
 
 use self::ParseError::*;
@@ -69,70 +69,58 @@ impl ParseError {
         match self {
             ParseError::EmppError(_) => true,
             ParseError::InvalidLokadId(_) => true,
-            ParseError::NoOutputs => true,
             _ => false,
         }
     }
 }
 
-pub fn parse_tx(tx: &Tx) -> ParseData {
+pub fn parse_tx(tx: &Tx) -> Result<Vec<ParsedPushdata>, empp::ParseError> {
     match tx.outputs.get(0) {
         Some(output) => parse(tx.txid_ref(), &output.script),
-        None => ParseData {
-            parsed: Parsed::default(),
-            first_err: Some(ParseError::NoOutputs),
-        },
+        None => Err(empp::ParseError::NoOutputs),
     }
 }
 
-pub fn parse(txid: &TxId, script: &Script) -> ParseData {
-    let mut empp_data = match empp::parse(script) {
-        Ok(empp_data) => empp_data,
-        Err(err) => {
-            return ParseData {
-                parsed: Parsed::default(),
-                first_err: Some(err.into()),
-            }
-        }
-    };
+pub fn parse(
+    txid: &TxId,
+    script: &Script,
+) -> Result<Vec<ParsedPushdata>, empp::ParseError> {
+    let mut empp_data = empp::parse(script)?;
     let mut sections = Vec::new();
     for mut pushdata in empp_data {
-        match parse_section(txid, &mut pushdata) {
-            Ok(section) => sections.push(section),
-            Err(err) => {
-                return ParseData {
-                    parsed: Parsed { sections },
-                    first_err: Some(err),
-                };
-            }
-        }
+        sections.push(match parse_section(txid, &mut pushdata) {
+            Ok(parsed_section) => parsed_section,
+            Err(err) => ParsedPushdata::Error(err),
+        });
     }
-    ParseData {
-        parsed: Parsed { sections },
-        first_err: None,
-    }
+    Ok(sections)
 }
 
 fn parse_section(
     txid: &TxId,
     pushdata: &mut Bytes,
-) -> Result<Section, ParseError> {
+) -> Result<ParsedPushdata, ParseError> {
     let lokad_id: LokadId = read_array(pushdata)?;
     if lokad_id != SLPV2_LOKAD_ID {
         return Err(InvalidLokadId(lokad_id));
     }
     let token_type = parse_token_type(pushdata)?;
     let tx_type = read_var_bytes(pushdata)?;
-    let section = match tx_type.as_ref() {
-        GENESIS => parse_genesis(txid, token_type, pushdata)?,
-        MINT => parse_mint(token_type, pushdata)?,
-        SEND => parse_send(token_type, pushdata)?,
+    let section_or_burn = match tx_type.as_ref() {
+        GENESIS => {
+            ParsedPushdata::Section(parse_genesis(txid, token_type, pushdata)?)
+        }
+        MINT => ParsedPushdata::Section(parse_mint(token_type, pushdata)?),
+        SEND => ParsedPushdata::Section(parse_send(token_type, pushdata)?),
+        BURN => {
+            ParsedPushdata::IntentionalBurn(parse_burn(token_type, pushdata)?)
+        }
         _ => return Err(UnknownTxType(tx_type)),
     };
     if !pushdata.is_empty() {
         return Err(LeftoverBytes(pushdata.split_off(0)));
     }
-    Ok(section)
+    Ok(section_or_burn)
 }
 
 fn parse_genesis(
@@ -195,6 +183,18 @@ fn parse_send(
             token_type,
         },
         variant: SectionVariant::Send(Send(output_amounts)),
+    })
+}
+
+fn parse_burn(
+    token_type: TokenType,
+    pushdata: &mut Bytes,
+) -> Result<IntentionalBurn, ParseError> {
+    let token_id: [u8; 32] = read_array(pushdata)?;
+    let amount = read_amount(pushdata)?;
+    Ok(IntentionalBurn {
+        token_id: TokenId::from(token_id),
+        amount,
     })
 }
 

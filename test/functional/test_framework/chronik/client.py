@@ -4,7 +4,7 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import http.client
-from typing import Union, Optional
+from typing import Union, Optional, List
 
 import chronik_pb2 as pb
 import websocket
@@ -158,6 +158,12 @@ class ChronikClient:
 
     def validate_tx(self, raw_tx: bytes) -> bytes:
         return self._request('POST', f'/validate-tx', pb.RawTx(raw_tx=raw_tx).SerializeToString(), pb.Tx)
+
+    def broadcast_txs(self, raw_txs: List[bytes]) -> bytes:
+        return self._request('POST',
+                             f'/broadcast-txs',
+                             pb.BroadcastTxsRequest(raw_txs=raw_txs).SerializeToString(),
+                             pb.BroadcastTxsResponse)
 
     def script(self, script_type: str, script_payload: str) -> ChronikScriptClient:
         return ChronikScriptClient(self, script_type, script_payload)

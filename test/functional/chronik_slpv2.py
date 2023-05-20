@@ -106,6 +106,22 @@ def slpv2_send(
 
     return result
 
+def slpv2_burn(
+    token_id: bytes,
+    burn_amount: int,
+) -> bytes:
+    result = bytearray()
+    result.extend(b'SLP2')
+    result.append(200)
+
+    result.append(len(b'BURN'))
+    result.extend(b'BURN')
+
+    result.extend(token_id)
+    result.extend(burn_amount.to_bytes(6, 'little'))
+
+    return result
+
 
 class ChronikTxTest(BitcoinTestFramework):
     def set_test_params(self):
@@ -156,7 +172,7 @@ class ChronikTxTest(BitcoinTestFramework):
         ]
 
         print('validate genesis', chronik.validate_tx(genesis_tx.serialize()).ok())
-        genesis_txid = node.sendrawtransaction(genesis_tx.serialize().hex())
+        genesis_txid = chronik.broadcast_txs([genesis_tx.serialize()]).ok().txids[0][::-1].hex()
         print('genesis', chronik.tx(genesis_txid).ok())
         print('info', chronik.slpv2_token_info(genesis_txid).ok())
 
@@ -197,7 +213,7 @@ class ChronikTxTest(BitcoinTestFramework):
             CTxOut(546, P2SH_OP_TRUE),
         ]
 
-        send_txid = node.sendrawtransaction(send_tx.serialize().hex())
+        send_txid = chronik.broadcast_txs([send_tx.serialize()]).ok().txids[0][::-1].hex()
         print('send', chronik.tx(send_txid).ok())
 
         coinvalue = 5000000000
@@ -220,7 +236,7 @@ class ChronikTxTest(BitcoinTestFramework):
             CTxOut(coinvalue - 200000, P2SH_OP_TRUE),
         ]
 
-        genesis2_txid = node.sendrawtransaction(genesis2_tx.serialize().hex())
+        genesis2_txid = chronik.broadcast_txs([genesis2_tx.serialize()]).ok().txids[0][::-1].hex()
         print('genesis2', chronik.tx(genesis2_txid).ok())
         print('info', chronik.slpv2_token_info(genesis2_txid).ok())
 
@@ -247,12 +263,16 @@ class ChronikTxTest(BitcoinTestFramework):
                 ),
                 slpv2_mint(
                     token_id=bytes.fromhex(genesis2_txid)[::-1],
-                    mint_amounts = [0, 5, 0],
-                    num_batons = 1,
+                    mint_amounts = [0, 5],
+                    num_batons = 0,
+                ),
+                slpv2_burn(
+                    token_id=bytes.fromhex(genesis_txid)[::-1],
+                    burn_amount=1,
                 ),
                 slpv2_send(
                     token_id=bytes.fromhex(genesis_txid)[::-1],
-                    output_amounts=[0, 0, 0, 0, 1, 1],
+                    output_amounts=[0, 0, 0, 0, 2],
                 ),
             ])),
             CTxOut(546, P2SH_OP_TRUE),
@@ -268,7 +288,8 @@ class ChronikTxTest(BitcoinTestFramework):
 
         print('validate multi', chronik.validate_tx(multi_tx.serialize()).ok())
 
-        multi_txid = node.sendrawtransaction(multi_tx.serialize().hex())
+        #multi_txid = node.sendrawtransaction(multi_tx.serialize().hex())
+        multi_txid = chronik.broadcast_txs([multi_tx.serialize()]).ok().txids[0][::-1].hex()
         print('multi', chronik.tx(multi_txid).ok())
         print('info', chronik.slpv2_token_info(multi_txid).ok())
         print('multi txid', multi_txid)

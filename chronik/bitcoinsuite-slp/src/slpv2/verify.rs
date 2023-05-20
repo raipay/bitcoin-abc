@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 
 use thiserror::Error;
 
-use crate::slpv2::{Amount, SectionType, Token, TokenId, TxSpec, TxData};
+use crate::slpv2::{
+    Amount, SectionData, SectionType, Token, TokenId, TokenOutputData, TxData,
+    TxSpec,
+};
 
 #[derive(Debug, Error, PartialEq)]
 pub enum VerifyError {
@@ -28,12 +31,13 @@ pub enum VerifyError {
 use self::VerifyError::*;
 
 pub fn verify(
-    data: TxSpec,
+    sections: Vec<SectionData>,
+    outputs: Vec<Option<TokenOutputData>>,
     actual_inputs: &[Option<Token<'_>>],
 ) -> (TxData, Vec<VerifyError>) {
     let mut burn_token_ids = BTreeSet::new();
     let mut burns = Vec::new();
-    for (section_idx, section) in data.sections.iter().enumerate() {
+    for (section_idx, section) in sections.iter().enumerate() {
         let mut input_sum = 0;
         let mut has_mint_baton = false;
         for input in actual_inputs.iter().flatten() {
@@ -61,7 +65,15 @@ pub fn verify(
             burn_token_ids.insert(section.meta.token_id);
         }
     }
+    for input in actual_inputs.iter().flatten() {
+        if !sections
+            .iter()
+            .any(|section| &section.meta.token_id == input.token_id.as_ref())
+        {
+            burn_token_ids.insert(input.token_id.clone().into_owned());
+        }
+    }
     let burn_token_ids = burn_token_ids.into_iter().collect::<Vec<_>>();
-    let tx_data = data.into_tx_data(actual_inputs, burn_token_ids);
+    let tx_data = TxData::new(sections, outputs, actual_inputs, burn_token_ids);
     (tx_data, burns)
 }

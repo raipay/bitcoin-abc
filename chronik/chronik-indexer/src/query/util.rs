@@ -274,21 +274,22 @@ fn slpv2_sections(
 }
 
 fn slpv2_errors(tx: &Tx, slpv2_tx_data: Option<&slpv2::TxData>) -> Vec<String> {
-    let parsed = slpv2::parse_tx(tx);
-    let parse_error = parsed.first_err;
-    let (tx_spec, process_error) =
-        slpv2::TxSpec::process_parsed(&parsed.parsed, tx);
+    let parsed = match slpv2::parse_tx(tx) {
+        Ok(parsed) => parsed,
+        Err(err) => return vec![format!("[IGNORED] EMPP error: {err}")],
+    };
+    let tx_spec = slpv2::TxSpec::process_parsed_pushdata(parsed, tx);
     let actual_inputs = match slpv2_tx_data {
         Some(actual_tx_data) => actual_tx_data.inputs().collect::<Vec<_>>(),
         None => vec![None; tx.inputs.len()],
     };
-    let (tx_data, verify_errs) = slpv2::verify(tx_spec, &actual_inputs);
+    let (tx_data, verify_errs) =
+        slpv2::verify(tx_spec.sections, tx_spec.outputs, &actual_inputs);
 
     let mut errors = Vec::new();
-    if let Some(parse_error) = parse_error {
+    for (pushdata_idx, parse_error) in tx_spec.parse_errors {
         let error = format!(
-            "Parse error at section index {}: {parse_error}",
-            parsed.parsed.sections.len()
+            "Parse error at pushdata index {pushdata_idx}: {parse_error}"
         );
         if parse_error.should_ignore() {
             errors.push(format!("[IGNORED] {error}"));
@@ -296,14 +297,14 @@ fn slpv2_errors(tx: &Tx, slpv2_tx_data: Option<&slpv2::TxData>) -> Vec<String> {
             errors.push(error);
         }
     }
-    if let Some(process_error) = process_error {
+    for (pushdata_idx, process_error) in tx_spec.process_errors {
         errors.push(format!(
             "Process error at section index {}: {process_error}",
             tx_data.sections.len()
         ));
     }
-    for mismatch in verify_errs {
-        errors.push(mismatch.to_string());
+    for verify_error in verify_errs {
+        errors.push(verify_error.to_string());
     }
     errors
 }
@@ -461,13 +462,12 @@ pub fn validate_slpv2_tx(
     tx: &Tx,
     mempool: &Mempool,
     db: &Db,
-) -> Result<Option<(slpv2::TxData, Vec<slpv2::VerifyError>)>> {
-    let parsed = slpv2::parse_tx(&tx);
-    if parsed.parsed.sections.is_empty() {
-        return Ok(None);
-    }
-    let (mut tx_spec, error) =
-        slpv2::TxSpec::process_parsed(&parsed.parsed, &tx);
+) -> Result<Option<(slpv2::TxData, Vec<String>)>> {
+    let parsed = match slpv2::parse_tx(tx) {
+        Ok(parsed) => parsed,
+        Err(_) => return Ok(None),
+    };
+    let tx_spec = slpv2::TxSpec::process_parsed_pushdata(parsed, tx);
     let mut tx_data_inputs =
         HashMap::<TxId, Option<Cow<'_, slpv2::TxData>>>::new();
     let mut actual_inputs = Vec::with_capacity(tx.inputs.len());
@@ -492,5 +492,47 @@ pub fn validate_slpv2_tx(
                 .flatten(),
         );
     }
-    Ok(Some(slpv2::verify(tx_spec, &actual_inputs)))
+    let (tx_data, verify_errs) =
+        slpv2::verify(tx_spec.sections, tx_spec.outputs, &actual_inputs);
+    let mut errors = Vec::new();
+    for (_, parse_err) in &tx_spec.parse_errors {
+        if !parse_err.should_ignore() {
+            errors.push(parse_err.to_string());
+        }
+    }
+    for (_, process_err) in &tx_spec.process_errors {
+        errors.push(process_err.to_string());
+    }
+    for verify_err in &verify_errs {
+        errors.push(verify_err.to_string());
+    }
+    let token_ids = tx_data.sections.iter().map(|section| section.meta.token_id).chain(tx_data.burn_token_ids.clone());
+    for token_id in token_ids {
+        let input_sum = tx_data
+            .inputs()
+            .flatten()
+            .filter(|token_output| token_output.token_id.as_ref() == &token_id)
+            .map(|token_output| token_output.amount)
+            .sum::<slpv2::Amount>();
+        let output_sum = tx_data
+            .outputs()
+            .flatten()
+            .filter(|token_output| token_output.token_id.as_ref() == &token_id)
+            .map(|token_output| token_output.amount)
+            .sum::<slpv2::Amount>();
+        let actual_burn = (input_sum - output_sum).max(0);
+        if actual_burn == 0 {
+            continue;
+        }
+        let intentional_burn_amount = tx_spec
+            .intentional_burns
+            .iter()
+            .find(|burn| burn.token_id == token_id)
+            .map(|burn| burn.amount)
+            .unwrap_or_default();
+        if intentional_burn_amount != actual_burn {
+            errors.push(format!("Unintentionally burning {actual_burn} base tokens of token ID {token_id}, but intentionally burning {intentional_burn_amount} base tokens"));
+        }
+    }
+    Ok(Some((tx_data, errors)))
 }

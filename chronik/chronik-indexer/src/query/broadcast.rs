@@ -33,14 +33,8 @@ pub enum QueryBroadcastError {
     #[error("400: Slp burn {0:?}")]
     SlpBurn(Box<slp::Burn>),
 
-    #[error("400: SLPv2 parse error: {0}")]
-    Slpv2Parse(slpv2::ParseError),
-
-    #[error("400: SLPv2 process error: {0}")]
-    Slpv2Process(slpv2::ProcessError),
-
-    #[error("400: SLPv2 mismatches: {0:?}")]
-    Slpv2Mismatches(Vec<String>),
+    #[error("400: SLPv2 errors: {0:?}")]
+    Slpv2Errors(Vec<String>),
 
     #[error("400: Broadcast failed: {0}")]
     BroadcastFailed(String),
@@ -67,31 +61,11 @@ impl QueryBroadcast<'_> {
                 None => {}
             }
 
-            let slpv2_parsed = slpv2::parse_tx(&tx);
-            if let Some(err) = slpv2_parsed.first_err {
-                if !err.should_ignore() {
-                    return Err(Slpv2Parse(err).into());
-                }
-            }
-            if slpv2_parsed.parsed.sections.is_empty() {
-                continue;
-            }
-            let (_, err) =
-                slpv2::TxSpec::process_parsed(&slpv2_parsed.parsed, &tx);
-            if let Some(err) = err {
-                return Err(Slpv2Process(err).into());
-            }
-            if let Some((_, mismatches)) =
+            if let Some((_, errors)) =
                 validate_slpv2_tx(&tx, self.mempool, self.db)?
             {
-                if !mismatches.is_empty() {
-                    return Err(Slpv2Mismatches(
-                        mismatches
-                            .into_iter()
-                            .map(|mismatch| mismatch.to_string())
-                            .collect(),
-                    )
-                    .into());
+                if !errors.is_empty() {
+                    return Err(Slpv2Errors(errors).into());
                 }
             }
         }

@@ -19,6 +19,9 @@ pub enum ParseError {
     #[error("Failed parsing script: {0}")]
     DataError(#[from] error::DataError),
 
+    #[error("No outputs")]
+    NoOutputs,
+
     #[error("Empty script")]
     EmptyScript,
 
