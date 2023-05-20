@@ -1,21 +1,19 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
-use itertools::Itertools;
 use thiserror::Error;
 
-use crate::slpv2::{Amount, Token, TokenId, TxSpec, SectionType};
+use crate::slpv2::{Amount, SectionType, Token, TokenId, TxSpec, TxData};
 
 #[derive(Debug, Error, PartialEq)]
-pub enum MismatchError {
+pub enum VerifyError {
     #[error(
-        "Mismatched token input and output sum for {token_id} at section index {section_idx}: Expected input sum {expected_sum} != actual input sum {actual_sum} (with {burn_amount} intentional burn)"
+        "Insufficient token input output sum for {token_id} at section index {section_idx}: input sum {input_sum} < output sum {output_sum}"
     )]
-    MismatchedInputSum {
+    InsufficientInputSum {
         section_idx: usize,
         token_id: TokenId,
-        expected_sum: Amount,
-        actual_sum: Amount,
-        burn_amount: Amount,
+        input_sum: Amount,
+        output_sum: Amount,
     },
 
     #[error(
@@ -27,12 +25,12 @@ pub enum MismatchError {
     },
 }
 
-use self::MismatchError::*;
+use self::VerifyError::*;
 
 pub fn verify(
-    data: &mut TxSpec,
+    data: TxSpec,
     actual_inputs: &[Option<Token<'_>>],
-) -> Vec<MismatchError> {
+) -> (TxData, Vec<VerifyError>) {
     let mut burn_token_ids = BTreeSet::new();
     let mut burns = Vec::new();
     for (section_idx, section) in data.sections.iter().enumerate() {
@@ -46,13 +44,12 @@ pub fn verify(
                 }
             }
         }
-        if input_sum != section.expected_input_sum {
-            burns.push(MismatchedInputSum {
+        if input_sum < section.required_input_sum {
+            burns.push(InsufficientInputSum {
                 section_idx,
                 token_id: section.meta.token_id,
-                expected_sum: section.expected_input_sum,
-                actual_sum: input_sum,
-                burn_amount: section.intentional_burn_amount,
+                input_sum,
+                output_sum: section.required_input_sum,
             });
             burn_token_ids.insert(section.meta.token_id);
         }
@@ -64,6 +61,7 @@ pub fn verify(
             burn_token_ids.insert(section.meta.token_id);
         }
     }
-    data.burn_token_ids(&burn_token_ids);
-    burns
+    let burn_token_ids = burn_token_ids.into_iter().collect::<Vec<_>>();
+    let tx_data = data.into_tx_data(actual_inputs, burn_token_ids);
+    (tx_data, burns)
 }

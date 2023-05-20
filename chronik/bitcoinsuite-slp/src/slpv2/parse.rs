@@ -1,9 +1,6 @@
-use std::collections::HashSet;
-
 use bitcoinsuite_core::{
     bytes::{read_array, read_bytes},
     error::DataError,
-    hash::Sha256d,
     script::Script,
     tx::{Tx, TxId},
 };
@@ -13,8 +10,8 @@ use thiserror::Error;
 use crate::{
     empp,
     slpv2::{
-        Amount, Genesis, GenesisData, MintData, ParseData,
-        Parsed, Section, SectionVariant, Send, TokenId, TokenMeta, TokenType,
+        Genesis, GenesisData, MintData, ParseData, Parsed, Section,
+        SectionVariant, Send, TokenId, TokenMeta, TokenType,
     },
 };
 
@@ -192,28 +189,12 @@ fn parse_send(
 ) -> Result<Section, ParseError> {
     let token_id: [u8; 32] = read_array(pushdata)?;
     let output_amounts = read_amounts(pushdata)?;
-    let mut intentional_burn_amount = None;
-    if !pushdata.is_empty() {
-        // optional intentional BURN
-        let burn_text = read_var_bytes(pushdata)?;
-        if burn_text != BURN {
-            return Err(InvalidBurn(burn_text));
-        }
-        let burn_amount = read_amount(pushdata)?;
-        if burn_amount == 0 {
-            return Err(ZeroBurnAmount);
-        }
-        intentional_burn_amount = Some(burn_amount);
-    }
     Ok(Section {
         meta: TokenMeta {
             token_id: TokenId::from(token_id),
             token_type,
         },
-        variant: SectionVariant::Send(Send {
-            output_amounts,
-            intentional_burn_amount,
-        }),
+        variant: SectionVariant::Send(Send(output_amounts)),
     })
 }
 

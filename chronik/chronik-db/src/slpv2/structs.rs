@@ -14,6 +14,6 @@ pub struct DbTxData {
 pub struct DbTxSection {
     pub token_num: TokenNum,
     pub section_type: SectionType,
-    pub expected_input_sum: slpv2::Amount,
-    pub intentional_burn_amount: slpv2::Amount,
+    pub required_input_sum: slpv2::Amount,
+    pub burn_amount: slpv2::Amount,
 }

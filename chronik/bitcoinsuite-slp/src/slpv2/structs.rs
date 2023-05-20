@@ -54,10 +54,7 @@ pub struct MintData {
 }
 
 #[derive(Clone, Debug)]
-pub struct Send {
-    pub output_amounts: Vec<Amount>,
-    pub intentional_burn_amount: Option<Amount>,
-}
+pub struct Send(pub Vec<Amount>);
 
 #[derive(Debug, Default)]
 pub struct Parsed {

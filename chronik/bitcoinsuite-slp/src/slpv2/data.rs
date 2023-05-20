@@ -1,20 +1,16 @@
-use std::{
-    borrow::Cow,
-    collections::{BTreeSet, HashSet},
-};
+use std::borrow::Cow;
 
 use bitcoinsuite_core::tx::Tx;
 use thiserror::Error;
 
 use crate::slpv2::{
-    Amount, Genesis, MintData, ParseError, Parsed, Section, SectionVariant,
-    Send, TokenId, TokenMeta, TokenType,
+    Amount, Genesis, MintData, Parsed, Section, SectionVariant, Send, TokenId,
+    TokenMeta,
 };
 
 #[derive(Clone, Debug, Default)]
 pub struct TxSpec {
     pub sections: Vec<SectionData>,
-    pub burn_token_ids: Vec<TokenId>,
     pub outputs: Vec<Option<TokenOutputData>>,
 }
 
@@ -44,8 +40,7 @@ pub struct Token<'a> {
 pub struct SectionData {
     pub meta: TokenMeta,
     pub section_type: SectionType,
-    pub expected_input_sum: Amount,
-    pub intentional_burn_amount: Amount,
+    pub required_input_sum: Amount,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -97,7 +92,6 @@ impl TxSpec {
     ) -> (TxSpec, Option<ProcessError>) {
         let mut tx_data = TxSpec {
             sections: vec![],
-            burn_token_ids: vec![],
             outputs: vec![None; tx.outputs.len()],
         };
         for section in &parsed.sections {
@@ -145,8 +139,7 @@ impl TxSpec {
         self.sections.push(SectionData {
             meta,
             section_type: SectionType::GENESIS,
-            expected_input_sum: 0,
-            intentional_burn_amount: 0,
+            required_input_sum: 0,
         });
         Ok(())
     }
@@ -162,8 +155,7 @@ impl TxSpec {
         self.sections.push(SectionData {
             meta,
             section_type: SectionType::MINT,
-            expected_input_sum: 0,
-            intentional_burn_amount: 0,
+            required_input_sum: 0,
         });
         Ok(())
     }
@@ -173,21 +165,17 @@ impl TxSpec {
         meta: TokenMeta,
         send: &Send,
     ) -> Result<(), ProcessError> {
-        let output_sum =
-            self.check_send_amounts(&send.output_amounts, &self.outputs)?;
-
-        let burn_amount = send.intentional_burn_amount.unwrap_or_default();
+        let output_sum = self.check_send_amounts(&send.0, &self.outputs)?;
 
         Self::process_send_amounts(
             self.sections.len(),
-            &send.output_amounts,
+            &send.0,
             &mut self.outputs[1..],
         );
         self.sections.push(SectionData {
             meta,
             section_type: SectionType::SEND,
-            expected_input_sum: output_sum + burn_amount,
-            intentional_burn_amount: burn_amount,
+            required_input_sum: output_sum,
         });
         Ok(())
     }
@@ -314,83 +302,63 @@ impl TxSpec {
     pub fn token(&self, token_output: &TokenOutputData) -> Token<'_> {
         Token {
             token_id: Cow::Borrowed(
-                if token_output.section_idx < self.sections.len() {
-                    &self.sections[token_output.section_idx].meta.token_id
-                } else {
-                    &self.burn_token_ids
-                        [token_output.section_idx - self.sections.len()]
-                },
+                &self.sections[token_output.section_idx].meta.token_id,
             ),
             amount: token_output.amount,
             is_mint_baton: token_output.is_mint_baton,
         }
     }
 
-    pub fn burn_token_ids(&mut self, token_ids: &BTreeSet<TokenId>) {
+    pub fn into_tx_data(
+        mut self,
+        inputs: &[Option<Token<'_>>],
+        burn_token_ids: Vec<TokenId>,
+    ) -> TxData {
         let mut remaining_sections = Vec::with_capacity(
-            self.sections.len().saturating_sub(token_ids.len()),
+            self.sections.len().saturating_sub(burn_token_ids.len()),
         );
         let mut replace_token_idx = vec![None; self.sections.len()];
-        let sections = std::mem::take(&mut self.sections);
-        for (idx, section) in sections.into_iter().enumerate() {
-            if !token_ids.contains(&section.meta.token_id) {
+        for (idx, section) in self.sections.into_iter().enumerate() {
+            if !burn_token_ids.contains(&section.meta.token_id) {
                 replace_token_idx[idx] = Some(remaining_sections.len());
                 remaining_sections.push(section);
             }
         }
-        for entry in self.outputs.iter_mut() {
-            if let Some(data) = entry {
-                match replace_token_idx[data.section_idx] {
-                    Some(token_idx) => data.section_idx = token_idx,
-                    None => *entry = None,
-                }
-            }
+        let mut outputs = self
+            .outputs
+            .into_iter()
+            .map(|entry| {
+                entry.and_then(|mut data| {
+                    let token_idx = replace_token_idx[data.section_idx]?;
+                    data.section_idx = token_idx;
+                    Some(data)
+                })
+            })
+            .collect::<Vec<_>>();
+        let inputs = inputs
+            .iter()
+            .map(|input| {
+                input.as_ref().map(|input| {
+                    get_token_output_data(
+                        &remaining_sections,
+                        &burn_token_ids,
+                        input,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        TxData {
+            sections: remaining_sections,
+            burn_token_ids,
+            inputs,
+            outputs,
         }
-        self.sections = remaining_sections;
-        self.burn_token_ids.extend(token_ids.iter().cloned());
     }
 }
 
 impl TxData {
-    pub fn from_spec_and_inputs(
-        tx_spec: TxSpec,
-        input_tokens: &[Option<Token<'_>>],
-    ) -> Self {
-        let mut tx_data = TxData {
-            sections: tx_spec.sections,
-            burn_token_ids: tx_spec.burn_token_ids,
-            inputs: Vec::with_capacity(input_tokens.len()),
-            outputs: tx_spec.outputs,
-        };
-        for input_token in input_tokens {
-            match input_token {
-                Some(token) => {
-                    tx_data.inputs.push(Some(tx_data.token_output_data(token)));
-                },
-                None => tx_data.inputs.push(None),
-            }
-        }
-        tx_data
-    }
-
     pub fn token_output_data(&self, token: &Token<'_>) -> TokenOutputData {
-        TokenOutputData {
-            section_idx: self
-                .sections
-                .iter()
-                .position(|section| section.meta.token_id == *token.token_id)
-                .or_else(|| {
-                    self.burn_token_ids
-                        .iter()
-                        .position(|token_id| {
-                            token_id == token.token_id.as_ref()
-                        })
-                        .map(|idx| idx + self.sections.len())
-                })
-                .unwrap(),
-            amount: token.amount,
-            is_mint_baton: token.is_mint_baton,
-        }
+        get_token_output_data(&self.sections, &self.burn_token_ids, token)
     }
 
     pub fn inputs(&self) -> impl ExactSizeIterator<Item = Option<Token<'_>>> {
@@ -428,6 +396,27 @@ impl Token<'_> {
             amount: self.amount,
             is_mint_baton: self.is_mint_baton,
         }
+    }
+}
+
+fn get_token_output_data(
+    sections: &[SectionData],
+    burn_token_ids: &[TokenId],
+    token: &Token<'_>,
+) -> TokenOutputData {
+    TokenOutputData {
+        section_idx: sections
+            .iter()
+            .position(|section| section.meta.token_id == *token.token_id)
+            .or_else(|| {
+                burn_token_ids
+                    .iter()
+                    .position(|token_id| token_id == token.token_id.as_ref())
+                    .map(|idx| idx + sections.len())
+            })
+            .unwrap(),
+        amount: token.amount,
+        is_mint_baton: token.is_mint_baton,
     }
 }
 

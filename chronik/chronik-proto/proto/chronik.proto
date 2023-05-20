@@ -273,7 +273,7 @@ message Slpv2Section {
     bytes token_id = 1;
     Slpv2TokenType token_type = 2;
     Slpv2SectionType section_type = 3;
-    int64 intentional_burn_amount = 4;
+    int64 burn_amount = 4;
 }
 
 enum Slpv2TokenType {

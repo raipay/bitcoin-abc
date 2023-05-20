@@ -108,10 +108,10 @@ impl<'tx> BatchProcessor<'tx> {
                 }
                 inputs
             };
-            let (mut tx_spec, error) =
+            let (tx_spec, error) =
                 slpv2::TxSpec::process_parsed(&parsed.parsed, tx.tx);
-            let burns = slpv2::verify(&mut tx_spec, &inputs);
-            if tx_spec.sections.is_empty() {
+            let (tx_data, burns) = slpv2::verify(tx_spec, &inputs);
+            if tx_data.sections.is_empty() {
                 continue;
             }
             for section in &parsed.parsed.sections {
@@ -129,22 +129,30 @@ impl<'tx> BatchProcessor<'tx> {
                     db_data.next_token_num += 1;
                 }
             }
-            let mut db_sections = Vec::with_capacity(tx_spec.sections.len());
-            for section in &tx_spec.sections {
+            let mut db_sections = Vec::with_capacity(tx_data.sections.len());
+            for section in &tx_data.sections {
                 let token_num = *db_data
                     .token_ids
                     .get_by_right(&section.meta.token_id)
                     .ok_or(MissingTokenId(section.meta.token_id))?;
+                let input_sum = tx_data
+                    .inputs()
+                    .filter_map(|input| {
+                        let input = input?;
+                        (input.token_id.as_ref() == &section.meta.token_id)
+                            .then(|| input.amount)
+                    })
+                    .sum::<slpv2::Amount>();
                 db_sections.push(DbTxSection {
                     token_num,
                     section_type: section.section_type,
-                    expected_input_sum: section.expected_input_sum,
-                    intentional_burn_amount: section.intentional_burn_amount,
+                    required_input_sum: section.required_input_sum,
+                    burn_amount: (input_sum - section.required_input_sum).max(0),
                 });
             }
             let mut db_burn_token_nums =
-                Vec::with_capacity(tx_spec.burn_token_ids.len());
-            for burn_token_id in &tx_spec.burn_token_ids {
+                Vec::with_capacity(tx_data.burn_token_ids.len());
+            for burn_token_id in &tx_data.burn_token_ids {
                 db_burn_token_nums.push(
                     *db_data
                         .token_ids
@@ -152,18 +160,10 @@ impl<'tx> BatchProcessor<'tx> {
                         .ok_or(MissingTokenId(*burn_token_id))?,
                 );
             }
-            let tx_data = slpv2::TxData::from_spec_and_inputs(tx_spec, &inputs);
             let db_tx_data = DbTxData {
                 sections: db_sections,
                 burn_token_nums: db_burn_token_nums,
-                input_tokens: inputs
-                    .iter()
-                    .map(|token| {
-                        token
-                            .as_ref()
-                            .map(|token| tx_data.token_output_data(token))
-                    })
-                    .collect(),
+                input_tokens: tx_data.inputs.clone(),
                 output_tokens: tx_data.outputs.clone(),
             };
             new_tx_data.push((tx_num, db_tx_data));

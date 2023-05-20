@@ -80,12 +80,17 @@ pub(crate) fn make_tx_proto(
                     sequence_no: input.sequence,
                     slp_token: slp_tx_data.as_ref().and_then(|tx_data| {
                         Some(make_slp_token_proto(
-                            tx_data.as_ref().ok()?.input_tokens.get(input_idx)?,
+                            tx_data
+                                .as_ref()
+                                .ok()?
+                                .input_tokens
+                                .get(input_idx)?,
                         ))
                     }),
                     slp_burn: slp_tx_data.as_ref().and_then(|tx_data| {
                         let tx_data = tx_data.as_ref().ok()?;
-                        let burn = tx_data.slp_burns.get(input_idx)?.as_ref()?;
+                        let burn =
+                            tx_data.slp_burns.get(input_idx)?.as_ref()?;
                         Some(proto::SlpBurn {
                             token: Some(make_slp_token_proto(&burn.token)),
                             token_id: burn.token_id.to_vec(),
@@ -133,7 +138,9 @@ pub(crate) fn make_tx_proto(
         time_first_seen,
         size: tx.ser_len() as u32,
         is_coinbase,
-        slp_tx_data: slp_tx_data.as_ref().and_then(|slp| slp.as_ref().ok().map(make_slp_tx_data)),
+        slp_tx_data: slp_tx_data
+            .as_ref()
+            .and_then(|slp| slp.as_ref().ok().map(make_slp_tx_data)),
         slp_error_msg: slp_tx_data
             .and_then(|msg| msg.err().map(|msg| msg.to_string()))
             .unwrap_or_default(),
@@ -165,9 +172,7 @@ pub(crate) fn make_slp_meta(slp_tx_data: &slp::TxData) -> proto::SlpMeta {
             slp::TokenType::Fungible => proto::SlpTokenType::Fungible,
             slp::TokenType::Nft1Group => proto::SlpTokenType::Nft1Group,
             slp::TokenType::Nft1Child => proto::SlpTokenType::Nft1Child,
-            slp::TokenType::Unknown => {
-                proto::SlpTokenType::UnknownTokenType
-            }
+            slp::TokenType::Unknown => proto::SlpTokenType::UnknownTokenType,
         } as _,
         tx_type: match slp_tx_data.tx_type {
             slp::TxTypeVariant::Genesis => proto::SlpTxType::Genesis,
@@ -236,11 +241,32 @@ fn slpv2_sections(
         Some(slpv2_tx_data) => slpv2_tx_data
             .sections
             .iter()
-            .map(|section| proto::Slpv2Section {
+            .enumerate()
+            .map(|(section_idx, section)| proto::Slpv2Section {
                 token_id: section.meta.token_id.to_vec(),
                 token_type: slpv2_token_type(section.meta.token_type) as _,
                 section_type: slpv2_section_type(section.section_type) as _,
-                intentional_burn_amount: section.intentional_burn_amount,
+                burn_amount: {
+                    let input_sum = slpv2_tx_data
+                        .inputs
+                        .iter()
+                        .flatten()
+                        .filter(|token_output| {
+                            token_output.section_idx == section_idx
+                        })
+                        .map(|token_output| token_output.amount)
+                        .sum::<slpv2::Amount>();
+                    let output_sum = slpv2_tx_data
+                        .outputs
+                        .iter()
+                        .flatten()
+                        .filter(|token_output| {
+                            token_output.section_idx == section_idx
+                        })
+                        .map(|token_output| token_output.amount)
+                        .sum::<slpv2::Amount>();
+                    (input_sum - output_sum).max(0)
+                },
             })
             .collect(),
         None => vec![],
@@ -250,13 +276,13 @@ fn slpv2_sections(
 fn slpv2_errors(tx: &Tx, slpv2_tx_data: Option<&slpv2::TxData>) -> Vec<String> {
     let parsed = slpv2::parse_tx(tx);
     let parse_error = parsed.first_err;
-    let (mut tx_data, process_error) =
+    let (tx_spec, process_error) =
         slpv2::TxSpec::process_parsed(&parsed.parsed, tx);
     let actual_inputs = match slpv2_tx_data {
         Some(actual_tx_data) => actual_tx_data.inputs().collect::<Vec<_>>(),
         None => vec![None; tx.inputs.len()],
     };
-    let mismatches = slpv2::verify(&mut tx_data, &actual_inputs);
+    let (tx_data, verify_errs) = slpv2::verify(tx_spec, &actual_inputs);
 
     let mut errors = Vec::new();
     if let Some(parse_error) = parse_error {
@@ -276,7 +302,7 @@ fn slpv2_errors(tx: &Tx, slpv2_tx_data: Option<&slpv2::TxData>) -> Vec<String> {
             tx_data.sections.len()
         ));
     }
-    for mismatch in mismatches {
+    for mismatch in verify_errs {
         errors.push(mismatch.to_string());
     }
     errors
@@ -435,7 +461,7 @@ pub fn validate_slpv2_tx(
     tx: &Tx,
     mempool: &Mempool,
     db: &Db,
-) -> Result<Option<(slpv2::TxData, Vec<slpv2::MismatchError>)>> {
+) -> Result<Option<(slpv2::TxData, Vec<slpv2::VerifyError>)>> {
     let parsed = slpv2::parse_tx(&tx);
     if parsed.parsed.sections.is_empty() {
         return Ok(None);
@@ -466,7 +492,5 @@ pub fn validate_slpv2_tx(
                 .flatten(),
         );
     }
-    let mismatches = slpv2::verify(&mut tx_spec, &actual_inputs);
-    let tx_data = slpv2::TxData::from_spec_and_inputs(tx_spec, &actual_inputs);
-    Ok(Some((tx_data, mismatches)))
+    Ok(Some(slpv2::verify(tx_spec, &actual_inputs)))
 }
