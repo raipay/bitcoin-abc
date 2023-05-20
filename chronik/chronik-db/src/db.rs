@@ -88,7 +88,7 @@ impl Db {
         ScriptHistoryWriter::add_cfs(&mut cfs);
         ScriptUtxoWriter::add_cfs(&mut cfs);
         SpentByWriter::add_cfs(&mut cfs);
-        SlpWriter::add_cfs(&mut cfs);
+        //SlpWriter::add_cfs(&mut cfs);
         Slpv2Writer::add_cfs(&mut cfs);
         Self::open_with_cfs(path, cfs)
     }
