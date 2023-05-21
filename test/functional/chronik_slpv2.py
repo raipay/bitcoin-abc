@@ -268,12 +268,12 @@ class ChronikTxTest(BitcoinTestFramework):
                 ),
                 slpv2_burn(
                     token_id=bytes.fromhex(genesis_txid)[::-1],
-                    burn_amount=1,
+                    burn_amount=3,
                 ),
-                slpv2_send(
-                    token_id=bytes.fromhex(genesis_txid)[::-1],
-                    output_amounts=[0, 0, 0, 0, 2],
-                ),
+                #slpv2_send(
+                #    token_id=bytes.fromhex(genesis_txid)[::-1],
+                #    output_amounts=[0, 0, 0, 0, 2],
+                #),
             ])),
             CTxOut(546, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),

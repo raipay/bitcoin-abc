@@ -185,7 +185,7 @@ impl<'a> QueryTxs<'a> {
         }
         // TODO: Don't use "0000...0000" txid
         let tx = Tx::with_txid(TxId::default(), tx);
-        let slpv2_tx_data = validate_slpv2_tx(&tx, self.mempool, self.db)?;
+        let (slpv2_tx_data, _) = validate_slpv2_tx(&tx, self.mempool, self.db)?;
         Ok(make_tx_proto(
             &tx,
             &OutputsSpent::default(),
@@ -194,7 +194,7 @@ impl<'a> QueryTxs<'a> {
             None,
             self.avalanche,
             validate_slp_tx(&tx, self.mempool, self.db)?,
-            slpv2_tx_data.as_ref().map(|(tx_data, _)| tx_data),
+            Some(&slpv2_tx_data),
         ))
     }
 

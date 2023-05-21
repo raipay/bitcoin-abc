@@ -61,12 +61,9 @@ impl QueryBroadcast<'_> {
                 None => {}
             }
 
-            if let Some((_, errors)) =
-                validate_slpv2_tx(&tx, self.mempool, self.db)?
-            {
-                if !errors.is_empty() {
-                    return Err(Slpv2Errors(errors).into());
-                }
+            let (_, errors) = validate_slpv2_tx(&tx, self.mempool, self.db)?;
+            if !errors.is_empty() {
+                return Err(Slpv2Errors(errors).into());
             }
         }
 

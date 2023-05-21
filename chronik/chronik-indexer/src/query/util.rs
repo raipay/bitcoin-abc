@@ -462,12 +462,7 @@ pub fn validate_slpv2_tx(
     tx: &Tx,
     mempool: &Mempool,
     db: &Db,
-) -> Result<Option<(slpv2::TxData, Vec<String>)>> {
-    let parsed = match slpv2::parse_tx(tx) {
-        Ok(parsed) => parsed,
-        Err(_) => return Ok(None),
-    };
-    let tx_spec = slpv2::TxSpec::process_parsed_pushdata(parsed, tx);
+) -> Result<(slpv2::TxData, Vec<String>)> {
     let mut tx_data_inputs =
         HashMap::<TxId, Option<Cow<'_, slpv2::TxData>>>::new();
     let mut actual_inputs = Vec::with_capacity(tx.inputs.len());
@@ -492,6 +487,22 @@ pub fn validate_slpv2_tx(
                 .flatten(),
         );
     }
+    let parsed = match slpv2::parse_tx(tx) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            let (tx_data, _) = slpv2::verify(
+                vec![],
+                vec![None; tx.outputs.len()],
+                &actual_inputs,
+            );
+            if actual_inputs.iter().any(|input| input.is_some()) {
+                return Ok((tx_data, vec![err.to_string()]));
+            } else {
+                return Ok((tx_data, vec![]));
+            }
+        }
+    };
+    let tx_spec = slpv2::TxSpec::process_parsed_pushdata(parsed, tx);
     let (tx_data, verify_errs) =
         slpv2::verify(tx_spec.sections, tx_spec.outputs, &actual_inputs);
     let mut errors = Vec::new();
@@ -506,7 +517,11 @@ pub fn validate_slpv2_tx(
     for verify_err in &verify_errs {
         errors.push(verify_err.to_string());
     }
-    let token_ids = tx_data.sections.iter().map(|section| section.meta.token_id).chain(tx_data.burn_token_ids.clone());
+    let token_ids = tx_data
+        .sections
+        .iter()
+        .map(|section| section.meta.token_id)
+        .chain(tx_data.burn_token_ids.clone());
     for token_id in token_ids {
         let input_sum = tx_data
             .inputs()
@@ -534,5 +549,5 @@ pub fn validate_slpv2_tx(
             errors.push(format!("Unintentionally burning {actual_burn} base tokens of token ID {token_id}, but intentionally burning {intentional_burn_amount} base tokens"));
         }
     }
-    Ok(Some((tx_data, errors)))
+    Ok((tx_data, errors))
 }
