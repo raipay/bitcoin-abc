@@ -3,6 +3,7 @@ use std::{borrow::Cow, collections::HashMap};
 use abc_rust_error::Result;
 use bimap::BiMap;
 use bitcoinsuite_slp::slpv2;
+use chronik_util::log;
 use thiserror::Error;
 use topo_sort::TopoSort;
 
@@ -53,7 +54,7 @@ impl<'tx> BatchProcessor<'tx> {
             .filter_map(|tx| {
                 let parsed = slpv2::parse_tx(&tx.tx).ok()?;
                 if parsed.iter().any(|pushdata| {
-                    matches!(pushdata, slpv2::ParsedPushdata::Error(_))
+                    !matches!(pushdata, slpv2::ParsedPushdata::Error(_))
                 }) {
                     return Some((tx.tx_num, (tx, parsed)));
                 }
@@ -132,10 +133,10 @@ impl<'tx> BatchProcessor<'tx> {
                     .ok_or(MissingTokenId(section.meta.token_id))?;
                 let input_sum = tx_data
                     .inputs()
+                    .flatten()
                     .filter_map(|input| {
-                        let input = input?;
                         (input.token_id.as_ref() == &section.meta.token_id)
-                            .then(|| input.amount)
+                            .then_some(input.amount)
                     })
                     .sum::<slpv2::Amount>();
                 db_sections.push(DbTxSection {
