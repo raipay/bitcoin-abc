@@ -103,7 +103,8 @@ impl ParseError {
     pub fn should_ignore(&self) -> bool {
         matches!(
             self,
-            ParseError::NoOpcodes
+            ParseError::NoOutputs
+                | ParseError::NoOpcodes
                 | ParseError::MissingOpReturn { .. }
                 | ParseError::InvalidLokadId { .. }
                 | ParseError::DataError { .. }

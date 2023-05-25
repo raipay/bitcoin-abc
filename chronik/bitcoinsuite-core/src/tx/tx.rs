@@ -138,6 +138,13 @@ impl std::ops::Deref for Tx {
     }
 }
 
+impl OutPoint {
+    /// Whether the outpoint is of a coinbase input.
+    pub fn is_coinbase(&self) -> bool {
+        self.txid == TxId::from([0; 32]) && self.out_idx == u32::MAX
+    }
+}
+
 impl BitcoinSer for TxMut {
     fn ser_to<S: BitcoinSerializer>(&self, bytes: &mut S) {
         self.version.ser_to(bytes);

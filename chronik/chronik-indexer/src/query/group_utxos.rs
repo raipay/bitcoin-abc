@@ -118,6 +118,7 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
             }
 
             let slp_tx_data = slp_reader.tx_data_by_tx_num(tx_num)?;
+            //let slp_tx_data = None;
             let slpv2_tx_data = slpv2_reader.tx_data_by_tx_num(tx_num)?;
 
             let outpoint = OutPoint { txid, out_idx };

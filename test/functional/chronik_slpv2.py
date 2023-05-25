@@ -173,6 +173,7 @@ class ChronikTxTest(BitcoinTestFramework):
 
         print('validate genesis', chronik.validate_tx(genesis_tx.serialize()).ok())
         genesis_txid = chronik.broadcast_txs([genesis_tx.serialize()]).ok().txids[0][::-1].hex()
+        self.generatetoaddress(node, 1, ADDRESS_ECREG_UNSPENDABLE)
         print('genesis', chronik.tx(genesis_txid).ok())
         print('info', chronik.slpv2_token_info(genesis_txid).ok())
 
@@ -195,6 +196,7 @@ class ChronikTxTest(BitcoinTestFramework):
         ]
 
         mint_txid = node.sendrawtransaction(mint_tx.serialize().hex())
+        self.generatetoaddress(node, 1, ADDRESS_ECREG_UNSPENDABLE)
         print('mint', chronik.tx(mint_txid).ok())
 
         send_tx = CTransaction()
@@ -268,12 +270,12 @@ class ChronikTxTest(BitcoinTestFramework):
                 ),
                 slpv2_burn(
                     token_id=bytes.fromhex(genesis_txid)[::-1],
-                    burn_amount=3,
+                    burn_amount=1,
                 ),
-                #slpv2_send(
-                #    token_id=bytes.fromhex(genesis_txid)[::-1],
-                #    output_amounts=[0, 0, 0, 0, 2],
-                #),
+                slpv2_send(
+                    token_id=bytes.fromhex(genesis_txid)[::-1],
+                    output_amounts=[0, 0, 0, 0, 2],
+                ),
             ])),
             CTxOut(546, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),
@@ -288,13 +290,13 @@ class ChronikTxTest(BitcoinTestFramework):
 
         print('validate multi', chronik.validate_tx(multi_tx.serialize()).ok())
 
-        #multi_txid = node.sendrawtransaction(multi_tx.serialize().hex())
-        multi_txid = chronik.broadcast_txs([multi_tx.serialize()]).ok().txids[0][::-1].hex()
+        multi_txid = node.sendrawtransaction(multi_tx.serialize().hex())
+        #multi_txid = chronik.broadcast_txs([multi_tx.serialize()]).ok().txids[0][::-1].hex()
+        #self.generatetoaddress(node, 1, ADDRESS_ECREG_UNSPENDABLE)
         print('multi', chronik.tx(multi_txid).ok())
         print('info', chronik.slpv2_token_info(multi_txid).ok())
         print('multi txid', multi_txid)
 
-        self.generatetoaddress(node, 1, ADDRESS_ECREG_UNSPENDABLE)
 
         #print('**** MINED BLOCK')
         #print('multi', chronik.tx(multi_txid).ok())

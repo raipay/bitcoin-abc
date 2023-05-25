@@ -66,18 +66,21 @@ impl<'a> QueryTxs<'a> {
     /// Query a tx by txid from the mempool or DB.
     pub fn tx_by_id(&self, txid: TxId) -> Result<proto::Tx> {
         match self.mempool.tx(&txid) {
-            Some(tx) => Ok(make_tx_proto(
-                &tx.tx,
-                &OutputsSpent::new_mempool(
-                    self.mempool.spent_by().outputs_spent(&txid),
-                ),
-                tx.time_first_seen,
-                false,
-                None,
-                self.avalanche,
-                validate_slp_tx(&tx.tx, self.mempool, self.db)?,
-                self.mempool.slpv2().tx_data(&txid),
-            )),
+            Some(tx) => {
+                let (tx_data, _) = validate_slpv2_tx(&tx.tx, self.mempool, self.db)?;
+                Ok(make_tx_proto(
+                    &tx.tx,
+                    &OutputsSpent::new_mempool(
+                        self.mempool.spent_by().outputs_spent(&txid),
+                    ),
+                    tx.time_first_seen,
+                    false,
+                    None,
+                    self.avalanche,
+                    validate_slp_tx(&tx.tx, self.mempool, self.db)?,
+                    Some(&tx_data),
+                ))
+            },
             None => {
                 let tx_reader = TxReader::new(self.db)?;
                 let (tx_num, block_tx) = tx_reader
@@ -86,8 +89,6 @@ impl<'a> QueryTxs<'a> {
                 let tx_entry = block_tx.entry;
                 let block_reader = BlockReader::new(self.db)?;
                 let spent_by_reader = SpentByReader::new(self.db)?;
-                let slp_reader = SlpReader::new(self.db)?;
-                let slpv2_reader = Slpv2Reader::new(self.db)?;
                 let block = block_reader
                     .by_height(block_tx.block_height)?
                     .ok_or(DbTxHasNoBlock(txid))?;
@@ -104,7 +105,7 @@ impl<'a> QueryTxs<'a> {
                     self.mempool.spent_by().outputs_spent(&txid),
                     tx_num,
                 )?;
-                let slpv2 = slpv2_reader.tx_data_by_tx_num(tx_num)?;
+                let (tx_data, _) = validate_slpv2_tx(&tx, self.mempool, self.db)?;
                 Ok(make_tx_proto(
                     &tx,
                     &outputs_spent,
@@ -113,7 +114,7 @@ impl<'a> QueryTxs<'a> {
                     Some(&block),
                     self.avalanche,
                     validate_slp_tx(&tx, self.mempool, self.db)?,
-                    slpv2.as_ref(),
+                    Some(&tx_data),
                 ))
             }
         }

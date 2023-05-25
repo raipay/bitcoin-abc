@@ -21,6 +21,7 @@ use chronik_db::{
     mem::Mempool,
 };
 use chronik_proto::proto;
+use chronik_util::log;
 use thiserror::Error;
 
 use crate::avalanche::Avalanche;
@@ -431,6 +432,10 @@ pub fn validate_slp_tx(
     for input in &tx.inputs {
         if let Entry::Vacant(entry) = tx_data_inputs.entry(input.prev_out.txid)
         {
+            if input.prev_out.is_coinbase() {
+                entry.insert(None);
+                continue;
+            }
             let tx_data =
                 mempool.slp().tx_data_or_read(db, entry.key(), |txid| {
                     mempool.tx(txid).is_some()
@@ -469,9 +474,16 @@ pub fn validate_slpv2_tx(
     for input in &tx.inputs {
         if let Entry::Vacant(entry) = tx_data_inputs.entry(input.prev_out.txid)
         {
+            if input.prev_out.is_coinbase() {
+                entry.insert(None);
+                continue;
+            }
             let tx_data =
                 mempool.slpv2().tx_data_or_read(db, entry.key(), |txid| {
                     mempool.tx(txid).is_some()
+                }).map_err(|err| {
+                    log!("validating tx failed: {:#?}\n", tx);
+                    err
                 })?;
             entry.insert(tx_data);
         }
@@ -487,6 +499,7 @@ pub fn validate_slpv2_tx(
                 .flatten(),
         );
     }
+    log!("actual inputs: {:?}\n", actual_inputs);
     let parsed = match slpv2::parse_tx(tx) {
         Ok(parsed) => parsed,
         Err(err) => {
@@ -505,6 +518,7 @@ pub fn validate_slpv2_tx(
     let tx_spec = slpv2::TxSpec::process_parsed_pushdata(parsed, tx);
     let (tx_data, verify_errs) =
         slpv2::verify(tx_spec.sections, tx_spec.outputs, &actual_inputs);
+    log!("tx_data inputs: {:?}\n", tx_data.inputs);
     let mut errors = Vec::new();
     for (_, parse_err) in &tx_spec.parse_errors {
         if !parse_err.should_ignore() {

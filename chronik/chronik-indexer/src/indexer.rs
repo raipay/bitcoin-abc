@@ -322,7 +322,7 @@ impl ChronikIndexer {
         script_history_writer.insert(&mut batch, &index_txs)?;
         script_utxo_writer.insert(&mut batch, &index_txs)?;
         spent_by_writer.insert(&mut batch, &index_txs)?;
-        //slp_writer.insert(&mut batch, &index_txs)?;
+        slp_writer.insert(&mut batch, &index_txs)?;
         slpv2_writer.insert(&mut batch, &index_txs)?;
         self.db.write_batch(batch)?;
         for tx in &block.block_txs.txs {
@@ -364,7 +364,7 @@ impl ChronikIndexer {
         script_history_writer.delete(&mut batch, &index_txs)?;
         script_utxo_writer.delete(&mut batch, &index_txs)?;
         spent_by_writer.delete(&mut batch, &index_txs)?;
-        //slp_writer.delete(&mut batch, &index_txs)?;
+        slp_writer.delete(&mut batch, &index_txs)?;
         slpv2_writer.delete(&mut batch, &index_txs)?;
         self.avalanche.disconnect_block(block.db_block.height)?;
         self.db.write_batch(batch)?;
