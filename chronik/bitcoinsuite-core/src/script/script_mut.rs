@@ -1,6 +1,6 @@
 use bytes::{BufMut, BytesMut};
 
-use crate::script::{opcode::Opcode, Script};
+use crate::script::{opcode::{Opcode, OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4}, Script, Op};
 
 /// A mutable version of [`Script`], it allows appending more opcodes/bytecode
 /// etc.
@@ -46,6 +46,22 @@ impl ScriptMut {
     /// ```
     pub fn put_bytecode(&mut self, slice: &[u8]) {
         self.0.put_slice(slice);
+    }
+
+    pub fn put_op(&mut self, op: Op) {
+        match op {
+            Op::Code(opcode) => self.put_opcodes([opcode]),
+            Op::Push(opcode, pushdata) => {
+                self.put_opcodes([opcode]);
+                match opcode {
+                    OP_PUSHDATA1 => self.0.put_u8(pushdata.len() as u8),
+                    OP_PUSHDATA2 => self.0.put_u16(pushdata.len() as u16),
+                    OP_PUSHDATA4 => self.0.put_u32(pushdata.len() as u32),
+                    _ => {}
+                }
+                self.put_bytecode(&pushdata);
+            },
+        }
     }
 
     /// Turn the given [`ScriptMut`] into a [`Script`], making it immutable.

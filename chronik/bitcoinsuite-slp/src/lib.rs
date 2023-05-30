@@ -3,5 +3,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 abc_rust_lint::lint! {
+    pub mod common;
     pub mod empp;
+    pub mod slp;
+    pub mod slpv2;
 }

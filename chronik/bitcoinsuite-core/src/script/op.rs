@@ -44,4 +44,15 @@ impl Op {
             otherwise => Op::Code(otherwise),
         })
     }
+
+    pub fn push_bytes(bytes: Bytes) -> Self {
+        match bytes.len() {
+            0 => Op::Code(OP_0),
+            0x01..=0x4b => Op::Push(Opcode(bytes.len() as u8), bytes),
+            0x4c..=0xff => Op::Push(OP_PUSHDATA1, bytes),
+            0x100..=0xffff => Op::Push(OP_PUSHDATA2, bytes),
+            0x10000..=0xffffffff => Op::Push(OP_PUSHDATA4, bytes),
+            _ => panic!("Bytes way too large"),
+        }
+    }
 }
