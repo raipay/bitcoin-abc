@@ -29,6 +29,10 @@ impl std::fmt::Display for TxId {
 }
 
 impl TxId {
+    pub const fn new(txid: [u8; 32]) -> Self {
+        TxId(Sha256d(txid))
+    }
+
     /// Return the [`TxId`] for the given [`TxMut`] (or `Tx`).
     ///
     /// This is done by hashing the serialized tx using [`Sha256d`].
