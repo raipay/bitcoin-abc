@@ -89,7 +89,18 @@ impl Db {
         ScriptUtxoWriter::add_cfs(&mut cfs);
         SpentByWriter::add_cfs(&mut cfs);
         SlpWriter::add_cfs(&mut cfs);
-        Self::open_with_cfs(path, cfs)
+        let mut db = Self::open_with_cfs(path, cfs)?;
+        /*db.drop_cf("slpv2_tx_data")?;
+        db.drop_cf("slpv2_token_meta")?;
+        db.drop_cf("slpv2_genesis_data")?;
+        db.drop_cf("slp_genesis_data")?;
+        let slp_writer = SlpWriter::new(&db)?;
+        {
+            let mut batch = WriteBatch::default();
+            slp_writer.clear(&mut batch)?;
+            db.write_batch(batch)?;
+        }*/
+        Ok(db)
     }
 
     pub(crate) fn open_with_cfs(
@@ -192,5 +203,10 @@ impl Db {
             }
         }
         Ok(true)
+    }
+
+    pub fn drop_cf(&mut self, name: &str) -> Result<()> {
+        self.db.drop_cf(name).map_err(RocksDb)?;
+        Ok(())
     }
 }
