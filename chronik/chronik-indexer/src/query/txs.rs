@@ -20,7 +20,7 @@ use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, OutputsSpent},
+    query::{make_tx_proto, OutputsSpent, SlpDbData},
 };
 
 /// Struct for querying txs from the db/mempool.
@@ -65,6 +65,7 @@ impl<'a> QueryTxs<'a> {
                 false,
                 None,
                 self.avalanche,
+                SlpDbData::from_mempool(self.mempool.slp(), &txid).as_ref(),
             )),
             None => {
                 let tx_reader = TxReader::new(self.db)?;
@@ -77,12 +78,14 @@ impl<'a> QueryTxs<'a> {
                 let block = block_reader
                     .by_height(block_tx.block_height)?
                     .ok_or(DbTxHasNoBlock(txid))?;
-                let tx = ffi::load_tx(
-                    block.file_num,
-                    tx_entry.data_pos,
-                    tx_entry.undo_pos,
-                )
-                .wrap_err(ReadFailure(txid))?;
+                let tx = Tx::from(
+                    ffi::load_tx(
+                        block.file_num,
+                        tx_entry.data_pos,
+                        tx_entry.undo_pos,
+                    )
+                    .wrap_err(ReadFailure(txid))?,
+                );
                 let outputs_spent = OutputsSpent::query(
                     &spent_by_reader,
                     &tx_reader,
@@ -90,12 +93,13 @@ impl<'a> QueryTxs<'a> {
                     tx_num,
                 )?;
                 Ok(make_tx_proto(
-                    &Tx::from(tx),
+                    &tx,
                     &outputs_spent,
                     tx_entry.time_first_seen,
                     tx_entry.is_coinbase,
                     Some(&block),
                     self.avalanche,
+                    SlpDbData::from_db(self.db, tx_num, &tx)?.as_ref(),
                 ))
             }
         }

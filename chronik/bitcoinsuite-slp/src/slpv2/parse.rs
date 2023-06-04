@@ -4,22 +4,26 @@ use bitcoinsuite_core::{
     tx::TxId,
 };
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{slpv2::{
-    consts::{SLPV2_LOKAD_ID, STANDARD_TOKEN_TYPE},
-    Amount, Genesis, GenesisInfo, MintData, Section, SectionVariant, Send,
-    TokenId, TokenMeta, TokenType,
-}, common::{LokadId, GENESIS, MINT, SEND, BURN}};
+use crate::{
+    common::{LokadId, BURN, GENESIS, MINT, SEND},
+    slpv2::{
+        consts::{SLPV2_LOKAD_ID, STANDARD_TOKEN_TYPE},
+        Amount, Genesis, GenesisInfo, MintData, Section, SectionVariant, Send,
+        TokenId, TokenMeta, TokenType,
+    },
+};
 
 /// Errors when parsing a SLPv2 tx.
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ParseError {
     #[error("Failed parsing pushdata: {0}")]
     DataError(#[from] DataError),
 
-    #[error("Leftover bytes: {0:?}")]
-    LeftoverBytes(Bytes),
+    #[error("Missing LOKAD_ID: {0:?}")]
+    MissingLokadId(Bytes),
 
     #[error("Invalid LOKAD_ID: {0:?}")]
     InvalidLokadId(LokadId),
@@ -32,14 +36,26 @@ pub enum ParseError {
 
     #[error("Decimals out of range: {0}, must be 0-9")]
     DecimalsOutOfRange(u8),
+
+    #[error("Leftover bytes: {0:?}")]
+    LeftoverBytes(Bytes),
 }
 
 use self::ParseError::*;
+
+impl ParseError {
+    pub fn should_ignore(&self) -> bool {
+        matches!(self, MissingLokadId(_) | InvalidLokadId(_))
+    }
+}
 
 pub fn parse_section(
     txid: &TxId,
     mut pushdata: Bytes,
 ) -> Result<Section, ParseError> {
+    if pushdata.len() < LokadId::default().len() {
+        return Err(MissingLokadId(pushdata));
+    }
     let lokad_id: LokadId = read_array(&mut pushdata)?;
     if lokad_id != SLPV2_LOKAD_ID {
         return Err(InvalidLokadId(lokad_id));

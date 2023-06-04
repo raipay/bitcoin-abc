@@ -1,21 +1,24 @@
-use std::borrow::Cow;
+use serde::{Deserialize, Serialize};
 
-use crate::slpv2::{
-    Amount, BurnError, GenesisInfo, SectionType, TokenId, TokenMeta, TokenType, ColoredTx,
+use crate::{
+    slp,
+    slpv2::{
+        Amount, BurnError, ColorError, ColoredTx, GenesisInfo, Int,
+        SectionType, TokenMeta,
+    },
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TxData {
     pub sections: Vec<SectionData>,
     pub burns: Vec<TokenBurn>,
-    pub inputs: Vec<Option<TokenData>>,
     pub outputs: Vec<Option<TokenData>>,
+    pub color_errors: Vec<ColorError>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Token<'a> {
-    pub token_id: Cow<'a, TokenId>,
-    pub token_type: TokenType,
+pub struct Token {
+    pub meta: TokenMeta,
     pub variant: TokenVariant,
 }
 
@@ -23,7 +26,7 @@ pub struct Token<'a> {
 pub enum TokenVariant {
     Amount(Amount),
     MintBaton,
-    Unknown,
+    Unknown(u8),
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -44,8 +47,23 @@ pub struct TokenBurn {
     pub meta: TokenMeta,
     pub intentional_burn: Option<Amount>,
     pub actual_burn: Amount,
+    pub burn_mint_batons: bool,
     pub is_total: bool,
     pub error: Option<BurnError>,
+}
+
+impl TokenVariant {
+    pub fn amount(&self) -> Amount {
+        match self {
+            &TokenVariant::Amount(amount) => amount,
+            TokenVariant::MintBaton => Amount::ZERO,
+            TokenVariant::Unknown(_) => Amount::ZERO,
+        }
+    }
+
+    pub fn is_mint_baton(&self) -> bool {
+        *self == TokenVariant::MintBaton
+    }
 }
 
 impl TokenData {
@@ -63,10 +81,10 @@ impl TokenData {
         }
     }
 
-    pub fn unknown(section_idx: usize) -> TokenData {
+    pub fn unknown(section_idx: usize, token_type: u8) -> TokenData {
         TokenData {
             section_idx,
-            variant: TokenVariant::Unknown,
+            variant: TokenVariant::Unknown(token_type),
         }
     }
 }
@@ -74,7 +92,6 @@ impl TokenData {
 impl TxData {
     pub fn new_burns(
         tx: ColoredTx,
-        inputs: &[Option<Token<'_>>],
         burns: Vec<TokenBurn>,
     ) -> Self {
         let mut remaining_sections = Vec::new();
@@ -89,7 +106,8 @@ impl TxData {
                 remaining_sections.push(section);
             }
         }
-        let outputs = tx.outputs
+        let outputs = tx
+            .outputs
             .into_iter()
             .map(|entry| {
                 entry.and_then(|mut data| {
@@ -98,58 +116,33 @@ impl TxData {
                 })
             })
             .collect::<Vec<_>>();
-        let inputs = inputs
-            .iter()
-            .map(|input| {
-                input.as_ref().map(|input| {
-                    get_token_data(&remaining_sections, &burns, input)
-                })
-            })
-            .collect::<Vec<_>>();
         TxData {
             sections: remaining_sections,
             burns,
-            inputs,
             outputs,
+            color_errors: tx.errors,
         }
     }
 
-    pub fn token_data(&self, token: &Token<'_>) -> TokenData {
+    pub fn token_data(&self, token: &Token) -> TokenData {
         get_token_data(&self.sections, &self.burns, token)
     }
 
-    pub fn inputs(&self) -> impl ExactSizeIterator<Item = Option<Token<'_>>> {
-        self.inputs
-            .iter()
-            .map(|input| input.as_ref().map(|input| self.token(input)))
-    }
-
-    pub fn outputs(&self) -> impl ExactSizeIterator<Item = Option<Token<'_>>> {
+    pub fn outputs(&self) -> impl ExactSizeIterator<Item = Option<Token>> + '_ {
         self.outputs
             .iter()
             .map(|output| output.as_ref().map(|output| self.token(output)))
     }
 
-    pub fn token(&self, token_output: &TokenData) -> Token<'_> {
+    pub fn token(&self, token_output: &TokenData) -> Token {
         let meta = if token_output.section_idx < self.sections.len() {
-            &self.sections[token_output.section_idx].meta
+            self.sections[token_output.section_idx].meta
         } else {
-            &self.burns[token_output.section_idx - self.sections.len()].meta
+            self.burns[token_output.section_idx - self.sections.len()].meta
         };
         Token {
-            token_id: Cow::Borrowed(&meta.token_id),
-            token_type: meta.token_type,
+            meta,
             variant: token_output.variant,
-        }
-    }
-}
-
-impl Token<'_> {
-    pub fn to_static(&self) -> Token<'static> {
-        Token {
-            token_id: Cow::Owned(self.token_id.clone().into_owned()),
-            token_type: self.token_type,
-            variant: self.variant,
         }
     }
 }
@@ -157,18 +150,16 @@ impl Token<'_> {
 fn get_token_data(
     sections: &[SectionData],
     burns: &[TokenBurn],
-    token: &Token<'_>,
+    token: &Token,
 ) -> TokenData {
     TokenData {
         section_idx: sections
             .iter()
-            .position(|section| section.meta.token_id == *token.token_id)
+            .position(|section| section.meta == token.meta)
             .or_else(|| {
                 burns
                     .iter()
-                    .position(|burn| {
-                        &burn.meta.token_id == token.token_id.as_ref()
-                    })
+                    .position(|burn| burn.meta == token.meta)
                     .map(|idx| idx + sections.len())
             })
             .unwrap(),
@@ -176,18 +167,48 @@ fn get_token_data(
     }
 }
 
-impl std::fmt::Display for Token<'_> {
+impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.variant {
             TokenVariant::Amount(amount) => {
-                write!(f, "{} tokens for token ID {}", amount, self.token_id)
+                write!(
+                    f,
+                    "{} tokens for token ID {}",
+                    amount, self.meta.token_id
+                )
             }
             TokenVariant::MintBaton => {
-                write!(f, "Mint baton for token ID {}", self.token_id)
+                write!(f, "Mint baton for token ID {}", self.meta.token_id)
             }
-            TokenVariant::Unknown => {
-                write!(f, "Unknown token type {}", self.token_type.to_u8())
+            TokenVariant::Unknown(token_type) => {
+                write!(f, "Unknown token type {}", token_type)
             }
         }
+    }
+}
+
+impl TokenVariant {
+    pub fn to_slpv1(self) -> Option<slp::Token> {
+        Some(match self {
+            TokenVariant::Amount(amount) => {
+                slp::Token::Amount(amount.int().try_into().ok()?)
+            }
+            TokenVariant::MintBaton => slp::Token::MintBaton,
+            TokenVariant::Unknown(token_type) => {
+                slp::Token::Unknown(token_type.into())
+            }
+        })
+    }
+
+    pub fn from_slpv1(slp: slp::Token) -> Option<Self> {
+        Some(match slp {
+            slp::Token::Amount(amount) => {
+                TokenVariant::Amount(Amount::new(amount.try_into().ok()?))
+            }
+            slp::Token::MintBaton => TokenVariant::MintBaton,
+            slp::Token::Unknown(token_type) => {
+                TokenVariant::Unknown(token_type.try_into().ok()?)
+            }
+        })
     }
 }

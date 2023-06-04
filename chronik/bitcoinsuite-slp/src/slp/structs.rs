@@ -1,20 +1,37 @@
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 
-use crate::slp::TokenId;
+use crate::slp::{
+    consts::{
+        TOKEN_TYPE_V1, TOKEN_TYPE_V1_NFT1_CHILD, TOKEN_TYPE_V1_NFT1_GROUP,
+    },
+    TokenId, VerifyError,
+};
 
 pub type Amount = u64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+)]
 pub enum TokenType {
     Fungible,
     Nft1Group,
     Nft1Child,
-    Unknown,
+    Unknown(u16),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TxType {
-    Genesis(Box<GenesisInfo>),
+    Genesis(GenesisInfo),
     Send,
     Mint,
     Burn(u64),
@@ -30,7 +47,9 @@ pub enum TxTypeVariant {
     Unknown,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Clone, Debug, Deserialize, PartialEq, Eq, Hash, Default, Serialize,
+)]
 pub struct GenesisInfo {
     pub token_ticker: Bytes,
     pub token_name: Bytes,
@@ -39,34 +58,72 @@ pub struct GenesisInfo {
     pub decimals: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+)]
 pub struct TokenMeta {
+    /// 0000...000000 if token_id is incomplete
     pub token_id: TokenId,
     pub token_type: TokenType,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Burn {
-    pub token: Token,
-    pub token_id: TokenId,
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct TokenBurn {
+    pub meta: TokenMeta,
+    pub amount: u128,
+    pub burn_mint_batons: bool,
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Token {
-    pub amount: Amount,
-    pub is_mint_baton: bool,
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+)]
+pub enum Token {
+    Amount(Amount),
+    MintBaton,
+    Unknown(u16),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxData {
-    pub input_tokens: Vec<Token>,
-    pub output_tokens: Vec<Token>,
-    pub slp_burns: Vec<Option<Box<Burn>>>,
-    pub token_type: TokenType,
+    pub meta: TokenMeta,
     pub tx_type: TxTypeVariant,
-    /// 0000...000000 if token_id is incomplete
-    pub token_id: TokenId,
-    pub group_token_id: Option<Box<TokenId>>,
+    pub output_tokens: Vec<Option<Token>>,
+    pub group_token_id: Option<TokenId>,
+    pub burns: Vec<TokenBurn>,
+    pub error: Option<VerifyError>,
+    pub genesis_info: Option<GenesisInfo>,
+}
+
+impl Token {
+    pub fn amount(&self) -> Amount {
+        match *self {
+            Token::Amount(amount) => amount,
+            Token::MintBaton => 0,
+            Token::Unknown(_) => 0,
+        }
+    }
+
+    pub fn is_mint_baton(&self) -> bool {
+        *self == Token::MintBaton
+    }
 }
 
 impl TxType {
@@ -79,28 +136,7 @@ impl TxType {
             TxType::Unknown => "UNKNOWN",
         }
     }
-}
 
-impl Token {
-    pub const MINT_BATON: Token = Token {
-        amount: 0,
-        is_mint_baton: true,
-    };
-
-    pub const EMPTY: Token = Token {
-        amount: 0,
-        is_mint_baton: false,
-    };
-
-    pub const fn amount(amount: Amount) -> Self {
-        Token {
-            amount,
-            is_mint_baton: false,
-        }
-    }
-}
-
-impl TxType {
     pub fn tx_type_variant(&self) -> TxTypeVariant {
         match &self {
             TxType::Genesis(_) => TxTypeVariant::Genesis,
@@ -108,6 +144,40 @@ impl TxType {
             TxType::Mint => TxTypeVariant::Mint,
             TxType::Burn(_) => TxTypeVariant::Burn,
             TxType::Unknown => TxTypeVariant::Unknown,
+        }
+    }
+}
+
+impl TokenMeta {
+    pub fn fungible(token_id: TokenId) -> TokenMeta {
+        TokenMeta {
+            token_id,
+            token_type: TokenType::Fungible,
+        }
+    }
+
+    pub fn nft1_group(token_id: TokenId) -> TokenMeta {
+        TokenMeta {
+            token_id,
+            token_type: TokenType::Nft1Group,
+        }
+    }
+
+    pub fn nft1_child(token_id: TokenId) -> TokenMeta {
+        TokenMeta {
+            token_id,
+            token_type: TokenType::Nft1Child,
+        }
+    }
+}
+
+impl TokenType {
+    pub fn to_u16(&self) -> u16 {
+        match *self {
+            TokenType::Fungible => TOKEN_TYPE_V1[0].into(),
+            TokenType::Nft1Group => TOKEN_TYPE_V1_NFT1_GROUP[0].into(),
+            TokenType::Nft1Child => TOKEN_TYPE_V1_NFT1_CHILD[0].into(),
+            TokenType::Unknown(token_type) => token_type,
         }
     }
 }

@@ -4,6 +4,8 @@
 
 //! Module for [`Opcode`].
 
+use serde::{Deserialize, Serialize};
+
 /// A script opcode, e.g. [`OP_0`] or [`OP_TRUE`].
 ///
 /// The contained opcode doesn't have to be valid/known.
@@ -16,7 +18,19 @@
 /// assert_eq!(OP_0::N, 0x00);
 /// assert_eq!(OP_TRUE::N, 0x51);
 /// ```
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+)]
 pub struct Opcode(pub u8);
 
 macro_rules! define_opcodes {

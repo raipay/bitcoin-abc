@@ -84,6 +84,12 @@ message Tx {
     uint32 size = 11;
     // Whether this tx is a coinbase tx
     bool is_coinbase = 12;
+
+    Slpv1TxData slpv1_data = 13;
+
+    repeated Slpv2Section slpv2_sections = 14;
+    repeated SlpBurn slp_burns = 15;
+    repeated string slp_errors = 16;
 }
 
 // UTXO of a script.
@@ -98,6 +104,7 @@ message ScriptUtxo {
     int64 value = 5;
     // Whether the UTXO has been finalized by Avalanche.
     bool is_final = 10;
+    SlpToken slp = 11;
 }
 
 // COutPoint, points to a coin being spent by an input.
@@ -128,6 +135,7 @@ message TxInput {
     int64 value = 4;
     // nSequence of the input.
     uint32 sequence_no = 5;
+    SlpToken slp = 8;
 }
 
 // CTxOut, creates a new coin.
@@ -138,6 +146,7 @@ message TxOutput {
     bytes output_script = 2;
     // Which tx and input spent this output, if any.
     SpentBy spent_by = 4;
+    SlpToken slp = 5;
 }
 
 // Data about a block which a Tx is in.
@@ -150,6 +159,94 @@ message BlockMetadata {
     int64 timestamp = 3;
     // Whether the block has been finalized by Avalanche.
     bool is_final = 4;
+}
+
+enum TokenProtocol {
+    TOKEN_PROTOCOL_SLPV1 = 0;
+    TOKEN_PROTOCOL_SLPV2 = 1;
+}
+
+enum Slpv1TokenType {
+    SLPV1_TOKEN_TYPE_UNKNOWN = 0;
+    SLPV1_TOKEN_TYPE_FUNGIBLE = 1;
+    SLPV1_TOKEN_TYPE_NFT1_GROUP = 0x81;
+    SLPV1_TOKEN_TYPE_NFT1_CHILD = 0x41;
+}
+
+enum Slpv2TokenType {
+    SLPV2_TOKEN_TYPE_STANDARD = 0;
+}
+
+enum SlpTxType {
+    UNKNOWN = 0;
+    GENESIS = 1;
+    SEND = 2;
+    MINT = 3;
+    BURN = 4;
+}
+
+message TokenInfo {
+    bytes token_id = 1;
+    TokenProtocol token_protocol = 2;
+    Slpv1TokenType slpv1_token_type = 3;
+    Slpv1GenesisInfo slpv1_genesis_info = 4;
+    Slpv2TokenType slpv2_token_type = 5;
+    Slpv2GenesisInfo slpv2_genesis_info = 6;
+    BlockMetadata block = 7;
+    int64 time_first_seen = 8;
+}
+
+message Slpv1TxData {
+    Slpv1TokenType token_type = 1;
+    SlpTxType tx_type = 2;
+    bytes token_id = 3;
+    bytes group_token_id = 4;
+}
+
+message Slpv2Section {
+    bytes token_id = 1;
+    Slpv2TokenType token_type = 2;
+    SlpTxType section_type = 3;
+}
+
+message SlpBurn {
+    bytes token_id = 1;
+    TokenProtocol token_protocol = 2;
+    Slpv1TokenType slpv1_token_type = 3;
+    Slpv2TokenType slpv2_token_type = 4;
+    string burn_error = 5;
+    string slpv1_actual_burn = 6;
+    int64 slpv2_intentional_burn = 7;
+    int64 slpv2_actual_burn = 8;
+    bool burn_mint_batons = 9;
+}
+
+message Slpv1GenesisInfo {
+    bytes token_ticker = 1;
+    bytes token_name = 2;
+    bytes token_document_url = 3;
+    bytes token_document_hash = 4;
+    uint32 decimals = 5;
+}
+
+message Slpv2GenesisInfo {
+    bytes token_ticker = 1;
+    bytes token_name = 2;
+    bytes url = 3;
+    bytes data = 4;
+    bytes auth_pubkey = 5;
+    uint32 decimals = 6;
+}
+
+message SlpToken {
+    bytes token_id = 1;
+    TokenProtocol token_protocol = 2;
+    Slpv1TokenType slpv1_token_type = 3;
+    Slpv2TokenType slpv2_token_type = 4;
+    int32 slpv2_section_idx = 5;
+    bool is_burned = 6;
+    uint64 amount = 7;
+    bool is_mint_baton = 8;
 }
 
 // Page with txs

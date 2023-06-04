@@ -19,7 +19,7 @@ use chronik_db::io::{
 use chronik_proto::proto;
 use thiserror::Error;
 
-use crate::avalanche::Avalanche;
+use crate::{avalanche::Avalanche, query::SlpDbData};
 
 /// Errors indicating something went wrong with reading txs.
 #[derive(Debug, Error, PartialEq)]
@@ -51,6 +51,7 @@ pub(crate) fn make_tx_proto(
     is_coinbase: bool,
     block: Option<&DbBlock>,
     avalanche: &Avalanche,
+    slp: Option<&SlpDbData<'_>>,
 ) -> proto::Tx {
     proto::Tx {
         txid: tx.txid().to_vec(),
@@ -58,7 +59,8 @@ pub(crate) fn make_tx_proto(
         inputs: tx
             .inputs
             .iter()
-            .map(|input| {
+            .enumerate()
+            .map(|(input_idx, input)| {
                 let coin = input.coin.as_ref();
                 let (output_script, value) = coin
                     .map(|coin| {
@@ -71,6 +73,7 @@ pub(crate) fn make_tx_proto(
                     output_script,
                     value,
                     sequence_no: input.sequence,
+                    slp: slp.and_then(|slp| slp.input_token_proto(input_idx)),
                 }
             })
             .collect(),
@@ -84,6 +87,7 @@ pub(crate) fn make_tx_proto(
                 spent_by: outputs_spent
                     .spent_by(output_idx as u32)
                     .map(|spent_by| make_spent_by_proto(&spent_by)),
+                slp: slp.and_then(|slp| slp.output_token_proto(output_idx)),
             })
             .collect(),
         lock_time: tx.locktime,
@@ -93,6 +97,12 @@ pub(crate) fn make_tx_proto(
             timestamp: block.timestamp,
             is_final: avalanche.is_final_height(block.height),
         }),
+        slpv1_data: slp.and_then(|slp| slp.slpv1_tx_data()),
+        slpv2_sections: slp
+            .map(|slp| slp.slpv2_sections_proto())
+            .unwrap_or_default(),
+        slp_burns: slp.map(|slp| slp.burns_proto()).unwrap_or_default(),
+        slp_errors: slp.map(|slp| slp.slp_errors()).unwrap_or_default(),
         time_first_seen,
         size: tx.ser_len() as u32,
         is_coinbase,

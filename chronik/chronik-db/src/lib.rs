@@ -13,6 +13,7 @@ abc_rust_lint::lint! {
     pub mod index_tx;
     mod reverse_lookup;
     pub mod ser;
+    pub mod slp;
     #[cfg(test)]
     mod test;
 }

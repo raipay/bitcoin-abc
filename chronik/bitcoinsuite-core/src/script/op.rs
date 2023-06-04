@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     bytes::{read_array, read_bytes},
@@ -11,7 +12,9 @@ use crate::{
 };
 
 /// An operation in a script.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
 pub enum Op {
     /// Opcode that stands by itself, with no data following it e.g. [`OP_0`],
     /// [`OP_1NEGATE`], [`OP_RETURN`], [`OP_EQUAL`], [`OP_CHECKSIG`].
@@ -53,6 +56,13 @@ impl Op {
             0x100..=0xffff => Op::Push(OP_PUSHDATA2, bytes),
             0x10000..=0xffffffff => Op::Push(OP_PUSHDATA4, bytes),
             _ => panic!("Bytes way too large"),
+        }
+    }
+
+    pub fn opcode(&self) -> Opcode {
+        match *self {
+            Op::Code(opcode) => opcode,
+            Op::Push(opcode, _) => opcode,
         }
     }
 }

@@ -1,6 +1,22 @@
-use bitcoinsuite_core::{hash::{Sha256d, Hashed}, error::DataError, tx::TxId};
+use bitcoinsuite_core::{
+    error::DataError,
+    hash::{Hashed, Sha256d},
+    tx::TxId,
+};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone,
+    Copy,
+    Default,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+)]
 pub struct TokenId(Sha256d);
 
 impl std::fmt::Debug for TokenId {
@@ -18,6 +34,10 @@ impl std::fmt::Display for TokenId {
 impl TokenId {
     pub fn from_be_bytes(bytes: [u8; 32]) -> Self {
         TokenId(Sha256d::from_be_bytes(bytes))
+    }
+
+    pub const fn from_le_hash(hash: Sha256d) -> Self {
+        TokenId(hash)
     }
 
     pub fn from_txid(txid: TxId) -> Self {
