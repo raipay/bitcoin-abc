@@ -246,6 +246,22 @@ impl<'a> SlpWriter<'a> {
             CF_SLP_TX_DATA,
             Options::default(),
         ));
+        /*columns.push(ColumnFamilyDescriptor::new(
+            "slpv2_tx_data",
+            Options::default(),
+        ));
+        columns.push(ColumnFamilyDescriptor::new(
+            "slpv2_token_meta",
+            Options::default(),
+        ));
+        columns.push(ColumnFamilyDescriptor::new(
+            "slpv2_genesis_data",
+            Options::default(),
+        ));
+        columns.push(ColumnFamilyDescriptor::new(
+            "slp_genesis_data",
+            Options::default(),
+        ));*/
     }
 }
 
