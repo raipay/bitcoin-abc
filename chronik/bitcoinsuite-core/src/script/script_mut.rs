@@ -1,6 +1,9 @@
 use bytes::{BufMut, BytesMut};
 
-use crate::script::{opcode::{Opcode, OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4}, Script, Op};
+use crate::script::{
+    opcode::{Opcode, OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4},
+    Op, Script,
+};
 
 /// A mutable version of [`Script`], it allows appending more opcodes/bytecode
 /// etc.
@@ -60,7 +63,7 @@ impl ScriptMut {
                     _ => {}
                 }
                 self.put_bytecode(&pushdata);
-            },
+            }
         }
     }
 

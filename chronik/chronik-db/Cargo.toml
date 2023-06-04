@@ -12,9 +12,16 @@ abc-rust-error = { path = "../abc-rust-error" }
 abc-rust-lint = { path = "../abc-rust-lint" }
 
 bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+bitcoinsuite-slp = { path = "../bitcoinsuite-slp" }
+
+chronik-util = { path = "../chronik-util" }
+
+bimap = "0.6"
 
 # En-/decode byte strings from/to hex
 hex = "0.4"
+
+itertools = "0.10"
 
 # Compact and fast serialization
 postcard = { version = "1.0", features = ["alloc"] }
@@ -27,6 +34,8 @@ serde = { version = "1.0", features = ["derive"] }
 
 # Derive error enums
 thiserror = "1.0"
+
+topo_sort = "0.4"
 
 # Key-value database
 # This is currently a git dependency, as this commit to fix the linux-arm build

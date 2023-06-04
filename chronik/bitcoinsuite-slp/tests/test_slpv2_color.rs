@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use bitcoinsuite_core::{
     script::Script,
     tx::{Tx, TxId, TxMut, TxOutput},
@@ -274,6 +272,7 @@ fn test_color_slpv2_mint_unknown_token_type() {
                 b"SLP2\x77".as_ref().into(),
                 make_mint(&TOKEN_ID3, [], 0),
                 b"SLP2\x89".as_ref().into(),
+                b"SLP2\x80".as_ref().into(),
             ]),
             3,
         )),
@@ -304,16 +303,25 @@ fn test_color_slpv2_mint_unknown_token_type() {
             outputs: vec![
                 None,
                 Some(TokenData::amount(0, _2)),
-                Some(TokenData::unknown(1)),
-                Some(TokenData::unknown(1)),
+                Some(TokenData::unknown(1, 0x77)),
+                Some(TokenData::unknown(1, 0x77)),
             ],
-            errors: vec![ColorError::SectionError {
-                pushdata_idx: 2,
-                error: ColorSectionError::DescendingTokenType {
-                    before: 0x77,
-                    after: 0,
+            errors: vec![
+                ColorError::SectionError {
+                    pushdata_idx: 2,
+                    error: ColorSectionError::DescendingTokenType {
+                        before: 0x77,
+                        after: 0,
+                    },
                 },
-            },],
+                ColorError::SectionError {
+                    pushdata_idx: 4,
+                    error: ColorSectionError::DescendingTokenType {
+                        before: 0x89,
+                        after: 0x80,
+                    },
+                },
+            ],
             ..Default::default()
         },
     );
@@ -362,8 +370,7 @@ fn test_color_slpv2_mint_overlapping_amount() {
                 pushdata_idx: 1,
                 error: ColorSectionError::OverlappingAmount {
                     prev_token: Token {
-                        token_id: Cow::Owned(TOKEN_ID2),
-                        token_type: TokenType::Standard,
+                        meta: TokenMeta::standard(TOKEN_ID2),
                         variant: TokenVariant::MintBaton,
                     },
                     amount_idx: 1,
@@ -396,8 +403,7 @@ fn test_color_slpv2_mint_overlapping_mint_baton() {
                 pushdata_idx: 1,
                 error: ColorSectionError::OverlappingMintBaton {
                     prev_token: Token {
-                        token_id: Cow::Owned(TOKEN_ID2),
-                        token_type: TokenType::Standard,
+                        meta: TokenMeta::standard(TOKEN_ID2),
                         variant: TokenVariant::Amount(_2),
                     },
                     baton_idx: 1,
@@ -479,8 +485,7 @@ fn test_color_slpv2_send_overlapping_amount() {
                 pushdata_idx: 1,
                 error: ColorSectionError::OverlappingAmount {
                     prev_token: Token {
-                        token_id: Cow::Owned(TOKEN_ID2),
-                        token_type: TokenType::Standard,
+                        meta: TokenMeta::standard(TOKEN_ID2),
                         variant: TokenVariant::Amount(_2),
                     },
                     amount_idx: 1,
@@ -717,12 +722,10 @@ fn test_color_slpv2_all_the_things() {
                     genesis_info: None,
                 },
             ],
-            intentional_burns: vec![
-                IntentionalBurn {
-                    meta: TokenMeta::standard(TOKEN_ID2),
-                    amount: _2,
-                },
-            ],
+            intentional_burns: vec![IntentionalBurn {
+                meta: TokenMeta::standard(TOKEN_ID2),
+                amount: _2,
+            },],
             outputs: vec![
                 None,
                 // success MINT: token ID 3
@@ -742,7 +745,7 @@ fn test_color_slpv2_all_the_things() {
                 // success MINT: token ID 2
                 Some(TokenData::mint_baton(2)),
                 // success UNKNOWN
-                Some(TokenData::unknown(4)),
+                Some(TokenData::unknown(4, 0x89)),
                 // success SEND: token ID 4
                 Some(TokenData::amount(3, MAX)),
             ],
@@ -765,8 +768,7 @@ fn test_color_slpv2_all_the_things() {
                     pushdata_idx: 3,
                     error: ColorSectionError::OverlappingAmount {
                         prev_token: Token {
-                            token_id: Cow::Owned(TOKEN_ID),
-                            token_type: TokenType::Standard,
+                            meta: TokenMeta::standard(TOKEN_ID),
                             variant: TokenVariant::Amount(_7),
                         },
                         amount_idx: 1,
@@ -778,8 +780,7 @@ fn test_color_slpv2_all_the_things() {
                     pushdata_idx: 4,
                     error: ColorSectionError::OverlappingMintBaton {
                         prev_token: Token {
-                            token_id: Cow::Owned(TOKEN_ID),
-                            token_type: TokenType::Standard,
+                            meta: TokenMeta::standard(TOKEN_ID),
                             variant: TokenVariant::Amount(_7),
                         },
                         baton_idx: 0,

@@ -1,16 +1,39 @@
 use std::ops::Range;
 
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 
 use crate::slpv2::{consts::STANDARD_TOKEN_TYPE, Amount, TokenId};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+)]
 pub enum TokenType {
     Standard,
     Unknown(u8),
 }
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+)]
 pub struct TokenMeta {
     pub token_id: TokenId,
     pub token_type: TokenType,
@@ -22,7 +45,7 @@ pub struct Section {
     pub variant: SectionVariant,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum SectionType {
     GENESIS,
     MINT,
@@ -40,7 +63,9 @@ pub enum SectionVariant {
     Unknown,
 }
 
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(
+    Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize,
+)]
 pub struct GenesisInfo {
     pub token_ticker: Bytes,
     pub token_name: Bytes,

@@ -1,9 +1,15 @@
+use bitcoinsuite_core::hash::Sha256d;
+use bitcoinsuite_slp::slp::{
+    verify, ParseData, SlpSpentOutput, Token, TokenBurn, TokenId, TokenMeta,
+    TxData, TxType, TxTypeVariant, VerifyError,
+};
 use pretty_assertions::assert_eq;
 
-use bitcoinsuite_slp::slp::{
-    verify, Burn, ParseData, SlpSpentOutput, Token, TokenId, TokenType, TxData,
-    TxType, TxTypeVariant, VerifyError,
-};
+const TOKEN_ID1: TokenId = TokenId::from_le_hash(Sha256d([1; 32]));
+const TOKEN_ID2: TokenId = TokenId::from_le_hash(Sha256d([2; 32]));
+const TOKEN_ID3: TokenId = TokenId::from_le_hash(Sha256d([3; 32]));
+const TOKEN_ID4: TokenId = TokenId::from_le_hash(Sha256d([4; 32]));
+const TOKEN_ID5: TokenId = TokenId::from_le_hash(Sha256d([5; 32]));
 
 #[test]
 fn test_verify_genesis_failure() -> Result<(), VerifyError> {
@@ -11,89 +17,128 @@ fn test_verify_genesis_failure() -> Result<(), VerifyError> {
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Nft1Child,
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
                 tx_type: TxType::Genesis(Default::default()),
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![],
             },
             &[None],
         ),
-        Err(VerifyError::HasNoNft1Group),
+        TxData {
+            meta: TokenMeta::nft1_child(TOKEN_ID4),
+            tx_type: TxTypeVariant::Genesis,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![],
+            error: Some(VerifyError::HasNoNft1Group),
+            genesis_info: None,
+        },
     );
     // Invalid NFT1 Group token amount and token type
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Nft1Child,
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
                 tx_type: TxType::Genesis(Default::default()),
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([3; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::EMPTY,
+                meta: TokenMeta::fungible(TOKEN_ID3),
+                token: Token::Amount(0),
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::HasNoNft1Group),
+        TxData {
+            meta: TokenMeta::nft1_child(TOKEN_ID4),
+            tx_type: TxTypeVariant::Genesis,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![],
+            error: Some(VerifyError::HasNoNft1Group),
+            genesis_info: None,
+        },
     );
     // Invalid NFT1 Group token amount
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Nft1Child,
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
                 tx_type: TxType::Genesis(Default::default()),
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([3; 32]),
-                token_type: TokenType::Nft1Group,
-                token: Token::EMPTY,
+                meta: TokenMeta::nft1_group(TOKEN_ID4),
+                token: Token::Amount(0),
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::HasNoNft1Group),
+        TxData {
+            meta: TokenMeta::nft1_child(TOKEN_ID4),
+            tx_type: TxTypeVariant::Genesis,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![],
+            error: Some(VerifyError::HasNoNft1Group),
+            genesis_info: None,
+        },
     );
     // Invalid NFT1 Group token type
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Nft1Child,
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
                 tx_type: TxType::Genesis(Default::default()),
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([3; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::amount(1),
+                meta: TokenMeta::fungible(TOKEN_ID4),
+                token: Token::Amount(1),
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::HasNoNft1Group),
+        TxData {
+            meta: TokenMeta::nft1_child(TOKEN_ID4),
+            tx_type: TxTypeVariant::Genesis,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID4),
+                amount: 1,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::HasNoNft1Group),
+            genesis_info: None,
+        },
     );
     // Invalid NFT1 Group token input index (must be at 0)
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Nft1Child,
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
                 tx_type: TxType::Genesis(Default::default()),
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![],
             },
             &[
                 None,
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([3; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::amount(1),
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    token: Token::Amount(1),
                     group_token_id: None,
                 })
             ],
         ),
-        Err(VerifyError::HasNoNft1Group),
+        TxData {
+            meta: TokenMeta::nft1_child(TOKEN_ID4),
+            tx_type: TxTypeVariant::Genesis,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
+                amount: 1,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::HasNoNft1Group),
+            genesis_info: None,
+        },
     );
     Ok(())
 }
@@ -104,117 +149,108 @@ fn test_verify_genesis_success() -> Result<(), VerifyError> {
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Genesis(Default::default()),
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[None],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::EMPTY],
-            output_tokens: vec![],
-            slp_burns: vec![None],
-            token_type: TokenType::Fungible,
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
             tx_type: TxTypeVariant::Genesis,
-            token_id: TokenId::from_be_bytes([1; 32]),
+            output_tokens: vec![],
             group_token_id: None,
-        }),
+            burns: vec![],
+            error: None,
+            genesis_info: Some(Default::default()),
+        },
     );
     // Fungible genesis burning another token
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID2),
                 tx_type: TxType::Genesis(Default::default()),
-                token_id: TokenId::from_be_bytes([2; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([1; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::amount(1),
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                token: Token::Amount(1),
                 group_token_id: None,
             })],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::EMPTY],
-            output_tokens: vec![],
-            slp_burns: vec![Some(Box::new(Burn {
-                token: Token::amount(1),
-                token_id: TokenId::from_be_bytes([1; 32]),
-            }))],
-            token_type: TokenType::Fungible,
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID2),
             tx_type: TxTypeVariant::Genesis,
-            token_id: TokenId::from_be_bytes([2; 32]),
+            output_tokens: vec![],
             group_token_id: None,
-        }),
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                amount: 1,
+                burn_mint_batons: false,
+            }],
+            error: None,
+            genesis_info: Some(Default::default()),
+        },
     );
     // NFT1 Child genesis consuming NFT1 Group
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Nft1Child,
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
                 tx_type: TxType::Genesis(Default::default()),
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([3; 32]),
-                token_type: TokenType::Nft1Group,
-                token: Token::amount(4),
+                meta: TokenMeta::nft1_group(TOKEN_ID3),
+                token: Token::Amount(4),
                 group_token_id: None,
             })],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::amount(4)],
-            output_tokens: vec![],
-            slp_burns: vec![None],
-            token_type: TokenType::Nft1Child,
+        TxData {
+            meta: TokenMeta::nft1_child(TOKEN_ID4),
             tx_type: TxTypeVariant::Genesis,
-            token_id: TokenId::from_be_bytes([4; 32]),
-            group_token_id: Some(Box::new(TokenId::from_be_bytes([3; 32]))),
-        }),
+            output_tokens: vec![],
+            group_token_id: Some(TOKEN_ID3),
+            burns: vec![],
+            error: None,
+            genesis_info: Some(Default::default()),
+        },
     );
     // NFT1 Child genesis consuming one NFT1 Group and burning another
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Nft1Child,
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
                 tx_type: TxType::Genesis(Default::default()),
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![],
             },
             &[
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([3; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(4),
+                    meta: TokenMeta::nft1_group(TOKEN_ID3),
+                    token: Token::Amount(4),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([2; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(1),
+                    meta: TokenMeta::nft1_group(TOKEN_ID2),
+                    token: Token::Amount(1),
                     group_token_id: None,
                 }),
             ],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::amount(4), Token::EMPTY],
-            output_tokens: vec![],
-            slp_burns: vec![
-                None,
-                Some(Box::new(Burn {
-                    token: Token::amount(1),
-                    token_id: TokenId::from_be_bytes([2; 32]),
-                })),
-            ],
-            token_type: TokenType::Nft1Child,
+        TxData {
+            meta: TokenMeta::nft1_child(TOKEN_ID4),
             tx_type: TxTypeVariant::Genesis,
-            token_id: TokenId::from_be_bytes([4; 32]),
-            group_token_id: Some(Box::new(TokenId::from_be_bytes([3; 32]))),
-        }),
+            output_tokens: vec![],
+            group_token_id: Some(TOKEN_ID3),
+            burns: vec![TokenBurn {
+                meta: TokenMeta::nft1_group(TOKEN_ID2),
+                amount: 1,
+                burn_mint_batons: false,
+            }],
+            error: None,
+            genesis_info: Some(Default::default()),
+        },
     );
     Ok(())
 }
@@ -225,144 +261,215 @@ fn test_verify_mint_failure() -> Result<(), VerifyError> {
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Mint,
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[None],
         ),
-        Err(VerifyError::HasNoMintBaton),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
+            tx_type: TxTypeVariant::Mint,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![],
+            error: Some(VerifyError::HasNoMintBaton),
+            genesis_info: None,
+        },
     );
     // No MINT input
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Mint,
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([1; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::amount(4),
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                token: Token::Amount(4),
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::HasNoMintBaton),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
+            tx_type: TxTypeVariant::Mint,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                amount: 4,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::HasNoMintBaton),
+            genesis_info: None,
+        },
     );
     // Wrong MINT input token ID
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Mint,
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([2; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::MINT_BATON,
+                meta: TokenMeta::fungible(TOKEN_ID2),
+                token: Token::MintBaton,
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::HasNoMintBaton),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
+            tx_type: TxTypeVariant::Mint,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID2),
+                amount: 0,
+                burn_mint_batons: true,
+            }],
+            error: Some(VerifyError::HasNoMintBaton),
+            genesis_info: None,
+        },
     );
     // Big Fungible example with lots of wrong MINT batons
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Mint,
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[
                 None,
                 // Not a MINT baton
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(4),
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    token: Token::Amount(4),
                     group_token_id: None,
                 }),
                 None,
                 // Wrong token ID
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([2; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::fungible(TOKEN_ID2),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Wrong token type (NFT1 Group)
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::nft1_group(TOKEN_ID1),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Wrong token type (NFT1 Child)
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::MINT_BATON,
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID1),
+                    token: Token::MintBaton,
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
                 None,
             ],
         ),
-        Err(VerifyError::HasNoMintBaton),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
+            tx_type: TxTypeVariant::Mint,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    amount: 4,
+                    burn_mint_batons: false,
+                },
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID2),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_group(TOKEN_ID1),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID1),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+            ],
+            error: Some(VerifyError::HasNoMintBaton),
+            genesis_info: None,
+        },
     );
     // Big NFT1 Group example with lots of wrong batons
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Nft1Group,
+                meta: TokenMeta::nft1_group(TOKEN_ID1),
                 tx_type: TxType::Mint,
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[
                 None,
                 // Not a MINT baton
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(4),
+                    meta: TokenMeta::nft1_group(TOKEN_ID1),
+                    token: Token::Amount(4),
                     group_token_id: None,
                 }),
                 None,
                 // Wrong token ID
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([2; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::nft1_group(TOKEN_ID2),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Wrong token type (Fungible)
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Wrong token type (NFT1 Child)
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::MINT_BATON,
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID1),
+                    token: Token::MintBaton,
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
                 None,
             ],
         ),
-        Err(VerifyError::HasNoMintBaton),
+        TxData {
+            meta: TokenMeta::nft1_group(TOKEN_ID1),
+            tx_type: TxTypeVariant::Mint,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::nft1_group(TOKEN_ID1),
+                    amount: 4,
+                    burn_mint_batons: false,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_group(TOKEN_ID2),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID1),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+            ],
+            error: Some(VerifyError::HasNoMintBaton),
+            genesis_info: None,
+        },
     );
     Ok(())
 }
@@ -373,211 +480,170 @@ fn test_verify_mint_success() -> Result<(), VerifyError> {
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Mint,
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([1; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::MINT_BATON,
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                token: Token::MintBaton,
                 group_token_id: None,
             })],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::MINT_BATON],
-            output_tokens: vec![],
-            slp_burns: vec![None],
-            token_type: TokenType::Fungible,
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
             tx_type: TxTypeVariant::Mint,
-            token_id: TokenId::from_be_bytes([1; 32]),
+            output_tokens: vec![],
             group_token_id: None,
-        }),
+            burns: vec![],
+            error: None,
+            genesis_info: None,
+        },
     );
     // Fungible MINT with lots of wrong batons and one correct one
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Mint,
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[
                 None,
                 // Not a MINT baton
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(4),
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    token: Token::Amount(4),
                     group_token_id: None,
                 }),
                 None,
                 // Wrong token ID
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([2; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::fungible(TOKEN_ID2),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Wrong token type (NFT1 Group)
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::nft1_group(TOKEN_ID1),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Correct MINT baton
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Wrong token type (NFT1 Child)
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::MINT_BATON,
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID1),
+                    token: Token::MintBaton,
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
                 None,
             ],
         ),
-        Ok(TxData {
-            input_tokens: vec![
-                Token::EMPTY,
-                Token::EMPTY,
-                Token::EMPTY,
-                Token::EMPTY,
-                Token::EMPTY,
-                Token::MINT_BATON,
-                Token::EMPTY,
-                Token::EMPTY,
-            ],
-            output_tokens: vec![],
-            slp_burns: vec![
-                None,
-                Some(Box::new(Burn {
-                    token: Token::amount(4),
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                })),
-                None,
-                Some(Box::new(Burn {
-                    token: Token::MINT_BATON,
-                    token_id: TokenId::from_be_bytes([2; 32]),
-                })),
-                Some(Box::new(Burn {
-                    token: Token::MINT_BATON,
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                })),
-                None, // Correct MINT baton not burned
-                Some(Box::new(Burn {
-                    token: Token::MINT_BATON,
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                })),
-                None,
-            ],
-            token_type: TokenType::Fungible,
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
             tx_type: TxTypeVariant::Mint,
-            token_id: TokenId::from_be_bytes([1; 32]),
+            output_tokens: vec![],
             group_token_id: None,
-        }),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    amount: 4,
+                    burn_mint_batons: false,
+                },
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID2),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_group(TOKEN_ID1),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID1),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+            ],
+            error: None,
+            genesis_info: None,
+        },
     );
     // NFT Group MINT with lots of invalid batons and one correct one
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Nft1Group,
+                meta: TokenMeta::nft1_group(TOKEN_ID1),
                 tx_type: TxType::Mint,
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[
                 None,
                 // Not a MINT baton
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(4),
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    token: Token::Amount(4),
                     group_token_id: None,
                 }),
                 None,
                 // Wrong token ID
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([2; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::fungible(TOKEN_ID2),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Correct MINT baton
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::nft1_group(TOKEN_ID1),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Wrong token type (Fungible)
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 // Wrong token type (NFT1 Child)
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::MINT_BATON,
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID1),
+                    token: Token::MintBaton,
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
                 None,
             ],
         ),
-        Ok(TxData {
-            input_tokens: vec![
-                Token::EMPTY,
-                Token::EMPTY,
-                Token::EMPTY,
-                Token::EMPTY,
-                Token::MINT_BATON,
-                Token::EMPTY,
-                Token::EMPTY,
-                Token::EMPTY,
-            ],
-            output_tokens: vec![],
-            slp_burns: vec![
-                None,
-                Some(Box::new(Burn {
-                    token: Token::amount(4),
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                })),
-                None,
-                Some(Box::new(Burn {
-                    token: Token::MINT_BATON,
-                    token_id: TokenId::from_be_bytes([2; 32]),
-                })),
-                None, // Correct MINT baton not burned
-                Some(Box::new(Burn {
-                    token: Token::MINT_BATON,
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                })),
-                Some(Box::new(Burn {
-                    token: Token::MINT_BATON,
-                    token_id: TokenId::from_be_bytes([1; 32]),
-                })),
-                None,
-            ],
-            token_type: TokenType::Nft1Group,
+        TxData {
+            meta: TokenMeta::nft1_group(TOKEN_ID1),
             tx_type: TxTypeVariant::Mint,
-            token_id: TokenId::from_be_bytes([1; 32]),
+            output_tokens: vec![],
             group_token_id: None,
-        }),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    amount: 4,
+                    burn_mint_batons: true,
+                },
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID2),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID1),
+                    amount: 0,
+                    burn_mint_batons: true,
+                },
+            ],
+            error: None,
+            genesis_info: None,
+        },
     );
     Ok(())
 }
@@ -588,232 +654,318 @@ fn test_verify_send_failure() -> Result<(), VerifyError> {
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::amount(4)],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![Some(Token::Amount(4))],
             },
             &[None],
         ),
-        Err(VerifyError::OutputSumExceedInputSum {
-            input_sum: 0,
-            output_sum: 4,
-        }),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID4),
+            tx_type: TxTypeVariant::Send,
+            output_tokens: vec![None],
+            group_token_id: None,
+            burns: vec![],
+            error: Some(VerifyError::OutputSumExceedInputSum {
+                input_sum: 0,
+                output_sum: 4,
+            }),
+            genesis_info: None,
+        },
     );
     // Fungible inputs not enough (3 < 4)
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::amount(4)],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![Some(Token::Amount(4))],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([4; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::amount(3),
+                meta: TokenMeta::fungible(TOKEN_ID4),
+                token: Token::Amount(3),
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::OutputSumExceedInputSum {
-            input_sum: 3,
-            output_sum: 4,
-        }),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID4),
+            tx_type: TxTypeVariant::Send,
+            output_tokens: vec![None],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID4),
+                amount: 3,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::OutputSumExceedInputSum {
+                input_sum: 3,
+                output_sum: 4,
+            }),
+            genesis_info: None,
+        },
     );
     // Wrong input token type (expected Fungible, got NFT1 Child)
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::amount(4)],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![Some(Token::Amount(4))],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([4; 32]),
-                token_type: TokenType::Nft1Child,
-                token: Token::amount(1),
-                group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                    [10; 32]
-                ))),
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
+                token: Token::Amount(1),
+                group_token_id: Some(TokenId::from_be_bytes([10; 32])),
             })],
         ),
-        Err(VerifyError::OutputSumExceedInputSum {
-            input_sum: 0,
-            output_sum: 4,
-        }),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID4),
+            tx_type: TxTypeVariant::Send,
+            output_tokens: vec![None],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
+                amount: 1,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::OutputSumExceedInputSum {
+                input_sum: 0,
+                output_sum: 4,
+            }),
+            genesis_info: None,
+        },
     );
     // NFT1 Group inputs not enough (3 < 4)
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::amount(4)],
-                token_type: TokenType::Nft1Group,
+                meta: TokenMeta::nft1_group(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![Some(Token::Amount(4))],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([4; 32]),
-                token_type: TokenType::Nft1Group,
-                token: Token::amount(3),
+                meta: TokenMeta::nft1_group(TOKEN_ID4),
+                token: Token::Amount(3),
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::OutputSumExceedInputSum {
-            input_sum: 3,
-            output_sum: 4,
-        }),
+        TxData {
+            meta: TokenMeta::nft1_group(TOKEN_ID4),
+            tx_type: TxTypeVariant::Send,
+            output_tokens: vec![None],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::nft1_group(TOKEN_ID4),
+                amount: 3,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::OutputSumExceedInputSum {
+                input_sum: 3,
+                output_sum: 4,
+            }),
+            genesis_info: None,
+        },
     );
     // Wrong input token type (expected NFT1 Group, got NFT1 Child)
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::amount(4)],
-                token_type: TokenType::Nft1Group,
+                meta: TokenMeta::nft1_group(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![Some(Token::Amount(4))],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([4; 32]),
-                token_type: TokenType::Nft1Child,
-                token: Token::amount(1),
-                group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                    [10; 32]
-                ))),
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
+                token: Token::Amount(1),
+                group_token_id: Some(TokenId::from_be_bytes([10; 32])),
             })],
         ),
-        Err(VerifyError::OutputSumExceedInputSum {
-            input_sum: 0,
-            output_sum: 4,
-        }),
+        TxData {
+            meta: TokenMeta::nft1_group(TOKEN_ID4),
+            tx_type: TxTypeVariant::Send,
+            output_tokens: vec![None],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
+                amount: 1,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::OutputSumExceedInputSum {
+                input_sum: 0,
+                output_sum: 4,
+            }),
+            genesis_info: None,
+        },
     );
     // Wrong input token ID
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::amount(4)],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![Some(Token::Amount(4))],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([3; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::amount(5),
+                meta: TokenMeta::fungible(TOKEN_ID3),
+                token: Token::Amount(5),
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::OutputSumExceedInputSum {
-            input_sum: 0,
-            output_sum: 4,
-        }),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID4),
+            tx_type: TxTypeVariant::Send,
+            output_tokens: vec![None],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID3),
+                amount: 5,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::OutputSumExceedInputSum {
+                input_sum: 0,
+                output_sum: 4,
+            }),
+            genesis_info: None,
+        },
     );
     // Big Fungible with off-by-one too little input tokens
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![
-                    Token::amount(1),
-                    Token::amount(0xffff_ffff_ffff_0000),
-                    Token::amount(0xffff_ffff_ffff_0001),
-                    Token::amount(2),
-                ],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![
+                    Some(Token::Amount(1)),
+                    Some(Token::Amount(0xffff_ffff_ffff_0000)),
+                    Some(Token::Amount(0xffff_ffff_ffff_0001)),
+                    Some(Token::Amount(2)),
+                ],
             },
             &[
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(0xffff_ffff_ffff_0000),
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    token: Token::Amount(0xffff_ffff_ffff_0000),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 }),
                 None,
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::amount(1),
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    token: Token::Amount(1),
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
                 None,
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(0xffff_ffff_ffff_0003),
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    token: Token::Amount(0xffff_ffff_ffff_0003),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([3; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(100),
+                    meta: TokenMeta::nft1_group(TOKEN_ID3),
+                    token: Token::Amount(100),
                     group_token_id: None,
                 })
             ],
         ),
-        Err(VerifyError::OutputSumExceedInputSum {
-            input_sum: 0x1fffffffffffe0003,
-            output_sum: 0x1fffffffffffe0004,
-        }),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID4),
+            tx_type: TxTypeVariant::Send,
+            output_tokens: vec![None; 4],
+            group_token_id: None,
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    amount: 0x1_ffff_ffff_fffe_0003,
+                    burn_mint_batons: true,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    amount: 1,
+                    burn_mint_batons: false,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_group(TOKEN_ID3),
+                    amount: 100,
+                    burn_mint_batons: false,
+                },
+            ],
+            error: Some(VerifyError::OutputSumExceedInputSum {
+                input_sum: 0x1fffffffffffe0003,
+                output_sum: 0x1fffffffffffe0004,
+            }),
+            genesis_info: None,
+        },
     );
     // Big NFT1 Group with off-by-one too little input tokens
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![
-                    Token::amount(1),
-                    Token::amount(0xffff_ffff_ffff_0000),
-                    Token::amount(0xffff_ffff_ffff_0001),
-                    Token::amount(2),
-                ],
-                token_type: TokenType::Nft1Group,
+                meta: TokenMeta::nft1_group(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![
+                    Some(Token::Amount(1)),
+                    Some(Token::Amount(0xffff_ffff_ffff_0000)),
+                    Some(Token::Amount(0xffff_ffff_ffff_0001)),
+                    Some(Token::Amount(2)),
+                ],
             },
             &[
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(0xffff_ffff_ffff_0000),
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    token: Token::Amount(0xffff_ffff_ffff_0000),
                     group_token_id: None,
                 }),
                 None,
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::amount(1),
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    token: Token::Amount(1),
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
                 None,
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(0xffff_ffff_ffff_0003),
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    token: Token::Amount(0xffff_ffff_ffff_0003),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([3; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(100),
+                    meta: TokenMeta::nft1_group(TOKEN_ID3),
+                    token: Token::Amount(100),
                     group_token_id: None,
                 })
             ],
         ),
-        Err(VerifyError::OutputSumExceedInputSum {
-            input_sum: 0x1fffffffffffe0003,
-            output_sum: 0x1fffffffffffe0004,
-        }),
+        TxData {
+            meta: TokenMeta::nft1_group(TOKEN_ID4),
+            tx_type: TxTypeVariant::Send,
+            output_tokens: vec![None; 4],
+            group_token_id: None,
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    amount: 0x1_ffff_ffff_fffe_0003,
+                    burn_mint_batons: false,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    amount: 1,
+                    burn_mint_batons: false,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_group(TOKEN_ID3),
+                    amount: 100,
+                    burn_mint_batons: false,
+                },
+            ],
+            error: Some(VerifyError::OutputSumExceedInputSum {
+                input_sum: 0x1fffffffffffe0003,
+                output_sum: 0x1fffffffffffe0004,
+            }),
+            genesis_info: None,
+        },
     );
     Ok(())
 }
@@ -824,338 +976,272 @@ fn test_verify_send_success() -> Result<(), VerifyError> {
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::EMPTY],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![None],
             },
             &[None],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::EMPTY],
-            output_tokens: vec![Token::EMPTY],
-            slp_burns: vec![None],
-            token_type: TokenType::Fungible,
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID4),
             tx_type: TxTypeVariant::Send,
-            token_id: TokenId::from_be_bytes([4; 32]),
+            output_tokens: vec![None],
             group_token_id: None,
-        }),
+            burns: vec![],
+            error: None,
+            genesis_info: None,
+        },
     );
     // Valid NFT1 Group SEND with 0 inputs and outputs
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::EMPTY],
-                token_type: TokenType::Nft1Group,
+                meta: TokenMeta::nft1_group(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![None],
             },
             &[None],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::EMPTY],
-            output_tokens: vec![Token::EMPTY],
-            slp_burns: vec![None],
-            token_type: TokenType::Nft1Group,
+        TxData {
+            meta: TokenMeta::nft1_group(TOKEN_ID4),
             tx_type: TxTypeVariant::Send,
-            token_id: TokenId::from_be_bytes([4; 32]),
+            output_tokens: vec![None],
             group_token_id: None,
-        }),
+            burns: vec![],
+            error: None,
+            genesis_info: None,
+        },
     );
     // Valid NFT1 Child SEND with 0 inputs and outputs
     // This leaves group_token_id at None
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::EMPTY],
-                token_type: TokenType::Nft1Child,
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![None],
             },
             &[None],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::EMPTY],
-            output_tokens: vec![Token::EMPTY],
-            slp_burns: vec![None],
-            token_type: TokenType::Nft1Child,
+        TxData {
+            meta: TokenMeta::nft1_child(TOKEN_ID4),
             tx_type: TxTypeVariant::Send,
-            token_id: TokenId::from_be_bytes([4; 32]),
+            output_tokens: vec![None],
             group_token_id: None,
-        }),
+            burns: vec![],
+            error: None,
+            genesis_info: None,
+        },
     );
     // Fungible SEND sending 10 tokens and burning a MINT baton
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![Token::amount(10)],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![Some(Token::Amount(10))],
             },
             &[
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(10),
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    token: Token::Amount(10),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::MINT_BATON,
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    token: Token::MintBaton,
                     group_token_id: None,
                 })
             ],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::amount(10), Token::EMPTY],
-            output_tokens: vec![Token::amount(10)],
-            slp_burns: vec![
-                None,
-                Some(Box::new(Burn {
-                    token: Token::MINT_BATON,
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                }))
-            ],
-            token_type: TokenType::Fungible,
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID4),
             tx_type: TxTypeVariant::Send,
-            token_id: TokenId::from_be_bytes([4; 32]),
+            output_tokens: vec![Some(Token::Amount(10))],
             group_token_id: None,
-        }),
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID4),
+                amount: 0,
+                burn_mint_batons: true,
+            }],
+            error: None,
+            genesis_info: None,
+        },
     );
     // Big Fungible SEND with 64-bit overflow and partially burning tokens
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![
-                    Token::amount(0xffff_ffff_ffff_0000),
-                    Token::amount(0xffff_ffff_ffff_0002),
-                    Token::amount(1),
-                ],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![
+                    Some(Token::Amount(0xffff_ffff_ffff_0000)),
+                    Some(Token::Amount(0xffff_ffff_ffff_0002)),
+                    Some(Token::Amount(1)),
+                ],
             },
             &[
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(0xffff_ffff_ffff_0000),
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    token: Token::Amount(0xffff_ffff_ffff_0000),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(0xefff_ffff_ffff_0000),
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    token: Token::Amount(0xefff_ffff_ffff_0000),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(0x2fff_ffff_ffff_0000),
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    token: Token::Amount(0x2fff_ffff_ffff_0000),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Fungible,
-                    token: Token::amount(10),
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    token: Token::Amount(10),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::amount(10),
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID5),
+                    token: Token::Amount(10),
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
             ],
         ),
-        Ok(TxData {
-            input_tokens: vec![
-                Token::amount(0xffff_ffff_ffff_0000),
-                Token::amount(0xefff_ffff_ffff_0000),
-                Token::amount(0x2fff_ffff_ffff_0000),
-                Token::amount(10),
-                Token::EMPTY,
-            ],
-            output_tokens: vec![
-                Token::amount(0xffff_ffff_ffff_0000),
-                Token::amount(0xffff_ffff_ffff_0002),
-                Token::amount(1),
-            ],
-            slp_burns: vec![
-                None,
-                None,
-                Some(Box::new(Burn {
-                    token: Token::amount(0x1fff_ffff_fffe_fffd),
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                })),
-                Some(Box::new(Burn {
-                    token: Token::amount(10),
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                })),
-                Some(Box::new(Burn {
-                    token: Token::amount(10),
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                })),
-            ],
-            token_type: TokenType::Fungible,
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID4),
             tx_type: TxTypeVariant::Send,
-            token_id: TokenId::from_be_bytes([4; 32]),
+            output_tokens: vec![
+                Some(Token::Amount(0xffff_ffff_ffff_0000)),
+                Some(Token::Amount(0xffff_ffff_ffff_0002)),
+                Some(Token::Amount(1)),
+            ],
             group_token_id: None,
-        }),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID5),
+                    amount: 10,
+                    burn_mint_batons: false,
+                },
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    amount: 0x1fff_ffff_fffe_fffd + 10,
+                    burn_mint_batons: false,
+                },
+            ],
+            error: None,
+            genesis_info: None,
+        },
     );
     // Big NFT1 Group SEND with 64-bit overflow and partially burning tokens
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![
-                    Token::amount(0xffff_ffff_ffff_0000),
-                    Token::amount(0xffff_ffff_ffff_0002),
-                    Token::amount(1),
-                ],
-                token_type: TokenType::Nft1Group,
+                meta: TokenMeta::nft1_group(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![
+                    Some(Token::Amount(0xffff_ffff_ffff_0000)),
+                    Some(Token::Amount(0xffff_ffff_ffff_0002)),
+                    Some(Token::Amount(1)),
+                ],
             },
             &[
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(0xffff_ffff_ffff_0000),
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    token: Token::Amount(0xffff_ffff_ffff_0000),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(0xefff_ffff_ffff_0000),
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    token: Token::Amount(0xefff_ffff_ffff_0000),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(0x2fff_ffff_ffff_0000),
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    token: Token::Amount(0x2fff_ffff_ffff_0000),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(10),
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    token: Token::Amount(10),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::amount(10),
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID5),
+                    token: Token::Amount(10),
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
             ],
         ),
-        Ok(TxData {
-            input_tokens: vec![
-                Token::amount(0xffff_ffff_ffff_0000),
-                Token::amount(0xefff_ffff_ffff_0000),
-                Token::amount(0x2fff_ffff_ffff_0000),
-                Token::amount(10),
-                Token::EMPTY,
-            ],
-            output_tokens: vec![
-                Token::amount(0xffff_ffff_ffff_0000),
-                Token::amount(0xffff_ffff_ffff_0002),
-                Token::amount(1),
-            ],
-            slp_burns: vec![
-                None,
-                None,
-                Some(Box::new(Burn {
-                    token: Token::amount(0x1fff_ffff_fffe_fffd),
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                })),
-                Some(Box::new(Burn {
-                    token: Token::amount(10),
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                })),
-                Some(Box::new(Burn {
-                    token: Token::amount(10),
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                })),
-            ],
-            token_type: TokenType::Nft1Group,
+        TxData {
+            meta: TokenMeta::nft1_group(TOKEN_ID4),
             tx_type: TxTypeVariant::Send,
-            token_id: TokenId::from_be_bytes([4; 32]),
+            output_tokens: vec![
+                Some(Token::Amount(0xffff_ffff_ffff_0000)),
+                Some(Token::Amount(0xffff_ffff_ffff_0002)),
+                Some(Token::Amount(1)),
+            ],
             group_token_id: None,
-        }),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID5),
+                    amount: 10,
+                    burn_mint_batons: false,
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    amount: 0x1fff_ffff_fffe_fffd + 10,
+                    burn_mint_batons: false,
+                },
+            ],
+            error: None,
+            genesis_info: None,
+        },
     );
     // Big NFT1 Child SEND with two 0 value NFT1 Child inputs
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![
-                    Token::EMPTY,
-                    Token::amount(1),
-                    Token::EMPTY
-                ],
-                token_type: TokenType::Nft1Child,
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
                 tx_type: TxType::Send,
-                token_id: TokenId::from_be_bytes([4; 32]),
+                output_tokens: vec![None, Some(Token::Amount(1)), None,],
             },
             &[
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::EMPTY,
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    token: Token::Amount(0),
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Group,
-                    token: Token::amount(0xefff_ffff_ffff_0000),
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    token: Token::Amount(0xefff_ffff_ffff_0000),
                     group_token_id: None,
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::amount(1),
-                    group_token_id: Some(Box::new(TokenId::from_be_bytes(
-                        [10; 32]
-                    ))),
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    token: Token::Amount(1),
+                    group_token_id: Some(TokenId::from_be_bytes([10; 32])),
                 }),
                 Some(SlpSpentOutput {
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                    token_type: TokenType::Nft1Child,
-                    token: Token::EMPTY,
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    token: Token::Amount(0),
                     group_token_id: None,
                 }),
             ],
         ),
-        Ok(TxData {
-            input_tokens: vec![
-                Token::EMPTY,
-                Token::EMPTY,
-                Token::amount(1),
-                Token::EMPTY,
-            ],
-            output_tokens: vec![Token::EMPTY, Token::amount(1), Token::EMPTY],
-            slp_burns: vec![
-                None,
-                Some(Box::new(Burn {
-                    token: Token::amount(0xefff_ffff_ffff_0000),
-                    token_id: TokenId::from_be_bytes([4; 32]),
-                })),
-                None,
-                None,
-            ],
-            token_type: TokenType::Nft1Child,
+        TxData {
+            meta: TokenMeta::nft1_child(TOKEN_ID4),
             tx_type: TxTypeVariant::Send,
-            token_id: TokenId::from_be_bytes([4; 32]),
-            group_token_id: Some(Box::new(TokenId::from_be_bytes([10; 32]))),
-        }),
+            output_tokens: vec![None, Some(Token::Amount(1)), None],
+            group_token_id: Some(TokenId::from_be_bytes([10; 32])),
+            burns: vec![TokenBurn {
+                meta: TokenMeta::nft1_group(TOKEN_ID4),
+                amount: 0xefff_ffff_ffff_0000,
+                burn_mint_batons: false,
+            }],
+            error: None,
+            genesis_info: None,
+        },
     );
     Ok(())
 }
@@ -1166,58 +1252,88 @@ fn test_verify_burn_failure() -> Result<(), VerifyError> {
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Burn(10),
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([2; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::amount(10),
+                meta: TokenMeta::fungible(TOKEN_ID2),
+                token: Token::Amount(10),
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::WrongBurnTokenId),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
+            tx_type: TxTypeVariant::Burn,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID2),
+                amount: 10,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::WrongBurnTokenId),
+            genesis_info: None,
+        },
     );
     // Invalid BURN: can't use to burn MINT baton
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Burn(10),
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([1; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::MINT_BATON,
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                token: Token::MintBaton,
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::WrongBurnMintBaton),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
+            tx_type: TxTypeVariant::Burn,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                amount: 0,
+                burn_mint_batons: true,
+            }],
+            error: Some(VerifyError::WrongBurnMintBaton),
+            genesis_info: None,
+        },
     );
-    // Invalid BURN: selling less tokens than claimed
+    // Invalid BURN: burning less tokens than claimed
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Burn(10),
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([1; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::amount(9),
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                token: Token::Amount(9),
                 group_token_id: None,
             })],
         ),
-        Err(VerifyError::WrongBurnInvalidAmount {
-            expected: 10,
-            actual: 9,
-        }),
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
+            tx_type: TxTypeVariant::Burn,
+            output_tokens: vec![],
+            group_token_id: None,
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                amount: 9,
+                burn_mint_batons: false,
+            }],
+            error: Some(VerifyError::WrongBurnInvalidAmount {
+                expected: 10,
+                actual: 9,
+            }),
+            genesis_info: None,
+        },
     );
     Ok(())
 }
@@ -1228,27 +1344,25 @@ fn test_verify_burn_success() -> Result<(), VerifyError> {
     assert_eq!(
         verify(
             &ParseData {
-                output_tokens: vec![],
-                token_type: TokenType::Fungible,
+                meta: TokenMeta::fungible(TOKEN_ID1),
                 tx_type: TxType::Burn(10),
-                token_id: TokenId::from_be_bytes([1; 32]),
+                output_tokens: vec![],
             },
             &[Some(SlpSpentOutput {
-                token_id: TokenId::from_be_bytes([1; 32]),
-                token_type: TokenType::Fungible,
-                token: Token::amount(10),
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                token: Token::Amount(10),
                 group_token_id: None,
             })],
         ),
-        Ok(TxData {
-            input_tokens: vec![Token::amount(10)],
-            output_tokens: vec![],
-            slp_burns: vec![None],
-            token_type: TokenType::Fungible,
+        TxData {
+            meta: TokenMeta::fungible(TOKEN_ID1),
             tx_type: TxTypeVariant::Burn,
-            token_id: TokenId::from_be_bytes([1; 32]),
+            output_tokens: vec![],
             group_token_id: None,
-        }),
+            burns: vec![],
+            error: None,
+            genesis_info: None,
+        },
     );
     Ok(())
 }

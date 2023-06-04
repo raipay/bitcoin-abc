@@ -1,8 +1,15 @@
+use bitcoinsuite_core::script::{
+    opcode::{OP_RESERVED, OP_RETURN},
+    Op, Script, ScriptMut,
+};
+use bytes::{BufMut, Bytes, BytesMut};
 
-use bitcoinsuite_core::script::{Script, ScriptMut, opcode::{OP_RETURN, OP_RESERVED}, Op};
-use bytes::{Bytes, BytesMut, BufMut};
-
-use crate::{slpv2::{TokenType, GenesisInfo, MintData, consts::SLPV2_LOKAD_ID, TokenId, Amount}, common::{GENESIS, MINT, BURN, SEND}
+use crate::{
+    common::{BURN, GENESIS, MINT, SEND},
+    slpv2::{
+        consts::SLPV2_LOKAD_ID, Amount, GenesisInfo, MintData, TokenId,
+        TokenType,
+    },
 };
 
 pub fn genesis_section(
@@ -36,7 +43,11 @@ pub fn genesis_section(
     section.freeze()
 }
 
-pub fn mint_section(token_id: &TokenId, token_type: TokenType, mint_data: &MintData) -> Bytes {
+pub fn mint_section(
+    token_id: &TokenId,
+    token_type: TokenType,
+    mint_data: &MintData,
+) -> Bytes {
     let mut section = BytesMut::new();
     section.put_slice(&SLPV2_LOKAD_ID);
     section.put_slice(&[token_type.to_u8()]);
@@ -44,11 +55,15 @@ pub fn mint_section(token_id: &TokenId, token_type: TokenType, mint_data: &MintD
     section.put_slice(MINT);
     section.put_slice(token_id.as_bytes());
     put_mint_data(&mut section, mint_data);
-    
+
     section.freeze()
 }
 
-pub fn burn_section(token_id: &TokenId, token_type: TokenType, amount: Amount) -> Bytes {
+pub fn burn_section(
+    token_id: &TokenId,
+    token_type: TokenType,
+    amount: Amount,
+) -> Bytes {
     let mut section = BytesMut::new();
     section.put_slice(&SLPV2_LOKAD_ID);
     section.put_slice(&[token_type.to_u8()]);

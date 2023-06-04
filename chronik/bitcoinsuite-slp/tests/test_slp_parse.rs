@@ -3,12 +3,11 @@ use bitcoinsuite_core::{
     script::{opcode::*, Script},
     tx::{Tx, TxId},
 };
-use pretty_assertions::assert_eq;
-
 use bitcoinsuite_slp::slp::{
     consts::OUTPUT_QUANTITY_FIELD_NAMES, parse, parse_tx, Amount, GenesisInfo,
-    ParseData, ParseError, Token, TokenId, TokenType, TxType,
+    ParseData, ParseError, Token, TokenId, TokenMeta, TokenType, TxType,
 };
+use pretty_assertions::assert_eq;
 
 #[test]
 fn test_parse_slp() -> Result<(), ParseError> {
@@ -144,7 +143,7 @@ fn test_parse_slp() -> Result<(), ParseError> {
             &TxId::default(),
             &Script::new(
                 vec![
-                    0x6a, 0x04, b'S', b'L', b'P', 0x00, 0x02, 0x99, 0x99, 0x01,
+                    0x6a, 0x04, b'S', b'L', b'P', 0x00, 0x02, 0x98, 0x76, 0x01,
                     0x00
                 ]
                 .into()
@@ -152,10 +151,12 @@ fn test_parse_slp() -> Result<(), ParseError> {
             1,
         ),
         Ok(ParseData {
-            output_tokens: vec![Token::EMPTY],
-            token_type: TokenType::Unknown,
+            output_tokens: vec![Some(Token::Unknown(0x9876))],
+            meta: TokenMeta {
+                token_id: TokenId::from_be_bytes([0; 32]),
+                token_type: TokenType::Unknown(0x9876),
+            },
             tx_type: TxType::Unknown,
-            token_id: TokenId::from_be_bytes([0; 32]),
         }),
     );
     // Invalid tx type
@@ -392,23 +393,25 @@ fn test_parse_slp() -> Result<(), ParseError> {
             3
         ),
         Ok(ParseData {
-            output_tokens: vec![
-                Token::EMPTY,
-                Token::amount(123),
-                Token::MINT_BATON
-            ],
-            token_type: TokenType::Fungible,
-            tx_type: TxType::Genesis(Box::new(GenesisInfo {
+            meta: TokenMeta {
+                token_id: TokenId::from_be_bytes([
+                    100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+                ]),
+                token_type: TokenType::Fungible,
+            },
+            tx_type: TxType::Genesis(GenesisInfo {
                 token_ticker: vec![0x44].into(),
                 token_name: vec![0x55].into(),
                 token_document_url: vec![0x66].into(),
                 token_document_hash: None,
                 decimals: 9
-            })),
-            token_id: TokenId::from_be_bytes([
-                100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-            ]),
+            }),
+            output_tokens: vec![
+                None,
+                Some(Token::Amount(123)),
+                Some(Token::MintBaton),
+            ],
         }),
     );
     for (type_byte, token_type) in [
@@ -450,16 +453,14 @@ fn test_parse_slp() -> Result<(), ParseError> {
                 3
             ),
             Ok(ParseData {
-                output_tokens: vec![
-                    Token::EMPTY,
-                    Token::amount(qty as Amount),
-                    match token_type {
-                        TokenType::Nft1Child => Token::EMPTY,
-                        _ => Token::MINT_BATON,
-                    },
-                ],
-                token_type,
-                tx_type: TxType::Genesis(Box::new(GenesisInfo {
+                meta: TokenMeta {
+                    token_id: TokenId::from_be_bytes([
+                        100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+                    ]),
+                    token_type,
+                },
+                tx_type: TxType::Genesis(GenesisInfo {
                     token_ticker: vec![0x44].into(),
                     token_name: vec![0x55].into(),
                     token_document_url: vec![0x66].into(),
@@ -468,11 +469,15 @@ fn test_parse_slp() -> Result<(), ParseError> {
                         TokenType::Nft1Child => 0,
                         _ => 9,
                     },
-                })),
-                token_id: TokenId::from_be_bytes([
-                    100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-                ]),
+                }),
+                output_tokens: vec![
+                    None,
+                    Some(Token::Amount(qty as Amount)),
+                    match token_type {
+                        TokenType::Nft1Child => None,
+                        _ => Some(Token::MintBaton),
+                    },
+                ],
             }),
         );
     }
@@ -608,17 +613,19 @@ fn test_parse_slp() -> Result<(), ParseError> {
                 3
             ),
             Ok(ParseData {
-                output_tokens: vec![
-                    Token::EMPTY,
-                    Token::amount(231),
-                    Token::MINT_BATON,
-                ],
-                token_type,
+                meta: TokenMeta {
+                    token_id: TokenId::from_be_bytes([
+                        44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+                    ]),
+                    token_type,
+                },
                 tx_type: TxType::Mint,
-                token_id: TokenId::from_be_bytes([
-                    44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-                ]),
+                output_tokens: vec![
+                    None,
+                    Some(Token::Amount(231)),
+                    Some(Token::MintBaton),
+                ],
             }),
         );
     }
@@ -727,12 +734,12 @@ fn test_parse_slp() -> Result<(), ParseError> {
         .concat();
         for num_amounts in 1..=19 {
             let mut script = script_intro.clone();
-            let mut amounts = vec![Token::EMPTY];
+            let mut amounts = vec![None];
             for idx in 1..=num_amounts {
                 script.extend([
                     0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, idx as u8,
                 ]);
-                amounts.push(Token::amount(idx));
+                amounts.push(Some(Token::Amount(idx)));
             }
             // output_tokens is independent of tx.outputs
             for num_tx_outputs in 1..=20 {
@@ -743,10 +750,12 @@ fn test_parse_slp() -> Result<(), ParseError> {
                         num_tx_outputs,
                     ),
                     Ok(ParseData {
-                        output_tokens: amounts.clone(),
-                        token_type,
+                        meta: TokenMeta {
+                            token_id: TokenId::from_be_bytes([0x22; 32]),
+                            token_type,
+                        },
                         tx_type: TxType::Send,
-                        token_id: TokenId::from_be_bytes([0x22; 32]),
+                        output_tokens: amounts.clone(),
                     }),
                 );
             }
@@ -842,10 +851,12 @@ fn test_parse_slp() -> Result<(), ParseError> {
                 3,
             ),
             Ok(ParseData {
-                output_tokens: vec![Token::EMPTY; 3],
-                token_type,
+                meta: TokenMeta {
+                    token_id: TokenId::from_be_bytes([0x44; 32]),
+                    token_type,
+                },
                 tx_type: TxType::Burn(231),
-                token_id: TokenId::from_be_bytes([0x44; 32]),
+                output_tokens: vec![None; 3],
             }),
         );
     }

@@ -4,6 +4,7 @@
 
 //! Module for errors in this crate.
 
+use hex::FromHexError;
 use thiserror::Error;
 
 /// Errors indicating some data doesn't map to some object.
@@ -33,5 +34,7 @@ pub enum DataError {
 
     /// Hex contains invalid characters, odd length, etc.
     #[error("Invalid hex: {0}")]
-    InvalidHex(hex::FromHexError),
+    InvalidHex(FromHexError),
 }
+
+impl Eq for DataError {}

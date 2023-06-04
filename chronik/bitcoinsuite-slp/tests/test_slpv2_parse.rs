@@ -20,7 +20,14 @@ fn invalid_len(expected: usize, actual: usize) -> Result<Section, ParseError> {
 
 #[test]
 fn test_parse_slpv2_intro() {
-    assert_eq!(parse(vec![]), invalid_len(4, 0));
+    assert_eq!(
+        parse(vec![]),
+        Err(ParseError::MissingLokadId(vec![].into())),
+    );
+    assert_eq!(
+        parse(vec![1, 2, 3]),
+        Err(ParseError::MissingLokadId(vec![1, 2, 3].into())),
+    );
     assert_eq!(
         parse(vec![1, 2, 3, 4]),
         Err(ParseError::InvalidLokadId([1, 2, 3, 4])),
@@ -140,7 +147,8 @@ fn test_parse_slpv2_genesis() {
         ),
         Err(ParseError::LeftoverBytes(b"hello".to_vec().into())),
     );
-    // any size > 127 for token_ticker, token_name, url, data, auth_pubkey, num amounts and num batons is invalid
+    // any size > 127 for token_ticker, token_name, url, data, auth_pubkey, num
+    // amounts and num batons is invalid
     for i in [0, 1, 2, 3, 4, 6, 7] {
         let mut tail = [0, 0, 0, 0, 0, 0, 0, 0];
         for invalid in 128..=255 {
@@ -165,7 +173,8 @@ fn test_parse_slpv2_genesis() {
         token_id: TokenId::from(TXID),
         token_type: TokenType::Standard,
     };
-    // exhaustively test all allowed sizes for token_ticker, token_name, url, data, auth_pubkey
+    // exhaustively test all allowed sizes for token_ticker, token_name, url,
+    // data, auth_pubkey
     for i in 0..5 {
         for size in 0..=127 {
             let mut pushdata = Vec::new();
@@ -189,7 +198,7 @@ fn test_parse_slpv2_genesis() {
             assert_eq!(
                 parse(pushdata),
                 Ok(Section {
-                    meta: meta.clone(),
+                    meta,
                     variant: SectionVariant::Genesis(Genesis {
                         data: info,
                         mint_data: MintData::default(),
@@ -212,7 +221,7 @@ fn test_parse_slpv2_genesis() {
         assert_eq!(
             parse(pushdata),
             Ok(Section {
-                meta: meta.clone(),
+                meta,
                 variant: SectionVariant::Genesis(Genesis {
                     data: GenesisInfo::default(),
                     mint_data: MintData {
@@ -230,7 +239,7 @@ fn test_parse_slpv2_genesis() {
         assert_eq!(
             parse(pushdata),
             Ok(Section {
-                meta: meta.clone(),
+                meta,
                 variant: SectionVariant::Genesis(Genesis {
                     data: GenesisInfo::default(),
                     mint_data: MintData {
@@ -313,7 +322,7 @@ fn test_parse_slpv2_mint() {
     assert_eq!(
         parse([SLP2, &[0], b"\x04MINT", &[0x76; 32], &[0, 0]].concat()),
         Ok(Section {
-            meta: meta.clone(),
+            meta,
             variant: SectionVariant::Mint(MintData::default()),
         }),
     );
@@ -337,7 +346,7 @@ fn test_parse_slpv2_mint() {
         assert_eq!(
             parse(pushdata),
             Ok(Section {
-                meta: meta.clone(),
+                meta,
                 variant: SectionVariant::Mint(MintData {
                     amounts,
                     num_batons: 0,
@@ -352,7 +361,7 @@ fn test_parse_slpv2_mint() {
         assert_eq!(
             parse(pushdata),
             Ok(Section {
-                meta: meta.clone(),
+                meta,
                 variant: SectionVariant::Mint(MintData {
                     amounts: vec![],
                     num_batons: size as usize,
@@ -415,7 +424,7 @@ fn test_parse_slpv2_send() {
     assert_eq!(
         parse([SLP2, &[0], b"\x04SEND", &[0x76; 32], &[0]].concat()),
         Ok(Section {
-            meta: meta.clone(),
+            meta,
             variant: SectionVariant::Send(Send(vec![])),
         }),
     );
@@ -436,7 +445,7 @@ fn test_parse_slpv2_send() {
         assert_eq!(
             parse(pushdata),
             Ok(Section {
-                meta: meta.clone(),
+                meta,
                 variant: SectionVariant::Send(Send(amounts)),
             }),
         );
@@ -460,7 +469,10 @@ fn test_parse_slpv2_burn() {
         );
     }
     assert_eq!(
-        parse([SLP2, &[0], b"\x04BURN", &[0x76; 32], &[1, 2, 3, 4, 5, 6]].concat()),
+        parse(
+            [SLP2, &[0], b"\x04BURN", &[0x76; 32], &[1, 2, 3, 4, 5, 6]]
+                .concat()
+        ),
         Ok(Section {
             meta: TokenMeta {
                 token_id: TokenId::from([0x76; 32]),
@@ -471,7 +483,9 @@ fn test_parse_slpv2_burn() {
     );
     // leftover bytes
     assert_eq!(
-        parse([SLP2, &[0], b"\x04BURN", &[0x76; 32], &[0; 6], b"hello"].concat()),
+        parse(
+            [SLP2, &[0], b"\x04BURN", &[0x76; 32], &[0; 6], b"hello"].concat()
+        ),
         Err(ParseError::LeftoverBytes(b"hello".to_vec().into())),
     );
 }

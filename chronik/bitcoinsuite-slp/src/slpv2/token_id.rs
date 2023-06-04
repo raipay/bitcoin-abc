@@ -1,6 +1,18 @@
 use bitcoinsuite_core::{error::DataError, hash::Sha256d, tx::TxId};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone,
+    Copy,
+    Default,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+)]
 pub struct TokenId(TxId);
 
 impl std::fmt::Debug for TokenId {

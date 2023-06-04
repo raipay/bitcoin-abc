@@ -17,7 +17,10 @@ use chronik_db::{
 use chronik_proto::proto;
 use thiserror::Error;
 
-use crate::{avalanche::Avalanche, query::make_outpoint_proto};
+use crate::{
+    avalanche::Avalanche,
+    query::{db_output, make_outpoint_proto, make_slp_token_proto},
+};
 
 static EMPTY_MEMBER_UTXOS: BTreeSet<OutPoint> = BTreeSet::new();
 
@@ -114,10 +117,13 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
                 is_coinbase: db_tx.entry.is_coinbase,
                 value: db_utxo.value,
                 is_final: self.avalanche.is_final_height(db_tx.block_height),
+                slp: db_output(self.db, tx_num, out_idx)?
+                    .as_ref()
+                    .map(make_slp_token_proto),
             });
         }
 
-        // Add DB UTXOs
+        // Add mempool UTXOs
         for &mempool_outpoint in mempool_utxos {
             let mempool_tx = self
                 .mempool
@@ -128,12 +134,14 @@ impl<'a, G: Group> QueryGroupUtxos<'a, G> {
                 .outputs
                 .get(mempool_outpoint.out_idx as usize)
                 .ok_or(MempoolTxOutputsOutOfBounds(mempool_outpoint))?;
+            let slp = self.mempool.slp().token_output(&mempool_outpoint);
             utxos.push(proto::ScriptUtxo {
                 outpoint: Some(make_outpoint_proto(&mempool_outpoint)),
                 block_height: -1,
                 is_coinbase: false,
                 value: output.value,
                 is_final: false,
+                slp: slp.as_ref().map(make_slp_token_proto),
             });
         }
 

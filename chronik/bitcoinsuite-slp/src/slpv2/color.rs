@@ -1,15 +1,14 @@
-use std::borrow::Cow;
-
 use bitcoinsuite_core::tx::{Tx, TxId};
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     empp,
     slpv2::{
-        parse_section, Amount, Genesis, GenesisInfo, MintData, ParseError,
-        SectionData, SectionType, SectionVariant, Send, Token, TokenData,
-        TokenId, TokenMeta, TokenVariant,
+        parse_section, Amount, Genesis, MintData, ParseError, SectionData,
+        SectionType, SectionVariant, Send, Token, TokenData, TokenId,
+        TokenMeta, TokenVariant,
     },
 };
 
@@ -27,7 +26,7 @@ pub struct IntentionalBurn {
     pub amount: Amount,
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ColorError {
     #[error("No outputs")]
     NoOutputs,
@@ -42,7 +41,7 @@ pub enum ColorError {
     },
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ColorSectionError {
     #[error("SLPv2 parse failed: {0}")]
     Slpv2ParseError(#[from] ParseError),
@@ -53,7 +52,10 @@ pub enum ColorSectionError {
     #[error("GENESIS must be the first pushdata")]
     GenesisMustBeFirst,
 
-    #[error("Descending token type: {before} > {after}, token types must be in ascending order")]
+    #[error(
+        "Descending token type: {before} > {after}, token types must be in \
+         ascending order"
+    )]
     DescendingTokenType { before: u8, after: u8 },
 
     #[error(
@@ -64,7 +66,10 @@ pub enum ColorSectionError {
         token_id: TokenId,
     },
 
-    #[error("Duplicate intentional burn token_id {token_id}, found in burn #{prev_burn_idx} and #{burn_idx}")]
+    #[error(
+        "Duplicate intentional burn token_id {token_id}, found in burn \
+         #{prev_burn_idx} and #{burn_idx}"
+    )]
     DuplicateIntentionalBurnTokenId {
         prev_burn_idx: usize,
         burn_idx: usize,
@@ -73,16 +78,13 @@ pub enum ColorSectionError {
 
     #[error("Overlapping amount")]
     OverlappingAmount {
-        prev_token: Token<'static>,
+        prev_token: Token,
         amount_idx: usize,
         amount: Amount,
     },
 
     #[error("Overlapping mint baton")]
-    OverlappingMintBaton {
-        prev_token: Token<'static>,
-        baton_idx: usize,
-    },
+    OverlappingMintBaton { prev_token: Token, baton_idx: usize },
 }
 
 use self::ColorError::*;
@@ -222,7 +224,7 @@ impl ColoredTx {
             if let Some(token) = token {
                 if amount != Amount::ZERO {
                     return Err(OverlappingAmount {
-                        prev_token: self.token(token).to_static(),
+                        prev_token: self.token(token),
                         amount_idx,
                         amount,
                     });
@@ -234,7 +236,7 @@ impl ColoredTx {
         {
             if let Some(output) = output {
                 return Err(OverlappingMintBaton {
-                    prev_token: self.token(output).to_static(),
+                    prev_token: self.token(output),
                     baton_idx,
                 });
             }
@@ -275,7 +277,7 @@ impl ColoredTx {
             if amount > Amount::ZERO {
                 if let Some(token) = &self.outputs[idx + 1] {
                     return Err(OverlappingAmount {
-                        prev_token: self.token(token).to_static(),
+                        prev_token: self.token(token),
                         amount_idx: idx,
                         amount,
                     });
@@ -328,7 +330,7 @@ impl ColoredTx {
             if token_data.is_none() {
                 *token_data = Some(TokenData {
                     section_idx: self.sections.len(),
-                    variant: TokenVariant::Unknown,
+                    variant: TokenVariant::Unknown(meta.token_type.to_u8()),
                 });
             }
         }
@@ -340,12 +342,37 @@ impl ColoredTx {
         Ok(())
     }
 
-    pub fn token(&self, token_output: &TokenData) -> Token<'_> {
+    pub fn token(&self, token_output: &TokenData) -> Token {
         let section = &self.sections[token_output.section_idx];
         Token {
-            token_id: Cow::Borrowed(&section.meta.token_id),
-            token_type: section.meta.token_type,
+            meta: section.meta,
             variant: token_output.variant,
+        }
+    }
+
+    pub fn should_ignore(&self) -> bool {
+        if !self.sections.is_empty() || !self.intentional_burns.is_empty() {
+            return false;
+        }
+        self.errors.iter().all(|err| err.should_ignore())
+    }
+}
+
+impl ColorError {
+    pub fn should_ignore(&self) -> bool {
+        match self {
+            NoOutputs => true,
+            EmppError(err) => err.should_ignore(),
+            SectionError { error, .. } => error.should_ignore(),
+        }
+    }
+}
+
+impl ColorSectionError {
+    pub fn should_ignore(&self) -> bool {
+        match self {
+            Slpv2ParseError(err) => err.should_ignore(),
+            _ => false,
         }
     }
 }

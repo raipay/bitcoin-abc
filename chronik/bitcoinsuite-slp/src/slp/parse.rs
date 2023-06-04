@@ -13,21 +13,19 @@ use crate::{
             OUTPUT_QUANTITY_FIELD_NAMES, SLP_LOKAD_ID, TOKEN_TYPE_V1,
             TOKEN_TYPE_V1_NFT1_CHILD, TOKEN_TYPE_V1_NFT1_GROUP,
         },
-        Amount, GenesisInfo, Token, TokenId, TokenType, TxType,
+        Amount, GenesisInfo, Token, TokenId, TokenMeta, TokenType, TxType,
     },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseData {
-    pub output_tokens: Vec<Token>,
-    pub token_type: TokenType,
+    pub meta: TokenMeta,
     pub tx_type: TxType,
-    /// 0000...000000 if token_id is incomplete
-    pub token_id: TokenId,
+    pub output_tokens: Vec<Option<Token>>,
 }
 
 /// Errors forwhen parsing a SLPv2 tx.
-#[derive(Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 pub enum ParseError {
     #[error("Failed parsing pushdata: {0}")]
     DataError(#[from] DataError),
@@ -43,8 +41,8 @@ pub enum ParseError {
     #[error("Disallowed push: {opcode} at op {op_idx}")]
     DisallowedPush { opcode: Opcode, op_idx: usize },
     #[error(
-        "Field has invalid length: expected one of {expected:?} but got {actual} for field \
-        {field_name}"
+        "Field has invalid length: expected one of {expected:?} but got \
+         {actual} for field {field_name}"
     )]
     InvalidFieldSize {
         field_name: &'static str,
@@ -53,11 +51,17 @@ pub enum ParseError {
     },
     #[error("Too many decimals, only max. 9 allowed, but got {actual}")]
     InvalidDecimals { actual: usize },
-    #[error("Mint baton at invalid output index, must be between 2 and 255, but got {actual}")]
+    #[error(
+        "Mint baton at invalid output index, must be between 2 and 255, but \
+         got {actual}"
+    )]
     InvalidMintBatonIdx { actual: usize },
     #[error("NFT1 Child Genesis cannot have mint baton")]
     Nft1ChildCannotHaveMintBaton,
-    #[error("Invalid NFT1 Child Genesis initial quantity, expected 1 but got {actual}")]
+    #[error(
+        "Invalid NFT1 Child Genesis initial quantity, expected 1 but got \
+         {actual}"
+    )]
     Nft1ChildInvalidInitialQuantity { actual: Amount },
     #[error(
         "Invalid NFT1 Child Genesis decimals, expected 0 but got {actual}"
@@ -71,7 +75,10 @@ pub enum ParseError {
         "Too few pushes, expected exactly {expected} but only got {actual}"
     )]
     TooFewPushesExact { expected: usize, actual: usize },
-    #[error("Pushed superfluous data: expected at most {expected} pushes, but got {actual}")]
+    #[error(
+        "Pushed superfluous data: expected at most {expected} pushes, but got \
+         {actual}"
+    )]
     SuperfluousPushes { expected: usize, actual: usize },
     #[error("Invalid LOKAD ID: {:?}", .0)]
     InvalidLokadId(Bytes),
@@ -79,7 +86,10 @@ pub enum ParseError {
     InvalidTokenType(Bytes),
     #[error("Invalid tx type: {:?}", .0)]
     InvalidTxType(Bytes),
-    #[error("Invalid SEND: Output amounts ({output_sum}) exceed input amounts ({input_sum})")]
+    #[error(
+        "Invalid SEND: Output amounts ({output_sum}) exceed input amounts \
+         ({input_sum})"
+    )]
     OutputSumExceedInputSum {
         output_sum: Amount,
         input_sum: Amount,
@@ -93,7 +103,8 @@ pub enum ParseError {
     #[error("Invalid BURN: Burning MINT baton")]
     WrongBurnMintBaton,
     #[error(
-        "Invalid BURN: Burning invalid amount, expected {expected} but got {actual} base tokens"
+        "Invalid BURN: Burning invalid amount, expected {expected} but got \
+         {actual} base tokens"
     )]
     WrongBurnInvalidAmount { expected: Amount, actual: Amount },
     #[error("Found orphan txs")]
@@ -140,18 +151,20 @@ pub fn parse(
         return Err(InvalidTokenType(opreturn_data[1].clone()));
     }
     // Short circuit for unknown/unsupported token types
-    let token_type = match parse_token_type(&opreturn_data[1]) {
-        Some(token_type) => token_type,
-        None => {
-            let token = Token::EMPTY;
-            return Ok(ParseData {
-                output_tokens: (0..num_outputs).map(|_| token).collect(),
-                token_type: TokenType::Unknown,
-                tx_type: TxType::Unknown,
+    let token_type = parse_token_type(&opreturn_data[1]);
+    if let TokenType::Unknown(type_num) = token_type {
+        let mut output_tokens = vec![None];
+        output_tokens
+            .extend(vec![Some(Token::Unknown(type_num)); num_outputs - 1]);
+        return Ok(ParseData {
+            output_tokens,
+            tx_type: TxType::Unknown,
+            meta: TokenMeta {
                 token_id: TokenId::from_be_bytes([0; 32]),
-            });
-        }
-    };
+                token_type,
+            },
+        });
+    }
 
     let parsed_opreturn = match opreturn_data[2].as_ref() {
         GENESIS => parse_genesis_data(opreturn_data, token_type)?,
@@ -168,8 +181,7 @@ pub fn parse(
         ) => expected_token_id,
         _ => unreachable!(),
     };
-    let mut output_tokens =
-        (0..num_outputs).map(|_| Token::EMPTY).collect::<Vec<_>>();
+    let mut output_tokens = vec![None; num_outputs];
     match parsed_opreturn.outputs {
         ParsedOutputs::MintTokens {
             mint_quantity,
@@ -178,28 +190,32 @@ pub fn parse(
             if let Some(baton_out_idx) = baton_out_idx {
                 if let Some(output_token) = output_tokens.get_mut(baton_out_idx)
                 {
-                    output_token.is_mint_baton = true;
+                    *output_token = Some(Token::MintBaton);
                 }
             }
             if let Some(output_token) = output_tokens.get_mut(1) {
-                output_token.amount = mint_quantity;
+                *output_token = Some(Token::Amount(mint_quantity));
             }
         }
         ParsedOutputs::Send(amounts) => {
-            output_tokens.resize(amounts.len() + 1, Token::EMPTY);
+            output_tokens.resize(amounts.len() + 1, None);
             for (output_token, amount) in
                 output_tokens.iter_mut().skip(1).zip(amounts)
             {
-                output_token.amount = amount;
+                if amount != 0 {
+                    *output_token = Some(Token::Amount(amount));
+                }
             }
         }
         ParsedOutputs::Burn => {}
     }
     Ok(ParseData {
-        output_tokens,
-        token_type,
+        meta: TokenMeta {
+            token_id,
+            token_type,
+        },
         tx_type: parsed_opreturn.tx_type,
-        token_id,
+        output_tokens,
     })
 }
 
@@ -248,9 +264,7 @@ fn parse_lokad_id(ops: &[Op]) -> Result<(), ParseError> {
     match ops.get(1) {
         Some(op) => match op {
             &Op::Code(opcode) => {
-                return Err(InvalidLokadId(
-                    vec![opcode.number()].into(),
-                ))
+                return Err(InvalidLokadId(vec![opcode.number()].into()))
             }
             Op::Push(_, bytes) => {
                 if bytes.as_ref() != SLP_LOKAD_ID {
@@ -263,15 +277,19 @@ fn parse_lokad_id(ops: &[Op]) -> Result<(), ParseError> {
     Ok(())
 }
 
-fn parse_token_type(bytes: &Bytes) -> Option<TokenType> {
+fn parse_token_type(bytes: &Bytes) -> TokenType {
     if bytes.as_ref() == TOKEN_TYPE_V1 {
-        Some(TokenType::Fungible)
+        TokenType::Fungible
     } else if bytes.as_ref() == TOKEN_TYPE_V1_NFT1_GROUP {
-        Some(TokenType::Nft1Group)
+        TokenType::Nft1Group
     } else if bytes.as_ref() == TOKEN_TYPE_V1_NFT1_CHILD {
-        Some(TokenType::Nft1Child)
+        TokenType::Nft1Child
     } else {
-        None
+        TokenType::Unknown(if bytes.len() == 1 {
+            bytes[0] as u16
+        } else {
+            u16::from_be_bytes(bytes.as_ref().try_into().unwrap())
+        })
     }
 }
 
@@ -367,13 +385,13 @@ fn parse_genesis_data(
         }
     }
     Ok(ParsedOpReturn {
-        tx_type: TxType::Genesis(Box::new(GenesisInfo {
+        tx_type: TxType::Genesis(GenesisInfo {
             token_ticker,
             token_name,
             token_document_url,
             token_document_hash: token_document_hash.as_ref().try_into().ok(),
             decimals,
-        })),
+        }),
         outputs: ParsedOutputs::MintTokens {
             baton_out_idx: mint_baton_out_idx
                 .first()

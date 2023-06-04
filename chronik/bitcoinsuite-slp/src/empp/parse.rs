@@ -13,7 +13,7 @@ use thiserror::Error;
 pub type EmppData = Vec<Bytes>;
 
 /// Errors when parsing a eMPP tx failed.
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ParseError {
     /// Script doesn't parse
     #[error("Failed parsing script: {0}")]
@@ -24,16 +24,16 @@ pub enum ParseError {
     EmptyScript,
 
     /// Script not empty, but didn't get OP_RETURN
-    #[error("Expected OP_RETURN, but got {0:?}")]
-    MissingOpReturn(Op),
+    #[error("Expected OP_RETURN, but got {0}")]
+    MissingOpReturn(Opcode),
 
     /// Got OP_RETURN, but then nothing followed
     #[error("Empty OP_RETURN")]
     EmptyOpReturn,
 
     /// Got OP_RETURN, but then didn't get OP_RESERVED
-    #[error("Missing OP_RESERVED, but got {0:?}")]
-    MissingOpReserved(Op),
+    #[error("Missing OP_RESERVED, but got {0}")]
+    MissingOpReserved(Opcode),
 
     /// Cannot use single-byte push opcodes in eMPP
     #[error(
@@ -61,11 +61,11 @@ pub fn parse(script: &Script) -> Result<EmppData, ParseError> {
     let mut ops = script.iter_ops();
     let op_return = ops.next().ok_or(EmptyScript)??;
     if !matches!(op_return, Op::Code(OP_RETURN)) {
-        return Err(MissingOpReturn(op_return));
+        return Err(MissingOpReturn(op_return.opcode()));
     }
     let op_reserved = ops.next().ok_or(EmptyOpReturn)??;
     if !matches!(op_reserved, Op::Code(OP_RESERVED)) {
-        return Err(MissingOpReserved(op_reserved));
+        return Err(MissingOpReserved(op_reserved.opcode()));
     }
     let mut empp_data = EmppData::new();
     for pushop in ops {
@@ -85,11 +85,23 @@ pub fn parse(script: &Script) -> Result<EmppData, ParseError> {
     Ok(empp_data)
 }
 
+impl ParseError {
+    pub fn should_ignore(&self) -> bool {
+        matches!(
+            self,
+            EmptyScript
+                | MissingOpReturn(_)
+                | EmptyOpReturn
+                | MissingOpReserved(_)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bitcoinsuite_core::{
         error::DataError,
-        script::{opcode::*, Op, Script},
+        script::{opcode::*, Script},
     };
     use bytes::Bytes;
 
@@ -103,7 +115,7 @@ mod tests {
         );
         assert_eq!(
             parse(&Script::new(vec![OP_CHECKSIG::N].into())).unwrap_err(),
-            ParseError::MissingOpReturn(Op::Code(OP_CHECKSIG)),
+            ParseError::MissingOpReturn(OP_CHECKSIG),
         );
         assert_eq!(
             parse(&Script::new(vec![OP_RETURN::N].into())).unwrap_err(),
@@ -112,7 +124,7 @@ mod tests {
         assert_eq!(
             parse(&Script::new(vec![OP_RETURN::N, OP_CHECKSIG::N].into()))
                 .unwrap_err(),
-            ParseError::MissingOpReserved(Op::Code(OP_CHECKSIG)),
+            ParseError::MissingOpReserved(OP_CHECKSIG),
         );
         assert_eq!(
             parse(&Script::new(vec![OP_RETURN::N, OP_RESERVED::N].into()))?,
