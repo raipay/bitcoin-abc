@@ -997,6 +997,445 @@ class ChronikSlp(BitcoinTestFramework):
             ],
         )
 
+        # Mine all txs and check again
+        self.generatetoaddress(node, 1, ADDRESS_ECREG_P2SH_OP_TRUE)[0]
+        genesis_proto = chronik.tx(genesis_txid).ok()
+        assert_equal(
+            list(genesis_proto.slpv2_sections),
+            [
+                pb.Slpv2Section(
+                    token_id=token_id,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.GENESIS,
+                )
+            ],
+        )
+        assert_equal(list(genesis_proto.slp_errors), [])
+        assert_equal(list(genesis_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in genesis_proto.outputs],
+            [
+                pb.SlpToken(),
+                slpv2_token(token_id=token_id, amount=10),
+                slpv2_token(token_id=token_id, amount=20),
+                slpv2_token(token_id=token_id, amount=30),
+                pb.SlpToken(),
+                slpv2_token(token_id=token_id, is_mint_baton=True),
+                slpv2_token(token_id=token_id, is_mint_baton=True),
+            ],
+        )
+
+        mint_proto = chronik.tx(mint_txid).ok()
+        assert_equal(
+            list(mint_proto.slpv2_sections),
+            [
+                pb.Slpv2Section(
+                    token_id=token_id,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.MINT,
+                )
+            ],
+        )
+        assert_equal(list(mint_proto.slp_errors), [])
+        assert_equal(list(mint_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in mint_proto.outputs],
+            [
+                pb.SlpToken(),
+                slpv2_token(token_id=token_id, amount=5),
+                pb.SlpToken(),
+                slpv2_token(token_id=token_id, is_mint_baton=True),
+            ],
+        )
+
+        send_proto = chronik.tx(send_txid).ok()
+        assert_equal(
+            list(send_proto.slpv2_sections),
+            [
+                pb.Slpv2Section(
+                    token_id=token_id,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.SEND,
+                )
+            ],
+        )
+        assert_equal(list(send_proto.slp_errors), [])
+        assert_equal(list(send_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in send_proto.outputs],
+            [
+                pb.SlpToken(),
+                slpv2_token(token_id=token_id, amount=3),
+                slpv2_token(token_id=token_id, amount=12),
+            ],
+        )
+
+        multi_proto = chronik.tx(multi_txid).ok()
+        assert_equal(
+            list(multi_proto.slpv2_sections),
+            [
+                pb.Slpv2Section(
+                    token_id=multi_token_id,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.GENESIS,
+                ),
+                pb.Slpv2Section(
+                    token_id=token_id2,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.MINT,
+                ),
+                pb.Slpv2Section(
+                    token_id=token_id,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.SEND,
+                ),
+            ],
+        )
+        assert_equal(list(multi_proto.slp_errors), [])
+        assert_equal(
+            list(multi_proto.slp_burns),
+            [
+                pb.SlpBurn(
+                    token_id=token_id,
+                    token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                    slpv2_intentional_burn=1,
+                    slpv2_actual_burn=1,
+                )
+            ],
+        )
+        assert_equal(
+            [output.slp for output in multi_proto.outputs],
+            [
+                pb.SlpToken(),
+                slpv2_token(token_id=multi_token_id, amount=0xFFFF_FFFF_FFFF),
+                slpv2_token(token_id=token_id2, amount=5, slpv2_section_idx=1),
+                slpv2_token(token_id=multi_token_id, is_mint_baton=True),
+                pb.SlpToken(),
+                slpv2_token(token_id=token_id, amount=2, slpv2_section_idx=2),
+                pb.SlpToken(),
+            ],
+        )
+
+        all_proto = chronik.tx(all_tx.hash).ok()
+        assert_equal(
+            list(all_proto.slpv2_sections),
+            [
+                pb.Slpv2Section(
+                    token_id=all_token_id,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.GENESIS,
+                ),
+                pb.Slpv2Section(
+                    token_id=token_id2,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.MINT,
+                ),
+                pb.Slpv2Section(
+                    token_id=token_id,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.MINT,
+                ),
+                pb.Slpv2Section(
+                    token_id=multi_token_id,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.SEND,
+                ),
+                pb.Slpv2Section(
+                    token_id=bytes(32),
+                    token_type=0x89,
+                    section_type=pb.UNKNOWN,
+                ),
+                pb.Slpv2Section(
+                    token_id=bytes(32),
+                    token_type=0x9A,
+                    section_type=pb.UNKNOWN,
+                ),
+            ],
+        )
+        assert_equal(
+            list(all_proto.slp_errors),
+            [
+                "Error at pushdata index 1: GENESIS must be the first pushdata",
+                "Error at pushdata index 2: Too few outputs, expected 107 but got 11",
+                "Error at pushdata index 3: Overlapping amount",
+                "Error at pushdata index 4: Overlapping mint baton",
+                (
+                    f"Error at pushdata index 8: Duplicate token_id {genesis_txid},"
+                    " found in section 2"
+                ),
+                (
+                    "Error at pushdata index 9: Duplicate intentional burn token_id"
+                    f" {genesis_txid}, found in burn #0 and #1"
+                ),
+                "Error at pushdata index 10: Too few outputs, expected 13 but got 11",
+                (
+                    f"Error at pushdata index 12: Duplicate token_id {multi_txid},"
+                    " found in section 3"
+                ),
+                (
+                    f"Error at pushdata index 14: Descending token type: {0x89} > 0,"
+                    " token types must be in ascending order"
+                ),
+            ],
+        )
+        assert_equal(
+            list(all_proto.slp_burns),
+            [
+                pb.SlpBurn(
+                    token_id=token_id,
+                    token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                    slpv2_intentional_burn=2,
+                    slpv2_actual_burn=0,
+                )
+            ],
+        )
+        assert_equal(
+            [output.slp for output in all_proto.outputs],
+            [
+                pb.SlpToken(),
+                # success MINT: token ID 3
+                slpv2_token(token_id=token_id2, amount=3, slpv2_section_idx=1),
+                # success GENESIS
+                slpv2_token(token_id=all_token_id, amount=7),
+                # success MINT: token ID 3
+                slpv2_token(
+                    token_id=token_id2, is_mint_baton=True, slpv2_section_idx=1
+                ),
+                # success MINT: token ID 2
+                slpv2_token(token_id=token_id, amount=2, slpv2_section_idx=2),
+                # success GENESIS
+                slpv2_token(token_id=all_token_id, amount=1),
+                # success GENESIS
+                slpv2_token(token_id=all_token_id, is_mint_baton=True),
+                # success GENESIS
+                slpv2_token(token_id=all_token_id, is_mint_baton=True),
+                # success MINT: token ID 2
+                slpv2_token(token_id=token_id, is_mint_baton=True, slpv2_section_idx=2),
+                # success UNKNOWN
+                slpv2_token(
+                    token_id=bytes(32), slpv2_token_type=0x89, slpv2_section_idx=4
+                ),
+                # success SEND: token ID 4
+                slpv2_token(
+                    token_id=multi_token_id,
+                    amount=0xFFFF_FFFF_FFFF,
+                    slpv2_section_idx=3,
+                ),
+            ],
+        )
+
+        non_slp_proto = chronik.tx(non_slp_txid).ok()
+        assert_equal(list(non_slp_proto.slpv2_sections), [])
+        assert_equal(
+            list(non_slp_proto.slp_burns),
+            [
+                pb.SlpBurn(
+                    token_id=all_token_id,
+                    token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                    slpv2_actual_burn=1,
+                )
+            ],
+        )
+        assert_equal(
+            list(non_slp_proto.slp_errors),
+            ["eMPP parse failed: Missing OP_RESERVED, but got [unrecognized opcode]"],
+        )
+        assert_equal([output.slp for output in non_slp_proto.outputs], [pb.SlpToken()])
+
+        non_slp_proto2 = chronik.tx(non_slp_txid2).ok()
+        assert_equal(list(non_slp_proto2.slpv2_sections), [])
+        assert_equal(
+            list(non_slp_proto2.slp_burns),
+            [
+                pb.SlpBurn(
+                    token_id=all_token_id,
+                    token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                    burn_mint_batons=True,
+                )
+            ],
+        )
+        assert_equal(
+            list(non_slp_proto2.slp_errors),
+            ["eMPP parse failed: Missing OP_RESERVED, but got [unrecognized opcode]"],
+        )
+        assert_equal([output.slp for output in non_slp_proto2.outputs], [pb.SlpToken()])
+
+        burn_proto = chronik.tx(burn_tx.hash).ok()
+        assert_equal(
+            list(burn_proto.slpv2_sections),
+            [
+                pb.Slpv2Section(
+                    token_id=token_id2,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.MINT,
+                ),
+                pb.Slpv2Section(
+                    token_id=multi_token_id,
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.SEND,
+                ),
+            ],
+        )
+        assert_equal(
+            list(burn_proto.slp_burns),
+            [
+                pb.SlpBurn(
+                    token_id=token_id,
+                    token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                    slpv2_intentional_burn=1,
+                    slpv2_actual_burn=2,
+                    burn_error="Missing MINT baton",
+                ),
+                pb.SlpBurn(
+                    token_id=token_id2,
+                    token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                    slpv2_actual_burn=3,
+                ),
+                pb.SlpBurn(
+                    token_id=all_token_id,
+                    token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                    slpv2_actual_burn=7,
+                    burn_error="Insufficient token input output sum",
+                ),
+                pb.SlpBurn(
+                    token_id=multi_token_id,
+                    token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                    slpv2_actual_burn=0xFFFF_FFFF_FFFF - 1234,
+                ),
+            ],
+        )
+        assert_equal(list(burn_proto.slp_errors), [])
+        assert_equal(
+            [output.slp for output in burn_proto.outputs],
+            [
+                pb.SlpToken(),
+                slpv2_token(token_id=token_id2, amount=4),
+                pb.SlpToken(),
+                pb.SlpToken(),
+                pb.SlpToken(),
+                slpv2_token(token_id=multi_token_id, amount=1234, slpv2_section_idx=1),
+            ],
+        )
+
+        no_tokens_proto = chronik.tx(no_tokens_txid).ok()
+        assert_equal(
+            list(no_tokens_proto.slpv2_sections),
+            [
+                pb.Slpv2Section(
+                    token_id=bytes([56] * 32),
+                    token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                    section_type=pb.SEND,
+                )
+            ],
+        )
+        assert_equal(
+            list(no_tokens_proto.slp_burns),
+            [
+                pb.SlpBurn(
+                    token_id=bytes([34] * 32),
+                    token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                    slpv2_intentional_burn=1234,
+                )
+            ],
+        )
+        assert_equal(list(no_tokens_proto.slp_errors), [])
+        assert_equal(
+            [output.slp for output in no_tokens_proto.outputs],
+            [
+                pb.SlpToken(),
+                pb.SlpToken(),
+                pb.SlpToken(),
+                pb.SlpToken(),
+                pb.SlpToken(),
+            ],
+        )
+
+        slp_genesis_proto = chronik.tx(slp_genesis_txid).ok()
+        assert_equal(
+            slp_genesis_proto.slpv1_data,
+            pb.Slpv1TxData(
+                token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                tx_type=pb.GENESIS,
+                token_id=slp_token_id,
+            ),
+        )
+        assert_equal(list(slp_genesis_proto.slp_errors), [])
+        assert_equal(list(slp_genesis_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in slp_genesis_proto.outputs],
+            [
+                pb.SlpToken(),
+                pb.SlpToken(
+                    token_id=slp_token_id,
+                    amount=5000,
+                    slpv1_token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                ),
+                pb.SlpToken(
+                    token_id=slp_token_id,
+                    is_mint_baton=True,
+                    slpv1_token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                ),
+                pb.SlpToken(),
+            ],
+        )
+
+        slp_mint_proto = chronik.tx(slp_mint_txid).ok()
+        assert_equal(
+            slp_mint_proto.slpv1_data,
+            pb.Slpv1TxData(
+                token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                tx_type=pb.MINT,
+                token_id=slp_token_id,
+            ),
+        )
+        assert_equal(list(slp_mint_proto.slp_errors), [])
+        assert_equal(list(slp_mint_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in slp_mint_proto.outputs],
+            [
+                pb.SlpToken(),
+                pb.SlpToken(
+                    token_id=slp_token_id,
+                    amount=20,
+                    slpv1_token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                ),
+                pb.SlpToken(),
+                pb.SlpToken(
+                    token_id=slp_token_id,
+                    is_mint_baton=True,
+                    slpv1_token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                ),
+            ],
+        )
+
+        slp_send_proto = chronik.tx(slp_send_txid).ok()
+        assert_equal(
+            slp_send_proto.slpv1_data,
+            pb.Slpv1TxData(
+                token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                tx_type=pb.SEND,
+                token_id=slp_token_id,
+            ),
+        )
+        assert_equal(list(slp_send_proto.slp_errors), [])
+        assert_equal(list(slp_send_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in slp_send_proto.outputs],
+            [
+                pb.SlpToken(),
+                pb.SlpToken(
+                    token_id=slp_token_id,
+                    amount=1000,
+                    slpv1_token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                ),
+                pb.SlpToken(
+                    token_id=slp_token_id,
+                    amount=4000,
+                    slpv1_token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                ),
+            ],
+        )
+
 
 if __name__ == "__main__":
     ChronikSlp().main()

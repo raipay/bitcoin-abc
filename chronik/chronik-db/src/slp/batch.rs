@@ -7,7 +7,6 @@ use bitcoinsuite_slp::{
     slpv2,
 };
 use itertools::{Either, Itertools};
-//use chronik_util::log;
 use thiserror::Error;
 use topo_sort::TopoSort;
 
@@ -136,9 +135,9 @@ impl<'tx> BatchProcessor<'tx> {
                     }
                     ProcessedTx {
                         new_token: match parsed.tx_type {
-                            slp::TxType::Genesis(genesis_info) => Some(
-                                Protocol::Slp((parsed.meta, genesis_info)),
-                            ),
+                            slp::TxType::Genesis(genesis_info) => {
+                                Some(Protocol::Slp((parsed.meta, genesis_info)))
+                            }
                             _ => None,
                         },
                         outputs: tx_data
@@ -149,14 +148,12 @@ impl<'tx> BatchProcessor<'tx> {
                                     Protocol::Slp(SlpSpentOutput {
                                         meta: tx_data.meta,
                                         token,
-                                        group_token_id: tx_data
-                                            .group_token_id
-                                            .clone(),
+                                        group_token_id: tx_data.group_token_id,
                                     })
                                 })
                             })
                             .collect::<Vec<_>>(),
-                        group_token_meta: tx_data.group_token_id.clone().map(
+                        group_token_meta: tx_data.group_token_id.map(
                             |token_id| slp::TokenMeta {
                                 token_id,
                                 token_type: slp::TokenType::Nft1Group,
@@ -277,6 +274,7 @@ impl<'tx> BatchProcessor<'tx> {
                 let out_idx = input.prev_out.out_idx as usize;
                 let token = new_tx_data
                     .get(&input_tx_num)
+                    .or_else(|| db_data.data.get(&input_tx_num))
                     .and_then(|db_tx_data| db_tx_data.output(out_idx));
                 let (token_num, token) = match token {
                     Some(token) => token,
@@ -351,7 +349,7 @@ impl<'tx> BatchProcessor<'tx> {
                             Some(&Some(token)) => token,
                             _ => return Ok(None),
                         },
-                        group_token_id: tx_data.group_token_id.clone(),
+                        group_token_id: tx_data.group_token_id,
                     }))
                 }
                 Protocol::Slpv2(tx_data) => tx_data
