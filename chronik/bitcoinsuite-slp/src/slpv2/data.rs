@@ -1,10 +1,8 @@
-use serde::{Deserialize, Serialize};
-
 use crate::{
     slp,
     slpv2::{
-        Amount, BurnError, ColorError, ColoredTx, GenesisInfo, Int,
-        SectionType, TokenMeta,
+        Amount, BurnError, ColorError, ColoredTx, GenesisInfo, SectionType,
+        TokenMeta,
     },
 };
 
@@ -90,10 +88,7 @@ impl TokenData {
 }
 
 impl TxData {
-    pub fn new_burns(
-        tx: ColoredTx,
-        burns: Vec<TokenBurn>,
-    ) -> Self {
+    pub fn new_burns(tx: ColoredTx, burns: Vec<TokenBurn>) -> Self {
         let mut remaining_sections = Vec::new();
         let mut replace_token_idx = vec![None; tx.sections.len()];
         for (idx, section) in tx.sections.into_iter().enumerate() {
@@ -210,5 +205,68 @@ impl TokenVariant {
                 TokenVariant::Unknown(token_type.try_into().ok()?)
             }
         })
+    }
+}
+
+impl TokenBurn {
+    pub fn is_intentional(&self) -> bool {
+        if let Some(intentional_burn) = self.intentional_burn {
+            !self.burn_mint_batons && intentional_burn == self.actual_burn
+        } else {
+            false
+        }
+    }
+}
+
+impl std::fmt::Display for TokenBurn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_intentional() {
+            return write!(
+                f,
+                "OK: Intentional burn of {} base tokens of token {}",
+                self.intentional_burn.unwrap(),
+                self.meta.token_id,
+            );
+        }
+        let any_actual_burn =
+            self.burn_mint_batons || self.actual_burn != Amount::ZERO;
+        if !any_actual_burn {
+            if let Some(err) = &self.error {
+                return write!(
+                    f,
+                    "Invalid SLPv2 tx for token {}: {}",
+                    self.meta.token_id, err,
+                );
+            }
+        }
+        write!(f, "Unexpected burn of SLPv2 token {}:", self.meta.token_id)?;
+        if self.burn_mint_batons {
+            write!(f, " burns mint baton(s)")?;
+            if self.actual_burn > Amount::ZERO {
+                write!(f, " and")?;
+            }
+        }
+        if self.actual_burn > Amount::ZERO {
+            write!(f, " burns {} base tokens", self.actual_burn)?;
+        }
+        if let Some(intentional_burn) = self.intentional_burn {
+            if any_actual_burn {
+                write!(
+                    f,
+                    " (intentional burn of {} base tokens)",
+                    intentional_burn,
+                )?;
+            } else {
+                write!(
+                    f,
+                    " Expected {} base tokens to be burned, but none found",
+                    intentional_burn,
+                )?;
+            }
+        }
+        if let Some(err) = &self.error {
+            write!(f, ": {}", err)?;
+        }
+        Ok(())
     }
 }

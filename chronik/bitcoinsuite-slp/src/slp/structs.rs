@@ -76,11 +76,12 @@ pub struct TokenMeta {
     pub token_type: TokenType,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenBurn {
     pub meta: TokenMeta,
     pub amount: u128,
     pub burn_mint_batons: bool,
+    pub error: Option<VerifyError>,
 }
 
 #[derive(
@@ -108,7 +109,7 @@ pub struct TxData {
     pub output_tokens: Vec<Option<Token>>,
     pub group_token_id: Option<TokenId>,
     pub burns: Vec<TokenBurn>,
-    pub error: Option<VerifyError>,
+    pub is_total_burn: bool,
     pub genesis_info: Option<GenesisInfo>,
 }
 
@@ -179,5 +180,33 @@ impl TokenType {
             TokenType::Nft1Child => TOKEN_TYPE_V1_NFT1_CHILD[0].into(),
             TokenType::Unknown(token_type) => token_type,
         }
+    }
+}
+
+impl std::fmt::Display for TokenBurn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.burn_mint_batons && self.amount == 0 {
+            if let Some(err) = &self.error {
+                return write!(
+                    f,
+                    "Invalid SLP tx for token {}: {}",
+                    self.meta.token_id, err,
+                );
+            }
+        }
+        write!(f, "Unexpected burn of SLP token {}:", self.meta.token_id)?;
+        if self.burn_mint_batons {
+            write!(f, " burns mint baton")?;
+            if self.amount > 0 {
+                write!(f, " and")?;
+            }
+        }
+        if self.amount > 0 {
+            write!(f, " burns {} base tokens", self.amount)?;
+        }
+        if let Some(err) = &self.error {
+            write!(f, ": {}", err)?;
+        }
+        Ok(())
     }
 }

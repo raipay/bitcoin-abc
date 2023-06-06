@@ -148,10 +148,10 @@ fn test_parse_slp() -> Result<(), ParseError> {
                 ]
                 .into()
             ),
-            1,
+            2,
         ),
         Ok(ParseData {
-            output_tokens: vec![Some(Token::Unknown(0x9876))],
+            output_tokens: vec![None, Some(Token::Unknown(0x9876))],
             meta: TokenMeta {
                 token_id: TokenId::from_be_bytes([0; 32]),
                 token_type: TokenType::Unknown(0x9876),

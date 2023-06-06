@@ -267,6 +267,22 @@ message ScriptUtxos {
     repeated ScriptUtxo utxos = 2;
 }
 
+message BroadcastTxRequest {
+    bytes raw_tx = 1;
+}
+
+message BroadcastTxResponse {
+    bytes txid = 1;
+}
+
+message BroadcastTxsRequest {
+    repeated bytes raw_txs = 1;
+}
+
+message BroadcastTxsResponse {
+    repeated bytes txids = 1;
+}
+
 // Raw serialized tx.
 message RawTx {
     // Bytes of the serialized tx.
