@@ -28,8 +28,13 @@ fn test_verify_genesis_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Genesis,
             output_tokens: vec![],
             group_token_id: None,
-            burns: vec![],
-            error: Some(VerifyError::HasNoNft1Group),
+            burns: vec![TokenBurn {
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
+                amount: 0,
+                burn_mint_batons: false,
+                error: Some(VerifyError::HasNoNft1Group),
+            }],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -52,8 +57,13 @@ fn test_verify_genesis_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Genesis,
             output_tokens: vec![],
             group_token_id: None,
-            burns: vec![],
-            error: Some(VerifyError::HasNoNft1Group),
+            burns: vec![TokenBurn {
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
+                amount: 0,
+                burn_mint_batons: false,
+                error: Some(VerifyError::HasNoNft1Group),
+            }],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -76,8 +86,13 @@ fn test_verify_genesis_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Genesis,
             output_tokens: vec![],
             group_token_id: None,
-            burns: vec![],
-            error: Some(VerifyError::HasNoNft1Group),
+            burns: vec![TokenBurn {
+                meta: TokenMeta::nft1_child(TOKEN_ID4),
+                amount: 0,
+                burn_mint_batons: false,
+                error: Some(VerifyError::HasNoNft1Group)
+            },],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -100,12 +115,21 @@ fn test_verify_genesis_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Genesis,
             output_tokens: vec![],
             group_token_id: None,
-            burns: vec![TokenBurn {
-                meta: TokenMeta::fungible(TOKEN_ID4),
-                amount: 1,
-                burn_mint_batons: false,
-            }],
-            error: Some(VerifyError::HasNoNft1Group),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    amount: 0,
+                    burn_mint_batons: false,
+                    error: Some(VerifyError::HasNoNft1Group),
+                },
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    amount: 1,
+                    burn_mint_batons: false,
+                    error: None,
+                },
+            ],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -135,8 +159,9 @@ fn test_verify_genesis_failure() -> Result<(), VerifyError> {
                 meta: TokenMeta::nft1_child(TOKEN_ID4),
                 amount: 1,
                 burn_mint_batons: false,
+                error: Some(VerifyError::HasNoNft1Group),
             }],
-            error: Some(VerifyError::HasNoNft1Group),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -161,7 +186,7 @@ fn test_verify_genesis_success() -> Result<(), VerifyError> {
             output_tokens: vec![],
             group_token_id: None,
             burns: vec![],
-            error: None,
+            is_total_burn: false,
             genesis_info: Some(Default::default()),
         },
     );
@@ -188,8 +213,9 @@ fn test_verify_genesis_success() -> Result<(), VerifyError> {
                 meta: TokenMeta::fungible(TOKEN_ID1),
                 amount: 1,
                 burn_mint_batons: false,
+                error: None,
             }],
-            error: None,
+            is_total_burn: false,
             genesis_info: Some(Default::default()),
         },
     );
@@ -213,7 +239,7 @@ fn test_verify_genesis_success() -> Result<(), VerifyError> {
             output_tokens: vec![],
             group_token_id: Some(TOKEN_ID3),
             burns: vec![],
-            error: None,
+            is_total_burn: false,
             genesis_info: Some(Default::default()),
         },
     );
@@ -247,8 +273,9 @@ fn test_verify_genesis_success() -> Result<(), VerifyError> {
                 meta: TokenMeta::nft1_group(TOKEN_ID2),
                 amount: 1,
                 burn_mint_batons: false,
+                error: None,
             }],
-            error: None,
+            is_total_burn: false,
             genesis_info: Some(Default::default()),
         },
     );
@@ -272,8 +299,13 @@ fn test_verify_mint_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Mint,
             output_tokens: vec![],
             group_token_id: None,
-            burns: vec![],
-            error: Some(VerifyError::HasNoMintBaton),
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID1),
+                amount: 0,
+                burn_mint_batons: false,
+                error: Some(VerifyError::HasNoMintBaton),
+            }],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -300,8 +332,9 @@ fn test_verify_mint_failure() -> Result<(), VerifyError> {
                 meta: TokenMeta::fungible(TOKEN_ID1),
                 amount: 4,
                 burn_mint_batons: false,
+                error: Some(VerifyError::HasNoMintBaton),
             }],
-            error: Some(VerifyError::HasNoMintBaton),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -324,12 +357,21 @@ fn test_verify_mint_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Mint,
             output_tokens: vec![],
             group_token_id: None,
-            burns: vec![TokenBurn {
-                meta: TokenMeta::fungible(TOKEN_ID2),
-                amount: 0,
-                burn_mint_batons: true,
-            }],
-            error: Some(VerifyError::HasNoMintBaton),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    amount: 0,
+                    burn_mint_batons: false,
+                    error: Some(VerifyError::HasNoMintBaton),
+                },
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID2),
+                    amount: 0,
+                    burn_mint_batons: true,
+                    error: None,
+                }
+            ],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -381,24 +423,28 @@ fn test_verify_mint_failure() -> Result<(), VerifyError> {
                     meta: TokenMeta::fungible(TOKEN_ID1),
                     amount: 4,
                     burn_mint_batons: false,
+                    error: Some(VerifyError::HasNoMintBaton),
                 },
                 TokenBurn {
                     meta: TokenMeta::fungible(TOKEN_ID2),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_group(TOKEN_ID1),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_child(TOKEN_ID1),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
             ],
-            error: Some(VerifyError::HasNoMintBaton),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -450,24 +496,28 @@ fn test_verify_mint_failure() -> Result<(), VerifyError> {
                     meta: TokenMeta::nft1_group(TOKEN_ID1),
                     amount: 4,
                     burn_mint_batons: false,
+                    error: Some(VerifyError::HasNoMintBaton),
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_group(TOKEN_ID2),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::fungible(TOKEN_ID1),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_child(TOKEN_ID1),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
             ],
-            error: Some(VerifyError::HasNoMintBaton),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -496,7 +546,7 @@ fn test_verify_mint_success() -> Result<(), VerifyError> {
             output_tokens: vec![],
             group_token_id: None,
             burns: vec![],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -554,24 +604,28 @@ fn test_verify_mint_success() -> Result<(), VerifyError> {
                     meta: TokenMeta::fungible(TOKEN_ID1),
                     amount: 4,
                     burn_mint_batons: false,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::fungible(TOKEN_ID2),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_group(TOKEN_ID1),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_child(TOKEN_ID1),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
             ],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -629,19 +683,22 @@ fn test_verify_mint_success() -> Result<(), VerifyError> {
                     meta: TokenMeta::fungible(TOKEN_ID1),
                     amount: 4,
                     burn_mint_batons: true,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::fungible(TOKEN_ID2),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_child(TOKEN_ID1),
                     amount: 0,
                     burn_mint_batons: true,
+                    error: None,
                 },
             ],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -665,11 +722,16 @@ fn test_verify_send_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Send,
             output_tokens: vec![None],
             group_token_id: None,
-            burns: vec![],
-            error: Some(VerifyError::OutputSumExceedInputSum {
-                input_sum: 0,
-                output_sum: 4,
-            }),
+            burns: vec![TokenBurn {
+                meta: TokenMeta::fungible(TOKEN_ID4),
+                amount: 0,
+                burn_mint_batons: false,
+                error: Some(VerifyError::OutputSumExceedInputSum {
+                    input_sum: 0,
+                    output_sum: 4,
+                }),
+            }],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -696,11 +758,12 @@ fn test_verify_send_failure() -> Result<(), VerifyError> {
                 meta: TokenMeta::fungible(TOKEN_ID4),
                 amount: 3,
                 burn_mint_batons: false,
+                error: Some(VerifyError::OutputSumExceedInputSum {
+                    input_sum: 3,
+                    output_sum: 4,
+                }),
             }],
-            error: Some(VerifyError::OutputSumExceedInputSum {
-                input_sum: 3,
-                output_sum: 4,
-            }),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -723,15 +786,24 @@ fn test_verify_send_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Send,
             output_tokens: vec![None],
             group_token_id: None,
-            burns: vec![TokenBurn {
-                meta: TokenMeta::nft1_child(TOKEN_ID4),
-                amount: 1,
-                burn_mint_batons: false,
-            }],
-            error: Some(VerifyError::OutputSumExceedInputSum {
-                input_sum: 0,
-                output_sum: 4,
-            }),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    amount: 0,
+                    burn_mint_batons: false,
+                    error: Some(VerifyError::OutputSumExceedInputSum {
+                        input_sum: 0,
+                        output_sum: 4,
+                    }),
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    amount: 1,
+                    burn_mint_batons: false,
+                    error: None,
+                },
+            ],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -758,11 +830,12 @@ fn test_verify_send_failure() -> Result<(), VerifyError> {
                 meta: TokenMeta::nft1_group(TOKEN_ID4),
                 amount: 3,
                 burn_mint_batons: false,
+                error: Some(VerifyError::OutputSumExceedInputSum {
+                    input_sum: 3,
+                    output_sum: 4,
+                }),
             }],
-            error: Some(VerifyError::OutputSumExceedInputSum {
-                input_sum: 3,
-                output_sum: 4,
-            }),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -785,15 +858,24 @@ fn test_verify_send_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Send,
             output_tokens: vec![None],
             group_token_id: None,
-            burns: vec![TokenBurn {
-                meta: TokenMeta::nft1_child(TOKEN_ID4),
-                amount: 1,
-                burn_mint_batons: false,
-            }],
-            error: Some(VerifyError::OutputSumExceedInputSum {
-                input_sum: 0,
-                output_sum: 4,
-            }),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::nft1_group(TOKEN_ID4),
+                    amount: 0,
+                    burn_mint_batons: false,
+                    error: Some(VerifyError::OutputSumExceedInputSum {
+                        input_sum: 0,
+                        output_sum: 4,
+                    }),
+                },
+                TokenBurn {
+                    meta: TokenMeta::nft1_child(TOKEN_ID4),
+                    amount: 1,
+                    burn_mint_batons: false,
+                    error: None,
+                }
+            ],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -816,15 +898,24 @@ fn test_verify_send_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Send,
             output_tokens: vec![None],
             group_token_id: None,
-            burns: vec![TokenBurn {
-                meta: TokenMeta::fungible(TOKEN_ID3),
-                amount: 5,
-                burn_mint_batons: false,
-            }],
-            error: Some(VerifyError::OutputSumExceedInputSum {
-                input_sum: 0,
-                output_sum: 4,
-            }),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID4),
+                    amount: 0,
+                    burn_mint_batons: false,
+                    error: Some(VerifyError::OutputSumExceedInputSum {
+                        input_sum: 0,
+                        output_sum: 4,
+                    }),
+                },
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID3),
+                    amount: 5,
+                    burn_mint_batons: false,
+                    error: None,
+                }
+            ],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -881,22 +972,25 @@ fn test_verify_send_failure() -> Result<(), VerifyError> {
                     meta: TokenMeta::fungible(TOKEN_ID4),
                     amount: 0x1_ffff_ffff_fffe_0003,
                     burn_mint_batons: true,
+                    error: Some(VerifyError::OutputSumExceedInputSum {
+                        input_sum: 0x1fffffffffffe0003,
+                        output_sum: 0x1fffffffffffe0004,
+                    }),
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_child(TOKEN_ID4),
                     amount: 1,
                     burn_mint_batons: false,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_group(TOKEN_ID3),
                     amount: 100,
                     burn_mint_batons: false,
+                    error: None,
                 },
             ],
-            error: Some(VerifyError::OutputSumExceedInputSum {
-                input_sum: 0x1fffffffffffe0003,
-                output_sum: 0x1fffffffffffe0004,
-            }),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -948,22 +1042,25 @@ fn test_verify_send_failure() -> Result<(), VerifyError> {
                     meta: TokenMeta::nft1_group(TOKEN_ID4),
                     amount: 0x1_ffff_ffff_fffe_0003,
                     burn_mint_batons: false,
+                    error: Some(VerifyError::OutputSumExceedInputSum {
+                        input_sum: 0x1fffffffffffe0003,
+                        output_sum: 0x1fffffffffffe0004,
+                    }),
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_child(TOKEN_ID4),
                     amount: 1,
                     burn_mint_batons: false,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_group(TOKEN_ID3),
                     amount: 100,
                     burn_mint_batons: false,
+                    error: None,
                 },
             ],
-            error: Some(VerifyError::OutputSumExceedInputSum {
-                input_sum: 0x1fffffffffffe0003,
-                output_sum: 0x1fffffffffffe0004,
-            }),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -988,7 +1085,7 @@ fn test_verify_send_success() -> Result<(), VerifyError> {
             output_tokens: vec![None],
             group_token_id: None,
             burns: vec![],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -1008,7 +1105,7 @@ fn test_verify_send_success() -> Result<(), VerifyError> {
             output_tokens: vec![None],
             group_token_id: None,
             burns: vec![],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -1029,7 +1126,7 @@ fn test_verify_send_success() -> Result<(), VerifyError> {
             output_tokens: vec![None],
             group_token_id: None,
             burns: vec![],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -1063,8 +1160,9 @@ fn test_verify_send_success() -> Result<(), VerifyError> {
                 meta: TokenMeta::fungible(TOKEN_ID4),
                 amount: 0,
                 burn_mint_batons: true,
+                error: None,
             }],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -1122,14 +1220,16 @@ fn test_verify_send_success() -> Result<(), VerifyError> {
                     meta: TokenMeta::nft1_child(TOKEN_ID5),
                     amount: 10,
                     burn_mint_batons: false,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::fungible(TOKEN_ID4),
                     amount: 0x1fff_ffff_fffe_fffd + 10,
                     burn_mint_batons: false,
+                    error: None,
                 },
             ],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -1187,14 +1287,16 @@ fn test_verify_send_success() -> Result<(), VerifyError> {
                     meta: TokenMeta::nft1_child(TOKEN_ID5),
                     amount: 10,
                     burn_mint_batons: false,
+                    error: None,
                 },
                 TokenBurn {
                     meta: TokenMeta::nft1_group(TOKEN_ID4),
                     amount: 0x1fff_ffff_fffe_fffd + 10,
                     burn_mint_batons: false,
+                    error: None,
                 },
             ],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -1238,8 +1340,9 @@ fn test_verify_send_success() -> Result<(), VerifyError> {
                 meta: TokenMeta::nft1_group(TOKEN_ID4),
                 amount: 0xefff_ffff_ffff_0000,
                 burn_mint_batons: false,
+                error: None,
             }],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );
@@ -1267,12 +1370,21 @@ fn test_verify_burn_failure() -> Result<(), VerifyError> {
             tx_type: TxTypeVariant::Burn,
             output_tokens: vec![],
             group_token_id: None,
-            burns: vec![TokenBurn {
-                meta: TokenMeta::fungible(TOKEN_ID2),
-                amount: 10,
-                burn_mint_batons: false,
-            }],
-            error: Some(VerifyError::WrongBurnTokenId),
+            burns: vec![
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID1),
+                    amount: 0,
+                    burn_mint_batons: false,
+                    error: Some(VerifyError::WrongBurnTokenId),
+                },
+                TokenBurn {
+                    meta: TokenMeta::fungible(TOKEN_ID2),
+                    amount: 10,
+                    burn_mint_batons: false,
+                    error: None,
+                },
+            ],
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -1299,8 +1411,9 @@ fn test_verify_burn_failure() -> Result<(), VerifyError> {
                 meta: TokenMeta::fungible(TOKEN_ID1),
                 amount: 0,
                 burn_mint_batons: true,
+                error: Some(VerifyError::WrongBurnMintBaton),
             }],
-            error: Some(VerifyError::WrongBurnMintBaton),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -1327,11 +1440,12 @@ fn test_verify_burn_failure() -> Result<(), VerifyError> {
                 meta: TokenMeta::fungible(TOKEN_ID1),
                 amount: 9,
                 burn_mint_batons: false,
+                error: Some(VerifyError::WrongBurnInvalidAmount {
+                    expected: 10,
+                    actual: 9,
+                }),
             }],
-            error: Some(VerifyError::WrongBurnInvalidAmount {
-                expected: 10,
-                actual: 9,
-            }),
+            is_total_burn: true,
             genesis_info: None,
         },
     );
@@ -1360,7 +1474,7 @@ fn test_verify_burn_success() -> Result<(), VerifyError> {
             output_tokens: vec![],
             group_token_id: None,
             burns: vec![],
-            error: None,
+            is_total_burn: false,
             genesis_info: None,
         },
     );

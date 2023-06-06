@@ -60,6 +60,7 @@ fn add_burn_token(
             meta,
             amount,
             burn_mint_batons: is_mint_baton,
+            error: None,
         }),
     }
 }
@@ -71,13 +72,19 @@ pub fn verify(
     let make_total_burn =
         |error: VerifyError, group_token_id: Option<TokenId>| {
             let mut burns = Vec::new();
+            burns.push(TokenBurn {
+                meta: parse_data.meta,
+                amount: 0,
+                burn_mint_batons: false,
+                error: Some(error),
+            });
             for output in spent_outputs.iter().flatten() {
                 let amount = output.token.amount();
                 add_burn_token(
                     &mut burns,
                     output.meta,
                     amount.into(),
-                    output.token == Token::MintBaton,
+                    output.token.is_mint_baton(),
                 );
             }
             TxData {
@@ -90,7 +97,7 @@ pub fn verify(
                 meta: parse_data.meta,
                 group_token_id,
                 burns,
-                error: Some(error),
+                is_total_burn: true,
                 genesis_info: None,
             }
         };
@@ -234,7 +241,7 @@ pub fn verify(
         meta: parse_data.meta,
         group_token_id,
         burns,
-        error: None,
+        is_total_burn: false,
         genesis_info,
     }
 }

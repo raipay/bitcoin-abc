@@ -122,6 +122,9 @@ impl ChronikServer {
             .route("/block-txs/:hash_or_height", routing::get(handle_block_txs))
             .route("/blocks/:start/:end", routing::get(handle_block_range))
             .route("/tx/:txid", routing::get(handle_tx))
+            .route("/validate-tx", routing::post(handle_validate_tx))
+            .route("/broadcast-tx", routing::post(handle_broadcast_tx))
+            .route("/broadcast-txs", routing::post(handle_broadcast_txs))
             .route("/raw-tx/:txid", routing::get(handle_raw_tx))
             .route(
                 "/script/:type/:payload/confirmed-txs",
@@ -191,6 +194,42 @@ async fn handle_tx(
     let indexer = indexer.read().await;
     let txid = txid.parse::<TxId>().wrap_err(NotTxId(txid))?;
     Ok(Protobuf(indexer.txs().tx_by_id(txid)?))
+}
+
+async fn handle_broadcast_tx(
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+    Protobuf(request): Protobuf<proto::BroadcastTxRequest>,
+) -> Result<Protobuf<proto::BroadcastTxResponse>, ReportError> {
+    let indexer = indexer.read().await;
+    let txids = indexer
+        .broadcast(node.as_ref())
+        .broadcast_txs(vec![request.raw_tx.into()])?;
+    Ok(Protobuf(proto::BroadcastTxResponse {
+        txid: txids[0].to_vec(),
+    }))
+}
+
+async fn handle_broadcast_txs(
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+    Protobuf(request): Protobuf<proto::BroadcastTxsRequest>,
+) -> Result<Protobuf<proto::BroadcastTxsResponse>, ReportError> {
+    let indexer = indexer.read().await;
+    let txids = indexer
+        .broadcast(node.as_ref())
+        .broadcast_txs(request.raw_txs.into_iter().map(Into::into).collect())?;
+    Ok(Protobuf(proto::BroadcastTxsResponse {
+        txids: txids.into_iter().map(|txid| txid.to_vec()).collect(),
+    }))
+}
+
+async fn handle_validate_tx(
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Protobuf(raw_tx): Protobuf<proto::RawTx>,
+) -> Result<Protobuf<proto::Tx>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(indexer.txs().validate_tx(raw_tx.raw_tx)?))
 }
 
 async fn handle_raw_tx(

@@ -8,24 +8,39 @@ use bitcoinsuite_slp::{
 };
 use chronik_db::{
     db::Db,
-    io::TxNum,
+    io::{TxNum, TxReader},
     slp::{
         data::{
-            only_slpv1_inputs, only_slpv2_inputs, EitherToken, EitherTxData,
-            Protocol,
+            only_slpv1_inputs, only_slpv2_inputs, DbToken, EitherToken,
+            EitherTxData, Protocol,
         },
-        io::SlpReader,
+        io::{SlpReader, TokenNum},
         mem::MempoolSlp,
     },
 };
 use chronik_proto::proto;
 use chronik_util::log;
+use thiserror::Error;
 
 pub struct SlpDbData<'a> {
     pub token_inputs: Cow<'a, [Option<EitherToken>]>,
     pub tx_data: Cow<'a, EitherTxData>,
     pub slpv1_error: Option<Cow<'a, slp::ParseError>>,
 }
+
+/// Errors indicating something went wrong with reading txs.
+#[derive(Debug, Error, PartialEq)]
+pub enum SlpDbDataError {
+    /// Transaction not in mempool nor DB.
+    #[error("400: Input tx {0} not found")]
+    InputTxNotFound(TxId),
+
+    /// Token num not found.
+    #[error("500: Inconsistent DB: Token num {0} not found")]
+    TokenNumDoesntExist(TokenNum),
+}
+
+use self::SlpDbDataError::*;
 
 impl<'a> SlpDbData<'a> {
     pub fn from_mempool(mempool: &'a MempoolSlp, txid: &TxId) -> Option<Self> {
@@ -56,6 +71,81 @@ impl<'a> SlpDbData<'a> {
             };
         let token_inputs =
             db_tx_data.assemble_tokens(&db_tx_data.inputs, &metas);
+        Self::parse_and_verify(tx, token_inputs)
+    }
+
+    pub fn from_tx(
+        db: &Db,
+        mempool: &'a MempoolSlp,
+        tx: &Tx,
+        is_mempool_tx: impl Fn(&TxId) -> bool,
+    ) -> Result<Option<Self>> {
+        let tx_reader = TxReader::new(db)?;
+        let slp_reader = SlpReader::new(db)?;
+        let mut token_inputs = Vec::with_capacity(tx.inputs.len());
+        for tx_input in &tx.inputs {
+            let input_txid = &tx_input.prev_out.txid;
+            let out_idx = tx_input.prev_out.out_idx as usize;
+            if let Some(tx_data) = mempool.tx_data(input_txid) {
+                token_inputs.push(match tx_data {
+                    Protocol::Slp(tx_data) => {
+                        match tx_data.output_tokens.get(out_idx) {
+                            Some(&Some(token)) => {
+                                Some(Protocol::Slp(slp::SlpSpentOutput {
+                                    meta: tx_data.meta,
+                                    token,
+                                    group_token_id: tx_data.group_token_id,
+                                }))
+                            }
+                            _ => None,
+                        }
+                    }
+                    Protocol::Slpv2(tx_data) => tx_data
+                        .outputs()
+                        .nth(out_idx)
+                        .flatten()
+                        .map(Protocol::Slpv2),
+                });
+                continue;
+            }
+            if is_mempool_tx(input_txid) {
+                token_inputs.push(None);
+                continue;
+            }
+            let tx_num = tx_reader
+                .tx_num_by_txid(input_txid)?
+                .ok_or(InputTxNotFound(*input_txid))?;
+            let db_tx_data = match slp_reader.tx_data_by_tx_num(tx_num)? {
+                Some(db_tx_data) => db_tx_data,
+                None => {
+                    token_inputs.push(None);
+                    continue;
+                }
+            };
+            if let Some((token_num, db_token)) = db_tx_data.output(out_idx) {
+                let meta = slp_reader
+                    .token_meta_by_token_num(token_num)?
+                    .ok_or(TokenNumDoesntExist(token_num))?;
+                let db_token = DbToken {
+                    token_num_idx: 0,
+                    ..*db_token
+                };
+                token_inputs.push(
+                    db_tx_data
+                        .assemble_tokens(&[Some(db_token)], &[meta])
+                        .remove(0),
+                );
+            } else {
+                token_inputs.push(None);
+            }
+        }
+        Self::parse_and_verify(tx, token_inputs)
+    }
+
+    fn parse_and_verify(
+        tx: &Tx,
+        token_inputs: Vec<Option<EitherToken>>,
+    ) -> Result<Option<Self>> {
         match slp::parse_tx(tx) {
             Ok(parse_data) => {
                 let actual_inputs = only_slpv1_inputs(&token_inputs);
@@ -87,7 +177,7 @@ impl<'a> SlpDbData<'a> {
             Protocol::Slp(token) => {
                 let is_burned = match self.tx_data.as_ref() {
                     Protocol::Slp(tx_data) => {
-                        if tx_data.error.is_some() {
+                        if tx_data.is_total_burn {
                             true
                         } else if tx_data.meta == token.meta {
                             false
@@ -240,25 +330,52 @@ impl<'a> SlpDbData<'a> {
             .collect()
     }
 
+    pub fn burns(
+        &'a self,
+    ) -> (Cow<'a, [slp::TokenBurn]>, Cow<'a, [slpv2::TokenBurn]>) {
+        match self.tx_data.as_ref() {
+            Protocol::Slp(tx_data) => {
+                let slpv2_inputs = only_slpv2_inputs(&self.token_inputs);
+                let slpv2_data =
+                    slpv2::verify(ColoredTx::default(), &slpv2_inputs);
+                (Cow::Borrowed(&tx_data.burns), Cow::Owned(slpv2_data.burns))
+            }
+            Protocol::Slpv2(tx_data) => {
+                let slpv1_dummy = ParseData {
+                    meta: slp::TokenMeta {
+                        token_id: Default::default(),
+                        token_type: slp::TokenType::Unknown(0xffff),
+                    },
+                    tx_type: slp::TxType::Unknown, // always burns all tokens
+                    output_tokens: vec![],
+                };
+                let slpv1_inputs = only_slpv1_inputs(&self.token_inputs);
+                let slpv1_data = slp::verify(&slpv1_dummy, &slpv1_inputs);
+                (Cow::Owned(slpv1_data.burns), Cow::Borrowed(&tx_data.burns))
+            }
+        }
+    }
+
     pub fn burns_proto(&self) -> Vec<proto::SlpBurn> {
-        fn slpv1_burn_proto(
-            burn: &slp::TokenBurn,
-            error: Option<&slp::VerifyError>,
-        ) -> proto::SlpBurn {
-            proto::SlpBurn {
+        let (slp_burns, slpv2_burns) = self.burns();
+        let mut burns = Vec::with_capacity(slp_burns.len() + slpv2_burns.len());
+        for burn in slp_burns.as_ref() {
+            burns.push(proto::SlpBurn {
                 token_id: burn.meta.token_id.to_vec(),
                 token_protocol: proto::TokenProtocol::Slpv1 as _,
                 slpv1_token_type: burn.meta.token_type.to_u16().into(),
-                burn_error: error
+                burn_error: burn
+                    .error
+                    .as_ref()
                     .map(|err| err.to_string())
                     .unwrap_or_default(),
                 slpv1_actual_burn: burn.amount.to_string(),
                 burn_mint_batons: burn.burn_mint_batons,
                 ..Default::default()
-            }
+            });
         }
-        fn slpv2_burn_proto(burn: &slpv2::TokenBurn) -> proto::SlpBurn {
-            proto::SlpBurn {
+        for burn in slpv2_burns.as_ref() {
+            burns.push(proto::SlpBurn {
                 token_id: burn.meta.token_id.to_vec(),
                 token_protocol: proto::TokenProtocol::Slpv2 as _,
                 burn_error: burn
@@ -274,46 +391,9 @@ impl<'a> SlpDbData<'a> {
                     .int(),
                 slpv2_actual_burn: burn.actual_burn.int(),
                 ..Default::default()
-            }
+            });
         }
-        match self.tx_data.as_ref() {
-            Protocol::Slp(tx_data) => {
-                let mut burns = Vec::new();
-                for burn in &tx_data.burns {
-                    burns.push(slpv1_burn_proto(burn, tx_data.error.as_ref()));
-                }
-                let slpv2_inputs = only_slpv2_inputs(&self.token_inputs);
-                let slpv2_data =
-                    slpv2::verify(ColoredTx::default(), &slpv2_inputs);
-                for burn in &slpv2_data.burns {
-                    burns.push(slpv2_burn_proto(burn));
-                }
-                burns
-            }
-            Protocol::Slpv2(tx_data) => {
-                let mut burns = Vec::new();
-                for burn in &tx_data.burns {
-                    burns.push(slpv2_burn_proto(burn));
-                }
-                let slpv1_dummy = ParseData {
-                    meta: slp::TokenMeta {
-                        token_id: Default::default(),
-                        token_type: slp::TokenType::Unknown(0xffff),
-                    },
-                    tx_type: slp::TxType::Unknown, // always burns all tokens
-                    output_tokens: vec![],
-                };
-                let slpv1_inputs = only_slpv1_inputs(&self.token_inputs);
-                let slpv1_data = slp::verify(&slpv1_dummy, &slpv1_inputs);
-                for burn in &slpv1_data.burns {
-                    burns.push(slpv1_burn_proto(
-                        burn,
-                        slpv1_data.error.as_ref(),
-                    ));
-                }
-                burns
-            }
-        }
+        burns
     }
 
     pub fn slp_errors(&self) -> Vec<String> {

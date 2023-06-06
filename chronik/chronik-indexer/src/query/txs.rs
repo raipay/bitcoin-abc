@@ -7,7 +7,7 @@
 use abc_rust_error::{Result, WrapErr};
 use bitcoinsuite_core::{
     ser::BitcoinSer,
-    tx::{Tx, TxId},
+    tx::{Coin, Tx, TxId, TxMut},
 };
 use chronik_bridge::ffi;
 use chronik_db::{
@@ -40,6 +40,10 @@ pub enum QueryTxError {
     /// Transaction not in mempool nor DB.
     #[error("404: Transaction {0} not found in the index")]
     TxNotFound(TxId),
+
+    /// Transaction not in mempool nor DB.
+    #[error("400: Input tx {0} not found")]
+    InputTxNotFound(TxId),
 
     /// Transaction in DB without block
     #[error("500: Inconsistent DB: {0} has no block")]
@@ -125,5 +129,63 @@ impl<'a> QueryTxs<'a> {
             }
         };
         Ok(proto::RawTx { raw_tx })
+    }
+
+    pub fn validate_tx(&self, raw_tx: Vec<u8>) -> Result<proto::Tx> {
+        let mut tx = TxMut::deser(&mut raw_tx.into())?;
+        for input in tx.inputs.iter_mut() {
+            let txid = &input.prev_out.txid;
+            if let Some(input_tx) = self.mempool.tx(txid) {
+                let output = input_tx
+                    .tx
+                    .outputs
+                    .get(input.prev_out.out_idx as usize)
+                    .ok_or(InputTxNotFound(*txid))?;
+                input.coin = Some(Coin {
+                    output: output.clone(),
+                    height: -1,
+                    is_coinbase: false,
+                });
+                continue;
+            }
+            let tx_reader = TxReader::new(self.db)?;
+            let block_reader = BlockReader::new(self.db)?;
+            let block_tx =
+                tx_reader.tx_by_txid(txid)?.ok_or(InputTxNotFound(*txid))?;
+            let block = block_reader
+                .by_height(block_tx.block_height)?
+                .ok_or(DbTxHasNoBlock(*txid))?;
+            let input_tx = Tx::from(
+                ffi::load_tx(
+                    block.file_num,
+                    block_tx.entry.data_pos,
+                    block_tx.entry.undo_pos,
+                )
+                .wrap_err(ReadFailure(*txid))?,
+            );
+            let output = input_tx
+                .outputs
+                .get(input.prev_out.out_idx as usize)
+                .ok_or(InputTxNotFound(*txid))?;
+            input.coin = Some(Coin {
+                output: output.clone(),
+                height: block.height,
+                is_coinbase: block_tx.entry.is_coinbase,
+            });
+        }
+        let tx = Tx::with_txid(TxId::from_tx(&tx), tx);
+        let slp =
+            SlpDbData::from_tx(self.db, self.mempool.slp(), &tx, |txid| {
+                self.mempool.tx(txid).is_some()
+            })?;
+        Ok(make_tx_proto(
+            &tx,
+            &OutputsSpent::default(),
+            0,
+            false,
+            None,
+            self.avalanche,
+            slp.as_ref(),
+        ))
     }
 }

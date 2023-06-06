@@ -32,7 +32,10 @@ use tokio::sync::RwLock;
 
 use crate::{
     avalanche::Avalanche,
-    query::{QueryBlocks, QueryGroupHistory, QueryGroupUtxos, QueryTxs},
+    query::{
+        QueryBlocks, QueryBroadcast, QueryGroupHistory, QueryGroupUtxos,
+        QueryTxs,
+    },
     subs::{BlockMsg, BlockMsgType, Subs},
     subs_group::TxMsgType,
 };
@@ -396,6 +399,14 @@ impl ChronikIndexer {
             subs.handle_tx_event(tx, TxMsgType::Finalized);
         }
         Ok(())
+    }
+
+    pub fn broadcast<'a>(&'a self, node: &'a Node) -> QueryBroadcast<'a> {
+        QueryBroadcast {
+            db: &self.db,
+            mempool: &self.mempool,
+            node,
+        }
     }
 
     /// Return [`QueryBlocks`] to read blocks from the DB.

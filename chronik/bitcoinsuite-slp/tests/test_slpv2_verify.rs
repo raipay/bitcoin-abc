@@ -215,7 +215,7 @@ fn test_verify_slpv2_mint_burn_tokens() {
                 meta: TokenMeta::standard(TOKEN_ID2),
                 intentional_burn: None,
                 actual_burn: Amount::new(600),
-                burn_mint_batons: true,
+                burn_mint_batons: false,
                 is_total: false,
                 error: None,
             }],
