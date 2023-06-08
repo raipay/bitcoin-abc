@@ -8,7 +8,8 @@ use bitcoinsuite_slp::{
 };
 use chronik_db::{
     db::Db,
-    io::{TxNum, TxReader},
+    io::{BlockHeight, BlockReader, TxNum, TxReader},
+    mem::Mempool,
     slp::{
         data::{
             only_slpv1_inputs, only_slpv2_inputs, DbToken, EitherToken,
@@ -21,6 +22,8 @@ use chronik_db::{
 use chronik_proto::proto;
 use chronik_util::log;
 use thiserror::Error;
+
+use crate::avalanche::Avalanche;
 
 pub struct SlpDbData<'a> {
     pub token_inputs: Cow<'a, [Option<EitherToken>]>,
@@ -38,6 +41,18 @@ pub enum SlpDbDataError {
     /// Token num not found.
     #[error("500: Inconsistent DB: Token num {0} not found")]
     TokenNumDoesntExist(TokenNum),
+
+    #[error("500: Inconsistent DB: TxData for token {0} not in mempool")]
+    TokenTxDataNotInMempool(TxId),
+
+    #[error("500: Inconsistent DB: MempoolTx for token {0} not in mempool")]
+    TokenTxNotInMempool(TxId),
+
+    #[error("500: Inconsistent DB: Mixing SLP and SLPv2")]
+    MixingSlpAndSlpv2,
+
+    #[error("500: Inconsistent DB: Missing block for height {0}")]
+    MissingBlockForHeight(BlockHeight),
 }
 
 use self::SlpDbDataError::*;
@@ -469,4 +484,87 @@ pub fn make_slp_token_proto(token: &EitherToken) -> proto::SlpToken {
             ..Default::default()
         },
     }
+}
+
+pub struct TokenInfo {
+    pub data: Protocol<
+        (slp::GenesisInfo, slp::TokenMeta),
+        (slpv2::GenesisInfo, slpv2::TokenMeta),
+    >,
+    pub block: Option<proto::BlockMetadata>,
+    pub time_first_seen: i64,
+}
+
+pub fn token_info(
+    db: &Db,
+    mempool: &Mempool,
+    avalanche: &Avalanche,
+    token_id_txid: &TxId,
+) -> Result<Option<TokenInfo>> {
+    if let Some(genesis_info) = mempool.slp().genesis_info(token_id_txid) {
+        let tx_data = mempool
+            .slp()
+            .tx_data(token_id_txid)
+            .ok_or(TokenTxDataNotInMempool(*token_id_txid))?;
+        let mempool_tx = mempool
+            .tx(token_id_txid)
+            .ok_or(TokenTxNotInMempool(*token_id_txid))?;
+        return match (genesis_info, tx_data) {
+            (Protocol::Slp(genesis_info), Protocol::Slp(tx_data)) => {
+                Ok(Some(TokenInfo {
+                    data: Protocol::Slp((genesis_info.clone(), tx_data.meta)),
+                    block: None,
+                    time_first_seen: mempool_tx.time_first_seen,
+                }))
+            }
+            (Protocol::Slpv2(genesis_info), Protocol::Slpv2(tx_data)) => {
+                Ok(Some(TokenInfo {
+                    data: Protocol::Slpv2((
+                        genesis_info.clone(),
+                        tx_data.sections[0].meta,
+                    )),
+                    block: None,
+                    time_first_seen: mempool_tx.time_first_seen,
+                }))
+            }
+            _ => Err(MixingSlpAndSlpv2.into()),
+        };
+    }
+    let tx_reader = TxReader::new(db)?;
+    let slp_reader = SlpReader::new(db)?;
+    let block_reader = BlockReader::new(db)?;
+    let (tx_num, block_tx) =
+        match tx_reader.tx_and_num_by_txid(token_id_txid)? {
+            Some(tuple) => tuple,
+            None => return Ok(None),
+        };
+    let block = block_reader
+        .by_height(block_tx.block_height)?
+        .ok_or(MissingBlockForHeight(block_tx.block_height))?;
+    let db_genesis = match slp_reader.genesis_info_by_tx_num(tx_num)? {
+        Some(db_genesis) => db_genesis,
+        None => return Ok(None),
+    };
+    let meta = slp_reader
+        .token_meta_by_token_num(db_genesis.token_num)?
+        .ok_or(TokenNumDoesntExist(db_genesis.token_num))?;
+    let slp_data = match (db_genesis.genesis_info, meta) {
+        (Protocol::Slp(genesis_info), Protocol::Slp(meta)) => {
+            Protocol::Slp((genesis_info, meta))
+        }
+        (Protocol::Slpv2(genesis_info), Protocol::Slpv2(meta)) => {
+            Protocol::Slpv2((genesis_info, meta))
+        }
+        _ => return Err(MixingSlpAndSlpv2.into()),
+    };
+    Ok(Some(TokenInfo {
+        data: slp_data,
+        block: Some(proto::BlockMetadata {
+            height: block_tx.block_height,
+            hash: block.hash.to_vec(),
+            timestamp: block.timestamp,
+            is_final: avalanche.is_final_height(block_tx.block_height),
+        }),
+        time_first_seen: block_tx.entry.time_first_seen,
+    }))
 }

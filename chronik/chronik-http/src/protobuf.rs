@@ -11,6 +11,7 @@ use axum::{
     http::{HeaderValue, Request},
     response::{IntoResponse, Response},
 };
+use chronik_util::log;
 use hyper::{body::to_bytes, header::CONTENT_TYPE, Body};
 use prost::Message;
 use thiserror::Error;
@@ -84,7 +85,7 @@ impl<P: Message + Default, S: Send + Sync> FromRequest<S, Body>
     }
 }
 
-impl<P: Message + Default> IntoResponse for Protobuf<P> {
+impl<P: Message + Default + std::fmt::Debug> IntoResponse for Protobuf<P> {
     fn into_response(self) -> Response {
         let mut response = Response::builder()
             .body(axum::body::boxed(Body::from(self.0.encode_to_vec())))

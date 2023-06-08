@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use abc_rust_error::Result;
 use bimap::BiMap;
-use bitcoinsuite_slp::{slp, slpv2};
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch};
 use thiserror::Error;
 
@@ -13,7 +12,7 @@ use crate::{
     ser::{db_deserialize, db_serialize},
     slp::{
         batch::{BatchDbData, BatchProcessor},
-        data::{DbTxData, EitherMeta, Protocol, FLAGS_HAS_GENESIS},
+        data::{DbGenesisData, DbTxData, EitherMeta, Protocol},
     },
 };
 
@@ -114,6 +113,13 @@ impl<'a> Slpv2Col<'a> {
         }
     }
 
+    fn get_genesis_data(&self, tx_num: TxNum) -> Result<Option<DbGenesisData>> {
+        match self.db.get(self.cf_genesis_info, ser_tx_num(tx_num)?)? {
+            Some(data) => Ok(Some(db_deserialize::<DbGenesisData>(&data)?)),
+            None => Ok(None),
+        }
+    }
+
     fn get_last_token_num(&self) -> Result<Option<TokenNum>> {
         let mut iter = self.db.iterator_end(self.cf_token_meta);
         match iter.next() {
@@ -173,7 +179,7 @@ impl<'a> SlpWriter<'a> {
                 db_serialize(&db_tx_data)?,
             );
         }
-        for (token_num, new_token) in process_result.new_tokens {
+        for (tx_num, token_num, new_token) in process_result.new_tokens {
             let (meta, genesis_info) = match new_token {
                 Protocol::Slp((meta, info)) => {
                     (Protocol::Slp(meta), Protocol::Slp(info))
@@ -189,10 +195,11 @@ impl<'a> SlpWriter<'a> {
             );
             batch.put_cf(
                 self.col.cf_genesis_info,
-                token_num_to_bytes(token_num),
-                db_serialize::<Protocol<slp::GenesisInfo, slpv2::GenesisInfo>>(
-                    &genesis_info,
-                )?,
+                ser_tx_num(tx_num)?,
+                db_serialize(&DbGenesisData {
+                    token_num,
+                    genesis_info,
+                })?,
             );
         }
         Ok(())
@@ -204,14 +211,17 @@ impl<'a> SlpWriter<'a> {
         txs: &[IndexTx<'_>],
     ) -> Result<()> {
         for tx in txs {
-            if let Some(db_tx_data) = self.col.get_tx_data(tx.tx_num)? {
-                if (db_tx_data.flags & FLAGS_HAS_GENESIS) != 0 {
-                    let token_num = db_tx_data.token_nums[0];
-                    let ser_token_num = token_num_to_bytes(token_num);
+            if self.col.get_tx_data(tx.tx_num)?.is_some() {
+                let ser_tx_num = ser_tx_num(tx.tx_num)?;
+                if let Some(db_genesis) =
+                    self.col.get_genesis_data(tx.tx_num)?
+                {
+                    let ser_token_num =
+                        token_num_to_bytes(db_genesis.token_num);
                     batch.delete_cf(self.col.cf_token_meta, ser_token_num);
-                    batch.delete_cf(self.col.cf_genesis_info, ser_token_num);
+                    batch.delete_cf(self.col.cf_genesis_info, &ser_tx_num);
                 }
-                batch.delete_cf(self.col.cf_tx_data, ser_tx_num(tx.tx_num)?);
+                batch.delete_cf(self.col.cf_tx_data, &ser_tx_num);
             }
         }
         Ok(())
@@ -291,20 +301,11 @@ impl<'a> SlpReader<'a> {
         }
     }
 
-    pub fn genesis_data_by_token_num(
+    pub fn genesis_info_by_tx_num(
         &self,
-        token_num: TokenNum,
-    ) -> Result<Option<slpv2::GenesisInfo>> {
-        match self
-            .col
-            .db
-            .get(self.col.cf_genesis_info, token_num_to_bytes(token_num))?
-        {
-            Some(genesis_data) => {
-                Ok(Some(db_deserialize::<slpv2::GenesisInfo>(&genesis_data)?))
-            }
-            None => Ok(None),
-        }
+        tx_num: TxNum,
+    ) -> Result<Option<DbGenesisData>> {
+        self.col.get_genesis_data(tx_num)
     }
 
     fn token_metas_from_db(

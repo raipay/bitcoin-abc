@@ -46,7 +46,7 @@ pub type NewToken = Protocol<
 >;
 
 pub struct BatchProcessResult {
-    pub new_tokens: Vec<(TokenNum, NewToken)>,
+    pub new_tokens: Vec<(TxNum, TokenNum, NewToken)>,
     pub new_tx_data: HashMap<TxNum, DbTxData>,
 }
 
@@ -108,7 +108,7 @@ impl<'tx> BatchProcessor<'tx> {
         for (&tx_num, batch_tx) in &self.parsed_txs {
             topo_sort.insert_from_slice(tx_num, &batch_tx.tx.input_nums);
         }
-        let mut new_tokens: Vec<(u32, NewToken)> = Vec::new();
+        let mut new_tokens: Vec<(TxNum, TokenNum, NewToken)> = Vec::new();
         let mut new_tx_data: HashMap<u64, DbTxData> = HashMap::new();
         for tx_num in topo_sort.into_nodes() {
             let tx_num = tx_num.map_err(|_| Cycle)?;
@@ -202,6 +202,7 @@ impl<'tx> BatchProcessor<'tx> {
                             Protocol::Slp(meta),
                         );
                         new_tokens.push((
+                            tx_num,
                             db_data.next_token_num,
                             Protocol::Slp((meta, genesis_info)),
                         ));
@@ -212,6 +213,7 @@ impl<'tx> BatchProcessor<'tx> {
                             Protocol::Slpv2(meta),
                         );
                         new_tokens.push((
+                            tx_num,
                             db_data.next_token_num,
                             Protocol::Slpv2((meta, genesis_info)),
                         ));
