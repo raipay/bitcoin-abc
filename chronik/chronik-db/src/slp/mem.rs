@@ -67,7 +67,12 @@ impl MempoolSlp {
         for input in &tx.tx.inputs {
             actual_inputs.push(
                 tx_data_inputs[&input.prev_out.txid].as_ref().and_then(
-                    |tx_data| tx_data[input.prev_out.out_idx as usize].clone(),
+                    |tx_data| {
+                        tx_data
+                            .get(input.prev_out.out_idx as usize)
+                            .cloned()
+                            .flatten()
+                    },
                 ),
             );
         }
