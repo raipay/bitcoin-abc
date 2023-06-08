@@ -6,21 +6,24 @@
 
 use abc_rust_error::{Result, WrapErr};
 use bitcoinsuite_core::{
+    hash::{Hashed, Sha256d},
     ser::BitcoinSer,
     tx::{Coin, Tx, TxId, TxMut},
 };
+use bitcoinsuite_slp::{slp, slpv2};
 use chronik_bridge::ffi;
 use chronik_db::{
     db::Db,
     io::{BlockReader, SpentByReader, TxReader},
     mem::Mempool,
+    slp::data::Protocol,
 };
 use chronik_proto::proto;
 use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, OutputsSpent, SlpDbData},
+    query::{make_tx_proto, token_info, OutputsSpent, SlpDbData},
 };
 
 /// Struct for querying txs from the db/mempool.
@@ -40,6 +43,10 @@ pub enum QueryTxError {
     /// Transaction not in mempool nor DB.
     #[error("404: Transaction {0} not found in the index")]
     TxNotFound(TxId),
+
+    /// Token not found in mempool nor DB.
+    #[error("404: Token {0} not found in the index")]
+    TokenNotFound(TxId),
 
     /// Transaction not in mempool nor DB.
     #[error("400: Input tx {0} not found")]
@@ -187,5 +194,49 @@ impl<'a> QueryTxs<'a> {
             self.avalanche,
             slp.as_ref(),
         ))
+    }
+
+    pub fn token_info(&self, token_id_txid: &TxId) -> Result<proto::TokenInfo> {
+        let token_info =
+            token_info(self.db, self.mempool, self.avalanche, token_id_txid)?
+                .ok_or(TokenNotFound(*token_id_txid))?;
+        Ok(match token_info.data {
+            Protocol::Slp((genesis_info, meta)) => proto::TokenInfo {
+                token_id: meta.token_id.to_vec(),
+                token_protocol: proto::TokenProtocol::Slpv1 as _,
+                slpv1_token_type: meta.token_type.to_u16().into(),
+                slpv1_genesis_info: Some(proto::Slpv1GenesisInfo {
+                    token_ticker: genesis_info.token_ticker.to_vec(),
+                    token_name: genesis_info.token_name.to_vec(),
+                    token_document_url: genesis_info
+                        .token_document_url
+                        .to_vec(),
+                    token_document_hash: genesis_info
+                        .token_document_hash
+                        .map(|hash| hash.to_vec())
+                        .unwrap_or_default(),
+                    decimals: genesis_info.decimals,
+                }),
+                block: token_info.block,
+                time_first_seen: token_info.time_first_seen,
+                ..Default::default()
+            },
+            Protocol::Slpv2((genesis_info, meta)) => proto::TokenInfo {
+                token_id: meta.token_id.to_vec(),
+                token_protocol: proto::TokenProtocol::Slpv2 as _,
+                slpv2_token_type: meta.token_type.to_u8().into(),
+                slpv2_genesis_info: Some(proto::Slpv2GenesisInfo {
+                    token_ticker: genesis_info.token_ticker.to_vec(),
+                    token_name: genesis_info.token_name.to_vec(),
+                    url: genesis_info.url.to_vec(),
+                    data: genesis_info.data.to_vec(),
+                    auth_pubkey: genesis_info.auth_pubkey.to_vec(),
+                    decimals: genesis_info.decimals.into(),
+                }),
+                block: token_info.block,
+                time_first_seen: token_info.time_first_seen,
+                ..Default::default()
+            },
+        })
     }
 }

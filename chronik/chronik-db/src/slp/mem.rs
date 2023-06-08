@@ -30,7 +30,10 @@ pub struct MempoolSlp {
 #[derive(Debug, Eq, Error, PartialEq)]
 pub enum MempoolSlpError {
     /// Tried adding a UTXO that already exists
-    #[error("Inconsistent DB: Mempool tx spending {0} found neither in the mempool nor DB")]
+    #[error(
+        "Inconsistent DB: Mempool tx spending {0} found neither in the \
+         mempool nor DB"
+    )]
     InputNotFound(TxId),
 }
 
@@ -181,11 +184,13 @@ impl MempoolSlp {
         match tx_data {
             Protocol::Slp(tx_data) => {
                 tx_data.output_tokens.get(out_idx).and_then(|&token| {
-                    token.map(|token| Protocol::Slp(slp::SlpSpentOutput {
-                        meta: tx_data.meta,
-                        token,
-                        group_token_id: tx_data.group_token_id.clone(),
-                    }))
+                    token.map(|token| {
+                        Protocol::Slp(slp::SlpSpentOutput {
+                            meta: tx_data.meta,
+                            token,
+                            group_token_id: tx_data.group_token_id.clone(),
+                        })
+                    })
                 })
             }
             Protocol::Slpv2(tx_data) => tx_data
@@ -196,7 +201,7 @@ impl MempoolSlp {
         }
     }
 
-    pub fn genesis_data(
+    pub fn genesis_info(
         &self,
         txid: &TxId,
     ) -> Option<Protocol<&slp::GenesisInfo, &slpv2::GenesisInfo>> {

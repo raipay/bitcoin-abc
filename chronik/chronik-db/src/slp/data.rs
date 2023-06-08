@@ -9,6 +9,7 @@ pub const FLAGS_HAS_GROUP_TOKEN_ID: u8 = 2;
 pub type EitherMeta = Protocol<slp::TokenMeta, slpv2::TokenMeta>;
 pub type EitherToken = Protocol<slp::SlpSpentOutput, slpv2::Token>;
 pub type EitherTxData = Protocol<slp::TxData, slpv2::TxData>;
+pub type EitherGenesisInfo = Protocol<slp::GenesisInfo, slpv2::GenesisInfo>;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DbTxData {
@@ -22,6 +23,12 @@ pub struct DbTxData {
 pub struct DbToken {
     pub token_num_idx: usize,
     pub variant: slp::Token,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DbGenesisData {
+    pub token_num: TokenNum,
+    pub genesis_info: EitherGenesisInfo,
 }
 
 impl DbTxData {
@@ -98,6 +105,15 @@ impl Protocol<slp::ParseData, slpv2::ColoredTx> {
                 }
                 slpv2.sections[0].section_type == slpv2::SectionType::GENESIS
             }
+        }
+    }
+}
+
+impl<A: Clone, B: Clone> Protocol<&A, &B> {
+    pub fn cloned(&self) -> Protocol<A, B> {
+        match *self {
+            Protocol::Slp(a) => Protocol::Slp(a.clone()),
+            Protocol::Slpv2(b) => Protocol::Slpv2(b.clone()),
         }
     }
 }
