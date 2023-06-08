@@ -641,6 +641,10 @@ void SetupServerArgs(NodeContext &node) {
                    "Output some performance statistics (e.g. num cache hits, "
                    "seconds spent) into a <datadir>/perf folder. (default: 0)",
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikslpreindexheight",
+                   "Reindex the SLP index of the Chronik indexer from the "
+                   "given height, and leave the other indexes untouched",
+                   ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
 #endif
     argsman.AddArg(
         "-blockfilterindex=<type>",
@@ -2558,7 +2562,9 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     if (args.GetBoolArg("-chronik", DEFAULT_CHRONIK)) {
         const bool fReindexChronik =
             fReindex || args.GetBoolArg("-chronikreindex", false);
-        if (!chronik::Start(config, node, fReindexChronik)) {
+        const int32_t slpReindexHeight =
+            args.GetIntArg("-chronikslpreindexheight", -1);
+        if (!chronik::Start(config, node, fReindexChronik, slpReindexHeight)) {
             return false;
         }
     }

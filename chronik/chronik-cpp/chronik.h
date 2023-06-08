@@ -18,7 +18,8 @@ namespace chronik {
 static const std::vector<std::string> DEFAULT_BINDS = {"127.0.0.1", "::1"};
 
 // Registers Chronik indexer as ValidationInterface, listens to HTTP queries
-bool Start(const Config &config, const node::NodeContext &node, bool fWipe);
+bool Start(const Config &config, const node::NodeContext &node, bool fWipe,
+           int32_t slpReindexHeight);
 
 // Unregisters Chronik indexer as ValidationInterface, stops the HTTP server
 void Stop();

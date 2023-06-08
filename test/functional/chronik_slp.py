@@ -1559,6 +1559,172 @@ class ChronikSlp(BitcoinTestFramework):
             slp_send_outputs,
         )
 
+        self.restart_node(0, ["-chronik", "-chronikslpreindexheight=100"])
+
+        assert_equal(
+            chronik.token_info(genesis_txid).ok(),
+            pb.TokenInfo(
+                token_id=token_id,
+                token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                slpv2_token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                slpv2_genesis_info=genesis_info,
+                block=pb.BlockMetadata(
+                    height=reorg_height,
+                    hash=bytes.fromhex(reorg.hash)[::-1],
+                    timestamp=reorg_timestamp,
+                ),
+                time_first_seen=mocktime,
+            ),
+        )
+
+        genesis_proto = chronik.tx(genesis_txid).ok()
+        assert_equal(list(genesis_proto.slpv2_sections), genesis_sections)
+        assert_equal(list(genesis_proto.slp_errors), [])
+        assert_equal(list(genesis_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in genesis_proto.outputs], genesis_slp_outputs
+        )
+
+        mint_proto = chronik.tx(mint_txid).ok()
+        assert_equal(list(mint_proto.slpv2_sections), mint_sections)
+        assert_equal(list(mint_proto.slp_errors), [])
+        assert_equal(list(mint_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in mint_proto.outputs],
+            mint_slp_outputs,
+        )
+
+        send_proto = chronik.tx(send_txid).ok()
+        assert_equal(list(send_proto.slpv2_sections), send_sections)
+        assert_equal(list(send_proto.slp_errors), [])
+        assert_equal(list(send_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in send_proto.outputs],
+            send_slp_outputs,
+        )
+
+        assert_equal(
+            chronik.token_info(multi_txid).ok(),
+            pb.TokenInfo(
+                token_id=multi_token_id,
+                token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                slpv2_token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                slpv2_genesis_info=pb.Slpv2GenesisInfo(token_ticker=b"MULTI"),
+                block=pb.BlockMetadata(
+                    height=reorg_height,
+                    hash=bytes.fromhex(reorg.hash)[::-1],
+                    timestamp=reorg_timestamp,
+                ),
+                time_first_seen=mocktime,
+            ),
+        )
+
+        multi_proto = chronik.tx(multi_txid).ok()
+        assert_equal(list(multi_proto.slpv2_sections), multi_sections)
+        assert_equal(list(multi_proto.slp_errors), [])
+        assert_equal(list(multi_proto.slp_burns), multi_burns)
+        assert_equal(
+            [output.slp for output in multi_proto.outputs],
+            multi_slp_outputs,
+        )
+
+        assert_equal(
+            chronik.token_info(all_txid).ok(),
+            pb.TokenInfo(
+                token_id=all_token_id,
+                token_protocol=pb.TOKEN_PROTOCOL_SLPV2,
+                slpv2_token_type=pb.SLPV2_TOKEN_TYPE_STANDARD,
+                slpv2_genesis_info=pb.Slpv2GenesisInfo(token_ticker=b"ALL"),
+                block=pb.BlockMetadata(
+                    height=reorg_height,
+                    hash=bytes.fromhex(reorg.hash)[::-1],
+                    timestamp=reorg_timestamp,
+                ),
+            ),
+        )
+
+        all_proto = chronik.tx(all_txid).ok()
+        assert_equal(list(all_proto.slpv2_sections), all_sections)
+        assert_equal(list(all_proto.slp_errors), all_slp_errors)
+        assert_equal(list(all_proto.slp_burns), all_burns)
+        assert_equal(
+            [output.slp for output in all_proto.outputs],
+            all_slp_outputs,
+        )
+
+        non_slp_proto = chronik.tx(non_slp_txid).ok()
+        assert_equal(list(non_slp_proto.slpv2_sections), [])
+        assert_equal(list(non_slp_proto.slp_burns), non_slp_burns)
+        assert_equal(list(non_slp_proto.slp_errors), non_slp_errors)
+        assert_equal([output.slp for output in non_slp_proto.outputs], [pb.SlpToken()])
+
+        non_slp_proto2 = chronik.tx(non_slp_txid2).ok()
+        assert_equal(list(non_slp_proto2.slpv2_sections), [])
+        assert_equal(list(non_slp_proto2.slp_burns), non_slp2_burns)
+        assert_equal(list(non_slp_proto2.slp_errors), non_slp2_errors)
+        assert_equal([output.slp for output in non_slp_proto2.outputs], [pb.SlpToken()])
+
+        burn_proto = chronik.tx(burn_tx.hash).ok()
+        assert_equal(list(burn_proto.slpv2_sections), burn_sections)
+        assert_equal(list(burn_proto.slp_burns), burn_burns)
+        assert_equal(list(burn_proto.slp_errors), [])
+        assert_equal(
+            [output.slp for output in burn_proto.outputs],
+            burn_slp_outputs,
+        )
+
+        no_tokens_proto = chronik.tx(no_tokens_txid).ok()
+        assert_equal(list(no_tokens_proto.slpv2_sections), no_tokens_sections)
+        assert_equal(list(no_tokens_proto.slp_burns), no_tokens_burns)
+        assert_equal(list(no_tokens_proto.slp_errors), [])
+        assert_equal(
+            [output.slp for output in no_tokens_proto.outputs],
+            no_tokens_slp_outputs,
+        )
+
+        assert_equal(
+            chronik.token_info(slp_genesis_txid).ok(),
+            pb.TokenInfo(
+                token_id=slp_token_id,
+                token_protocol=pb.TOKEN_PROTOCOL_SLPV1,
+                slpv1_token_type=pb.SLPV1_TOKEN_TYPE_FUNGIBLE,
+                slpv1_genesis_info=slp_genesis_info,
+                block=pb.BlockMetadata(
+                    height=reorg_height,
+                    hash=bytes.fromhex(reorg.hash)[::-1],
+                    timestamp=reorg_timestamp,
+                ),
+                time_first_seen=mocktime,
+            ),
+        )
+
+        slp_genesis_proto = chronik.tx(slp_genesis_txid).ok()
+        assert_equal(slp_genesis_proto.slpv1_data, slp_genesis_tx_data)
+        assert_equal(list(slp_genesis_proto.slp_errors), [])
+        assert_equal(list(slp_genesis_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in slp_genesis_proto.outputs],
+            slp_genesis_outputs,
+        )
+
+        slp_mint_proto = chronik.tx(slp_mint_txid).ok()
+        assert_equal(slp_mint_proto.slpv1_data, slp_mint_tx_data)
+        assert_equal(list(slp_mint_proto.slp_errors), [])
+        assert_equal(list(slp_mint_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in slp_mint_proto.outputs],
+            slp_mint_outputs,
+        )
+
+        slp_send_proto = chronik.tx(slp_send_txid).ok()
+        assert_equal(slp_send_proto.slpv1_data, slp_send_tx_data)
+        assert_equal(list(slp_send_proto.slp_errors), [])
+        assert_equal(list(slp_send_proto.slp_burns), [])
+        assert_equal(
+            [output.slp for output in slp_send_proto.outputs],
+            slp_send_outputs,
+        )
+
 
 if __name__ == "__main__":
     ChronikSlp().main()

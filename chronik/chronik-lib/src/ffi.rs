@@ -27,6 +27,9 @@ mod ffi_inner {
         /// Whether to output Chronik performance statistics into a perf/
         /// folder
         pub enable_perf_stats: bool,
+        /// Reindex the SLP index of the Chronik indexer from the given height,
+        /// and leave the other indexes untouched.
+        pub slp_reindex_height: i32,
     }
 
     extern "Rust" {

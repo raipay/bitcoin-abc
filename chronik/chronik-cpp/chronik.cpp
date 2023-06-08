@@ -24,7 +24,8 @@ template <typename T, typename C> rust::Vec<T> ToRustVec(const C &container) {
     return vec;
 }
 
-bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
+bool Start(const Config &config, const node::NodeContext &node, bool fWipe,
+           int32_t slpReindexHeight) {
     const bool is_pause_allowed = gArgs.GetBoolArg("-chronikallowpause", false);
     if (is_pause_allowed && !config.GetChainParams().IsTestChain()) {
         return InitError(_("Using -chronikallowpause on a mainnet chain is not "
@@ -40,6 +41,7 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
             .wipe_db = fWipe,
             .is_pause_allowed = is_pause_allowed,
             .enable_perf_stats = gArgs.GetBoolArg("-chronikperfstats", false),
+            .slp_reindex_height = slpReindexHeight,
         },
         config, node);
 }
