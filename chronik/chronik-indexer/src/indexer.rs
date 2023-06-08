@@ -21,7 +21,7 @@ use chronik_db::{
     io::{
         BlockHeight, BlockReader, BlockStatsWriter, BlockTxs, BlockWriter,
         DbBlock, MetadataReader, MetadataWriter, SchemaVersion, SpentByWriter,
-        TxEntry, TxWriter,
+        TxEntry, TxReader, TxWriter,
     },
     mem::{Mempool, MempoolTx},
     slp::io::SlpWriter,
@@ -51,6 +51,8 @@ pub struct ChronikIndexerParams {
     pub wipe_db: bool,
     /// Function ptr to compress scripts.
     pub fn_compress_script: FnCompressScript,
+    /// Reindex the SLP index of the Chronik indexer from the given height.
+    pub slp_reindex_height: i32,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
@@ -61,6 +63,7 @@ pub struct ChronikIndexer {
     script_group: ScriptGroup,
     avalanche: Avalanche,
     subs: RwLock<Subs>,
+    slp_reindex_height: i32,
 }
 
 /// Access to the bitcoind node.
@@ -168,6 +171,7 @@ impl ChronikIndexer {
             script_group: script_group.clone(),
             avalanche: Avalanche::default(),
             subs: RwLock::new(Subs::new(script_group)),
+            slp_reindex_height: params.slp_reindex_height,
         })
     }
 
@@ -234,10 +238,14 @@ impl ChronikIndexer {
                 );
             }
         }
+        if self.slp_reindex_height != -1 {
+            self.slp_reindex(bridge, tip_height)?;
+        }
         log!(
             "Chronik completed re-syncing with the node, both are now at \
              block {node_tip_hash} at height {node_height}.\n"
         );
+        self.slp_reindex_height = -1;
         Ok(())
     }
 
@@ -281,6 +289,62 @@ impl ChronikIndexer {
             self.handle_block_disconnected(block)?;
         }
         Ok(fork_info.height)
+    }
+
+    fn slp_reindex(
+        &self,
+        bridge: &ffi::ChronikBridge,
+        tip_height: BlockHeight,
+    ) -> Result<()> {
+        log!(
+            "Reindexing only SLP index from height {}\n",
+            self.slp_reindex_height
+        );
+        let slp_writer = SlpWriter::new(&self.db)?;
+        let tx_reader = TxReader::new(&self.db)?;
+        let mut batch = WriteBatch::default();
+        slp_writer.clear(&mut batch)?; // TODO: make clear optional
+        self.db.write_batch(batch)?;
+        for height in self.slp_reindex_height..=tip_height {
+            if ffi::shutdown_requested() {
+                log!("Stopped reindexing SLP index\n");
+                return Ok(());
+            }
+            let db_block = BlockReader::new(&self.db)?
+                .by_height(height)?
+                .ok_or(BlocksBelowMissing {
+                    missing: height,
+                    exists: tip_height,
+                })?;
+            let first_tx_num = tx_reader.first_tx_num_by_block(height)?.ok_or(
+                BlocksBelowMissing {
+                    missing: height,
+                    exists: tip_height,
+                },
+            )?;
+            let block_index = bridge
+                .lookup_block_index(db_block.hash.to_bytes())
+                .map_err(|_| CannotRewindChronik(db_block.hash))?;
+            let ffi_block = bridge.load_block(block_index)?;
+            let ffi_block = expect_unique_ptr("load_block", &ffi_block);
+            let block = self.make_chronik_block(ffi_block, block_index)?;
+            let hash = block.db_block.hash;
+            let mut batch = WriteBatch::default();
+            let index_txs =
+                prepare_indexed_txs(&self.db, first_tx_num, &block.txs)?;
+            slp_writer.insert(&mut batch, &index_txs)?;
+            self.db.write_batch(batch)?;
+            log_chronik!(
+                "Block {hash} added to SLP index {height}/{tip_height}\n"
+            );
+            if height % 100 == 0 {
+                log!(
+                    "Synced Chronik SLP index up to block {hash} at height \
+                     {height}/{tip_height}\n"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Add transaction to the indexer's mempool.
@@ -331,7 +395,9 @@ impl ChronikIndexer {
         script_history_writer.insert(&mut batch, &index_txs)?;
         script_utxo_writer.insert(&mut batch, &index_txs)?;
         spent_by_writer.insert(&mut batch, &index_txs)?;
-        slp_writer.insert(&mut batch, &index_txs)?;
+        if self.slp_reindex_height == -1 {
+            slp_writer.insert(&mut batch, &index_txs)?;
+        }
         self.db.write_batch(batch)?;
         for tx in &block.block_txs.txs {
             self.mempool.remove_mined(&tx.txid)?;
@@ -570,6 +636,7 @@ mod tests {
             datadir_net: datadir_net.clone(),
             wipe_db: false,
             fn_compress_script: prefix_mock_compress,
+            slp_reindex_height: -1,
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
@@ -639,6 +706,7 @@ mod tests {
             datadir_net: dir.path().to_path_buf(),
             wipe_db: false,
             fn_compress_script: prefix_mock_compress,
+            slp_reindex_height: -1,
         };
 
         // Setting up DB first time sets the schema version

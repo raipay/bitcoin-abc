@@ -22,6 +22,9 @@ mod ffi_inner {
         pub default_port: u16,
         /// Whether to clear the DB before proceeding, e.g. when reindexing
         pub wipe_db: bool,
+        /// Reindex the SLP index of the Chronik indexer from the given height,
+        /// and leave the other indexes untouched.
+        pub slp_reindex_height: i32,
     }
 
     extern "Rust" {
