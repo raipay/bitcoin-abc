@@ -64,6 +64,7 @@ impl QueryBroadcast<'_> {
             if let Protocol::Slpv2(tx_data) = slp.tx_data.as_ref() {
                 if tx_data.sections.is_empty()
                     && tx_data.color_errors.is_empty()
+                    && tx_data.burns.is_empty()
                 {
                     if let Some(slpv1_error) = &slp.slpv1_error {
                         burn_msgs
