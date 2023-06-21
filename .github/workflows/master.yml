@@ -1,0 +1,30 @@
+name: Build and push to Docker Hub
+
+on:
+  push:
+    branches: ["feature/images"] # To be changed before merge
+
+jobs:
+  production_build:
+    name: Build and push to registry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+            username: ${{ secrets.DOCKER_IO_EMAIL }}
+            password: ${{ secrets.DOCKER_IO_PASSWORD }}
+
+      - name: Build Container Image
+        run: |-
+          docker build \
+            -t bitcoin-abc:latest \
+            -f images/Dockerfile .
+
+      - name: Publish to Docker Hub
+        id: publish
+        run: |-
+          docker push bitcoin-abc:latest
