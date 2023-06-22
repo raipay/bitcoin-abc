@@ -2,7 +2,7 @@ name: Build and push to Docker Hub
 
 on:
   push:
-    branches: ["feature/images"] # To be changed before merge
+    branches: ["feature/containers"] # To be changed before merge
 
 jobs:
   production_build:
