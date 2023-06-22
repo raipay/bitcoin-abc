@@ -36,8 +36,6 @@ COPY . /bitcoin-abc
 RUN git clone https://github.com/givelotus/bitcoinsuite.git /bitcoinsuite \
     && mkdir -p /target/bitcoind \
     && mkdir -p /bitcoinsuite/downloads/bitcoin-abc/bin/ \
-    && cd /bitcoin-abc \
-    && git checkout 926838c69f0ef19fa409c3610b99fb927ba8e2fb \
     && cd /target/bitcoind \
     && cmake -GNinja \
         -DBUILD_BITCOIN_CHRONIK=on \
