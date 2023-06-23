@@ -4,12 +4,17 @@
 
 #include <test/util/blockfilter.h>
 
-#include <blockdb.h>
 #include <chainparams.h>
+#include <node/blockstorage.h>
 #include <validation.h>
+
+using node::ReadBlockFromDisk;
+using node::UndoReadFromDisk;
 
 bool ComputeFilter(BlockFilterType filter_type, const CBlockIndex *block_index,
                    BlockFilter &filter) {
+    LOCK(::cs_main);
+
     CBlock block;
     if (!ReadBlockFromDisk(block, block_index->GetBlockPos(),
                            Params().GetConsensus())) {

@@ -1,21 +1,21 @@
-// Copyright (c) 2017-2019 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <consensus/amount.h>
 #include <rpc/util.h>
 
 #include <key_io.h>
 #include <script/descriptor.h>
 #include <script/signingprovider.h>
 #include <tinyformat.h>
+#include <util/check.h>
 #include <util/strencodings.h>
 #include <util/string.h>
 #include <util/translation.h>
 
 #include <tuple>
 
-#include <boost/algorithm/string/classification.hpp>
-#include <boost/algorithm/string/split.hpp>
 #include <boost/variant/static_visitor.hpp>
 
 const std::string UNIX_EPOCH_TIME = "UNIX epoch time";
@@ -135,9 +135,59 @@ std::vector<uint8_t> ParseHexO(const UniValue &o, std::string strKey) {
     return ParseHexV(find_value(o, strKey), strKey);
 }
 
+namespace {
+
+/**
+ * Quote an argument for shell.
+ *
+ * @note This is intended for help, not for security-sensitive purposes.
+ */
+std::string ShellQuote(const std::string &s) {
+    std::string result;
+    result.reserve(s.size() * 2);
+    for (const char ch : s) {
+        if (ch == '\'') {
+            result += "'\''";
+        } else {
+            result += ch;
+        }
+    }
+    return "'" + result + "'";
+}
+
+/**
+ * Shell-quotes the argument if it needs quoting, else returns it literally, to
+ * save typing.
+ *
+ * @note This is intended for help, not for security-sensitive purposes.
+ */
+std::string ShellQuoteIfNeeded(const std::string &s) {
+    for (const char ch : s) {
+        if (ch == ' ' || ch == '\'' || ch == '"') {
+            return ShellQuote(s);
+        }
+    }
+
+    return s;
+}
+
+} // namespace
+
 std::string HelpExampleCli(const std::string &methodname,
                            const std::string &args) {
     return "> bitcoin-cli " + methodname + " " + args + "\n";
+}
+
+std::string HelpExampleCliNamed(const std::string &methodname,
+                                const RPCArgList &args) {
+    std::string result = "> bitcoin-cli -named " + methodname;
+    for (const auto &argpair : args) {
+        const auto &value = argpair.second.isStr() ? argpair.second.get_str()
+                                                   : argpair.second.write();
+        result += " " + argpair.first + "=" + ShellQuoteIfNeeded(value);
+    }
+    result += "\n";
+    return result;
 }
 
 std::string HelpExampleRpc(const std::string &methodname,
@@ -147,6 +197,20 @@ std::string HelpExampleRpc(const std::string &methodname,
            "\"method\": \"" +
            methodname + "\", \"params\": [" + args +
            "]}' -H 'content-type: text/plain;' http://127.0.0.1:8332/\n";
+}
+
+std::string HelpExampleRpcNamed(const std::string &methodname,
+                                const RPCArgList &args) {
+    UniValue params(UniValue::VOBJ);
+    for (const auto &param : args) {
+        params.pushKV(param.first, param.second);
+    }
+
+    return "> curl --user myusername --data-binary '{\"jsonrpc\": \"1.0\", "
+           "\"id\": \"curltest\", "
+           "\"method\": \"" +
+           methodname + "\", \"params\": " + params.write() +
+           "}' -H 'content-type: text/plain;' http://127.0.0.1:8332/\n";
 }
 
 // Converts a hex string to a public key if possible
@@ -262,6 +326,15 @@ public:
 
 UniValue DescribeAddress(const CTxDestination &dest) {
     return boost::apply_visitor(DescribeAddressVisitor(), dest);
+}
+
+std::string GetAllOutputTypes() {
+    std::vector<std::string> ret;
+    using U = std::underlying_type<TxoutType>::type;
+    for (U i = (U)TxoutType::NONSTANDARD; i <= (U)TxoutType::NULL_DATA; ++i) {
+        ret.emplace_back(GetTxnOutputType(static_cast<TxoutType>(i)));
+    }
+    return Join(ret, ", ");
 }
 
 RPCErrorCode RPCErrorFromTransactionError(TransactionError terr) {
@@ -386,9 +459,7 @@ struct Sections {
                     {indent + "]" + (outer_type != OuterType::NONE ? "," : ""),
                      ""});
                 break;
-            }
-
-                // no default case, so the compiler can warn about missing cases
+            } // no default case, so the compiler can warn about missing cases
         }
     }
 
@@ -399,6 +470,10 @@ struct Sections {
         std::string ret;
         const size_t pad = m_max_pad + 4;
         for (const auto &s : m_sections) {
+            // The left part of a section is assumed to be a single line,
+            // usually it is the name of the JSON struct or a brace like
+            // {, }, [, or ]
+            CHECK_NONFATAL(s.m_left.find('\n') == std::string::npos);
             if (s.m_right.empty()) {
                 ret += s.m_left;
                 ret += "\n";
@@ -436,13 +511,18 @@ struct Sections {
 RPCHelpMan::RPCHelpMan(std::string name_, std::string description,
                        std::vector<RPCArg> args, RPCResults results,
                        RPCExamples examples)
-    : m_name{std::move(name_)}, m_description{std::move(description)},
-      m_args{std::move(args)}, m_results{std::move(results)},
-      m_examples{std::move(examples)} {
+    : RPCHelpMan{std::move(name_),   std::move(description), std::move(args),
+                 std::move(results), std::move(examples),    nullptr} {}
+
+RPCHelpMan::RPCHelpMan(std::string name_, std::string description,
+                       std::vector<RPCArg> args, RPCResults results,
+                       RPCExamples examples, RPCMethodImpl fun)
+    : m_name{std::move(name_)}, m_fun{std::move(fun)},
+      m_description{std::move(description)}, m_args{std::move(args)},
+      m_results{std::move(results)}, m_examples{std::move(examples)} {
     std::set<std::string> named_args;
     for (const auto &arg : m_args) {
-        std::vector<std::string> names;
-        boost::split(names, arg.m_names, boost::is_any_of("|"));
+        std::vector<std::string> names = SplitString(arg.m_names, '|');
         // Should have unique named arguments
         for (const std::string &name : names) {
             CHECK_NONFATAL(named_args.insert(name).second);
@@ -452,7 +532,12 @@ RPCHelpMan::RPCHelpMan(std::string name_, std::string description,
 
 std::string RPCResults::ToDescriptionString() const {
     std::string result;
+
     for (const auto &r : m_results) {
+        if (r.m_type == RPCResult::Type::ANY) {
+            // for testing only
+            continue;
+        }
         if (r.m_cond.empty()) {
             result += "\nResult:\n";
         } else {
@@ -469,6 +554,26 @@ std::string RPCExamples::ToDescriptionString() const {
     return m_examples.empty() ? m_examples : "\nExamples:\n" + m_examples;
 }
 
+UniValue RPCHelpMan::HandleRequest(const Config &config,
+                                   const JSONRPCRequest &request) const {
+    if (request.mode == JSONRPCRequest::GET_ARGS) {
+        return GetArgMap();
+    }
+    /*
+     * Check if the given request is valid according to this command or if
+     * the user is asking for help information, and throw help when appropriate.
+     */
+    if (request.mode == JSONRPCRequest::GET_HELP ||
+        !IsValidNumArgs(request.params.size())) {
+        throw std::runtime_error(ToString());
+    }
+    const UniValue ret = m_fun(*this, config, request);
+    CHECK_NONFATAL(std::any_of(
+        m_results.m_results.begin(), m_results.m_results.end(),
+        [ret](const RPCResult &res) { return res.MatchesType(ret); }));
+    return ret;
+}
+
 bool RPCHelpMan::IsValidNumArgs(size_t num_args) const {
     size_t num_required_args = 0;
     for (size_t n = m_args.size(); n > 0; --n) {
@@ -479,6 +584,15 @@ bool RPCHelpMan::IsValidNumArgs(size_t num_args) const {
     }
     return num_required_args <= num_args && num_args <= m_args.size();
 }
+
+std::vector<std::string> RPCHelpMan::GetArgNames() const {
+    std::vector<std::string> ret;
+    for (const auto &arg : m_args) {
+        ret.emplace_back(arg.m_names);
+    }
+    return ret;
+}
+
 std::string RPCHelpMan::ToString() const {
     std::string ret;
 
@@ -486,6 +600,10 @@ std::string RPCHelpMan::ToString() const {
     ret += m_name;
     bool was_optional{false};
     for (const auto &arg : m_args) {
+        if (arg.m_hidden) {
+            // Any arg that follows is also hidden
+            break;
+        }
         const bool optional = arg.IsOptional();
         ret += " ";
         if (optional) {
@@ -513,6 +631,10 @@ std::string RPCHelpMan::ToString() const {
     Sections sections;
     for (size_t i{0}; i < m_args.size(); ++i) {
         const auto &arg = m_args.at(i);
+        if (arg.m_hidden) {
+            // Any arg that follows is also hidden
+            break;
+        }
 
         if (i == 0) {
             ret += "\nArguments:\n";
@@ -539,6 +661,24 @@ std::string RPCHelpMan::ToString() const {
     return ret;
 }
 
+UniValue RPCHelpMan::GetArgMap() const {
+    UniValue arr{UniValue::VARR};
+    for (int i{0}; i < int(m_args.size()); ++i) {
+        const auto &arg = m_args.at(i);
+        std::vector<std::string> arg_names = SplitString(arg.m_names, '|');
+        for (const auto &arg_name : arg_names) {
+            UniValue map{UniValue::VARR};
+            map.push_back(m_name);
+            map.push_back(i);
+            map.push_back(arg_name);
+            map.push_back(arg.m_type == RPCArg::Type::STR ||
+                          arg.m_type == RPCArg::Type::STR_HEX);
+            arr.push_back(map);
+        }
+    }
+    return arr;
+}
+
 std::string RPCArg::GetFirstName() const {
     return m_names.substr(0, m_names.find("|"));
 }
@@ -549,10 +689,10 @@ std::string RPCArg::GetName() const {
 }
 
 bool RPCArg::IsOptional() const {
-    if (m_fallback.which() == 1) {
+    if (m_fallback.index() == 1) {
         return true;
     } else {
-        return RPCArg::Optional::NO != boost::get<RPCArg::Optional>(m_fallback);
+        return RPCArg::Optional::NO != std::get<RPCArg::Optional>(m_fallback);
     }
 }
 
@@ -592,15 +732,13 @@ std::string RPCArg::ToDescriptionString() const {
             case Type::ARR: {
                 ret += "json array";
                 break;
-            }
-
-                // no default case, so the compiler can warn about missing cases
+            } // no default case, so the compiler can warn about missing cases
         }
     }
-    if (m_fallback.which() == 1) {
-        ret += ", optional, default=" + boost::get<std::string>(m_fallback);
+    if (m_fallback.index() == 1) {
+        ret += ", optional, default=" + std::get<std::string>(m_fallback);
     } else {
-        switch (boost::get<RPCArg::Optional>(m_fallback)) {
+        switch (std::get<RPCArg::Optional>(m_fallback)) {
             case RPCArg::Optional::OMITTED: {
                 // nothing to do. Element is treated as if not present and has
                 // no default value
@@ -613,9 +751,7 @@ std::string RPCArg::ToDescriptionString() const {
             case RPCArg::Optional::NO: {
                 ret += ", required";
                 break;
-            }
-
-                // no default case, so the compiler can warn about missing cases
+            } // no default case, so the compiler can warn about missing cases
         }
     }
     ret += ")";
@@ -649,6 +785,10 @@ void RPCResult::ToSections(Sections &sections, const OuterType outer_type,
             sections.PushSection(
                 {indent + "..." + maybe_separator, m_description});
             return;
+        }
+        case Type::ANY: {
+            // Only for testing
+            NONFATAL_UNREACHABLE();
         }
         case Type::NONE: {
             sections.PushSection(
@@ -706,6 +846,11 @@ void RPCResult::ToSections(Sections &sections, const OuterType outer_type,
             return;
         }
         case Type::OBJ_DYN:
+        case Type::OBJ_EMPTY: {
+            sections.PushSection(
+                {indent + maybe_key + "{}", Description("empty JSON object")});
+            return;
+        }
         case Type::OBJ: {
             sections.PushSection(
                 {indent + maybe_key + "{", Description("json object")});
@@ -724,12 +869,45 @@ void RPCResult::ToSections(Sections &sections, const OuterType outer_type,
             }
             sections.PushSection({indent + "}" + maybe_separator, ""});
             return;
-        }
-
-            // no default case, so the compiler can warn about missing cases
+        } // no default case, so the compiler can warn about missing cases
     }
+    NONFATAL_UNREACHABLE();
+}
 
-    CHECK_NONFATAL(false);
+bool RPCResult::MatchesType(const UniValue &result) const {
+    switch (m_type) {
+        case Type::ELISION: {
+            return false;
+        }
+        case Type::ANY: {
+            return true;
+        }
+        case Type::NONE: {
+            return UniValue::VNULL == result.getType();
+        }
+        case Type::STR:
+        case Type::STR_HEX: {
+            return UniValue::VSTR == result.getType();
+        }
+        case Type::NUM:
+        case Type::STR_AMOUNT:
+        case Type::NUM_TIME: {
+            return UniValue::VNUM == result.getType();
+        }
+        case Type::BOOL: {
+            return UniValue::VBOOL == result.getType();
+        }
+        case Type::ARR_FIXED:
+        case Type::ARR: {
+            return UniValue::VARR == result.getType();
+        }
+        case Type::OBJ_DYN:
+        case Type::OBJ_EMPTY:
+        case Type::OBJ: {
+            return UniValue::VOBJ == result.getType();
+        }
+    } // no default case, so the compiler can warn about missing cases
+    NONFATAL_UNREACHABLE();
 }
 
 std::string RPCArg::ToStringObj(const bool oneline) const {
@@ -763,11 +941,12 @@ std::string RPCArg::ToStringObj(const bool oneline) const {
         case Type::OBJ:
         case Type::OBJ_USER_KEYS:
             // Currently unused, so avoid writing dead code
-            CHECK_NONFATAL(false);
+            NONFATAL_UNREACHABLE();
 
             // no default case, so the compiler can warn about missing cases
     }
-    CHECK_NONFATAL(false);
+    NONFATAL_UNREACHABLE();
+    return res + "unknown";
 }
 
 std::string RPCArg::ToString(const bool oneline) const {
@@ -803,11 +982,9 @@ std::string RPCArg::ToString(const bool oneline) const {
                 res += i.ToString(oneline) + ",";
             }
             return "[" + res + "...]";
-        }
-
-            // no default case, so the compiler can warn about missing cases
+        } // no default case, so the compiler can warn about missing cases
     }
-    CHECK_NONFATAL(false);
+    NONFATAL_UNREACHABLE();
 }
 
 static std::pair<int64_t, int64_t> ParseRange(const UniValue &value) {

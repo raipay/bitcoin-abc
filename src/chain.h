@@ -43,18 +43,6 @@ static constexpr int64_t TIMESTAMP_WINDOW = MAX_FUTURE_BLOCK_TIME;
  */
 static constexpr int64_t MAX_BLOCK_TIME_GAP = 90 * 60;
 
-/**
- * Maintain a map of CBlockIndex for all known headers.
- */
-struct BlockHasher {
-    // this used to call `GetCheapHash()` in uint256, which was later moved; the
-    // cheap hash function simply calls ReadLE64() however, so the end result is
-    // identical
-    size_t operator()(const BlockHash &hash) const {
-        return ReadLE64(hash.begin());
-    }
-};
-
 extern RecursiveMutex cs_main;
 
 arith_uint256 GetBlockProof(const CBlockIndex &block);
@@ -93,6 +81,7 @@ public:
     }
 
     SERIALIZE_METHODS(CDiskBlockIndex, obj) {
+        LOCK(::cs_main);
         int _nVersion = s.GetVersion();
         if (!(s.GetType() & SER_GETHASH)) {
             READWRITE(VARINT_MODE(_nVersion, VarIntMode::NONNEGATIVE_SIGNED));
@@ -180,12 +169,6 @@ public:
         return vChain[nHeight];
     }
 
-    /** Compare two chains efficiently. */
-    friend bool operator==(const CChain &a, const CChain &b) {
-        return a.vChain.size() == b.vChain.size() &&
-               a.vChain[a.vChain.size() - 1] == b.vChain[b.vChain.size() - 1];
-    }
-
     /** Efficiently check whether a block is present in this chain. */
     bool Contains(const CBlockIndex *pindex) const {
         return (*this)[pindex->nHeight] == pindex;
@@ -207,7 +190,7 @@ public:
      * Return the maximal height in the chain. Is equal to chain.Tip() ?
      * chain.Tip()->nHeight : -1.
      */
-    int Height() const { return vChain.size() - 1; }
+    int Height() const { return int(vChain.size()) - 1; }
 
     /** Set/initialize a chain with a given tip. */
     void SetTip(CBlockIndex *pindex);

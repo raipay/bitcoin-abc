@@ -18,7 +18,7 @@ BOOST_AUTO_TEST_SUITE(message_writer_tests)
 
 template <typename... Args>
 static void CheckMessage(CDataStream &expectedMessage, std::string command,
-                         Args &&... args) {
+                         Args &&...args) {
     CDataStream message(SER_NETWORK, PROTOCOL_VERSION);
     MessageWriter::WriteMessage(message, command, std::forward<Args>(args)...);
     BOOST_CHECK_EQUAL(message.size(), expectedMessage.size());
@@ -35,7 +35,7 @@ BOOST_AUTO_TEST_CASE(simple_header_and_payload_message_writer_test) {
     CService service;
     CAddress addrTo(service, ServiceFlags(NODE_NETWORK));
     CAddress addrFrom(service, ServiceFlags(NODE_NETWORK));
-    std::string user_agent = "/bitcoin-cash-seeder:0.15/";
+    std::string user_agent = "/Bitcoin ABC:0.0.0(seeder)/";
     int start_height = 1;
 
     CDataStream versionPayload(SER_NETWORK, PROTOCOL_VERSION);

@@ -49,6 +49,7 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"getbalance", 1, "minconf"},
     {"getbalance", 2, "include_watchonly"},
     {"getbalance", 3, "avoid_reuse"},
+    {"getblockfrompeer", 1, "peer_id"},
     {"getblockhash", 0, "height"},
     {"waitforblockheight", 0, "height"},
     {"waitforblockheight", 1, "timeout"},
@@ -111,8 +112,12 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"gettxout", 1, "n"},
     {"gettxout", 2, "include_mempool"},
     {"gettxoutproof", 0, "txids"},
+    {"gettxoutsetinfo", 1, "hash_or_height"},
+    {"gettxoutsetinfo", 2, "use_index"},
     {"lockunspent", 0, "unlock"},
     {"lockunspent", 1, "transactions"},
+    {"send", 0, "outputs"},
+    {"send", 1, "options"},
     {"importprivkey", 2, "rescan"},
     {"importaddress", 2, "rescan"},
     {"importaddress", 3, "p2sh"},
@@ -127,7 +132,7 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"pruneblockchain", 0, "height"},
     {"keypoolrefill", 0, "newsize"},
     {"getrawmempool", 0, "verbose"},
-    {"estimatefee", 0, "nblocks"},
+    {"getrawmempool", 1, "mempool_sequence"},
     {"prioritisetransaction", 1, "dummy"},
     {"prioritisetransaction", 2, "fee_delta"},
     {"setban", 2, "bantime"},
@@ -157,15 +162,20 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"createwallet", 2, "blank"},
     {"createwallet", 4, "avoid_reuse"},
     {"createwallet", 5, "descriptors"},
+    {"createwallet", 6, "load_on_startup"},
+    {"restorewallet", 2, "load_on_startup"},
+    {"loadwallet", 1, "load_on_startup"},
+    {"unloadwallet", 1, "load_on_startup"},
     {"getnodeaddresses", 0, "count"},
+    {"addpeeraddress", 1, "port"},
+    {"addpeeraddress", 2, "tried"},
     {"stop", 0, "wait"},
+    {"createwallettransaction", 1, "amount"},
     // Avalanche
     {"addavalanchenode", 0, "nodeid"},
     {"buildavalancheproof", 0, "sequence"},
     {"buildavalancheproof", 1, "expiration"},
     {"buildavalancheproof", 3, "stakes"},
-    // ABC specific RPC
-    {"setexcessiveblock", 0, "blockSize"},
 };
 
 class CRPCConvertTable {
@@ -185,14 +195,9 @@ public:
 };
 
 CRPCConvertTable::CRPCConvertTable() {
-    const unsigned int n_elem =
-        (sizeof(vRPCConvertParams) / sizeof(vRPCConvertParams[0]));
-
-    for (unsigned int i = 0; i < n_elem; i++) {
-        members.insert(std::make_pair(vRPCConvertParams[i].methodName,
-                                      vRPCConvertParams[i].paramIdx));
-        membersByName.insert(std::make_pair(vRPCConvertParams[i].methodName,
-                                            vRPCConvertParams[i].paramName));
+    for (const auto &cp : vRPCConvertParams) {
+        members.emplace(cp.methodName, cp.paramIdx);
+        membersByName.emplace(cp.methodName, cp.paramName);
     }
 }
 
@@ -206,7 +211,7 @@ UniValue ParseNonRFCJSONValue(const std::string &strVal) {
     UniValue jVal;
     if (!jVal.read(std::string("[") + strVal + std::string("]")) ||
         !jVal.isArray() || jVal.size() != 1) {
-        throw std::runtime_error(std::string("Error parsing JSON:") + strVal);
+        throw std::runtime_error(std::string("Error parsing JSON: ") + strVal);
     }
     return jVal[0];
 }

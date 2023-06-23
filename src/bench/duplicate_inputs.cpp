@@ -6,6 +6,7 @@
 #include <chain.h>
 #include <chainparams.h>
 #include <config.h>
+#include <consensus/amount.h>
 #include <consensus/merkle.h>
 #include <consensus/validation.h>
 #include <pow/pow.h>
@@ -35,7 +36,7 @@ static void DuplicateInputs(benchmark::Bench &bench) {
     CMutableTransaction naughtyTx{};
 
     LOCK(cs_main);
-    CBlockIndex *pindexPrev = ::ChainActive().Tip();
+    CBlockIndex *pindexPrev = test_setup.m_node.chainman->ActiveChain().Tip();
     assert(pindexPrev != nullptr);
     block.nBits = GetNextWorkRequired(pindexPrev, &block, chainParams);
     block.nNonce = 0;

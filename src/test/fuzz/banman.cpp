@@ -30,12 +30,12 @@ ConsumeBanTimeOffset(FuzzedDataProvider &fuzzed_data_provider) noexcept {
 } // namespace
 
 void initialize() {
-    InitializeFuzzingContext();
+    static const auto testing_setup = MakeFuzzingContext<>();
 }
 
 void test_one_input(const std::vector<uint8_t> &buffer) {
     FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
-    const fs::path banlist_file = GetDataDir() / "fuzzed_banlist.dat";
+    const fs::path banlist_file = gArgs.GetDataDirNet() / "fuzzed_banlist.dat";
     fs::remove(banlist_file);
     const CChainParams &chainparams = GetConfig().GetChainParams();
     {
@@ -91,5 +91,5 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
             }
         }
     }
-    fs::remove(banlist_file);
+    fs::remove(fs::PathToString(banlist_file));
 }

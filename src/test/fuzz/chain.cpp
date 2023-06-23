@@ -23,20 +23,23 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
 
     const BlockHash zero{};
     disk_block_index->phashBlock = &zero;
-    (void)disk_block_index->GetBlockHash();
-    (void)disk_block_index->GetBlockPos();
-    (void)disk_block_index->GetBlockTime();
-    (void)disk_block_index->GetBlockTimeMax();
-    (void)disk_block_index->GetChainSize();
-    (void)disk_block_index->GetChainTxCount();
-    (void)disk_block_index->GetHeaderReceivedTime();
-    (void)disk_block_index->GetMedianTimePast();
-    (void)disk_block_index->GetReceivedTimeDiff();
-    (void)disk_block_index->GetUndoPos();
-    (void)disk_block_index->HaveTxsDownloaded();
-    (void)disk_block_index->IsValid();
-    (void)disk_block_index->ToString();
-    (void)disk_block_index->UpdateChainStats();
+    {
+        LOCK(::cs_main);
+        (void)disk_block_index->GetBlockHash();
+        (void)disk_block_index->GetBlockPos();
+        (void)disk_block_index->GetBlockTime();
+        (void)disk_block_index->GetBlockTimeMax();
+        (void)disk_block_index->GetChainSize();
+        (void)disk_block_index->GetChainTxCount();
+        (void)disk_block_index->GetHeaderReceivedTime();
+        (void)disk_block_index->GetMedianTimePast();
+        (void)disk_block_index->GetReceivedTimeDiff();
+        (void)disk_block_index->GetUndoPos();
+        (void)disk_block_index->HaveTxsDownloaded();
+        (void)disk_block_index->IsValid();
+        (void)disk_block_index->ToString();
+        (void)disk_block_index->UpdateChainStats();
+    }
 
     const CBlockHeader block_header = disk_block_index->GetBlockHeader();
     (void)CDiskBlockIndex{*disk_block_index};
@@ -59,6 +62,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         bool has_failed_parent = fuzzed_data_provider.ConsumeBool();
         bool is_parked = fuzzed_data_provider.ConsumeBool();
         bool has_parked_parent = fuzzed_data_provider.ConsumeBool();
+        bool is_assumed_valid = fuzzed_data_provider.ConsumeBool();
         const BlockStatus block_status =
             base.withValidity(block_validity)
                 .withData(has_data)
@@ -66,7 +70,8 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                 .withFailed(has_failed)
                 .withFailedParent(has_failed_parent)
                 .withParked(is_parked)
-                .withParkedParent(has_parked_parent);
+                .withParkedParent(has_parked_parent)
+                .withAssumedValid(is_assumed_valid);
 
         assert(block_status.hasData() == has_data);
         assert(block_status.hasUndo() == has_undo);
@@ -74,6 +79,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         assert(block_status.hasFailedParent() == has_failed_parent);
         assert(block_status.isParked() == is_parked);
         assert(block_status.hasParkedParent() == has_parked_parent);
+        assert(block_status.isAssumedValid() == is_assumed_valid);
 
         assert(block_status.isInvalid() == has_failed || has_failed_parent);
         const BlockStatus valid_block = block_status.withClearedFailureFlags();
@@ -85,10 +91,15 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
             block_status.withClearedParkedFlags();
         assert(!unparked_block.isOnParkedChain());
 
+        const BlockStatus unassumed_valid_block =
+            block_status.withClearedAssumedValidFlags();
+        assert(!unassumed_valid_block.isAssumedValid());
+
         if (!block_status.isValid()) {
             continue;
         }
-        (void)disk_block_index->RaiseValidity(block_validity);
+        WITH_LOCK(::cs_main,
+                  (void)disk_block_index->RaiseValidity(block_validity));
     }
 
     CBlockIndex block_index{block_header};

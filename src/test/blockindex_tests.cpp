@@ -44,6 +44,7 @@ BOOST_AUTO_TEST_CASE(get_disk_positions) {
         BlockValidity::UNKNOWN, BlockValidity::RESERVED,
         BlockValidity::TREE,    BlockValidity::TRANSACTIONS,
         BlockValidity::CHAIN,   BlockValidity::SCRIPTS};
+    LOCK(cs_main);
     for (BlockValidity validity : validityValues) {
         // Test against all combinations of data and undo flags
         for (int flags = 0; flags <= 0x03; flags++) {
@@ -268,6 +269,7 @@ BOOST_AUTO_TEST_CASE(index_validity_tests) {
         BlockValidity::TREE,    BlockValidity::TRANSACTIONS,
         BlockValidity::CHAIN,   BlockValidity::SCRIPTS};
     std::set<bool> boolValues = {false, true};
+    LOCK(::cs_main);
     for (BlockValidity validity : validityValues) {
         for (bool withFailed : boolValues) {
             for (bool withFailedParent : boolValues) {
@@ -420,4 +422,49 @@ BOOST_AUTO_TEST_CASE(index_ancestors) {
     }
 }
 
+BOOST_AUTO_TEST_CASE(index_assumevalid_tests) {
+    CBlockIndex index;
+
+    // Test against all validity values
+    std::set<BlockValidity> validityValues{
+        BlockValidity::UNKNOWN, BlockValidity::RESERVED,
+        BlockValidity::TREE,    BlockValidity::TRANSACTIONS,
+        BlockValidity::CHAIN,   BlockValidity::SCRIPTS};
+    std::set<bool> boolValues = {false, true};
+    for (BlockValidity validityFrom : validityValues) {
+        for (bool withAssumedValid : boolValues) {
+            LOCK(cs_main);
+
+            index.nStatus = BlockStatus()
+                                .withValidity(validityFrom)
+                                .withAssumedValid(withAssumedValid);
+            BOOST_CHECK_EQUAL(index.nStatus.isAssumedValid(),
+                              index.IsAssumedValid());
+            BOOST_CHECK_EQUAL(index.IsAssumedValid(), withAssumedValid);
+
+            for (BlockValidity validityUpTo : validityValues) {
+                // Test RaiseValidity()
+                bool raisedValidity = index.RaiseValidity(validityUpTo);
+                if (validityFrom < validityUpTo) {
+                    BOOST_CHECK(raisedValidity);
+                    BOOST_CHECK_EQUAL(index.nStatus.getValidity(),
+                                      validityUpTo);
+                    if (validityUpTo < BlockValidity::SCRIPTS) {
+                        BOOST_CHECK_EQUAL(index.IsAssumedValid(),
+                                          withAssumedValid);
+                    } else {
+                        // If a block had been marked assumed-valid and
+                        // we're raising its validity to a certain point,
+                        // there is no longer an assumption.
+                        BOOST_CHECK(!index.IsAssumedValid());
+                    }
+                } else {
+                    // Validity not raised, so no change to assumed-validity
+                    BOOST_CHECK(!raisedValidity);
+                    BOOST_CHECK_EQUAL(index.IsAssumedValid(), withAssumedValid);
+                }
+            }
+        }
+    }
+}
 BOOST_AUTO_TEST_SUITE_END()

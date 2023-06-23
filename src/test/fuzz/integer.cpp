@@ -2,12 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <amount.h>
 #include <arith_uint256.h>
 #include <chainparams.h>
 #include <clientversion.h>
 #include <compressor.h>
 #include <config.h>
+#include <consensus/amount.h>
 #include <consensus/merkle.h>
 #include <core_io.h>
 #include <crypto/common.h>
@@ -26,6 +26,7 @@
 #include <serialize.h>
 #include <streams.h>
 #include <uint256.h>
+#include <univalue.h>
 #include <util/check.h>
 #include <util/moneystr.h>
 #include <util/strencodings.h>
@@ -107,8 +108,9 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     }
     (void)GetSizeOfCompactSize(u64);
     (void)GetSpecialScriptSize(u32);
-    if (!MultiplicationOverflow(i64, static_cast<int64_t>(::nBytesPerSigOp)) &&
-        !AdditionOverflow(i64 * ::nBytesPerSigOp, static_cast<int64_t>(4))) {
+    if (!MultiplicationOverflow(i64,
+                                static_cast<int64_t>(::nBytesPerSigCheck)) &&
+        !AdditionOverflow(i64 * ::nBytesPerSigCheck, static_cast<int64_t>(4))) {
         (void)GetVirtualTransactionSize(i64, i64);
     }
     if (!MultiplicationOverflow(i64, static_cast<int64_t>(u32)) &&

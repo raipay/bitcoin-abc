@@ -6,17 +6,32 @@
 #define BITCOIN_AVALANCHE_TEST_UTIL_H
 
 #include <avalanche/proof.h>
-#include <pubkey.h>
+#include <avalanche/proofbuilder.h>
+#include <key.h>
+#include <script/script.h>
 
-#include <cstdio>
+#include <vector>
 
 namespace avalanche {
 
 constexpr uint32_t MIN_VALID_PROOF_SCORE = 100 * PROOF_DUST_THRESHOLD / COIN;
 
-Proof buildRandomProof(uint32_t score, const CPubKey &master = CPubKey());
+const CScript UNSPENDABLE_ECREG_PAYOUT_SCRIPT =
+    CScript() << OP_DUP << OP_HASH160 << std::vector<uint8_t>(20, 0)
+              << OP_EQUALVERIFY << OP_CHECKSIG;
 
-bool hasDustStake(const Proof &proof);
+ProofRef buildRandomProof(Chainstate &active_chainstate, uint32_t score,
+                          int height = 100,
+                          const CKey &masterKey = CKey::MakeCompressedKey());
+
+bool hasDustStake(const ProofRef &proof);
+
+struct TestProofBuilder {
+    static LimitedProofId getReverseOrderLimitedProofId(ProofBuilder &pb);
+    static ProofRef buildWithReversedOrderStakes(ProofBuilder &pb);
+    static LimitedProofId getDuplicatedStakeLimitedProofId(ProofBuilder &pb);
+    static ProofRef buildDuplicatedStakes(ProofBuilder &pb);
+};
 
 } // namespace avalanche
 

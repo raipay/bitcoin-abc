@@ -5,6 +5,7 @@
 
 include(CheckIncludeFiles)
 include(CheckSymbolExists)
+include(CheckTypeSize)
 include(CheckCXXSymbolExists)
 include(CheckCXXSourceCompiles)
 
@@ -55,15 +56,15 @@ check_symbol_exists(bswap_64 "byteswap.h" HAVE_DECL_BSWAP_64)
 check_include_files("sys/select.h" HAVE_SYS_SELECT_H)
 check_include_files("sys/prctl.h" HAVE_SYS_PRCTL_H)
 
-# Bitmanip intrinsics
-function(check_builtin_exist SYMBOL VARIABLE)
+# Built-in compiler intrinsics
+function(check_builtin_exist_with_code SYMBOL VARIABLE CODE)
 	set(
 		SOURCE_FILE
 		"${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeTmp/CheckBuiltinExists.c"
 	)
 	set(
 		CMAKE_CONFIGURABLE_FILE_CONTENT
-		"int main(int argc, char** argv) { (void)argv; return ${SYMBOL}(argc); }\n"
+		"int main(int argc, char** argv) { (void)argv; return ${CODE}; }\n"
 	)
 	configure_file(
 		"${CMAKE_ROOT}/Modules/CMakeConfigurableFile.in"
@@ -101,10 +102,26 @@ function(check_builtin_exist SYMBOL VARIABLE)
 	endif()
 endfunction()
 
+function(check_builtin_exist SYMBOL VARIABLE)
+	check_builtin_exist_with_code(
+		${SYMBOL}
+		${VARIABLE}
+		"${SYMBOL}(argc)"
+	)
+endfunction()
+
+# Bitmanip intrinsics
 check_builtin_exist(__builtin_clz HAVE_DECL___BUILTIN_CLZ)
 check_builtin_exist(__builtin_clzl HAVE_DECL___BUILTIN_CLZL)
 check_builtin_exist(__builtin_clzll HAVE_DECL___BUILTIN_CLZLL)
 check_builtin_exist(__builtin_popcount HAVE_DECL___BUILTIN_POPCOUNT)
+# Overflow math
+check_builtin_exist_with_code(
+	__builtin_saddll_overflow HAVE_DECL___BUILTIN_SADDLL_OVERFLOW
+	"__builtin_saddll_overflow(argc, argc, (long long int*)&argc)")
+check_builtin_exist_with_code(
+	__builtin_ssubll_overflow HAVE_DECL___BUILTIN_SSUBLL_OVERFLOW
+	"__builtin_ssubll_overflow(argc, argc, (long long int*)&argc)")
 
 # Memory management capabilities
 check_symbol_exists(M_ARENA_MAX "malloc.h" HAVE_MALLOPT_ARENA_MAX)
@@ -112,8 +129,9 @@ check_symbol_exists(malloc_info "malloc.h" HAVE_MALLOC_INFO)
 
 # Various system libraries
 check_symbol_exists(strnlen "string.h" HAVE_DECL_STRNLEN)
-# daemon() is located in unistd.h on linux and in stdlib.h on BSDs and macOS.
-check_symbol_exists(daemon "unistd.h;stdlib.h" HAVE_DECL_DAEMON)
+# These are used for daemonization in bitcoind
+check_symbol_exists(fork "unistd.h" HAVE_DECL_FORK)
+check_symbol_exists(setsid "unistd.h" HAVE_DECL_SETSID)
 
 # Check for ways to obtain entropy
 check_symbol_exists(getentropy "unistd.h" HAVE_GETENTROPY)
@@ -210,6 +228,9 @@ set(CMAKE_REQUIRED_FLAGS -O2)
 # Activate wallet
 set(ENABLE_WALLET ${BUILD_BITCOIN_WALLET})
 
+# Activate Chronik indexer
+set(ENABLE_CHRONIK ${BUILD_BITCOIN_CHRONIK})
+
 # Activate ZeroMQ
 set(ENABLE_ZMQ ${BUILD_BITCOIN_ZMQ})
 
@@ -228,8 +249,36 @@ if(ENABLE_UPNP)
 	set(USE_UPNP ${START_WITH_UPNP} CACHE INTERNAL "UPnP is enabled")
 endif()
 
+# Try to find natpmp
+if(ENABLE_NATPMP)
+	# The expected behavior is as follow:
+	#  - If NAT-PMP is enabled USE_NATPMP must be defined
+	#  - If NAT-PMP should be a port map method, USE_NATPMP should be
+	#    defined to 1, otherwise it should be defined to 0.
+	#  - If both USE_UPNP and USE_NATPMP are defined to 1, UPnP is used first.
+	#    If it fails, NAT-PMP is then used.
+	set(USE_NATPMP ${START_WITH_NATPMP} CACHE INTERNAL "NAT-PMP is enabled")
+endif()
+
 if(ENABLE_DBUS_NOTIFICATIONS)
 	set(USE_DBUS 1)
+endif()
+
+if(ENABLE_TRACING)
+	check_cxx_source_compiles("
+	#include <sys/sdt.h>
+	int main() {
+		DTRACE_PROBE(\"context\", \"event\");
+		return 0;
+	}
+	" HAVE_SDT_TRACEPOINT)
+
+	if(NOT HAVE_SDT_TRACEPOINT)
+		message(
+			FATAL_ERROR
+			"sys/sdt.h tracepoint not supported on your system, you must install it (see doc/tracing.md) or disable eBPF tracing with -DENABLE_TRACING=OFF"
+		)
+	endif()
 endif()
 
 # Check if std::system or ::wsystem is available
@@ -238,6 +287,8 @@ check_cxx_symbol_exists(::wsystem "" _HAVE_WSYSTEM)
 if(_HAVE_STD_SYSTEM OR _HAVE_WSYSTEM)
 	set(HAVE_SYSTEM 1)
 endif()
+
+check_type_size(__int128 __INT128)
 
 # Generate the config
 configure_file(bitcoin-config.h.cmake.in bitcoin-config.h ESCAPE_QUOTES)

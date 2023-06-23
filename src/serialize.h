@@ -8,6 +8,7 @@
 
 #include <compat/endian.h>
 #include <prevector.h>
+#include <rcu.h>
 #include <span.h>
 
 #include <algorithm>
@@ -749,6 +750,61 @@ template <class Formatter> struct VectorFormatter {
 };
 
 /**
+ * Helper for differentially encoded Compact Size integers in lists.
+ *
+ * Instead of using raw indexes, the number encoded is the difference between
+ * the current index and the previous index, minus one. For example, a first
+ * index of 0 implies a real index of 0, a second index of 0 thereafter refers
+ * to a real index of 1, etc.
+ *
+ * To be used with a VectorFormatter.
+ */
+class DifferenceFormatter {
+    uint64_t m_shift = 0;
+
+public:
+    template <typename Stream, typename I> void Ser(Stream &s, I v) {
+        if (v < m_shift || v >= std::numeric_limits<uint64_t>::max()) {
+            throw std::ios_base::failure("differential value overflow");
+        }
+        WriteCompactSize(s, v - m_shift);
+        m_shift = uint64_t(v) + 1;
+    }
+    template <typename Stream, typename I> void Unser(Stream &s, I &v) {
+        uint64_t n = ReadCompactSize(s);
+        m_shift += n;
+        if (m_shift < n || m_shift >= std::numeric_limits<uint64_t>::max() ||
+            m_shift < std::numeric_limits<I>::min() ||
+            m_shift > std::numeric_limits<I>::max()) {
+            throw std::ios_base::failure("differential value overflow");
+        }
+        v = I(m_shift++);
+    }
+};
+
+/**
+ * Helper for a list of items containing a differentially encoded index as their
+ * first member. See DifferenceFormatter for info about the index encoding.
+ *
+ * The index should be a public member of the object.
+ * SerData()/UnserData() methods must be implemented to serialize/deserialize
+ * the remaining item data.
+ *
+ * To be used with a VectorFormatter.
+ */
+struct DifferentialIndexedItemFormatter : public DifferenceFormatter {
+    template <typename Stream, typename T> void Ser(Stream &s, T v) {
+        DifferenceFormatter::Ser(s, v.index);
+        v.SerData(s);
+    }
+
+    template <typename Stream, typename T> void Unser(Stream &s, T &v) {
+        DifferenceFormatter::Unser(s, v.index);
+        v.UnserData(s);
+    }
+};
+
+/**
  * Forward declarations
  */
 
@@ -837,6 +893,14 @@ template <typename Stream, typename T>
 void Serialize(Stream &os, const std::unique_ptr<const T> &p);
 template <typename Stream, typename T>
 void Unserialize(Stream &os, std::unique_ptr<const T> &p);
+
+/**
+ * RCUPtr
+ */
+template <typename Stream, typename T>
+void Serialize(Stream &os, const RCUPtr<const T> &p);
+template <typename Stream, typename T>
+void Unserialize(Stream &os, RCUPtr<const T> &p);
 
 /**
  * If none of the specialized versions above matched, default to calling member
@@ -1078,6 +1142,19 @@ void Unserialize(Stream &is, std::shared_ptr<const T> &p) {
 }
 
 /**
+ * RCUPtr
+ */
+template <typename Stream, typename T>
+void Serialize(Stream &os, const RCUPtr<const T> &p) {
+    Serialize(os, *p);
+}
+
+template <typename Stream, typename T>
+void Unserialize(Stream &is, RCUPtr<const T> &p) {
+    p = RCUPtr<const T>::make(deserialize, is);
+}
+
+/**
  * Support for SERIALIZE_METHODS and READWRITE macro.
  */
 struct CSerActionSerialize {
@@ -1126,7 +1203,7 @@ public:
 template <typename Stream> void SerializeMany(Stream &s) {}
 
 template <typename Stream, typename Arg, typename... Args>
-void SerializeMany(Stream &s, const Arg &arg, const Args &... args) {
+void SerializeMany(Stream &s, const Arg &arg, const Args &...args) {
     ::Serialize(s, arg);
     ::SerializeMany(s, args...);
 }
@@ -1134,20 +1211,20 @@ void SerializeMany(Stream &s, const Arg &arg, const Args &... args) {
 template <typename Stream> inline void UnserializeMany(Stream &s) {}
 
 template <typename Stream, typename Arg, typename... Args>
-inline void UnserializeMany(Stream &s, Arg &&arg, Args &&... args) {
+inline void UnserializeMany(Stream &s, Arg &&arg, Args &&...args) {
     ::Unserialize(s, arg);
     ::UnserializeMany(s, args...);
 }
 
 template <typename Stream, typename... Args>
 inline void SerReadWriteMany(Stream &s, CSerActionSerialize ser_action,
-                             const Args &... args) {
+                             const Args &...args) {
     ::SerializeMany(s, args...);
 }
 
 template <typename Stream, typename... Args>
 inline void SerReadWriteMany(Stream &s, CSerActionUnserialize ser_action,
-                             Args &&... args) {
+                             Args &&...args) {
     ::UnserializeMany(s, args...);
 }
 
@@ -1184,7 +1261,7 @@ template <typename T> size_t GetSerializeSize(const T &t, int nVersion = 0) {
 }
 
 template <typename... T>
-size_t GetSerializeSizeMany(int nVersion, const T &... t) {
+size_t GetSerializeSizeMany(int nVersion, const T &...t) {
     CSizeComputer sc(nVersion);
     SerializeMany(sc, t...);
     return sc.size();

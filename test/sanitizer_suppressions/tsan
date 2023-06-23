@@ -1,35 +1,22 @@
 # ThreadSanitizer suppressions
 # ============================
+#
+# https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
 
-# double locks (TODO fix)
-mutex:g_genesis_wait_mutex
-mutex:Interrupt
-mutex:CThreadInterrupt
-mutex:CConnman::Interrupt
-mutex:CConnman::WakeMessageHandler
-mutex:CConnman::ThreadOpenConnections
-mutex:CConnman::ThreadOpenAddedConnections
-mutex:CConnman::SocketHandler
-mutex:UpdateTip
-mutex:PeerManager::UpdatedBlockTip
-mutex:g_best_block_mutex
-mutex:rcu_tests::synchronize_test
+
 # race (TODO fix)
-race:CConnman::WakeMessageHandler
-race:CConnman::ThreadMessageHandler
-race:fHaveGenesis
-race:ProcessNewBlock
-race:ThreadImport
 race:WalletBatch::WriteHDChain
 race:CZMQAbstractPublishNotifier::SendMessage
 race:BerkeleyBatch
+race:BerkeleyDatabase
+race:validation_chainstatemanager_tests
 race:bitcoin-qt
+
 # deadlock (TODO fix)
 deadlock:CConnman::ForNode
 deadlock:CConnman::GetNodeStats
-deadlock:CChainState::ConnectTip
+deadlock:Chainstate::ConnectTip
 deadlock:UpdateTip
-deadlock:wallet_tests::CreateWalletFromFile
 
 # Lock order inversion due to the large cs_main lock from Shutdown, which comes
 # before the cs_proofrequest lock
@@ -48,7 +35,24 @@ deadlock:src/qt/test/*
 
 # External libraries
 deadlock:libdb
+# Note: Clang-14 doesn't exclude properly the libdb with the deadlock filter, so
+# called_from_lib is used instead. We need to specify db_cxx to avoid name
+# conflicts with other libs (like dbus).
+called_from_lib:libdb_cxx
 thread:src/leveldb/*
+race:epoll_ctl
+
+# Race in headers only Boost Test
+race:std::__1::ios_base::flags
+
+# Intermittent issues
+# -------------------
+#
+# Suppressions that follow might only happen intermittently, thus they are not
+# reproducible. Make sure to include a link to a full trace.
+
+# https://github.com/bitcoin/bitcoin/issues/20618
+race:CZMQAbstractPublishNotifier::SendZmqMessage
 
 # Reverselock tests is triggering lock-order-inversion errors when run as part
 # of test_bitcoin.

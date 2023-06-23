@@ -96,9 +96,9 @@ static ScriptErrorDesc script_errors[] = {
 };
 
 static std::string FormatScriptError(ScriptError err) {
-    for (size_t i = 0; i < ARRAYLEN(script_errors); ++i) {
-        if (script_errors[i].err == err) {
-            return script_errors[i].name;
+    for (const auto &se : script_errors) {
+        if (se.err == err) {
+            return se.name;
         }
     }
 
@@ -108,9 +108,9 @@ static std::string FormatScriptError(ScriptError err) {
 }
 
 static ScriptError ParseScriptError(const std::string &name) {
-    for (size_t i = 0; i < ARRAYLEN(script_errors); ++i) {
-        if (script_errors[i].name == name) {
-            return script_errors[i].err;
+    for (const auto &se : script_errors) {
+        if (se.name == name) {
+            return se.err;
         }
     }
 
@@ -2389,7 +2389,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
     }
 
 #ifdef UPDATE_JSON_TESTS
-    FILE *file = fopen("script_tests.json.gen", "w");
+    FILE *file = fsbridge::fopen("script_tests.json.gen", "w");
     fputs(strGen.c_str(), file);
     fclose(file);
 #endif

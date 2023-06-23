@@ -31,13 +31,12 @@ class WalletLabelsTest(BitcoinTestFramework):
 
         # Note each time we call generate, all generated coins go into
         # the same address, so we call twice to get two addresses w/50 each
-        node.generatetoaddress(
-            nblocks=1, address=node.getnewaddress(
-                label='coinbase'))
-        node.generatetoaddress(
-            nblocks=101,
-            address=node.getnewaddress(
-                label='coinbase'))
+        self.generatetoaddress(
+            node, nblocks=1, address=node.getnewaddress(label="coinbase")
+        )
+        self.generatetoaddress(
+            node, nblocks=101, address=node.getnewaddress(label="coinbase")
+        )
         assert_equal(node.getbalance(), 100000000)
 
         # there should be 2 address groups
@@ -51,7 +50,7 @@ class WalletLabelsTest(BitcoinTestFramework):
             assert_equal(len(address_group), 1)
             assert_equal(len(address_group[0]), 3)
             assert_equal(address_group[0][1], 50000000)
-            assert_equal(address_group[0][2], 'coinbase')
+            assert_equal(address_group[0][2], "coinbase")
             linked_addresses.add(address_group[0][0])
 
         # send 50 from each address to a third address not in this wallet
@@ -66,10 +65,10 @@ class WalletLabelsTest(BitcoinTestFramework):
         address_groups = node.listaddressgroupings()
         assert_equal(len(address_groups), 1)
         assert_equal(len(address_groups[0]), 2)
-        assert_equal(set([a[0] for a in address_groups[0]]), linked_addresses)
+        assert_equal({a[0] for a in address_groups[0]}, linked_addresses)
         assert_equal([a[1] for a in address_groups[0]], [0, 0])
 
-        node.generate(1)
+        self.generate(node, 1)
 
         # we want to reset so that the "" label has what's expected.
         # otherwise we're off by exactly the fee amount as that's mined
@@ -78,16 +77,16 @@ class WalletLabelsTest(BitcoinTestFramework):
 
         # Create labels and make sure subsequent label API calls
         # recognize the label/address associations.
-        labels = [Label(name)
-                  for name in ("a", "b", "c", "d", "e")]
+        labels = [Label(name) for name in ("a", "b", "c", "d", "e")]
         for label in labels:
             address = node.getnewaddress(label.name)
             label.add_receive_address(address)
             label.verify(node)
 
         # Check all labels are returned by listlabels.
-        assert_equal(node.listlabels(), sorted(
-            ['coinbase'] + [label.name for label in labels]))
+        assert_equal(
+            node.listlabels(), sorted(["coinbase"] + [label.name for label in labels])
+        )
 
         # Send a transaction to each label.
         for label in labels:
@@ -95,23 +94,22 @@ class WalletLabelsTest(BitcoinTestFramework):
             label.verify(node)
 
         # Check the amounts received.
-        node.generate(1)
+        self.generate(node, 1)
         for label in labels:
-            assert_equal(
-                node.getreceivedbyaddress(label.addresses[0]), amount_to_send)
+            assert_equal(node.getreceivedbyaddress(label.addresses[0]), amount_to_send)
             assert_equal(node.getreceivedbylabel(label.name), amount_to_send)
 
         for i, label in enumerate(labels):
             to_label = labels[(i + 1) % len(labels)]
             node.sendtoaddress(to_label.addresses[0], amount_to_send)
-        node.generate(1)
+        self.generate(node, 1)
         for label in labels:
             address = node.getnewaddress(label.name)
             label.add_receive_address(address)
             label.verify(node)
             assert_equal(node.getreceivedbylabel(label.name), 2000000)
             label.verify(node)
-        node.generate(101)
+        self.generate(node, 101)
 
         # Check that setlabel can assign a label to a new unused address.
         for label in labels:
@@ -119,22 +117,23 @@ class WalletLabelsTest(BitcoinTestFramework):
             node.setlabel(address, label.name)
             label.add_address(address)
             label.verify(node)
-            assert_raises_rpc_error(-11,
-                                    "No addresses with label",
-                                    node.getaddressesbylabel,
-                                    "")
+            assert_raises_rpc_error(
+                -11, "No addresses with label", node.getaddressesbylabel, ""
+            )
 
         # Check that addmultisigaddress can assign labels.
-        for label in labels:
-            addresses = []
-            for x in range(10):
-                addresses.append(node.getnewaddress())
-            multisig_address = node.addmultisigaddress(
-                5, addresses, label.name)['address']
-            label.add_address(multisig_address)
-            label.purpose[multisig_address] = "send"
-            label.verify(node)
-        node.generate(101)
+        if not self.options.descriptors:
+            for label in labels:
+                addresses = []
+                for _ in range(10):
+                    addresses.append(node.getnewaddress())
+                multisig_address = node.addmultisigaddress(5, addresses, label.name)[
+                    "address"
+                ]
+                label.add_address(multisig_address)
+                label.purpose[multisig_address] = "send"
+                label.verify(node)
+            self.generate(node, 101)
 
         # Check that setlabel can change the label of an address from a
         # different label.
@@ -171,7 +170,8 @@ class Label:
         assert self.name in node.listlabels()
         assert_equal(
             node.getaddressesbylabel(self.name),
-            {address: {"purpose": self.purpose[address]} for address in self.addresses})
+            {address: {"purpose": self.purpose[address]} for address in self.addresses},
+        )
 
 
 def change_label(node, address, old_label, new_label):
@@ -185,5 +185,5 @@ def change_label(node, address, old_label, new_label):
     new_label.verify(node)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     WalletLabelsTest().main()

@@ -5,13 +5,13 @@
 #ifndef BITCOIN_CORE_IO_H
 #define BITCOIN_CORE_IO_H
 
-#include <attributes.h>
 #include <script/sighashtype.h>
 
 #include <string>
 #include <vector>
 
 struct Amount;
+struct BlockHash;
 class CBlock;
 class CBlockHeader;
 class CMutableTransaction;
@@ -19,14 +19,15 @@ class CScript;
 class CTransaction;
 class uint256;
 class UniValue;
+class CTxUndo;
 
 // core_read.cpp
 CScript ParseScript(const std::string &s);
 std::string ScriptToAsmStr(const CScript &script,
                            const bool fAttemptSighashDecode = false);
-NODISCARD bool DecodeHexTx(CMutableTransaction &tx,
-                           const std::string &strHexTx);
-NODISCARD bool DecodeHexBlk(CBlock &, const std::string &strHexBlk);
+[[nodiscard]] bool DecodeHexTx(CMutableTransaction &tx,
+                               const std::string &strHexTx);
+[[nodiscard]] bool DecodeHexBlk(CBlock &, const std::string &strHexBlk);
 bool DecodeHexBlockHeader(CBlockHeader &, const std::string &hex_header);
 
 /**
@@ -48,7 +49,8 @@ std::string SighashToStr(uint8_t sighash_type);
 void ScriptPubKeyToUniv(const CScript &scriptPubKey, UniValue &out,
                         bool fIncludeHex);
 void ScriptToUniv(const CScript &script, UniValue &out, bool include_address);
-void TxToUniv(const CTransaction &tx, const uint256 &hashBlock, UniValue &entry,
-              bool include_hex = true, int serialize_flags = 0);
+void TxToUniv(const CTransaction &tx, const BlockHash &hashBlock,
+              UniValue &entry, bool include_hex = true, int serialize_flags = 0,
+              const CTxUndo *txundo = nullptr);
 
 #endif // BITCOIN_CORE_IO_H

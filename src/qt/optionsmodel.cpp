@@ -9,6 +9,7 @@
 #include <qt/optionsmodel.h>
 
 #include <interfaces/node.h>
+#include <mapport.h>
 #include <net.h>
 #include <netbase.h>
 #include <qt/bitcoinunits.h>
@@ -147,6 +148,14 @@ void OptionsModel::Init(bool resetSettings) {
         addOverriddenOption("-upnp");
     }
 
+    if (!settings.contains("fUseNatpmp")) {
+        settings.setValue("fUseNatpmp", DEFAULT_NATPMP);
+    }
+    if (!gArgs.SoftSetBoolArg("-natpmp",
+                              settings.value("fUseNatpmp").toBool())) {
+        addOverriddenOption("-natpmp");
+    }
+
     if (!settings.contains("fListen")) {
         settings.setValue("fListen", DEFAULT_LISTEN);
     }
@@ -222,7 +231,7 @@ void OptionsModel::Reset() {
     QSettings settings;
 
     // Backup old settings to chain-specific datadir for troubleshooting
-    BackupSettings(GetDataDir(true) / "guisettings.ini.bak", settings);
+    BackupSettings(gArgs.GetDataDirNet() / "guisettings.ini.bak", settings);
 
     // Save the strDataDir setting
     QString dataDir = GUIUtil::getDefaultDataDirectory();
@@ -322,7 +331,13 @@ QVariant OptionsModel::data(const QModelIndex &index, int role) const {
                 return settings.value("fUseUPnP");
 #else
                 return false;
-#endif
+#endif // USE_UPNP
+            case MapPortNatpmp:
+#ifdef USE_NATPMP
+                return settings.value("fUseNatpmp");
+#else
+                return false;
+#endif // USE_NATPMP
             case MinimizeOnClose:
                 return fMinimizeOnClose;
 
@@ -392,7 +407,9 @@ bool OptionsModel::setData(const QModelIndex &index, const QVariant &value,
                 break;
             case MapPortUPnP: // core option - can be changed on-the-fly
                 settings.setValue("fUseUPnP", value.toBool());
-                node().mapPort(value.toBool());
+                break;
+            case MapPortNatpmp: // core option - can be changed on-the-fly
+                settings.setValue("fUseNatpmp", value.toBool());
                 break;
             case MinimizeOnClose:
                 fMinimizeOnClose = value.toBool();

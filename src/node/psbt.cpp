@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <amount.h>
 #include <coins.h>
+#include <consensus/amount.h>
 #include <consensus/tx_verify.h>
 #include <node/psbt.h>
 #include <policy/policy.h>
@@ -12,6 +12,7 @@
 
 #include <numeric>
 
+namespace node {
 PSBTAnalysis AnalyzePSBT(PartiallySignedTransaction psbtx) {
     // Go through each input and build status
     PSBTAnalysis result;
@@ -158,3 +159,4 @@ PSBTAnalysis AnalyzePSBT(PartiallySignedTransaction psbtx) {
 
     return result;
 }
+} // namespace node

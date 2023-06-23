@@ -3,94 +3,145 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-from test_framework.blocktools import (
-    create_block,
-    create_coinbase,
-)
-from test_framework.messages import ToHex
-from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import (
-    assert_equal,
-    assert_greater_than_or_equal,
-)
-
 from decimal import Decimal
 
-AXION_ACTIVATION_TIME = 2000000600
+from test_framework.blocktools import create_block, create_coinbase
+from test_framework.cashaddr import decode
+from test_framework.messages import XEC, CTxOut, ToHex
+from test_framework.script import OP_EQUAL, OP_HASH160, CScript
+from test_framework.test_framework import BitcoinTestFramework
+from test_framework.txtools import pad_tx
+from test_framework.util import assert_equal, assert_greater_than_or_equal
 
 MINER_FUND_RATIO = 8
-
-MINER_FUND_ADDR = 'ecregtest:pqnqv9lt7e5vjyp0w88zf2af0l92l8rxdgz0wv9ltl'
+MINER_FUND_ADDR = "ecregtest:prfhcnyqnl5cgrnmlfmms675w93ld7mvvq9jcw0zsn"
 
 
 class MinerFundTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
-        self.num_nodes = 1
-        self.extra_args = [[
-            '-enableminerfund',
-            '-axionactivationtime={}'.format(AXION_ACTIVATION_TIME),
-        ]]
+        self.num_nodes = 2
+        self.extra_args = [
+            [
+                "-enableminerfund",
+            ],
+            [],
+        ]
 
     def run_test(self):
         node = self.nodes[0]
-        address = node.get_deterministic_priv_key().address
 
-        self.log.info('Create some history')
-        for _ in range(0, 50):
-            node.generatetoaddress(1, address)
+        self.log.info("Create some history")
+        self.generate(node, 10)
 
-        node = self.nodes[0]
-        address = node.get_deterministic_priv_key().address
+        def get_best_coinbase(n):
+            return n.getblock(n.getbestblockhash(), 2)["tx"][0]
 
-        # Move MTP forward to axion activation
-        node.setmocktime(AXION_ACTIVATION_TIME)
-        node.generatetoaddress(6, address)
-        assert_equal(
-            node.getblockchaininfo()['mediantime'],
-            AXION_ACTIVATION_TIME)
+        coinbase = get_best_coinbase(node)
+        assert_greater_than_or_equal(len(coinbase["vout"]), 2)
+        block_reward = sum([vout["value"] for vout in coinbase["vout"]])
 
-        # Let's remember the hash of this block for later use.
-        fork_block_hash = int(node.getbestblockhash(), 16)
+        def check_miner_fund_output():
+            coinbase = get_best_coinbase(node)
+            assert_equal(len(coinbase["vout"]), 2)
+            assert_equal(
+                coinbase["vout"][1]["scriptPubKey"]["addresses"][0], MINER_FUND_ADDR
+            )
 
-        def get_best_coinbase():
-            return node.getblock(node.getbestblockhash(), 2)['tx'][0]
+            total = Decimal()
+            for o in coinbase["vout"]:
+                total += o["value"]
 
-        # No money goes to the fund.
-        coinbase = get_best_coinbase()
-        assert_equal(len(coinbase['vout']), 1)
-        block_reward = coinbase['vout'][0]['value']
+            assert_equal(total, block_reward)
+            assert_greater_than_or_equal(
+                coinbase["vout"][1]["value"], (MINER_FUND_RATIO * total) / 100
+            )
 
-        # First block with the new rules.
-        node.generatetoaddress(1, address)
-
+        # The coinbase has an output to the miner fund address.
         # Now we send part of the coinbase to the fund.
-        coinbase = get_best_coinbase()
-        assert_equal(len(coinbase['vout']), 2)
-        assert_equal(
-            coinbase['vout'][1]['scriptPubKey']['addresses'][0],
-            MINER_FUND_ADDR)
+        check_miner_fund_output()
 
-        total = Decimal()
-        for o in coinbase['vout']:
-            total += o['value']
+        def create_cb_pay_to_address():
+            _, _, script_hash = decode(MINER_FUND_ADDR)
 
-        assert_equal(total, block_reward)
-        assert_greater_than_or_equal(
-            coinbase['vout'][1]['value'],
-            (MINER_FUND_RATIO * total) / 100)
+            miner_fund_amount = int(block_reward * XEC * MINER_FUND_RATIO / 100)
 
-        # Invalidate top block, submit a custom block that do not send anything
-        # to the fund and check it is rejected.
-        node.invalidateblock(node.getbestblockhash())
+            # Build a coinbase with no miner fund
+            cb = create_coinbase(node.getblockcount() + 1)
+            # Keep only the block reward output
+            cb.vout = cb.vout[:1]
+            # Change the block reward to account for the miner fund
+            cb.vout[0].nValue = int(block_reward * XEC - miner_fund_amount)
+            # Add the miner fund output
+            cb.vout.append(
+                CTxOut(
+                    nValue=miner_fund_amount,
+                    scriptPubKey=CScript([OP_HASH160, script_hash, OP_EQUAL]),
+                )
+            )
 
-        block_height = node.getblockcount() + 1
-        block = create_block(
-            fork_block_hash, create_coinbase(block_height), AXION_ACTIVATION_TIME + 1, version=4)
-        block.solve()
+            pad_tx(cb)
+            cb.calc_sha256()
 
-        assert_equal(node.submitblock(ToHex(block)), 'bad-cb-minerfund')
+            return cb
+
+        tip = node.getbestblockhash()
+        # Build a custom coinbase that spend to the new miner fund address
+        # and check it is accepted.
+        good_block = create_block(
+            int(tip, 16),
+            create_cb_pay_to_address(),
+            node.getblock(tip)["time"] + 1,
+            version=4,
+        )
+        good_block.solve()
+
+        node.submitblock(ToHex(good_block))
+        assert_equal(node.getbestblockhash(), good_block.hash)
+
+        # node0 mines a block with a coinbase output to the miner fund.
+        address = node.get_deterministic_priv_key().address
+        first_block_has_miner_fund = self.generatetoaddress(
+            node, nblocks=1, address=address
+        )[0]
+        check_miner_fund_output()
+
+        # Invalidate it
+        for n in self.nodes:
+            n.invalidateblock(first_block_has_miner_fund)
+
+        # node1 mines a block without a coinbase output to the miner fund.
+        with node.assert_debug_log(expected_msgs=["policy-bad-miner-fund"]):
+            first_block_no_miner_fund = self.generatetoaddress(
+                self.nodes[1], nblocks=1, address=address, sync_fun=self.no_op
+            )[0]
+
+        coinbase = get_best_coinbase(self.nodes[1])
+        assert_equal(len(coinbase["vout"]), 1)
+
+        # node0 parks the block since the miner fund is enforced by policy.
+        def parked_block(blockhash):
+            for tip in node.getchaintips():
+                if tip["hash"] == blockhash:
+                    assert tip["status"] != "active"
+                    return tip["status"] == "parked"
+            return False
+
+        self.wait_until(lambda: parked_block(first_block_no_miner_fund))
+
+        # Unpark the block
+        node.unparkblock(first_block_no_miner_fund)
+
+        # Invalidate it
+        for n in self.nodes:
+            n.invalidateblock(first_block_no_miner_fund)
+
+        # Connecting the block again does not park because block policies are
+        # only checked the first time a block is connected.
+        for n in self.nodes:
+            n.reconsiderblock(first_block_no_miner_fund)
+            assert_equal(n.getbestblockhash(), first_block_no_miner_fund)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     MinerFundTest().main()

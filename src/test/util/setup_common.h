@@ -5,31 +5,22 @@
 #ifndef BITCOIN_TEST_UTIL_SETUP_COMMON_H
 #define BITCOIN_TEST_UTIL_SETUP_COMMON_H
 
-#include <amount.h>
 #include <chainparamsbase.h>
+#include <consensus/amount.h>
 #include <fs.h>
 #include <key.h>
+#include <node/caches.h>
 #include <node/context.h>
 #include <primitives/transaction.h>
 #include <pubkey.h>
 #include <random.h>
-#include <scheduler.h>
+#include <stdexcept>
 #include <util/check.h>
 #include <util/string.h>
 #include <util/system.h>
 
-#include <boost/thread/thread.hpp>
-
 #include <type_traits>
-
-/**
- * Version of Boost::test prior to 1.64 have issues when dealing with nullptr_t.
- * In order to work around this, we ensure that the null pointers are typed in a
- * way that Boost will like better.
- *
- * TODO: Use nullptr directly once the minimum version of boost is 1.64 or more.
- */
-#define NULLPTR(T) static_cast<T *>(nullptr)
+#include <vector>
 
 // Enable BOOST_CHECK_EQUAL for enum class types
 template <typename T>
@@ -101,27 +92,37 @@ extern std::vector<const char *> fixture_extra_args;
  */
 struct BasicTestingSetup {
     ECCVerifyHandle globalVerifyHandle;
-    NodeContext m_node;
+    node::NodeContext m_node;
 
     explicit BasicTestingSetup(
         const std::string &chainName = CBaseChainParams::MAIN,
         const std::vector<const char *> &extra_args = {});
     ~BasicTestingSetup();
 
-private:
     const fs::path m_path_root;
+    ArgsManager m_args;
+};
+
+/**
+ * Testing setup that performs all steps up until right before
+ * ChainstateManager gets initialized. Meant for testing ChainstateManager
+ * initialization behaviour.
+ */
+struct ChainTestingSetup : public BasicTestingSetup {
+    node::CacheSizes m_cache_sizes{};
+
+    explicit ChainTestingSetup(
+        const std::string &chainName = CBaseChainParams::MAIN,
+        const std::vector<const char *> &extra_args = {});
+    ~ChainTestingSetup();
 };
 
 /**
  * Testing setup that configures a complete environment.
- * Included are coins database, script check threads setup.
  */
-struct TestingSetup : public BasicTestingSetup {
-    boost::thread_group threadGroup;
-
+struct TestingSetup : public ChainTestingSetup {
     explicit TestingSetup(const std::string &chainName = CBaseChainParams::MAIN,
                           const std::vector<const char *> &extra_args = {});
-    ~TestingSetup();
 };
 
 /** Identical to TestingSetup, but chain set to regtest */
@@ -130,20 +131,51 @@ struct RegTestingSetup : public TestingSetup {
 };
 
 class CBlock;
+class Chainstate;
 class CMutableTransaction;
 class CScript;
 
-//
-// Testing fixture that pre-creates a
-// 100-block REGTEST-mode block chain
-//
+/**
+ * Testing fixture that pre-creates a 100-block REGTEST-mode block chain
+ */
 struct TestChain100Setup : public RegTestingSetup {
     TestChain100Setup();
 
-    // Create a new block with just given transactions, coinbase paying to
-    // scriptPubKey, and try to add it to the current chain.
+    /**
+     * Create a new block with just given transactions, coinbase paying to
+     * scriptPubKey, and try to add it to the current chain.
+     * If no chainstate is specified, default to the active.
+     */
     CBlock CreateAndProcessBlock(const std::vector<CMutableTransaction> &txns,
-                                 const CScript &scriptPubKey);
+                                 const CScript &scriptPubKey,
+                                 Chainstate *chainstate = nullptr);
+
+    /**
+     * Create a new block with just given transactions, coinbase paying to
+     * scriptPubKey.
+     */
+    CBlock CreateBlock(const std::vector<CMutableTransaction> &txns,
+                       const CScript &scriptPubKey, Chainstate &chainstate);
+
+    //! Mine a series of new blocks on the active chain.
+    void mineBlocks(int num_blocks);
+
+    /**
+     * Create a transaction and submit to the mempool.
+     *
+     * @param input_transaction  The transaction to spend
+     * @param input_vout         The vout to spend from the input_transaction
+     * @param input_height       The height of the block that included the
+     *                           input_transaction
+     * @param input_signing_key  The key to spend the input_transaction
+     * @param output_destination Where to send the output
+     * @param output_amount      How much to send
+     * @param submit             Whether or not to submit to mempool
+     */
+    CMutableTransaction CreateValidMempoolTransaction(
+        CTransactionRef input_transaction, int input_vout, int input_height,
+        CKey input_signing_key, CScript output_destination,
+        Amount output_amount = COIN, bool submit = true);
 
     ~TestChain100Setup();
 
@@ -161,13 +193,14 @@ struct TestMemPoolEntryHelper {
     int64_t nTime;
     unsigned int nHeight;
     bool spendsCoinbase;
-    unsigned int nSigOpCount;
+    unsigned int nSigChecks;
+    uint64_t entryId = 0;
 
     TestMemPoolEntryHelper()
-        : nFee(), nTime(0), nHeight(1), spendsCoinbase(false), nSigOpCount(1) {}
+        : nFee(), nTime(0), nHeight(1), spendsCoinbase(false), nSigChecks(1) {}
 
-    CTxMemPoolEntry FromTx(const CMutableTransaction &tx);
-    CTxMemPoolEntry FromTx(const CTransactionRef &tx);
+    CTxMemPoolEntry FromTx(const CMutableTransaction &tx) const;
+    CTxMemPoolEntry FromTx(const CTransactionRef &tx) const;
 
     // Change the default value
     TestMemPoolEntryHelper &Fee(Amount _fee) {
@@ -186,8 +219,12 @@ struct TestMemPoolEntryHelper {
         spendsCoinbase = _flag;
         return *this;
     }
-    TestMemPoolEntryHelper &SigOpCount(unsigned int _nSigOpCount) {
-        nSigOpCount = _nSigOpCount;
+    TestMemPoolEntryHelper &SigChecks(unsigned int _nSigChecks) {
+        nSigChecks = _nSigChecks;
+        return *this;
+    }
+    TestMemPoolEntryHelper &EntryId(uint64_t _entryId) {
+        entryId = _entryId;
         return *this;
     }
 };
@@ -209,7 +246,7 @@ CBlock getBlock13b8a();
 class HasReason {
 public:
     explicit HasReason(const std::string &reason) : m_reason(reason) {}
-    template <typename E> bool operator()(const E &e) const {
+    bool operator()(const std::exception &e) const {
         return std::string(e.what()).find(m_reason) != std::string::npos;
     };
 

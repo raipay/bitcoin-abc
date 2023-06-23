@@ -74,9 +74,15 @@ bool Delegation::verify(DelegationState &state, CPubKey &auth) const {
     uint256 hash = getProofId();
     const CPubKey *pauth = &proofMaster;
 
+    if (levels.size() > MAX_DELEGATION_LEVELS) {
+        return state.Invalid(DelegationResult::TOO_MANY_LEVELS,
+                             "too-many-levels");
+    }
+
     bool ret = reduceLevels(hash, levels, [&](const Level &l) {
         if (!pauth->VerifySchnorr(hash, l.sig)) {
-            return state.Invalid(DelegationResult::INVALID_SIGNATURE);
+            return state.Invalid(DelegationResult::INVALID_SIGNATURE,
+                                 "invalid-signature");
         }
 
         // This key is valid, now up to the next delegation level.

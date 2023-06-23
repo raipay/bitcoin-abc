@@ -50,10 +50,9 @@ const int BITCOIN_IPC_CONNECT_TIMEOUT = 1000; // milliseconds
 const char *BIP70_MESSAGE_PAYMENTACK = "PaymentACK";
 const char *BIP70_MESSAGE_PAYMENTREQUEST = "PaymentRequest";
 // BIP71 payment protocol media types
-const char *BIP71_MIMETYPE_PAYMENT = "application/bitcoincash-payment";
-const char *BIP71_MIMETYPE_PAYMENTACK = "application/bitcoincash-paymentack";
-const char *BIP71_MIMETYPE_PAYMENTREQUEST =
-    "application/bitcoincash-paymentrequest";
+const char *BIP71_MIMETYPE_PAYMENT = "application/ecash-payment";
+const char *BIP71_MIMETYPE_PAYMENTACK = "application/ecash-paymentack";
+const char *BIP71_MIMETYPE_PAYMENTREQUEST = "application/ecash-paymentrequest";
 #endif
 
 //
@@ -65,9 +64,9 @@ static QString ipcServerName() {
     QString name("BitcoinQt");
 
     // Append a simple hash of the datadir
-    // Note that GetDataDir(true) returns a different path for -testnet versus
-    // main net
-    QString ddir(GUIUtil::boostPathToQString(GetDataDir(true)));
+    // Note that gArgs.GetDataDirNet() returns a different path for -testnet
+    // versus main net
+    QString ddir(GUIUtil::boostPathToQString(gArgs.GetDataDirNet()));
     name.append(QString::number(qHash(ddir)));
 
     return name;
@@ -77,7 +76,7 @@ static QString ipcServerName() {
 // We store payment URIs and requests received before the main GUI window is up
 // and ready to ask the user to send payment.
 //
-static QList<QString> savedPaymentRequests;
+static QSet<QString> savedPaymentRequests;
 
 static std::string ipcParseURI(const QString &arg, const CChainParams &params,
                                bool useCashAddr) {
@@ -177,7 +176,10 @@ void PaymentServer::ipcParseCommandLine(int argc, char *argv[]) {
             continue;
         }
 
-        savedPaymentRequests.append(arg);
+        if (savedPaymentRequests.contains(arg)) {
+            continue;
+        }
+        savedPaymentRequests.insert(arg);
 #endif
         chosenNetwork = itemNetwork;
     }
@@ -312,9 +314,9 @@ bool PaymentServer::handleURI(const CChainParams &params, const QString &s) {
     }
 
     QUrlQuery uri((QUrl(s)));
+#ifdef ENABLE_BIP70
     // payment request URI
     if (uri.hasQueryItem("r")) {
-#ifdef ENABLE_BIP70
         QByteArray temp;
         temp.append(uri.queryItemValue("r").toUtf8());
         QString decoded = QUrl::fromPercentEncoding(temp);
@@ -332,21 +334,24 @@ bool PaymentServer::handleURI(const CChainParams &params, const QString &s) {
                                .arg(fetchUrl.toString()),
                            CClientUIInterface::ICON_WARNING);
         }
-
-#else
-        Q_EMIT message(tr("URI handling"),
-                       tr("Cannot process payment request because BIP70 "
-                          "support was not compiled in."),
-                       CClientUIInterface::ICON_WARNING);
-#endif
         return true;
     }
+#endif
 
     // normal URI
     SendCoinsRecipient recipient;
     if (GUIUtil::parseBitcoinURI(scheme, s, &recipient)) {
         if (!IsValidDestinationString(recipient.address.toStdString(),
                                       params)) {
+#ifndef ENABLE_BIP70
+            // payment request
+            if (uri.hasQueryItem("r")) {
+                Q_EMIT message(tr("URI handling"),
+                               tr("Cannot process payment request because "
+                                  "BIP70 support was not compiled in."),
+                               CClientUIInterface::ICON_WARNING);
+            }
+#endif
             Q_EMIT message(
                 tr("URI handling"),
                 tr("Invalid payment address %1").arg(recipient.address),
@@ -367,7 +372,7 @@ bool PaymentServer::handleURI(const CChainParams &params, const QString &s) {
 
 void PaymentServer::handleURIOrFile(const QString &s) {
     if (saveURIs) {
-        savedPaymentRequests.append(s);
+        savedPaymentRequests.insert(s);
         return;
     }
 
@@ -376,9 +381,9 @@ void PaymentServer::handleURIOrFile(const QString &s) {
         return;
     }
 
-#ifdef ENABLE_BIP70
     // payment request file
     if (QFile::exists(s)) {
+#ifdef ENABLE_BIP70
         PaymentRequestPlus request;
         SendCoinsRecipient recipient;
         if (!readPaymentRequestFromFile(s, request)) {
@@ -391,8 +396,13 @@ void PaymentServer::handleURIOrFile(const QString &s) {
         }
 
         return;
-    }
+#else
+        Q_EMIT message(tr("Payment request file handling"),
+                       tr("Cannot process payment request because BIP70 "
+                          "support was not compiled in."),
+                       CClientUIInterface::ICON_WARNING);
 #endif
+    }
 }
 
 void PaymentServer::handleURIConnection() {
@@ -733,11 +743,7 @@ void PaymentServer::fetchPaymentACK(interfaces::Wallet &wallet,
 
     // Create a new refund address, or re-use:
     CTxDestination dest;
-    const OutputType change_type =
-        wallet.getDefaultChangeType() != OutputType::CHANGE_AUTO
-            ? wallet.getDefaultChangeType()
-            : wallet.getDefaultAddressType();
-    if (wallet.getNewDestination(change_type, "", dest)) {
+    if (wallet.getNewDestination(OutputType::LEGACY, "", dest)) {
         // BIP70 requests encode the scriptPubKey directly, so we are not
         // restricted to address types supported by the receiver. As a result,
         // we choose the address format we also use for change. Despite an

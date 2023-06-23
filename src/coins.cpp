@@ -7,6 +7,7 @@
 #include <consensus/consensus.h>
 #include <logging.h>
 #include <random.h>
+#include <util/trace.h>
 #include <version.h>
 
 bool CCoinsView::GetCoin(const COutPoint &outpoint, Coin &coin) const {
@@ -55,10 +56,6 @@ CCoinsViewCursor *CCoinsViewBacked::Cursor() const {
 size_t CCoinsViewBacked::EstimateSize() const {
     return base->EstimateSize();
 }
-
-SaltedOutpointHasher::SaltedOutpointHasher()
-    : k0(GetRand(std::numeric_limits<uint64_t>::max())),
-      k1(GetRand(std::numeric_limits<uint64_t>::max())) {}
 
 CCoinsViewCache::CCoinsViewCache(CCoinsView *baseIn)
     : CCoinsViewBacked(baseIn), cachedCoinsUsage(0) {}
@@ -139,6 +136,17 @@ void CCoinsViewCache::AddCoin(const COutPoint &outpoint, Coin coin,
     it->second.flags |=
         CCoinsCacheEntry::DIRTY | (fresh ? CCoinsCacheEntry::FRESH : 0);
     cachedCoinsUsage += it->second.coin.DynamicMemoryUsage();
+    TRACE5(utxocache, add, outpoint.GetTxId().data(), outpoint.GetN(),
+           coin.GetHeight(), coin.GetTxOut().nValue.ToString().c_str(),
+           coin.IsCoinBase());
+}
+
+void CCoinsViewCache::EmplaceCoinInternalDANGER(COutPoint &&outpoint,
+                                                Coin &&coin) {
+    cachedCoinsUsage += coin.DynamicMemoryUsage();
+    cacheCoins.emplace(
+        std::piecewise_construct, std::forward_as_tuple(std::move(outpoint)),
+        std::forward_as_tuple(std::move(coin), CCoinsCacheEntry::DIRTY));
 }
 
 void AddCoins(CCoinsViewCache &cache, const CTransaction &tx, int nHeight,
@@ -163,6 +171,10 @@ bool CCoinsViewCache::SpendCoin(const COutPoint &outpoint, Coin *moveout) {
         return false;
     }
     cachedCoinsUsage -= it->second.coin.DynamicMemoryUsage();
+    TRACE5(utxocache, spent, outpoint.GetTxId().data(), outpoint.GetN(),
+           it->second.coin.GetHeight(),
+           it->second.coin.GetTxOut().nValue.ToString().c_str(),
+           it->second.coin.IsCoinBase());
     if (moveout) {
         *moveout = std::move(it->second.coin);
     }
@@ -279,6 +291,10 @@ void CCoinsViewCache::Uncache(const COutPoint &outpoint) {
     CCoinsMap::iterator it = cacheCoins.find(outpoint);
     if (it != cacheCoins.end() && it->second.flags == 0) {
         cachedCoinsUsage -= it->second.coin.DynamicMemoryUsage();
+        TRACE5(utxocache, uncache, outpoint.GetTxId().data(), outpoint.GetN(),
+               it->second.coin.GetHeight(),
+               it->second.coin.GetTxOut().nValue.ToString().c_str(),
+               it->second.coin.IsCoinBase());
         cacheCoins.erase(it);
     }
 }

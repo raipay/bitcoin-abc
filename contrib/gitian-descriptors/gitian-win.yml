@@ -3,7 +3,7 @@ name: "bitcoin-abc-win"
 enable_cache: true
 distro: "debian"
 suites:
-- "buster"
+- "bullseye"
 architectures:
 - "amd64"
 packages:
@@ -11,6 +11,7 @@ packages:
 - "automake"
 - "bsdmainutils"
 - "ca-certificates"
+- "cmake"
 - "curl"
 - "faketime"
 - "g++"
@@ -22,12 +23,8 @@ packages:
 - "nsis"
 - "pkg-config"
 - "python3"
+- "python3-pip"
 - "zip"
-repositories:
-- "distribution": "buster-backports"
-  "source": "deb http://deb.debian.org/debian/ buster-backports main"
-  packages:
-  - "cmake"
 remotes:
 - "url": "https://github.com/Bitcoin-ABC/bitcoin-abc.git"
   "dir": "bitcoin"
@@ -47,8 +44,6 @@ script: |
   HOST_CFLAGS="-O2 -g"
   HOST_CXXFLAGS="-O2 -g"
 
-  export QT_RCC_TEST=1
-  export QT_RCC_SOURCE_DATE_OVERRIDE=1
   export TZ="UTC"
   export BUILD_DIR=`pwd`
   mkdir -p ${WRAP_DIR}
@@ -82,35 +77,29 @@ script: |
   done
   }
 
-  function create_per-host_linker_wrapper {
-  # This is only needed for trusty, as the mingw linker leaks a few bytes of
-  # heap, causing non-determinism. See discussion in https://github.com/bitcoin/bitcoin/pull/6900
+  function create_per-host_compiler_wrapper {
+  # -posix variant is required for c++11 threading.
   for i in ${HOSTS[@]}; do
     mkdir -p ${WRAP_DIR}/${i}
-    for prog in collect2; do
-        echo '#!/usr/bin/env bash' > ${WRAP_DIR}/${i}/${prog}
-        REAL=$(${i}-gcc -print-prog-name=${prog})
-        echo "export MALLOC_PERTURB_=255" >> ${WRAP_DIR}/${i}/${prog}
-        echo "${REAL} \$@" >> $WRAP_DIR/${i}/${prog}
-        chmod +x ${WRAP_DIR}/${i}/${prog}
-    done
     for prog in gcc g++; do
         echo '#!/usr/bin/env bash' > ${WRAP_DIR}/${i}-${prog}
         echo "REAL=\`which -a ${i}-${prog}-posix | grep -v ${WRAP_DIR}/${i}-${prog} | head -1\`" >> ${WRAP_DIR}/${i}-${prog}
         echo 'export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1' >> ${WRAP_DIR}/${i}-${prog}
         echo "export FAKETIME=\"$1\"" >> ${WRAP_DIR}/${i}-${prog}
         echo "export COMPILER_PATH=${WRAP_DIR}/${i}" >> ${WRAP_DIR}/${i}-${prog}
-        echo "\$REAL \$@" >> $WRAP_DIR/${i}-${prog}
+        echo "\$REAL \"\$@\"" >> $WRAP_DIR/${i}-${prog}
         chmod +x ${WRAP_DIR}/${i}-${prog}
     done
   done
   }
 
+  pip3 install lief==0.11.5
+
   # Faketime for depends so intermediate results are comparable
   export PATH_orig=${PATH}
   create_global_faketime_wrappers "2000-01-01 12:00:00"
   create_per-host_faketime_wrappers "2000-01-01 12:00:00"
-  create_per-host_linker_wrapper "2000-01-01 12:00:00"
+  create_per-host_compiler_wrapper "2000-01-01 12:00:00"
   export PATH=${WRAP_DIR}:${PATH}
 
   cd bitcoin
@@ -125,7 +114,7 @@ script: |
   export PATH=${PATH_orig}
   create_global_faketime_wrappers "${REFERENCE_DATETIME}"
   create_per-host_faketime_wrappers "${REFERENCE_DATETIME}"
-  create_per-host_linker_wrapper "${REFERENCE_DATETIME}"
+  create_per-host_compiler_wrapper "${REFERENCE_DATETIME}"
   export PATH=${WRAP_DIR}:${PATH}
 
   mkdir -p source_package
@@ -162,7 +151,6 @@ script: |
     cd distsrc-${i}
     INSTALLPATH=`pwd`/installed/${DISTNAME}
     mkdir -p ${INSTALLPATH}
-    tar --strip-components=1 -xf ../$SOURCEDIST
 
     cmake -GNinja .. \
       -DCMAKE_TOOLCHAIN_FILE=${SOURCEDIR}/cmake/platforms/${CMAKE_TOOLCHAIN_FILE[${i}]} \
@@ -177,6 +165,7 @@ script: |
 
     ninja
     ninja security-check
+    ninja symbol-check
 
     ninja install-debug
 

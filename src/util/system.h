@@ -14,7 +14,6 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <attributes.h>
 #include <compat.h>
 #include <compat/assumptions.h>
 #include <fs.h>
@@ -22,11 +21,9 @@
 #include <sync.h>
 #include <tinyformat.h>
 #include <util/settings.h>
-#include <util/threadnames.h>
 #include <util/time.h>
 
-#include <boost/thread/condition_variable.hpp> // for boost::thread_interrupted
-
+#include <any>
 #include <cstdint>
 #include <exception>
 #include <map>
@@ -45,7 +42,7 @@ extern const char *const BITCOIN_SETTINGS_FILENAME;
 void SetupEnvironment();
 bool SetupNetworking();
 
-template <typename... Args> bool error(const char *fmt, const Args &... args) {
+template <typename... Args> bool error(const char *fmt, const Args &...args) {
     LogPrintf("ERROR: %s\n", tfm::format(fmt, args...));
     return false;
 }
@@ -55,7 +52,7 @@ bool FileCommit(FILE *file);
 bool TruncateFile(FILE *file, unsigned int length);
 int RaiseFileDescriptorLimit(int nMinFD);
 void AllocateFileRange(FILE *file, unsigned int offset, unsigned int length);
-bool RenameOver(fs::path src, fs::path dest);
+[[nodiscard]] bool RenameOver(fs::path src, fs::path dest);
 bool LockDirectory(const fs::path &directory, const std::string lockfile_name,
                    bool probe_only = false);
 void UnlockDirectory(const fs::path &directory,
@@ -82,14 +79,9 @@ void ReleaseDirectoryLocks();
 
 bool TryCreateDirectories(const fs::path &p);
 fs::path GetDefaultDataDir();
-// The blocks directory is always net specific.
-const fs::path &GetBlocksDir();
-const fs::path &GetDataDir(bool fNetSpecific = true);
 // Return true if -datadir option points to a valid directory or is not
 // specified.
 bool CheckDataDirOption();
-/** Tests only */
-void ClearDatadirCache();
 fs::path GetConfigFile(const std::string &confPath);
 #ifdef WIN32
 fs::path GetSpecialFolderPath(int nFolder, bool fCreate = true);
@@ -101,14 +93,14 @@ std::string ShellEscape(const std::string &arg);
 void runCommand(const std::string &strCommand);
 #endif
 
-NODISCARD bool ParseKeyValue(std::string &key, std::string &val);
+[[nodiscard]] bool ParseKeyValue(std::string &key, std::string &val);
 
 /**
  * Most paths passed as configuration arguments are treated as relative to
  * the datadir if they are not absolute.
  *
  * @param path The path to be conditionally prefixed with datadir.
- * @param net_specific Forwarded to GetDataDir().
+ * @param net_specific Use network specific datadir variant
  * @return The normalized path.
  */
 fs::path AbsPathForConfigVal(const fs::path &path, bool net_specific = true);
@@ -135,12 +127,13 @@ enum class OptionsCategory {
     GUI,
     COMMANDS,
     REGISTER_COMMANDS,
+    AVALANCHE,
 
     // Always the last option to avoid printing these in the help
     HIDDEN,
 
-    // Avalanche is still experimental, so we keep it hidden for now.
-    AVALANCHE,
+    // Hide Chronik for now
+    CHRONIK,
 };
 
 struct SectionInfo {
@@ -182,11 +175,14 @@ protected:
     std::map<OptionsCategory, std::map<std::string, Arg>>
         m_available_args GUARDED_BY(cs_args);
     std::list<SectionInfo> m_config_sections GUARDED_BY(cs_args);
+    mutable fs::path m_cached_blocks_path GUARDED_BY(cs_args);
+    mutable fs::path m_cached_datadir_path GUARDED_BY(cs_args);
+    mutable fs::path m_cached_network_datadir_path GUARDED_BY(cs_args);
 
-    NODISCARD bool ReadConfigStream(std::istream &stream,
-                                    const std::string &filepath,
-                                    std::string &error,
-                                    bool ignore_invalid_keys = false);
+    [[nodiscard]] bool ReadConfigStream(std::istream &stream,
+                                        const std::string &filepath,
+                                        std::string &error,
+                                        bool ignore_invalid_keys = false);
 
     /**
      * Returns true if settings values from the default section should be used,
@@ -220,10 +216,10 @@ public:
      */
     void SelectConfigNetwork(const std::string &network);
 
-    NODISCARD bool ParseParameters(int argc, const char *const argv[],
-                                   std::string &error);
-    NODISCARD bool ReadConfigFiles(std::string &error,
-                                   bool ignore_invalid_keys = false);
+    [[nodiscard]] bool ParseParameters(int argc, const char *const argv[],
+                                       std::string &error);
+    [[nodiscard]] bool ReadConfigFiles(std::string &error,
+                                       bool ignore_invalid_keys = false);
 
     /**
      * Log warnings for options in m_section_only_args when they are specified
@@ -236,6 +232,47 @@ public:
      * Log warnings for unrecognized section names in the config file.
      */
     const std::list<SectionInfo> GetUnrecognizedSections() const;
+
+    /**
+     * Get a normalized path from a specified pathlike argument
+     *
+     * It is guaranteed that the returned path has no trailing slashes.
+     *
+     * @param pathlike_arg Pathlike argument to get a path from (e.g.,
+     * "-datadir", "-blocksdir" or "-walletdir")
+     * @return Normalized path which is get from a specified pathlike argument
+     */
+    fs::path GetPathArg(std::string pathlike_arg) const;
+
+    /**
+     * Get blocks directory path
+     *
+     * @return Blocks path which is network specific
+     */
+    const fs::path &GetBlocksDirPath() const;
+
+    /**
+     * Get data directory path
+     *
+     * @return Absolute path on success, otherwise an empty path when a
+     * non-directory path would be returned
+     * @post Returned directory path is created unless it is empty
+     */
+    const fs::path &GetDataDirBase() const { return GetDataDir(false); }
+
+    /**
+     * Get data directory path with appended network identifier
+     *
+     * @return Absolute path on success, otherwise an empty path when a
+     * non-directory path would be returned
+     * @post Returned directory path is created unless it is empty
+     */
+    const fs::path &GetDataDirNet() const { return GetDataDir(true); }
+
+    /**
+     * Clear cached directory paths
+     */
+    void ClearPathCache();
 
     /**
      * Return a vector of strings of the given argument
@@ -279,7 +316,7 @@ public:
      * @param nDefault (e.g. 1)
      * @return command-line argument (0 if invalid number) or default value
      */
-    int64_t GetArg(const std::string &strArg, int64_t nDefault) const;
+    int64_t GetIntArg(const std::string &strArg, int64_t nDefault) const;
 
     /**
      * Return boolean argument or default value.
@@ -398,6 +435,16 @@ public:
     void LogArgs() const;
 
 private:
+    /**
+     * Get data directory path
+     *
+     * @param net_specific Append network identifier to the returned path
+     * @return Absolute path on success, otherwise an empty path when a
+     *         non-directory path would be returned
+     * @post Returned directory path is created unless it is empty
+     */
+    const fs::path &GetDataDir(bool net_specific) const;
+
     // Helper function for LogArgs().
     void
     logArgsPrefix(const std::string &prefix, const std::string &section,
@@ -440,27 +487,6 @@ std::string HelpMessageOpt(const std::string &option,
  */
 int GetNumCores();
 
-/**
- * .. and a wrapper that just calls func once
- */
-template <typename Callable> void TraceThread(const char *name, Callable func) {
-    util::ThreadRename(name);
-    try {
-        LogPrintf("%s thread start\n", name);
-        func();
-        LogPrintf("%s thread exit\n", name);
-    } catch (const boost::thread_interrupted &) {
-        LogPrintf("%s thread interrupt\n", name);
-        throw;
-    } catch (const std::exception &e) {
-        PrintExceptionContinue(&e, name);
-        throw;
-    } catch (...) {
-        PrintExceptionContinue(nullptr, name);
-        throw;
-    }
-}
-
 std::string CopyrightHolders(const std::string &strPrefix);
 
 /**
@@ -480,6 +506,16 @@ inline void insert(Tdst &dst, const Tsrc &src) {
 template <typename TsetT, typename Tsrc>
 inline void insert(std::set<TsetT> &dst, const Tsrc &src) {
     dst.insert(src.begin(), src.end());
+}
+
+/**
+ * Helper function to access the contained object of a std::any instance.
+ * Returns a pointer to the object if passed instance has a value and the type
+ * matches, nullptr otherwise.
+ */
+template <typename T> T *AnyPtr(const std::any &any) noexcept {
+    T *const *ptr = std::any_cast<T *>(&any);
+    return ptr ? *ptr : nullptr;
 }
 
 #ifdef WIN32

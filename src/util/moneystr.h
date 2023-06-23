@@ -9,10 +9,9 @@
 #ifndef BITCOIN_UTIL_MONEYSTR_H
 #define BITCOIN_UTIL_MONEYSTR_H
 
-#include <amount.h>
-#include <attributes.h>
-
 #include <string>
+
+struct Amount;
 
 /**
  * Do not use these functions to represent or parse monetary amounts to or from
@@ -23,6 +22,6 @@ std::string FormatMoney(const Amount n);
  * Parse an amount denoted in full coins. E.g. "0.0034" supplied on the command
  * line.
  **/
-NODISCARD bool ParseMoney(const std::string &str, Amount &nRet);
+[[nodiscard]] bool ParseMoney(const std::string &str, Amount &nRet);
 
 #endif // BITCOIN_UTIL_MONEYSTR_H

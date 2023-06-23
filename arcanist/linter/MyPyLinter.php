@@ -4,6 +4,12 @@
  * Uses the mypy tool to lint the typehints in python files.
  */
 final class MyPyLinter extends ArcanistExternalLinter {
+  const SEVERITYMAP = array(
+    // Disable the 'note' severity to avoid the [annotation-unchecked] spam
+    'note' => ArcanistLintSeverity::SEVERITY_DISABLED,
+    'warning' => ArcanistLintSeverity::SEVERITY_WARNING,
+    'error' => ArcanistLintSeverity::SEVERITY_ERROR,
+  );
 
   public function getInfoName() {
     return 'mypy';
@@ -23,6 +29,12 @@ final class MyPyLinter extends ArcanistExternalLinter {
 
   public function getDefaultBinary() {
     return 'mypy';
+  }
+
+  public function getMandatoryFlags() {
+    return array(
+      '--show-error-codes',
+    );
   }
 
   public function getInstallInstructions() {
@@ -47,7 +59,7 @@ final class MyPyLinter extends ArcanistExternalLinter {
   protected function parseLinterOutput($path, $err, $stdout, $stderr) {
     $messages = array();
 
-    $pattern = '/(.+):(\d+): (.+): (.+)/';
+    $pattern = '/(.+):(\d+): ([^:]+): (.+)/';
     if (preg_match_all($pattern, $stdout, $errors, PREG_SET_ORDER)) {
       foreach ($errors as $error) {
         list(, $file, $line, $severity, $message) = $error;
@@ -56,7 +68,9 @@ final class MyPyLinter extends ArcanistExternalLinter {
         ->setGranularity(ArcanistLinter::GRANULARITY_FILE)
         ->setPath($path)
         ->setLine($line)
-        ->setSeverity(ArcanistLintSeverity::SEVERITY_ERROR)
+        // It's OK to crash if the severity is not part of the array, so we can
+        // detect the issue and fix it.
+        ->setSeverity(self::SEVERITYMAP[$severity])
         ->setName('mypy found an issue:')
         ->setDescription($message);
       }

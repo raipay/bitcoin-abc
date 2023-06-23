@@ -1,3 +1,7 @@
+// Copyright (c) 2015-2021 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 #include <qt/test/util.h>
 #include <qt/test/wallettests.h>
 
@@ -7,7 +11,6 @@
 #include <interfaces/chain.h>
 #include <interfaces/node.h>
 #include <key_io.h>
-#include <network.h>
 #include <qt/bitcoinamountfield.h>
 #include <qt/clientmodel.h>
 #include <qt/optionsmodel.h>
@@ -115,9 +118,8 @@ void TestGUI(interfaces::Node &node) {
             {}, GetScriptForRawPubKey(test.coinbaseKey.GetPubKey()));
     }
     node.setContext(&test.m_node);
-    std::shared_ptr<CWallet> wallet =
-        std::make_shared<CWallet>(node.context()->chain.get(), WalletLocation(),
-                                  CreateMockWalletDatabase());
+    std::shared_ptr<CWallet> wallet = std::make_shared<CWallet>(
+        node.context()->chain.get(), "", CreateMockWalletDatabase());
 
     bool firstRun;
     wallet->LoadWallet(firstRun);
@@ -129,8 +131,8 @@ void TestGUI(interfaces::Node &node) {
                                  wallet->m_default_address_type),
             "", "receive");
         spk_man->AddKeyPubKey(test.coinbaseKey, test.coinbaseKey.GetPubKey());
-        wallet->SetLastBlockProcessed(105,
-                                      ::ChainActive().Tip()->GetBlockHash());
+        wallet->SetLastBlockProcessed(
+            105, node.context()->chainman->ActiveTip()->GetBlockHash());
     }
     {
         WalletRescanReserver reserver(*wallet);
@@ -140,7 +142,7 @@ void TestGUI(interfaces::Node &node) {
             {} /* max height */, reserver, true /* fUpdate */);
         QCOMPARE(result.status, CWallet::ScanResult::SUCCESS);
         QCOMPARE(result.last_scanned_block,
-                 ::ChainActive().Tip()->GetBlockHash());
+                 node.context()->chainman->ActiveTip()->GetBlockHash());
         QVERIFY(result.last_failed_block.IsNull());
     }
     wallet->SetBroadcastTransactions(true);
@@ -153,7 +155,7 @@ void TestGUI(interfaces::Node &node) {
     AddWallet(wallet);
     WalletModel walletModel(interfaces::MakeWallet(wallet), clientModel,
                             platformStyle.get());
-    RemoveWallet(wallet);
+    RemoveWallet(wallet, std::nullopt);
     SendCoinsDialog sendCoinsDialog(platformStyle.get(), &walletModel);
 
     {
@@ -164,7 +166,7 @@ void TestGUI(interfaces::Node &node) {
         int unit = walletModel.getOptionsModel()->getDisplayUnit();
         Amount balance = walletModel.wallet().getBalance();
         QString balanceComparison = BitcoinUnits::formatWithUnit(
-            unit, balance, false, BitcoinUnits::separatorAlways);
+            unit, balance, false, BitcoinUnits::SeparatorStyle::ALWAYS);
         QCOMPARE(balanceText, balanceComparison);
     }
 
@@ -184,11 +186,11 @@ void TestGUI(interfaces::Node &node) {
     OverviewPage overviewPage(platformStyle.get());
     overviewPage.setWalletModel(&walletModel);
     QLabel *balanceLabel = overviewPage.findChild<QLabel *>("labelBalance");
-    QString balanceText = balanceLabel->text();
+    QString balanceText = balanceLabel->text().trimmed();
     int unit = walletModel.getOptionsModel()->getDisplayUnit();
     Amount balance = walletModel.wallet().getBalance();
     QString balanceComparison = BitcoinUnits::formatWithUnit(
-        unit, balance, false, BitcoinUnits::separatorAlways);
+        unit, balance, false, BitcoinUnits::SeparatorStyle::ALWAYS);
     QCOMPARE(balanceText, balanceComparison);
 
     // Check Request Payment button
@@ -219,19 +221,53 @@ void TestGUI(interfaces::Node &node) {
         if (widget->inherits("ReceiveRequestDialog")) {
             ReceiveRequestDialog *receiveRequestDialog =
                 qobject_cast<ReceiveRequestDialog *>(widget);
-            QTextEdit *rlist =
-                receiveRequestDialog->QObject::findChild<QTextEdit *>("outUri");
-            QString paymentText = rlist->toPlainText();
-            QStringList paymentTextList = paymentText.split('\n');
-            QCOMPARE(paymentTextList.at(0), QString("Payment information"));
-            QVERIFY(paymentTextList.at(1).indexOf(QString("URI: ecregtest:")) !=
-                    -1);
-            QVERIFY(paymentTextList.at(2).indexOf(QString("Address:")) != -1);
-            QCOMPARE(paymentTextList.at(3),
-                     QString("Amount: 0.01 ") +
+            QCOMPARE(receiveRequestDialog
+                         ->QObject::findChild<QLabel *>("payment_header")
+                         ->text(),
+                     QString("Payment information"));
+            QCOMPARE(
+                receiveRequestDialog->QObject::findChild<QLabel *>("uri_tag")
+                    ->text(),
+                QString("URI:"));
+            QString uri = receiveRequestDialog
+                              ->QObject::findChild<QLabel *>("uri_content")
+                              ->text();
+            QCOMPARE(uri.count("ecregtest:"), 2);
+            QCOMPARE(receiveRequestDialog
+                         ->QObject::findChild<QLabel *>("address_tag")
+                         ->text(),
+                     QString("Address:"));
+
+            QCOMPARE(uri.count("amount=0.01"), 2);
+            QCOMPARE(
+                receiveRequestDialog->QObject::findChild<QLabel *>("amount_tag")
+                    ->text(),
+                QString("Amount:"));
+            QCOMPARE(receiveRequestDialog
+                         ->QObject::findChild<QLabel *>("amount_content")
+                         ->text(),
+                     QString("0.01 ") +
                          QString::fromStdString(Currency::get().ticker));
-            QCOMPARE(paymentTextList.at(4), QString("Label: TEST_LABEL_1"));
-            QCOMPARE(paymentTextList.at(5), QString("Message: TEST_MESSAGE_1"));
+
+            QCOMPARE(uri.count("label=TEST_LABEL_1"), 2);
+            QCOMPARE(
+                receiveRequestDialog->QObject::findChild<QLabel *>("label_tag")
+                    ->text(),
+                QString("Label:"));
+            QCOMPARE(receiveRequestDialog
+                         ->QObject::findChild<QLabel *>("label_content")
+                         ->text(),
+                     QString("TEST_LABEL_1"));
+
+            QCOMPARE(uri.count("message=TEST_MESSAGE_1"), 2);
+            QCOMPARE(receiveRequestDialog
+                         ->QObject::findChild<QLabel *>("message_tag")
+                         ->text(),
+                     QString("Message:"));
+            QCOMPARE(receiveRequestDialog
+                         ->QObject::findChild<QLabel *>("message_content")
+                         ->text(),
+                     QString("TEST_MESSAGE_1"));
         }
     }
 

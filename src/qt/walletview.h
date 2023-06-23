@@ -5,7 +5,7 @@
 #ifndef BITCOIN_QT_WALLETVIEW_H
 #define BITCOIN_QT_WALLETVIEW_H
 
-#include <amount.h>
+#include <consensus/amount.h>
 
 #include <QStackedWidget>
 
@@ -70,7 +70,7 @@ private:
 
     TransactionView *transactionView;
 
-    QProgressDialog *progressDialog;
+    QProgressDialog *progressDialog{nullptr};
     const PlatformStyle *platformStyle;
 
 public Q_SLOTS:
@@ -98,7 +98,7 @@ public Q_SLOTS:
      */
     void processNewTransaction(const QModelIndex &parent, int start, int end);
     /** Encrypt the wallet */
-    void encryptWallet(bool status);
+    void encryptWallet();
     /** Backup the wallet */
     void backupWallet();
     /** Change encrypted wallet passphrase */
@@ -121,6 +121,7 @@ public Q_SLOTS:
     void requestedSyncWarningInfo();
 
 Q_SIGNALS:
+    void setPrivacy(bool privacy);
     void transactionClicked();
     void coinsSent();
     /**  Fired when a message should be reported to the user */

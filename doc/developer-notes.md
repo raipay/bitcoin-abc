@@ -17,6 +17,7 @@ Developer Notes
         - [Writing script integration tests](#writing-script-integration-tests)
         - [Testnet and Regtest modes](#testnet-and-regtest-modes)
         - [DEBUG_LOCKORDER](#debug_lockorder)
+        - [DEBUG_LOCKCONTENTION](#debug_lockcontention)
         - [Valgrind suppressions file](#valgrind-suppressions-file)
         - [Compiling for test coverage](#compiling-for-test-coverage)
         - [Performance profiling with perf](#performance-profiling-with-perf)
@@ -58,7 +59,7 @@ submitting them for review. These linters are run automatically when using
 Coding Style (C++)
 ------------------
 
-- Basic rules specified in [src/.clang-format](/src/.clang-format).
+- Basic rules specified in [.clang-format](/.clang-format).
   - Braces on new lines for namespaces, classes, functions, methods.
   - Braces on the same line for everything else.
   - 4 space indentation (no tabs) for every block except namespaces.
@@ -162,7 +163,7 @@ For example, to describe a function use:
  */
 bool function(int arg1, const char *arg2)
 ```
-A complete list of `@xxx` commands can be found at http://www.stack.nl/~dimitri/doxygen/manual/commands.html.
+A complete list of `@xxx` commands can be found at http://www.doxygen.nl/manual/commands.html.
 As Doxygen recognizes the comments by the delimiters (`/**` and `*/` in this case), you don't
 *need* to provide any commands for a comment to be valid; just a description text is fine.
 
@@ -203,7 +204,7 @@ Not OK (used plenty in the current source, but not picked up):
 //
 ```
 
-A full list of comment syntaxes picked up by doxygen can be found at http://www.stack.nl/~dimitri/doxygen/manual/docblocks.html,
+A full list of comment syntaxes picked up by doxygen can be found at http://www.doxygen.nl/manual/docblocks.html,
 but if possible use one of the above styles.
 
 To build doxygen locally to test changes to the Doxyfile or visualize your comments before landing changes:
@@ -275,6 +276,18 @@ multi-threading bugs can be very difficult to track down.
 The `-DCMAKE_BUILD_TYPE=Debug` cmake option adds `-DDEBUG_LOCKORDER` to the
 compiler flags. This inserts run-time checks to keep track of which locks are
 held, and adds warnings to the debug.log file if inconsistencies are detected.
+
+### DEBUG_LOCKCONTENTION
+
+Defining `DEBUG_LOCKCONTENTION` adds a "lock" logging category that, when enabled,
+logs the location and duration of each lock contention to the `debug.log` file.
+
+To enable it, run cmake with `-DDEBUG_LOCKCONTENTION` added to your CPPFLAGS,
+e.g. `-DCMAKE_CXX_FLAGS="-DDEBUG_LOCKCONTENTION"`, then build and run bitcoind.
+
+You can then use the `-debug=lock` configuration option at bitcoind startup or
+`bitcoin-cli logging '["lock"]'` at runtime to turn on lock contention logging.
+It can be toggled off again with `bitcoin-cli logging [] '["lock"]'`.
 
 ### Assertions and Checks
 
@@ -685,6 +698,19 @@ class A
   - *Rationale*: Easier to understand what is happening, thus easier to spot mistakes, even for those
   that are not language lawyers
 
+- Use `Span` as function argument when it can operate on any range-like container.
+
+  - *Rationale*: Compared to `Foo(const vector<int>&)` this avoids the need for a (potentially expensive)
+    conversion to vector if the caller happens to have the input stored in another type of container.
+    However, be aware of the pitfalls documented in [span.h](../src/span.h).
+
+```cpp
+void Foo(Span<const int> data);
+
+std::vector<int> vec{1,2,3};
+Foo(vec);
+```
+
 Strings and formatting
 ------------------------
 
@@ -725,6 +751,49 @@ Please name variables so that their names do not shadow variables defined in the
 
 Threads and synchronization
 ----------------------------
+
+- Prefer `Mutex` type to `RecursiveMutex` one
+
+- Consistently use [Clang Thread Safety Analysis](https://clang.llvm.org/docs/ThreadSafetyAnalysis.html) annotations to
+  get compile-time warnings about potential race conditions in code. Combine annotations in function declarations with
+  run-time asserts in function definitions:
+
+```C++
+// txmempool.h
+class CTxMemPool {
+public:
+    ...
+    mutable RecursiveMutex cs;
+    ...
+    void UpdateTransactionsFromBlock(...) EXCLUSIVE_LOCKS_REQUIRED(::cs_main, cs);
+    ...
+}
+
+// txmempool.cpp
+void CTxMemPool::UpdateTransactionsFromBlock(...) {
+    AssertLockHeld(::cs_main);
+    AssertLockHeld(cs);
+    ...
+}
+```
+
+```C++
+// validation.h
+class ChainstateManager {
+public:
+    ...
+    bool ProcessNewBlock(...) LOCKS_EXCLUDED(::cs_main);
+    ...
+}
+
+// validation.cpp
+bool ChainstateManager::ProcessNewBlock(...) {
+    AssertLockNotHeld(::cs_main);
+    ...
+    LOCK(::cs_main);
+    ...
+}
+```
 
 - Build and run tests with `-DDEBUG_LOCKORDER` to verify that no potential
   deadlocks are introduced. As of 0.12, this is defined by default when
@@ -888,7 +957,8 @@ Current third party libraries include:
     Core contributors.
 
 - src/univalue
-  - Upstream at https://github.com/jgarzik/univalue ; maintained by Jeff Garzik.
+  - Upstream at https://github.com/bitcoin-core/univalue ; actively maintained by
+    Bitcoin Core contributors, deviates from upstream https://github.com/jgarzik/univalue
 
 Upgrading LevelDB
 ---------------------

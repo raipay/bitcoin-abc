@@ -37,13 +37,16 @@ Optional dependencies:
  Library     | Purpose          | Description
  ------------|------------------|----------------------
  miniupnpc   | UPnP Support     | Firewall-jumping support
+ libnatpmp   | NAT-PMP Support  | Firewall-jumping support
  libdb       | Berkeley DB      | Wallet storage (only needed when wallet enabled)
+ libsqlite3  | SQLite 3         | Wallet storage (only needed when wallet enabled)
  jemalloc    | Memory allocator | Library to enhance the memory allocation and improve performances
  qt          | GUI              | GUI toolkit (only needed when GUI enabled)
  protobuf    | Payments in GUI  | Data interchange format used for payment protocol (only needed when BIP70 enabled)
  libqrencode | QR codes in GUI  | Optional for generating QR codes (only needed when GUI enabled)
  univalue    | Utility          | JSON parsing and encoding (bundled version will be used unless --with-system-univalue passed to configure)
  libzmq3     | ZMQ notification | Optional, allows generating ZMQ notifications (requires ZMQ version >= 4.1.5)
+ systemtap   | Tracing (USDT)   | Optional, statically defined tracepoints
 
 For the versions used, see [dependencies.md](dependencies.md)
 
@@ -60,9 +63,9 @@ Dependency Build Instructions: Ubuntu & Debian
 ----------------------------------------------
 Build requirements:
 
-    sudo apt-get install bsdmainutils build-essential libssl-dev libevent-dev lld ninja-build python3
+    sudo apt-get install bsdmainutils build-essential cmake libssl-dev libevent-dev lld ninja-build python3
 
-**Installing cmake:**
+**Installing cmake on older distribution (Debian < 11 or Ubuntu < 20.04):**
 
 On Debian Buster (10), `cmake` should be installed from the backports repository:
 
@@ -70,11 +73,7 @@ On Debian Buster (10), `cmake` should be installed from the backports repository
     sudo apt-get update
     sudo apt-get -t buster-backports install cmake
 
-On Ubuntu 20.04 and later:
-
-    sudo apt-get install cmake
-
-On previous Ubuntu versions, the `cmake` package is too old and needs to be installed from the Kitware APT repository:
+If the `cmake` packaged version is too old it can be installed from the Kitware APT repository:
 
     sudo apt-get install apt-transport-https ca-certificates gnupg software-properties-common wget
     wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | sudo apt-key add -
@@ -97,21 +96,21 @@ Options when installing required Boost library files:
 individual boost development packages, so the following can be used to only
 install necessary parts of boost:
 
-        sudo apt-get install libboost-system-dev libboost-filesystem-dev libboost-test-dev libboost-thread-dev
+        sudo apt-get install libboost-dev
 
 2. If that doesn't work, you can install all boost development packages with:
 
         sudo apt-get install libboost-all-dev
 
-BerkeleyDB 5.3 or later is required for the wallet. This can be installed with:
+BerkeleyDB 5.3 or later and SQLite 3.7 or later are required for the wallet. These can be installed with:
 
-        sudo apt-get install libdb-dev libdb++-dev
+        sudo apt-get install libdb-dev libdb++-dev libsqlite3-dev
 
 See the section "Disable-wallet mode" to build Bitcoin ABC without wallet.
 
-Minipupnc dependencies (can be disabled by passing `-DENABLE_UPNP=OFF` on the cmake command line):
+Port mapping dependencies MiniUPnPc and NAT-PMP (can be disabled by passing `-DENABLE_UPNP=OFF` and `-DENABLE_NATPMP=OFF` on the cmake command line):
 
-    sudo apt-get install libminiupnpc-dev
+    sudo apt-get install libminiupnpc-dev libnatpmp-dev
 
 ZMQ dependencies (provides ZMQ API, can be disabled by passing `-DBUILD_BITCOIN_ZMQ=OFF` on the cmake command line):
 
@@ -120,6 +119,10 @@ ZMQ dependencies (provides ZMQ API, can be disabled by passing `-DBUILD_BITCOIN_
 jemalloc dependencies (provides the jemalloc library, can be disabled by passing `-DUSE_JEMALLOC=OFF` on the cmake command line):
 
     sudo apt-get install libjemalloc-dev
+
+User-Space, Statically Defined Tracing (USDT) dependencies (provides the tracepoint library, can be disabled by passing `-DENABLE_TRACING=OFF` on the cmake command line):
+
+    sudo apt install systemtap-sdt-dev
 
 Dependencies for the GUI: Ubuntu & Debian
 -----------------------------------------
@@ -142,13 +145,17 @@ Build requirements:
 
     sudo dnf install boost-devel cmake gcc-c++ libdb-cxx-devel libdb-devel libevent-devel ninja-build openssl-devel python3
 
-Minipupnc dependencies (can be disabled by passing `-DENABLE_UPNP=OFF` on the cmake command line):
+Port mapping dependencies MiniUPnPc and NAT-PMP (can be disabled by passing `-DENABLE_UPNP=OFF` and `-DENABLE_NATPMP=OFF` on the cmake command line):
 
-    sudo dnf install miniupnpc-devel
+    sudo dnf install miniupnpc-devel libnatpmp-devel
 
 ZMQ dependencies (can be disabled by passing `-DBUILD_BITCOIN_ZMQ=OFF` on the cmake command line):
 
     sudo dnf install zeromq-devel
+
+User-Space, Statically Defined Tracing (USDT) dependencies (provides the tracepoint library, can be disabled by passing `-DENABLE_TRACING=OFF` on the cmake command line):
+
+    sudo dnf install systemtap
 
 To build with Qt 5 you need the following:
 
@@ -157,6 +164,10 @@ To build with Qt 5 you need the following:
 libqrencode dependencies (can be disabled by passing `-DENABLE_QRCODE=OFF`):
 
     sudo dnf install qrencode-devel
+
+SQLite can be installed with:
+
+    sudo dnf install sqlite-devel
 
 Notes
 -----
@@ -169,10 +180,20 @@ miniupnpc
 
 [miniupnpc](https://miniupnp.tuxfamily.org) may be used for UPnP port mapping.  It can be downloaded from [here](
 https://miniupnp.tuxfamily.org/files/).  UPnP support is compiled in and
-turned off by default.  See the cmake options for upnp behavior desired:
+turned off by default.  See the cmake options for UPnP behavior desired:
 
     ENABLE_UPNP            Enable UPnP support (miniupnp required, default ON)
     START_WITH_UPNP        UPnP support turned on by default at runtime (default OFF)
+
+libnatpmp
+---------
+
+[libnatpmp](https://miniupnp.tuxfamily.org/libnatpmp.html) may be used for NAT-PMP port mapping. It can be downloaded
+from [here](https://miniupnp.tuxfamily.org/files/). NAT-PMP support is compiled in and
+turned off by default. See the configure options for NAT-PMP behavior desired:
+
+    ENABLE_NATPMP          NAT-PMP support (libnatpmp required, default ON)
+    START_WITH_NATPMP      NAT-PMP support turned on by default at runtime (default OFF)
 
 Boost
 -----

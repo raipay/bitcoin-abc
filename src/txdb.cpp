@@ -5,7 +5,6 @@
 
 #include <txdb.h>
 
-#include <blockdb.h>
 #include <chain.h>
 #include <node/ui_interface.h>
 #include <pow/pow.h>
@@ -29,6 +28,32 @@ static const char DB_HEAD_BLOCKS = 'H';
 static const char DB_FLAG = 'F';
 static const char DB_REINDEX_FLAG = 'R';
 static const char DB_LAST_BLOCK = 'l';
+
+// Keys used in previous version that might still be found in the DB:
+static constexpr uint8_t DB_TXINDEX_BLOCK{'T'};
+//               uint8_t DB_TXINDEX{'t'}
+
+std::optional<bilingual_str> CheckLegacyTxindex(CBlockTreeDB &block_tree_db) {
+    CBlockLocator ignored{};
+    if (block_tree_db.Read(DB_TXINDEX_BLOCK, ignored)) {
+        return _("The -txindex upgrade started by a previous version can not "
+                 "be completed. Restart with the previous version or run a "
+                 "full -reindex.");
+    }
+    bool txindex_legacy_flag{false};
+    block_tree_db.ReadFlag("txindex", txindex_legacy_flag);
+    if (txindex_legacy_flag) {
+        // Disable legacy txindex and warn once about occupied disk space
+        if (!block_tree_db.WriteFlag("txindex", false)) {
+            return Untranslated(
+                "Failed to write block index db flag 'txindex'='0'");
+        }
+        return _("The block index db contains a legacy 'txindex'. To clear the "
+                 "occupied disk space, run a full -reindex, otherwise ignore "
+                 "this error. This error message will not be displayed again.");
+    }
+    return std::nullopt;
+}
 
 namespace {
 
@@ -54,11 +79,16 @@ CCoinsViewDB::CCoinsViewDB(fs::path ldb_path, size_t nCacheSize, bool fMemory,
       m_ldb_path(ldb_path), m_is_memory(fMemory) {}
 
 void CCoinsViewDB::ResizeCache(size_t new_cache_size) {
-    // Have to do a reset first to get the original `m_db` state to release its
-    // filesystem lock.
-    m_db.reset();
-    m_db = std::make_unique<CDBWrapper>(m_ldb_path, new_cache_size, m_is_memory,
-                                        /*fWipe*/ false, /*obfuscate*/ true);
+    // We can't do this operation with an in-memory DB since we'll lose all the
+    // coins upon reset.
+    if (!m_is_memory) {
+        // Have to do a reset first to get the original `m_db` state to release
+        // its filesystem lock.
+        m_db.reset();
+        m_db = std::make_unique<CDBWrapper>(m_ldb_path, new_cache_size,
+                                            m_is_memory, /*fWipe*/ false,
+                                            /*obfuscate*/ true);
+    }
 }
 
 bool CCoinsViewDB::GetCoin(const COutPoint &outpoint, Coin &coin) const {
@@ -90,8 +120,8 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) {
     size_t count = 0;
     size_t changed = 0;
     size_t batch_size =
-        (size_t)gArgs.GetArg("-dbbatchsize", DEFAULT_DB_BATCH_SIZE);
-    int crash_simulate = gArgs.GetArg("-dbcrashratio", 0);
+        (size_t)gArgs.GetIntArg("-dbbatchsize", DEFAULT_DB_BATCH_SIZE);
+    int crash_simulate = gArgs.GetIntArg("-dbcrashratio", 0);
     assert(!hashBlock.IsNull());
 
     BlockHash old_tip = GetBestBlock();
@@ -158,8 +188,8 @@ size_t CCoinsViewDB::EstimateSize() const {
 }
 
 CBlockTreeDB::CBlockTreeDB(size_t nCacheSize, bool fMemory, bool fWipe)
-    : CDBWrapper(GetDataDir() / "blocks" / "index", nCacheSize, fMemory,
-                 fWipe) {}
+    : CDBWrapper(gArgs.GetDataDirNet() / "blocks" / "index", nCacheSize,
+                 fMemory, fWipe) {}
 
 bool CBlockTreeDB::ReadBlockFileInfo(int nFile, CBlockFileInfo &info) {
     return Read(std::make_pair(DB_BLOCK_FILES, nFile), info);
@@ -270,6 +300,7 @@ bool CBlockTreeDB::ReadFlag(const std::string &name, bool &fValue) {
 bool CBlockTreeDB::LoadBlockIndexGuts(
     const Consensus::Params &params,
     std::function<CBlockIndex *(const BlockHash &)> insertBlockIndex) {
+    AssertLockHeld(::cs_main);
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
 
     uint64_t version = 0;
@@ -458,6 +489,9 @@ bool CCoinsViewDB::Upgrade() {
 }
 
 bool CBlockTreeDB::Upgrade(const Consensus::Params &params) {
+    // This method used to add the block size to pre-0.22.8 block index
+    // databases. This is no longer supported as of 0.25.5, but the method is
+    // kept to update the version number in the database.
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
 
     uint64_t version = 0;
@@ -471,92 +505,22 @@ bool CBlockTreeDB::Upgrade(const Consensus::Params &params) {
         return true;
     }
 
-    CDBBatch batch(*this);
-
     pcursor->Seek(std::make_pair(DB_BLOCK_INDEX, uint256()));
-    if (!pcursor->Valid()) {
-        // The DB is empty, so just write the version number and consider the
-        // upgrade done.
-        batch.Write("version", uint64_t(CLIENT_VERSION));
-        WriteBatch(batch);
-        return true;
+
+    // The DB is not empty, and the version is either non-existent or too old.
+    // The node requires a reindex.
+    if (pcursor->Valid() && version < CDiskBlockIndex::TRACK_SIZE_VERSION) {
+        LogPrintf(
+            "\nThe database is too old. The block index cannot be upgraded "
+            "and reindexing is required.\n");
+        return false;
     }
 
-    int64_t count = 0;
-    LogPrintf("Upgrading block index database...\n");
-    int reportDone = -1;
-    std::pair<uint8_t, uint256> key = {DB_BLOCK_INDEX, uint256()};
-    while (pcursor->Valid()) {
-        if (ShutdownRequested()) {
-            break;
-        }
-
-        if (!pcursor->GetKey(key) || key.first != DB_BLOCK_INDEX) {
-            break;
-        }
-
-        if (count++ % 256 == 0) {
-            uint32_t high =
-                0x100 * *key.second.begin() + *(key.second.begin() + 1);
-            int percentageDone = (int)(high * 100.0 / 65536.0 + 0.5);
-            uiInterface.ShowProgress(
-                _("Upgrading block index database").translated, percentageDone,
-                true);
-            if (reportDone < percentageDone / 10) {
-                // report max. every 10% step
-                LogPrintfToBeContinued("[%d%%]...", percentageDone);
-                reportDone = percentageDone / 10;
-            }
-        }
-
-        // Read the block index entry and update it.
-        CDiskBlockIndex diskindex;
-        if (!pcursor->GetValue(diskindex)) {
-            return error("%s: cannot parse CDiskBlockIndex record", __func__);
-        }
-
-        // The block hash needs to be usable.
-        BlockHash blockhash = diskindex.GetBlockHash();
-        diskindex.phashBlock = &blockhash;
-
-        bool mustUpdate = false;
-
-        // We must update the block index to add the size.
-        if (CLIENT_VERSION >= CDiskBlockIndex::TRACK_SIZE_VERSION &&
-            version < CDiskBlockIndex::TRACK_SIZE_VERSION &&
-            diskindex.nTx > 0 && diskindex.nSize == 0) {
-            if (!diskindex.nStatus.hasData()) {
-                // The block was pruned, we need a full reindex.
-                LogPrintf("\nThe block %s is pruned. The block index cannot be "
-                          "upgraded and reindexing is required.\n",
-                          blockhash.GetHex());
-                return false;
-            }
-
-            CBlock block;
-            if (!ReadBlockFromDisk(block, &diskindex, params)) {
-                // Failed to read the block from disk, even though it is marked
-                // that we have data for this block.
-                return false;
-            }
-
-            mustUpdate = true;
-            diskindex.nSize = ::GetSerializeSize(block, PROTOCOL_VERSION);
-        }
-
-        if (mustUpdate) {
-            batch.Write(std::make_pair(DB_BLOCK_INDEX, blockhash), diskindex);
-        }
-
-        pcursor->Next();
-    }
-
-    // Upgrade is done, now let's update the version number.
+    // The DB is empty or recent enough.
+    // Just write the new version number and consider the upgrade done.
+    CDBBatch batch(*this);
+    LogPrintf("Updating the block index database version to %d\n",
+              CLIENT_VERSION);
     batch.Write("version", uint64_t(CLIENT_VERSION));
-
-    WriteBatch(batch);
-    CompactRange({DB_BLOCK_INDEX, uint256()}, key);
-    uiInterface.ShowProgress("", 100, false);
-    LogPrintf("[%s].\n", ShutdownRequested() ? "CANCELLED" : "DONE");
-    return !ShutdownRequested();
+    return WriteBatch(batch);
 }

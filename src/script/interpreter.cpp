@@ -127,8 +127,8 @@ private:
     uint32_t m_first_false_pos = NO_FALSE;
 
 public:
-    bool empty() { return m_stack_size == 0; }
-    bool all_true() { return m_first_false_pos == NO_FALSE; }
+    bool empty() const { return m_stack_size == 0; }
+    bool all_true() const { return m_first_false_pos == NO_FALSE; }
     void push_back(bool f) {
         if (m_first_false_pos == NO_FALSE && !f) {
             // The stack consists of all true values, and a false is added.
@@ -1121,7 +1121,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                  iSig++, iKey++) {
                                 if ((checkBits >> iKey) == 0) {
                                     // This is a sanity check and should be
-                                    // unrecheable.
+                                    // unreachable.
                                     return set_error(
                                         serror, ScriptError::INVALID_BIT_RANGE);
                                 }
@@ -1133,7 +1133,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
 
                                 if (iKey >= nKeysCount) {
                                     // This is a sanity check and should be
-                                    // unrecheable.
+                                    // unreachable.
                                     return set_error(serror,
                                                      ScriptError::PUBKEY_COUNT);
                                 }
@@ -1172,7 +1172,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
 
                             if ((checkBits >> iKey) != 0) {
                                 // This is a sanity check and should be
-                                // unrecheable.
+                                // unreachable.
                                 return set_error(
                                     serror, ScriptError::INVALID_BIT_COUNT);
                             }

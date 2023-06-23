@@ -5,7 +5,7 @@ Below are some notes on how to build Bitcoin ABC for Windows.
 
 The options known to work for building Bitcoin ABC on Windows are:
 
-* On Linux, using the [Mingw-w64](https://mingw-w64.org/doku.php) cross compiler tool chain. Debian Buster is recommended
+* On Linux, using the [Mingw-w64](https://mingw-w64.org/doku.php) cross compiler tool chain. Debian Bullseye is recommended
 and is the platform used to build the Bitcoin ABC Windows release binaries.
 * On Windows, using [Windows
 Subsystem for Linux (WSL)](https://msdn.microsoft.com/commandline/wsl/about) and the Mingw-w64 cross compiler tool chain.
@@ -62,7 +62,7 @@ First, install the general dependencies:
 
     sudo apt update
     sudo apt upgrade
-    sudo apt install autoconf automake build-essential bsdmainutils curl git libboost-all-dev libevent-dev libssl-dev libtool ninja-build pkg-config python3
+    sudo apt install autoconf automake build-essential bsdmainutils curl git libboost-dev libevent-dev libssl-dev libtool ninja-build pkg-config python3
 
 The cmake version packaged with Ubuntu Bionic is too old for building Building Bitcoin ABC.
 To install the latest version:

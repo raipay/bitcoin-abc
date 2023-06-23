@@ -5,7 +5,7 @@
 #ifndef BITCOIN_INTERFACES_NODE_H
 #define BITCOIN_INTERFACES_NODE_H
 
-#include <amount.h>     // For Amount
+#include <consensus/amount.h>
 #include <net.h>        // For CConnman::NumConnections
 #include <net_types.h>  // For banmap_t
 #include <netaddress.h> // For Network
@@ -29,18 +29,19 @@ struct CNodeStats;
 class Coin;
 class Config;
 class HTTPRPCRequestProcessor;
-struct NodeContext;
 class proxyType;
 class RPCServer;
 class RPCTimerInterface;
 enum class SynchronizationState;
 class UniValue;
-enum class WalletCreationStatus;
 struct bilingual_str;
+namespace node {
+struct NodeContext;
+} // namespace node
 
 namespace interfaces {
 class Handler;
-class Wallet;
+class WalletClient;
 struct BlockTip;
 
 //! Block and header tip information
@@ -85,7 +86,7 @@ public:
     virtual bool shutdownRequested() = 0;
 
     //! Map port.
-    virtual void mapPort(bool use_upnp) = 0;
+    virtual void mapPort(bool use_upnp, bool use_natpmp) = 0;
 
     //! Get proxy.
     virtual bool getProxy(Network net, proxyType &proxy_info) = 0;
@@ -155,14 +156,12 @@ public:
     //! Get network active.
     virtual bool getNetworkActive() = 0;
 
-    //! Estimate smart fee.
-    virtual CFeeRate estimateSmartFee() = 0;
-
     //! Get dust relay fee.
     virtual CFeeRate getDustRelayFee() = 0;
 
     //! Execute rpc command.
-    virtual UniValue executeRpc(Config &config, const std::string &command,
+    virtual UniValue executeRpc(const Config &config,
+                                const std::string &command,
                                 const UniValue &params,
                                 const std::string &uri) = 0;
 
@@ -178,29 +177,8 @@ public:
     //! Get unspent outputs associated with a transaction.
     virtual bool getUnspentOutput(const COutPoint &output, Coin &coin) = 0;
 
-    //! Return default wallet directory.
-    virtual std::string getWalletDir() = 0;
-
-    //! Return available wallets in wallet directory.
-    virtual std::vector<std::string> listWalletDir() = 0;
-
-    //! Return interfaces for accessing wallets (if any).
-    virtual std::vector<std::unique_ptr<Wallet>> getWallets() = 0;
-
-    //! Attempts to load a wallet from file or directory.
-    //! The loaded wallet is also notified to handlers previously registered
-    //! with handleLoadWallet.
-    virtual std::unique_ptr<Wallet>
-    loadWallet(const CChainParams &params, const std::string &name,
-               bilingual_str &error,
-               std::vector<bilingual_str> &warnings) const = 0;
-
-    //! Create a wallet from file
-    virtual std::unique_ptr<Wallet>
-    createWallet(const CChainParams &params, const SecureString &passphrase,
-                 uint64_t wallet_creation_flags, const std::string &name,
-                 bilingual_str &error, std::vector<bilingual_str> &warnings,
-                 WalletCreationStatus &status) = 0;
+    //! Get wallet client.
+    virtual WalletClient &walletClient() = 0;
 
     //! Register handler for init messages.
     using InitMessageFn = std::function<void(const std::string &message)>;
@@ -223,10 +201,6 @@ public:
     using ShowProgressFn = std::function<void(
         const std::string &title, int progress, bool resume_possible)>;
     virtual std::unique_ptr<Handler> handleShowProgress(ShowProgressFn fn) = 0;
-
-    //! Register handler for load wallet messages.
-    using LoadWalletFn = std::function<void(std::unique_ptr<Wallet> wallet)>;
-    virtual std::unique_ptr<Handler> handleLoadWallet(LoadWalletFn fn) = 0;
 
     //! Register handler for number of connections changed messages.
     using NotifyNumConnectionsChangedFn =
@@ -266,12 +240,12 @@ public:
 
     //! Get and set internal node context. Useful for testing, but not
     //! accessible across processes.
-    virtual NodeContext *context() { return nullptr; }
-    virtual void setContext(NodeContext *context) {}
+    virtual node::NodeContext *context() { return nullptr; }
+    virtual void setContext(node::NodeContext *context) {}
 };
 
 //! Return implementation of Node interface.
-std::unique_ptr<Node> MakeNode(NodeContext *context = nullptr);
+std::unique_ptr<Node> MakeNode(node::NodeContext *context = nullptr);
 
 //! Block tip (could be a header or not, depends on the subscribed signal).
 struct BlockTip {

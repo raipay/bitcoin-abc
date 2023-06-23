@@ -22,7 +22,7 @@ struct RCUTest {
     }
 };
 
-BOOST_FIXTURE_TEST_SUITE(rcu_tests, BasicTestingSetup)
+BOOST_AUTO_TEST_SUITE(rcu_tests)
 
 enum RCUTestStep {
     Init,
@@ -136,7 +136,7 @@ BOOST_AUTO_TEST_CASE(synchronize_test) {
     BOOST_CHECK(true);
 }
 
-BOOST_AUTO_TEST_CASE(cleanup_test) {
+BOOST_AUTO_TEST_CASE(cleanup_simple) {
     RCULock::synchronize();
     BOOST_CHECK(RCUTest::getCleanups().empty());
 
@@ -145,16 +145,19 @@ BOOST_AUTO_TEST_CASE(cleanup_test) {
 
     BOOST_CHECK(!isClean1);
     BOOST_CHECK_EQUAL(RCUTest::getCleanups().size(), 1);
-    BOOST_CHECK_EQUAL(RCUTest::getRevision(),
-                      RCUTest::getCleanups().begin()->first);
+
+    auto revision = RCUTest::getCleanups().begin()->first;
+    BOOST_CHECK_EQUAL(RCUTest::getRevision(), revision);
 
     // Synchronize runs the cleanups.
     RCULock::synchronize();
     BOOST_CHECK(RCUTest::getCleanups().empty());
     BOOST_CHECK(isClean1);
+}
 
+BOOST_AUTO_TEST_CASE(cleanup_multiple) {
     // Check multiple callbacks.
-    isClean1 = false;
+    bool isClean1 = false;
     bool isClean2 = false;
     bool isClean3 = false;
     RCULock::registerCleanup([&] { isClean1 = true; });
@@ -167,11 +170,13 @@ BOOST_AUTO_TEST_CASE(cleanup_test) {
     BOOST_CHECK(isClean1);
     BOOST_CHECK(isClean2);
     BOOST_CHECK(isClean3);
+}
 
+BOOST_AUTO_TEST_CASE(cleanup_test_nested) {
     // Check callbacks adding each others.
-    isClean1 = false;
-    isClean2 = false;
-    isClean3 = false;
+    bool isClean1 = false;
+    bool isClean2 = false;
+    bool isClean3 = false;
 
     RCULock::registerCleanup([&] {
         isClean1 = true;
@@ -183,6 +188,33 @@ BOOST_AUTO_TEST_CASE(cleanup_test) {
 
     BOOST_CHECK_EQUAL(RCUTest::getCleanups().size(), 1);
     RCULock::synchronize();
+    BOOST_CHECK(RCUTest::getCleanups().empty());
+    BOOST_CHECK(isClean1);
+    BOOST_CHECK(isClean2);
+    BOOST_CHECK(isClean3);
+}
+
+BOOST_AUTO_TEST_CASE(cleanup_on_unlock) {
+    // Check callbacks adding each others.
+    bool isClean1 = false;
+    bool isClean2 = false;
+    bool isClean3 = false;
+
+    RCULock::registerCleanup([&] {
+        isClean1 = true;
+        RCULock::registerCleanup([&] {
+            isClean2 = true;
+            RCULock::registerCleanup([&] { isClean3 = true; });
+        });
+    });
+
+    BOOST_CHECK_EQUAL(RCUTest::getCleanups().size(), 1);
+
+    {
+        // There is no contention, so this will cleanup.
+        RCULock lock;
+    }
+
     BOOST_CHECK(RCUTest::getCleanups().empty());
     BOOST_CHECK(isClean1);
     BOOST_CHECK(isClean2);
@@ -258,8 +290,8 @@ BOOST_AUTO_TEST_CASE(rcuptr_operator_test) {
     auto altptr = RCUPtr<RCURefTestItem>::make([] {});
 
     // Check various operators.
-    BOOST_CHECK_EQUAL(gptr.get(), NULLPTR(RCURefTestItem));
-    BOOST_CHECK_EQUAL(gptr, NULLPTR(RCURefTestItem));
+    BOOST_CHECK_EQUAL(gptr.get(), nullptr);
+    BOOST_CHECK_EQUAL(gptr, nullptr);
     BOOST_CHECK(!gptr);
 
     auto copyptr = gptr;
@@ -269,7 +301,7 @@ BOOST_AUTO_TEST_CASE(rcuptr_operator_test) {
     BOOST_CHECK(gptr != altptr);
 
     gptr = RCUPtr<RCURefTestItem>::acquire(ptr);
-    BOOST_CHECK_EQUAL(ptr, NULLPTR(RCURefTestItem));
+    BOOST_CHECK_EQUAL(ptr, nullptr);
 
     BOOST_CHECK_EQUAL(gptr.get(), oldPtr);
     BOOST_CHECK_EQUAL(&*gptr, oldPtr);
@@ -302,10 +334,10 @@ public:
         : cleanupfun(fun) {}
     ~RCURefMoveTestItem() { cleanupfun(); }
 
-    void acquire() {
+    void incrementRefCount() {
         throw std::runtime_error("RCUPtr incremented the refcount");
     }
-    void release() {
+    void decrementRefCount() {
         RCULock::registerCleanup([this] { delete this; });
     }
 };
@@ -316,7 +348,7 @@ BOOST_AUTO_TEST_CASE(move_rcuptr_test) {
     // Check tat copy is failing.
     auto rcuptr1 =
         RCUPtr<RCURefMoveTestItem>::make([&] { isDestroyed = true; });
-    BOOST_CHECK_THROW(rcuptr1->acquire(), std::runtime_error);
+    BOOST_CHECK_THROW(rcuptr1->incrementRefCount(), std::runtime_error);
     BOOST_CHECK_THROW(auto rcuptrcopy = rcuptr1;, std::runtime_error);
 
     // Try to move.
@@ -373,17 +405,68 @@ BOOST_AUTO_TEST_CASE(move_rcuptr_test) {
 
     rcuptr1 = RCUPtr<RCURefMoveTestItem>::acquire(ptr);
     BOOST_CHECK_EQUAL(rcuptr1, ptrCopy);
-    BOOST_CHECK_EQUAL(ptr, NULLPTR(RCURefMoveTestItem));
+    BOOST_CHECK_EQUAL(ptr, nullptr);
 
     ptr = rcuptr1.release();
-    BOOST_CHECK_EQUAL(rcuptr1, NULLPTR(RCURefMoveTestItem));
+    BOOST_CHECK_EQUAL(rcuptr1, nullptr);
     BOOST_CHECK_EQUAL(ptr, ptrCopy);
 
     RCULock::synchronize();
     BOOST_CHECK(!isDestroyed);
 
     RCUPtr<RCURefMoveTestItem>::acquire(ptr);
-    BOOST_CHECK_EQUAL(ptr, NULLPTR(RCURefMoveTestItem));
+    BOOST_CHECK_EQUAL(ptr, nullptr);
+    BOOST_CHECK(!isDestroyed);
+    RCULock::synchronize();
+    BOOST_CHECK(isDestroyed);
+}
+
+BOOST_AUTO_TEST_CASE(rcu_converting_constructor) {
+    bool isDestroyed = false;
+
+    auto rcuNonConst =
+        RCUPtr<RCURefTestItem>::make([&] { isDestroyed = true; });
+    BOOST_CHECK_EQUAL(rcuNonConst->getRefCount(), 0);
+
+    RCUPtr<const RCURefTestItem> rcuConst(rcuNonConst);
+    BOOST_CHECK_EQUAL(rcuConst->getRefCount(), 1);
+    BOOST_CHECK_EQUAL(rcuNonConst->getRefCount(), 1);
+
+    rcuNonConst = RCUPtr<RCURefTestItem>();
+
+    // We still have a copy
+    BOOST_CHECK(!isDestroyed);
+    RCULock::synchronize();
+    BOOST_CHECK(!isDestroyed);
+
+    // Destroy the copy
+    rcuConst = RCUPtr<const RCURefTestItem>();
+    BOOST_CHECK(!isDestroyed);
+    RCULock::synchronize();
+    BOOST_CHECK(isDestroyed);
+}
+
+BOOST_AUTO_TEST_CASE(rcu_converting_assignment) {
+    bool isDestroyed = false;
+    auto rcuConst = RCUPtr<const RCURefTestItem>();
+
+    {
+        auto rcuNonConst =
+            RCUPtr<RCURefTestItem>::make([&] { isDestroyed = true; });
+        BOOST_CHECK_EQUAL(rcuNonConst->getRefCount(), 0);
+
+        rcuConst = rcuNonConst;
+        BOOST_CHECK_EQUAL(rcuConst->getRefCount(), 1);
+        BOOST_CHECK_EQUAL(rcuNonConst->getRefCount(), 1);
+    }
+
+    // We still have a copy
+    BOOST_CHECK(!isDestroyed);
+    RCULock::synchronize();
+    BOOST_CHECK(!isDestroyed);
+
+    // Destroy the copy
+    rcuConst = RCUPtr<const RCURefTestItem>();
     BOOST_CHECK(!isDestroyed);
     RCULock::synchronize();
     BOOST_CHECK(isDestroyed);

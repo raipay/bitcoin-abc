@@ -33,6 +33,12 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <fstream>
+
+using node::AnalyzePSBT;
+using node::DEFAULT_MAX_RAW_TX_FEE_RATE;
+using node::PSBTAnalysis;
+
 WalletView::WalletView(const PlatformStyle *_platformStyle,
                        WalletModel *_walletModel, QWidget *parent)
     : QStackedWidget(parent), clientModel(nullptr), walletModel(_walletModel),
@@ -99,6 +105,8 @@ WalletView::WalletView(const PlatformStyle *_platformStyle,
     // Pass through messages from transactionView
     connect(transactionView, &TransactionView::message, this,
             &WalletView::message);
+    connect(this, &WalletView::setPrivacy, overviewPage,
+            &OverviewPage::setPrivacy);
 
     // Set the model properly.
     setWalletModel(walletModel);
@@ -251,7 +259,7 @@ void WalletView::gotoLoadPSBT() {
                        CClientUIInterface::MSG_ERROR);
         return;
     }
-    std::ifstream in(filename.toLocal8Bit().data(), std::ios::binary);
+    std::ifstream in{filename.toLocal8Bit().data(), std::ios::binary};
     std::string dataStr(std::istreambuf_iterator<char>{in}, {});
 
     std::string error;
@@ -302,7 +310,7 @@ void WalletView::gotoLoadPSBT() {
                 CTransactionRef tx = MakeTransactionRef(mtx);
 
                 TransactionError result = BroadcastTransaction(
-                    *clientModel->node().context(), GetConfig(), tx, err_string,
+                    *clientModel->node().context(), tx, err_string,
                     DEFAULT_MAX_RAW_TX_FEE_RATE.GetFeePerK(), /* relay */ true,
                     /* wait_callback */ false);
                 if (result == TransactionError::OK) {
@@ -344,14 +352,11 @@ void WalletView::updateEncryptionStatus() {
     Q_EMIT encryptionStatusChanged();
 }
 
-void WalletView::encryptWallet(bool status) {
+void WalletView::encryptWallet() {
     if (!walletModel) {
         return;
     }
-
-    AskPassphraseDialog dlg(status ? AskPassphraseDialog::Encrypt
-                                   : AskPassphraseDialog::Decrypt,
-                            this);
+    AskPassphraseDialog dlg(AskPassphraseDialog::Encrypt, this);
     dlg.setModel(walletModel);
     dlg.exec();
 

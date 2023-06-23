@@ -6,35 +6,32 @@
 Test proof inventory relaying
 """
 
+import time
+
+from test_framework.address import ADDRESS_ECREG_UNSPENDABLE
 from test_framework.avatools import (
-    create_coinbase_stakes,
+    AvaP2PInterface,
+    avalanche_proof_from_hex,
+    gen_proof,
     get_proof_ids,
     wait_for_proof,
 )
-from test_framework.address import ADDRESS_BCHREG_UNSPENDABLE
-from test_framework.key import ECKey, bytes_to_wif
 from test_framework.messages import (
-    AvalancheProof,
-    CInv,
-    FromHex,
     MSG_AVA_PROOF,
     MSG_TYPE_MASK,
+    CInv,
     msg_avaproof,
     msg_getdata,
 )
-from test_framework.p2p import (
-    P2PInterface,
-    p2p_lock,
-)
+from test_framework.p2p import P2PInterface, p2p_lock
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_greater_than,
-    connect_nodes,
-    wait_until,
+    assert_raises_rpc_error,
+    uint256_hex,
 )
-
-import time
+from test_framework.wallet_util import bytes_to_wif
 
 # Broadcast reattempt occurs every 10 to 15 minutes
 MAX_INITIAL_BROADCAST_DELAY = 15 * 60
@@ -46,51 +43,51 @@ class ProofInvStoreP2PInterface(P2PInterface):
     def __init__(self):
         super().__init__()
         self.proof_invs_counter = 0
+        self.last_proofid = None
 
     def on_inv(self, message):
         for i in message.inv:
             if i.type & MSG_TYPE_MASK == MSG_AVA_PROOF:
                 self.proof_invs_counter += 1
+                self.last_proofid = i.hash
 
 
 class ProofInventoryTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 5
-        self.extra_args = [['-enableavalanche=1',
-                            '-avacooldown=0']] * self.num_nodes
+        self.extra_args = [
+            [
+                "-avaproofstakeutxodustthreshold=1000000",
+                "-avaproofstakeutxoconfirmations=2",
+                "-avacooldown=0",
+                "-whitelist=noban@127.0.0.1",
+            ]
+        ] * self.num_nodes
 
-    def gen_proof(self, node):
-        blockhashes = node.generate(10)
+    def generate_proof(self, node, mature=True):
+        privkey, proof = gen_proof(self, node)
 
-        privkey = ECKey()
-        privkey.generate()
-        pubkey = privkey.get_pubkey()
+        if mature:
+            self.generate(node, 1, sync_fun=self.no_op)
 
-        stakes = create_coinbase_stakes(
-            node, blockhashes, node.get_deterministic_priv_key().key)
-        proof_hex = node.buildavalancheproof(
-            42, 2000000000, pubkey.get_bytes().hex(), stakes)
-
-        return bytes_to_wif(privkey.get_bytes()), FromHex(
-            AvalancheProof(), proof_hex)
+        return privkey, proof
 
     def test_send_proof_inv(self):
         self.log.info("Test sending a proof to our peers")
 
         node = self.nodes[0]
 
-        for i in range(10):
+        for _ in range(10):
             node.add_p2p_connection(ProofInvStoreP2PInterface())
 
-        _, proof = self.gen_proof(node)
+        _, proof = self.generate_proof(node)
         assert node.sendavalancheproof(proof.serialize().hex())
 
         def proof_inv_found(peer):
             with p2p_lock:
-                return peer.last_message.get(
-                    "inv") and peer.last_message["inv"].inv[-1].hash == proof.proofid
+                return peer.last_proofid == proof.proofid
 
-        wait_until(lambda: all(proof_inv_found(i) for i in node.p2ps))
+        self.wait_until(lambda: all(proof_inv_found(i) for i in node.p2ps))
 
         self.log.info("Test that we don't send the same inv several times")
 
@@ -101,7 +98,7 @@ class ProofInventoryTest(BitcoinTestFramework):
         node.sendavalancheproof(proof.serialize().hex())
 
         # Our new extra peer should receive it but not the others
-        wait_until(lambda: proof_inv_found(extra_peer))
+        self.wait_until(lambda: proof_inv_found(extra_peer))
         assert all(p.proof_invs_counter == 1 for p in node.p2ps)
 
         # Send the proof again and force the send loop to be processed
@@ -115,7 +112,7 @@ class ProofInventoryTest(BitcoinTestFramework):
         self.log.info("Test a peer is created on proof reception")
 
         node = self.nodes[0]
-        _, proof = self.gen_proof(node)
+        _, proof = self.generate_proof(node)
 
         peer = node.add_p2p_connection(P2PInterface())
 
@@ -123,82 +120,146 @@ class ProofInventoryTest(BitcoinTestFramework):
         msg.proof = proof
         peer.send_message(msg)
 
-        wait_until(lambda: proof.proofid in get_proof_ids(node))
+        self.wait_until(lambda: proof.proofid in get_proof_ids(node))
 
-        self.log.info("Test receiving a proof with missing utxo is orphaned")
+        self.log.info("Test receiving a proof with an immature utxo")
 
-        privkey = ECKey()
-        privkey.generate()
-        orphan_hex = node.buildavalancheproof(
-            42, 2000000000, privkey.get_pubkey().get_bytes().hex(), [{
-                'txid': '0' * 64,
-                'vout': 0,
-                'amount': 10e6,
-                'height': 42,
-                'iscoinbase': False,
-                'privatekey': bytes_to_wif(privkey.get_bytes()),
-            }]
-        )
-
-        orphan = FromHex(AvalancheProof(), orphan_hex)
-        orphan_proofid = "{:064x}".format(orphan.proofid)
+        _, immature = self.generate_proof(node, mature=False)
+        immature_proofid = uint256_hex(immature.proofid)
 
         msg = msg_avaproof()
-        msg.proof = orphan
+        msg.proof = immature
         peer.send_message(msg)
 
-        wait_for_proof(node, orphan_proofid, expect_orphan=True)
+        wait_for_proof(node, immature_proofid, expect_status="immature")
 
     def test_ban_invalid_proof(self):
         node = self.nodes[0]
-        _, bad_proof = self.gen_proof(node)
+        _, bad_proof = self.generate_proof(node)
         bad_proof.stakes = []
 
-        peer = node.add_p2p_connection(P2PInterface())
+        privkey = node.get_deterministic_priv_key().key
+        missing_stake = node.buildavalancheproof(
+            1,
+            0,
+            privkey,
+            [
+                {
+                    "txid": "0" * 64,
+                    "vout": 0,
+                    "amount": 10000000,
+                    "height": 42,
+                    "iscoinbase": False,
+                    "privatekey": privkey,
+                }
+            ],
+        )
 
+        self.restart_node(0, ["-avaproofstakeutxodustthreshold=1000000"])
+
+        peer = node.add_p2p_connection(P2PInterface())
         msg = msg_avaproof()
+
+        # Sending a proof with a missing utxo doesn't trigger a ban
+        msg.proof = avalanche_proof_from_hex(missing_stake)
+        with node.assert_debug_log(["received: avaproof"], ["Misbehaving"]):
+            peer.send_message(msg)
+            peer.sync_with_ping()
+
         msg.proof = bad_proof
-        with node.assert_debug_log([
-            'Misbehaving',
-            'invalid-avaproof',
-        ]):
+        with node.assert_debug_log(
+            [
+                "Misbehaving",
+                "invalid-proof",
+            ]
+        ):
             peer.send_message(msg)
             peer.wait_for_disconnect()
 
     def test_proof_relay(self):
-        # This test makes no sense with a single node !
-        assert_greater_than(self.num_nodes, 1)
+        # This test makes no sense with less than 2 nodes !
+        assert_greater_than(self.num_nodes, 2)
 
-        def restart_nodes_with_proof(nodes=self.nodes):
-            proofids = set()
-            for i, node in enumerate(nodes):
-                privkey, proof = self.gen_proof(node)
-                proofids.add(proof.proofid)
+        proofs_keys = [self.generate_proof(self.nodes[0]) for _ in self.nodes]
+        proofids = {proof_key[1].proofid for proof_key in proofs_keys}
+        # generate_proof does not sync, so do it manually
+        self.sync_blocks()
 
-                self.restart_node(node.index, self.extra_args[node.index] + [
-                    "-avaproof={}".format(proof.serialize().hex()),
-                    "-avamasterkey={}".format(privkey)
-                ])
+        def restart_nodes_with_proof(nodes, extra_args=None):
+            for node in nodes:
+                privkey, proof = proofs_keys[node.index]
+                self.restart_node(
+                    node.index,
+                    self.extra_args[node.index]
+                    + [
+                        f"-avaproof={proof.serialize().hex()}",
+                        f"-avamasterkey={bytes_to_wif(privkey.get_bytes())}",
+                    ]
+                    + (extra_args or []),
+                )
 
-                # Connect a block to make the proof be added to our pool
-                node.generate(1)
-                wait_until(lambda: proof.proofid in get_proof_ids(node))
+        restart_nodes_with_proof(self.nodes[:-1])
 
-                [connect_nodes(node, n) for n in nodes[:i]]
+        chainwork = int(self.nodes[-1].getblockchaininfo()["chainwork"], 16)
+        restart_nodes_with_proof(
+            self.nodes[-1:], extra_args=[f"-minimumchainwork={chainwork + 100:#x}"]
+        )
 
-            return proofids
+        # Add an inbound so the node proof can be registered and advertised
+        [node.add_p2p_connection(P2PInterface()) for node in self.nodes]
 
-        proofids = restart_nodes_with_proof(self.nodes)
+        [
+            [self.connect_nodes(node.index, j) for j in range(node.index)]
+            for node in self.nodes
+        ]
+
+        # Connect a block to make the proofs added to our pool
+        self.generate(self.nodes[0], 1, sync_fun=self.sync_blocks)
 
         self.log.info("Nodes should eventually get the proof from their peer")
-        self.sync_proofs()
-        for node in self.nodes:
+        self.sync_proofs(self.nodes[:-1])
+        for node in self.nodes[:-1]:
             assert_equal(set(get_proof_ids(node)), proofids)
+
+        assert self.nodes[-1].getblockchaininfo()["initialblockdownload"]
+        self.log.info("Except the node that has not completed IBD")
+        assert_equal(len(get_proof_ids(self.nodes[-1])), 1)
+
+        # The same if we send a proof directly with no download request
+        peer = AvaP2PInterface()
+        self.nodes[-1].add_p2p_connection(peer)
+
+        _, proof = self.generate_proof(self.nodes[0])
+        peer.send_avaproof(proof)
+        peer.sync_send_with_ping()
+        with p2p_lock:
+            assert_equal(peer.message_count.get("getdata", 0), 0)
+
+        # Leave the nodes in good shape for the next tests
+        restart_nodes_with_proof(self.nodes)
+        [
+            [self.connect_nodes(node.index, j) for j in range(node.index)]
+            for node in self.nodes
+        ]
+
+    def test_manually_sent_proof(self):
+        node0 = self.nodes[0]
+
+        _, proof = self.generate_proof(node0)
+
+        self.log.info("Send a proof via RPC and check all the nodes download it")
+        node0.sendavalancheproof(proof.serialize().hex())
+        self.sync_proofs()
 
     def test_unbroadcast(self):
         self.log.info("Test broadcasting proofs")
 
         node = self.nodes[0]
+
+        # Disconnect the other nodes/peers, or they will request the proof and
+        # invalidate the test
+        [n.stop_node() for n in self.nodes[1:]]
+        node.disconnect_p2ps()
 
         def add_peers(count):
             peers = []
@@ -208,8 +269,8 @@ class ProofInventoryTest(BitcoinTestFramework):
                 peers.append(peer)
             return peers
 
-        _, proof = self.gen_proof(node)
-        proofid_hex = "{:064x}".format(proof.proofid)
+        _, proof = self.generate_proof(node)
+        proofid_hex = uint256_hex(proof.proofid)
 
         # Broadcast the proof
         peers = add_peers(3)
@@ -218,17 +279,20 @@ class ProofInventoryTest(BitcoinTestFramework):
 
         def proof_inv_received(peers):
             with p2p_lock:
-                return all(p.last_message.get(
-                    "inv") and p.last_message["inv"].inv[-1].hash == proof.proofid for p in peers)
+                return all(
+                    p.last_message.get("inv")
+                    and p.last_message["inv"].inv[-1].hash == proof.proofid
+                    for p in peers
+                )
 
-        wait_until(lambda: proof_inv_received(peers))
+        self.wait_until(lambda: proof_inv_received(peers))
 
         # If no peer request the proof for download, the node should reattempt
         # broadcasting to all new peers after 10 to 15 minutes.
         peers = add_peers(3)
         node.mockscheduler(MAX_INITIAL_BROADCAST_DELAY + 1)
         peers[-1].sync_with_ping()
-        wait_until(lambda: proof_inv_received(peers))
+        self.wait_until(lambda: proof_inv_received(peers))
 
         # If at least one peer requests the proof, there is no more attempt to
         # broadcast it
@@ -243,8 +307,7 @@ class ProofInventoryTest(BitcoinTestFramework):
 
         assert not proof_inv_received(peers)
 
-        self.log.info(
-            "Proofs that become invalid should no longer be broadcasted")
+        self.log.info("Proofs that become invalid should no longer be broadcasted")
 
         # Restart and add connect a new set of peers
         self.restart_node(0)
@@ -252,34 +315,44 @@ class ProofInventoryTest(BitcoinTestFramework):
         # Broadcast the proof
         peers = add_peers(3)
         assert node.sendavalancheproof(proof.serialize().hex())
-        wait_until(lambda: proof_inv_received(peers))
+        self.wait_until(lambda: proof_inv_received(peers))
 
         # Sanity check our node knows the proof, and it is valid
-        wait_for_proof(node, proofid_hex, expect_orphan=False)
+        wait_for_proof(node, proofid_hex)
 
         # Mature the utxo then spend it
-        node.generate(100)
+        self.generate(node, 100, sync_fun=self.no_op)
         utxo = proof.stakes[0].stake.utxo
         raw_tx = node.createrawtransaction(
-            inputs=[{
-                # coinbase
-                "txid": "{:064x}".format(utxo.hash),
-                "vout": utxo.n
-            }],
-            outputs={ADDRESS_BCHREG_UNSPENDABLE: 25_000_000 - 250.00},
+            inputs=[
+                {
+                    # coinbase
+                    "txid": uint256_hex(utxo.txid),
+                    "vout": utxo.n,
+                }
+            ],
+            outputs={ADDRESS_ECREG_UNSPENDABLE: 25_000_000 - 250.00},
         )
         signed_tx = node.signrawtransactionwithkey(
             hexstring=raw_tx,
             privkeys=[node.get_deterministic_priv_key().key],
         )
-        node.sendrawtransaction(signed_tx['hex'])
+        node.sendrawtransaction(signed_tx["hex"])
 
         # Mine the tx in a block
-        node.generate(1)
+        self.generate(node, 1, sync_fun=self.no_op)
 
-        # Wait for the proof to be orphaned
-        wait_until(lambda: node.getrawavalancheproof(
-            proofid_hex)["orphan"] is True)
+        # Wait for the proof to be invalidated
+        def check_proof_not_found(proofid):
+            try:
+                assert_raises_rpc_error(
+                    -8, "Proof not found", node.getrawavalancheproof, proofid
+                )
+                return True
+            except BaseException:
+                return False
+
+        self.wait_until(lambda: check_proof_not_found(proofid_hex))
 
         # It should no longer be broadcasted
         peers = add_peers(3)
@@ -291,10 +364,13 @@ class ProofInventoryTest(BitcoinTestFramework):
     def run_test(self):
         self.test_send_proof_inv()
         self.test_receive_proof()
-        self.test_ban_invalid_proof()
         self.test_proof_relay()
+        self.test_manually_sent_proof()
+
+        # Run these tests last because they need to disconnect the nodes
         self.test_unbroadcast()
+        self.test_ban_invalid_proof()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     ProofInventoryTest().main()

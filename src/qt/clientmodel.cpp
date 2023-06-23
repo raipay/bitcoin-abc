@@ -4,7 +4,6 @@
 
 #include <qt/clientmodel.h>
 
-#include <checkpoints.h>
 #include <clientversion.h>
 #include <config.h>
 #include <interfaces/handler.h>
@@ -16,6 +15,7 @@
 #include <qt/guiutil.h>
 #include <qt/peertablemodel.h>
 #include <util/system.h>
+#include <util/threadnames.h>
 #include <validation.h>
 
 #include <QDebug>
@@ -23,6 +23,7 @@
 #include <QTimer>
 
 #include <cstdint>
+#include <functional>
 
 static int64_t nLastHeaderTipUpdateNotification = 0;
 static int64_t nLastBlockTipUpdateNotification = 0;
@@ -52,6 +53,7 @@ ClientModel::ClientModel(interfaces::Node &node, OptionsModel *_optionsModel,
     // move timer to thread so that polling doesn't disturb main event loop
     timer->moveToThread(m_thread);
     m_thread->start();
+    QTimer::singleShot(0, timer, []() { util::ThreadRename("qt-clientmodl"); });
 
     subscribeToCoreSignals();
 }
@@ -189,11 +191,11 @@ QString ClientModel::formatClientStartupTime() const {
 }
 
 QString ClientModel::dataDir() const {
-    return GUIUtil::boostPathToQString(GetDataDir());
+    return GUIUtil::boostPathToQString(gArgs.GetDataDirNet());
 }
 
 QString ClientModel::blocksDir() const {
-    return GUIUtil::boostPathToQString(GetBlocksDir());
+    return GUIUtil::boostPathToQString(gArgs.GetBlocksDirPath());
 }
 
 void ClientModel::updateBanlist() {

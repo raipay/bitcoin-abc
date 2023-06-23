@@ -9,9 +9,10 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <attributes.h>
 #include <compat.h>
+#include <crypto/siphash.h>
 #include <prevector.h>
+#include <random.h>
 #include <serialize.h>
 #include <util/strencodings.h>
 #include <util/string.h>
@@ -29,14 +30,14 @@
  * should be serialized in (unserialized from) v2 format (BIP155).
  * Make sure that this does not collide with any of the values in `version.h`.
  */
-static const int ADDRV2_FORMAT = 0x20000000;
+static constexpr int ADDRV2_FORMAT = 0x20000000;
 
 /**
  * A network type.
  * @note An address may belong to more than one network, for example `10.0.0.1`
  * belongs to both `NET_UNROUTABLE` and `NET_IPV4`.
  * Keep these sequential starting from 0 and `NET_MAX` as the last entry.
- * We have loops like `for (int i = 0; i < NET_MAX; i++)` that expect to iterate
+ * We have loops like `for (int i = 0; i < NET_MAX; ++i)` that expect to iterate
  * over all enum values and also `GetExtNetwork()` "extends" this enum by
  * introducing standalone constants starting from `NET_MAX`.
  */
@@ -61,7 +62,7 @@ enum Network {
     NET_CJDNS,
 
     /// A set of addresses that represent the hash of a string or FQDN. We use
-    /// them in CAddrMan to keep track of which DNS seeds were used.
+    /// them in AddrMan to keep track of which DNS seeds were used.
     NET_INTERNAL,
 
     /// Dummy value to indicate the number of NET_* constants.
@@ -111,6 +112,9 @@ static constexpr size_t ADDR_CJDNS_SIZE = 16;
 /// Size of "internal" (NET_INTERNAL) address (in bytes).
 static constexpr size_t ADDR_INTERNAL_SIZE = 10;
 
+/// SAM 3.1 and earlier do not support specifying ports and force the port to 0.
+static constexpr uint16_t I2P_SAM31_PORT{0};
+
 /**
  * Network address.
  */
@@ -127,8 +131,11 @@ protected:
      */
     Network m_net{NET_IPV6};
 
-    // for scoped/link-local ipv6 addresses
-    uint32_t scopeId{0};
+    /**
+     * Scope id if scoped/link-local IPV6 address.
+     * See https://tools.ietf.org/html/rfc4007
+     */
+    uint32_t m_scope_id{0};
 
 public:
     CNetAddr();
@@ -145,8 +152,16 @@ public:
 
     bool SetInternal(const std::string &name);
 
-    // for Tor addresses
-    bool SetSpecial(const std::string &strName);
+    /**
+     * Parse a Tor or I2P address and set this object to it.
+     * @param[in] addr Address to parse, for example
+     * pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion or
+     * ukeu3k5oycgaauneqgtnvselmt4yemvoilkln7jpvamvfx7dnkdq.b32.i2p.
+     * @returns Whether the operation was successful.
+     * @see CNetAddr::IsTor(), CNetAddr::IsI2P()
+     */
+    bool SetSpecial(const std::string &addr);
+
     // INADDR_ANY equivalent
     bool IsBindAny() const;
     // IPv4 mapped address (::FFFF:0:0/96, 0.0.0.0/0)
@@ -202,9 +217,8 @@ public:
     enum Network GetNetwork() const;
     std::string ToString() const;
     std::string ToStringIP() const;
-    uint64_t GetHash() const;
     bool GetInAddr(struct in_addr *pipv4Addr) const;
-    uint32_t GetNetClass() const;
+    Network GetNetClass() const;
 
     //! For IPv4, mapped IPv4, SIIT translated IPv4, Teredo, 6to4 tunneled
     //! addresses, return the relevant IPv4 address as a uint32.
@@ -232,6 +246,12 @@ public:
     friend bool operator<(const CNetAddr &a, const CNetAddr &b);
 
     /**
+     * Whether this address should be relayed to other peers even if we can't
+     * reach it ourselves.
+     */
+    bool IsRelayable() const { return IsIPv4() || IsIPv6() || IsTor(); }
+
+    /**
      * Serialize to a stream.
      */
     template <typename Stream> void Serialize(Stream &s) const {
@@ -256,6 +276,25 @@ public:
     friend class CSubNet;
 
 private:
+    /**
+     * Parse a Tor address and set this object to it.
+     * @param[in] addr Address to parse, must be a valid C string, for example
+     * pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd.onion or
+     * 6hzph5hv6337r6p2.onion.
+     * @returns Whether the operation was successful.
+     * @see CNetAddr::IsTor()
+     */
+    bool SetTor(const std::string &addr);
+
+    /**
+     * Parse an I2P address and set this object to it.
+     * @param[in] addr Address to parse, must be a valid C string, for example
+     * ukeu3k5oycgaauneqgtnvselmt4yemvoilkln7jpvamvfx7dnkdq.b32.i2p.
+     * @returns Whether the operation was successful.
+     * @see CNetAddr::IsI2P()
+     */
+    bool SetI2P(const std::string &addr);
+
     /**
      * BIP155 network ids recognized by this software.
      */
@@ -408,7 +447,7 @@ private:
                 "Address too long: %u > %u", address_size, MAX_ADDRV2_SIZE));
         }
 
-        scopeId = 0;
+        m_scope_id = 0;
 
         if (SetNetFromBIP155Network(bip155_net, address_size)) {
             m_addr.resize(address_size);
@@ -509,10 +548,10 @@ protected:
 
 public:
     CService();
-    CService(const CNetAddr &ip, unsigned short port);
-    CService(const struct in_addr &ipv4Addr, unsigned short port);
+    CService(const CNetAddr &ip, uint16_t port);
+    CService(const struct in_addr &ipv4Addr, uint16_t port);
     explicit CService(const struct sockaddr_in &addr);
-    unsigned short GetPort() const;
+    uint16_t GetPort() const;
     bool GetSockAddr(struct sockaddr *paddr, socklen_t *addrlen) const;
     bool SetSockAddr(const struct sockaddr *paddr);
     friend bool operator==(const CService &a, const CService &b);
@@ -525,15 +564,37 @@ public:
     std::string ToStringPort() const;
     std::string ToStringIPPort() const;
 
-    CService(const struct in6_addr &ipv6Addr, unsigned short port);
+    CService(const struct in6_addr &ipv6Addr, uint16_t port);
     explicit CService(const struct sockaddr_in6 &addr);
 
     SERIALIZE_METHODS(CService, obj) {
         READWRITEAS(CNetAddr, obj);
         READWRITE(Using<BigEndianFormatter<2>>(obj.port));
     }
+
+    friend class CServiceHash;
 };
 
-bool SanityCheckASMap(const std::vector<bool> &asmap);
+class CServiceHash {
+public:
+    CServiceHash()
+        : m_salt_k0{GetRand(std::numeric_limits<uint64_t>::max())},
+          m_salt_k1{GetRand(std::numeric_limits<uint64_t>::max())} {}
+
+    CServiceHash(uint64_t salt_k0, uint64_t salt_k1)
+        : m_salt_k0{salt_k0}, m_salt_k1{salt_k1} {}
+
+    size_t operator()(const CService &a) const noexcept {
+        CSipHasher hasher(m_salt_k0, m_salt_k1);
+        hasher.Write(a.m_net);
+        hasher.Write(a.port);
+        hasher.Write(a.m_addr.data(), a.m_addr.size());
+        return static_cast<size_t>(hasher.Finalize());
+    }
+
+private:
+    const uint64_t m_salt_k0;
+    const uint64_t m_salt_k1;
+};
 
 #endif // BITCOIN_NETADDRESS_H

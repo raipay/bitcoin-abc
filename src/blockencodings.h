@@ -6,6 +6,12 @@
 #define BITCOIN_BLOCKENCODINGS_H
 
 #include <primitives/block.h>
+#include <serialize.h>
+#include <shortidprocessor.h>
+
+#include <cstdint>
+#include <memory>
+#include <vector>
 
 class Config;
 class CTxMemPool;
@@ -13,29 +19,6 @@ class CTxMemPool;
 // Transaction compression schemes for compact block relay can be introduced by
 // writing an actual formatter here.
 using TransactionCompression = DefaultFormatter;
-
-class DifferenceFormatter {
-    uint64_t m_shift = 0;
-
-public:
-    template <typename Stream, typename I> void Ser(Stream &s, I v) {
-        if (v < m_shift || v >= std::numeric_limits<uint64_t>::max()) {
-            throw std::ios_base::failure("differential value overflow");
-        }
-        WriteCompactSize(s, v - m_shift);
-        m_shift = uint64_t(v) + 1;
-    }
-    template <typename Stream, typename I> void Unser(Stream &s, I &v) {
-        uint64_t n = ReadCompactSize(s);
-        m_shift += n;
-        if (m_shift < n || m_shift >= std::numeric_limits<uint64_t>::max() ||
-            m_shift < std::numeric_limits<I>::min() ||
-            m_shift > std::numeric_limits<I>::max()) {
-            throw std::ios_base::failure("differential value overflow");
-        }
-        v = I(m_shift++);
-    }
-};
 
 class BlockTransactionsRequest {
 public:
@@ -68,14 +51,18 @@ public:
 // Dumb serialization/storage-helper for CBlockHeaderAndShortTxIDs and
 // PartiallyDownloadedBlock
 struct PrefilledTransaction {
-    // Used as an offset since last prefilled tx in CBlockHeaderAndShortTxIDs,
-    // as a proper transaction-in-block-index in PartiallyDownloadedBlock
+    // Used as an offset since last prefilled tx in CBlockHeaderAndShortTxIDs
     uint32_t index;
     CTransactionRef tx;
 
-    SERIALIZE_METHODS(PrefilledTransaction, obj) {
-        READWRITE(COMPACTSIZE(obj.index),
-                  Using<TransactionCompression>(obj.tx));
+    template <typename Stream> void SerData(Stream &s) { s << tx; }
+    template <typename Stream> void UnserData(Stream &s) { s >> tx; }
+};
+
+struct ShortIdProcessorPrefilledTransactionAdapter {
+    uint32_t getIndex(const PrefilledTransaction &pt) const { return pt.index; }
+    CTransactionRef getItem(const PrefilledTransaction &pt) const {
+        return pt.tx;
     }
 };
 
@@ -124,19 +111,52 @@ public:
             obj.header, obj.nonce,
             Using<VectorFormatter<CustomUintFormatter<SHORTTXIDS_LENGTH>>>(
                 obj.shorttxids),
-            obj.prefilledtxn);
-        if (ser_action.ForRead()) {
-            if (obj.BlockTxCount() > std::numeric_limits<uint32_t>::max()) {
-                throw std::ios_base::failure("indices overflowed 32 bits");
+            Using<VectorFormatter<DifferentialIndexedItemFormatter>>(
+                obj.prefilledtxn));
+
+        if (ser_action.ForRead() && obj.prefilledtxn.size() > 0) {
+            // Thanks to the DifferenceFormatter, the index values in the
+            // deserialized prefilled txs are absolute and sorted, so the last
+            // vector item has the highest index value.
+            uint64_t highestPrefilledIndex = obj.prefilledtxn.back().index;
+
+            // Make sure the indexes do not overflow 32 bits.
+            if (highestPrefilledIndex + obj.shorttxids.size() >
+                std::numeric_limits<uint32_t>::max()) {
+                throw std::ios_base::failure("indexes overflowed 32 bits");
             }
+
+            // Make sure the indexes are contiguous. E.g. if there is no shortid
+            // but 2 prefilled txs with absolute indexes 0 and 2, then the tx at
+            // index 1 cannot be recovered.
+            if (highestPrefilledIndex >= obj.BlockTxCount()) {
+                throw std::ios_base::failure("non contiguous indexes");
+            }
+
             obj.FillShortTxIDSelector();
         }
     }
 };
 
 class PartiallyDownloadedBlock {
+    struct CTransactionRefCompare {
+        bool operator()(const CTransactionRef &lhs,
+                        const CTransactionRef &rhs) const {
+            return lhs->GetHash() == rhs->GetHash();
+        }
+    };
+
+    using TransactionShortIdProcessor =
+        ShortIdProcessor<PrefilledTransaction,
+                         ShortIdProcessorPrefilledTransactionAdapter,
+                         CTransactionRefCompare>;
+
+    // FIXME This better fits a unique_ptr, but the unit tests needs a copy
+    // operator for this class. It can be trivially changed when the unit tests
+    // are refactored.
+    std::shared_ptr<TransactionShortIdProcessor> shortidProcessor;
+
 protected:
-    std::vector<CTransactionRef> txns_available;
     size_t prefilled_count = 0, mempool_count = 0, extra_count = 0;
     const CTxMemPool *pool;
     const Config *config;

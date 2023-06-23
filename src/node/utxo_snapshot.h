@@ -9,8 +9,9 @@
 #include <primitives/blockhash.h>
 #include <serialize.h>
 
+namespace node {
 //! Metadata describing a serialized version of a UTXO set from which an
-//! assumeutxo CChainState can be constructed.
+//! assumeutxo Chainstate can be constructed.
 class SnapshotMetadata {
 public:
     //! The hash of the block that reflects the tip of the chain for the
@@ -21,19 +22,15 @@ public:
     //! during snapshot load to estimate progress of UTXO set reconstruction.
     uint64_t m_coins_count = 0;
 
-    //! Necessary to "fake" the base nChainTx so that we can estimate progress
-    //! during initial block download for the assumeutxo chainstate.
-    uint64_t m_nchaintx = 0;
-
     SnapshotMetadata() {}
     SnapshotMetadata(const BlockHash &base_blockhash, uint64_t coins_count,
                      uint64_t nchaintx)
-        : m_base_blockhash(base_blockhash), m_coins_count(coins_count),
-          m_nchaintx(nchaintx) {}
+        : m_base_blockhash(base_blockhash), m_coins_count(coins_count) {}
 
     SERIALIZE_METHODS(SnapshotMetadata, obj) {
-        READWRITE(obj.m_base_blockhash, obj.m_coins_count, obj.m_nchaintx);
+        READWRITE(obj.m_base_blockhash, obj.m_coins_count);
     }
 };
+} // namespace node
 
 #endif // BITCOIN_NODE_UTXO_SNAPSHOT_H

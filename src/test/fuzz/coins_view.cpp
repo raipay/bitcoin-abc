@@ -2,10 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <amount.h>
 #include <chainparams.h>
 #include <chainparamsbase.h>
 #include <coins.h>
+#include <consensus/amount.h>
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <key.h>
@@ -26,7 +26,12 @@
 #include <string>
 #include <vector>
 
+using node::CCoinsStats;
+using node::CoinStatsHashType;
+using node::GetUTXOStats;
+
 namespace {
+const TestingSetup *g_setup;
 const Coin EMPTY_COIN{};
 
 bool operator==(const Coin &a, const Coin &b) {
@@ -39,9 +44,8 @@ bool operator==(const Coin &a, const Coin &b) {
 } // namespace
 
 void initialize() {
-    static const ECCVerifyHandle ecc_verify_handle;
-    ECC_Start();
-    SelectParams(CBaseChainParams::REGTEST);
+    static const auto testing_setup = MakeFuzzingContext<const TestingSetup>();
+    g_setup = testing_setup.get();
 }
 
 void test_one_input(const std::vector<uint8_t> &buffer) {
@@ -249,7 +253,8 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     break;
                 }
                 bool expected_code_path = false;
-                const int height = fuzzed_data_provider.ConsumeIntegral<int>();
+                const int height{
+                    int(fuzzed_data_provider.ConsumeIntegral<uint32_t>() >> 1)};
                 const bool possible_overwrite =
                     fuzzed_data_provider.ConsumeBool();
                 try {
@@ -299,10 +304,12 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                 break;
             }
             case 3: {
-                CCoinsStats stats;
+                CCoinsStats stats{CoinStatsHashType::HASH_SERIALIZED};
                 bool expected_code_path = false;
                 try {
-                    (void)GetUTXOStats(&coins_view_cache, stats);
+                    (void)GetUTXOStats(&coins_view_cache,
+                                       g_setup->m_node.chainman->m_blockman,
+                                       stats);
                 } catch (const std::logic_error &) {
                     expected_code_path = true;
                 }

@@ -7,6 +7,7 @@
 #include <net.h>
 #include <net_processing.h>
 #include <protocol.h>
+#include <txorphanage.h>
 #include <validation.h>
 #include <validationinterface.h>
 
@@ -17,17 +18,13 @@
 #include <test/util/net.h>
 #include <test/util/setup_common.h>
 
+namespace {
 const TestingSetup *g_setup;
+} // namespace
 
 void initialize() {
-    static TestingSetup setup{
-        CBaseChainParams::REGTEST,
-        {
-            "-nodebuglogfile",
-        },
-    };
-    g_setup = &setup;
-
+    static const auto testing_setup = MakeFuzzingContext<const TestingSetup>();
+    g_setup = testing_setup.get();
     for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
         MineBlock(GetConfig(), g_setup->m_node, CScript() << OP_TRUE);
     }
@@ -47,14 +44,17 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         const ServiceFlags service_flags =
             ServiceFlags(fuzzed_data_provider.ConsumeIntegral<uint64_t>());
         const ConnectionType conn_type = fuzzed_data_provider.PickValueInArray(
-            {ConnectionType::INBOUND, ConnectionType::OUTBOUND,
+            {ConnectionType::INBOUND, ConnectionType::OUTBOUND_FULL_RELAY,
              ConnectionType::MANUAL, ConnectionType::FEELER,
              ConnectionType::BLOCK_RELAY, ConnectionType::ADDR_FETCH});
         peers.push_back(
             std::make_unique<CNode>(
-                i, service_flags, 0, INVALID_SOCKET,
+                i, service_flags, INVALID_SOCKET,
                 CAddress{CService{in_addr{0x0100007f}, 7777}, NODE_NETWORK}, 0,
-                0, 0, CAddress{}, std::string{}, conn_type)
+                0, 0, CAddress{}, std::string{}, conn_type,
+                conn_type == ConnectionType::INBOUND
+                    ? fuzzed_data_provider.ConsumeBool()
+                    : false)
                 .release());
         CNode &p2p_node = *peers.back();
 
@@ -90,7 +90,5 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         }
     }
     SyncWithValidationInterfaceQueue();
-    // See init.cpp for rationale for implicit locking order requirement
-    LOCK2(::cs_main, g_cs_orphans);
     g_setup->m_node.connman->StopNodes();
 }

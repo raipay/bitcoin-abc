@@ -12,6 +12,7 @@
 
 class ArgsManager;
 class BanMan;
+class AddrMan;
 class CConnman;
 class CScheduler;
 class CTxMemPool;
@@ -20,8 +21,10 @@ class PeerManager;
 namespace interfaces {
 class Chain;
 class ChainClient;
+class WalletClient;
 } // namespace interfaces
 
+namespace node {
 //! NodeContext struct containing references to chain state and connection
 //! state.
 //!
@@ -33,17 +36,21 @@ class ChainClient;
 //! any member functions. It should just be a collection of references that can
 //! be used without pulling in unwanted dependencies or functionality.
 struct NodeContext {
+    std::unique_ptr<AddrMan> addrman;
     std::unique_ptr<CConnman> connman;
-    // Currently a raw pointer because the memory is not managed by this struct
-    CTxMemPool *mempool{nullptr};
+    std::unique_ptr<CTxMemPool> mempool;
     std::unique_ptr<PeerManager> peerman;
-    // Currently a raw pointer because the memory is not managed by this struct
-    ChainstateManager *chainman{nullptr};
+    std::unique_ptr<ChainstateManager> chainman;
     std::unique_ptr<BanMan> banman;
     // Currently a raw pointer because the memory is not managed by this struct
     ArgsManager *args{nullptr};
     std::unique_ptr<interfaces::Chain> chain;
+    //! List of all chain clients (wallet processes or other client) connected
+    //! to node.
     std::vector<std::unique_ptr<interfaces::ChainClient>> chain_clients;
+    //! Reference to chain client that should used to load or create wallets
+    //! opened by the gui.
+    interfaces::WalletClient *wallet_client{nullptr};
     std::unique_ptr<CScheduler> scheduler;
     std::function<void()> rpc_interruption_point = [] {};
 
@@ -53,5 +60,6 @@ struct NodeContext {
     NodeContext();
     ~NodeContext();
 };
+} // namespace node
 
 #endif // BITCOIN_NODE_CONTEXT_H

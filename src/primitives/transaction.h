@@ -7,7 +7,7 @@
 #ifndef BITCOIN_PRIMITIVES_TRANSACTION_H
 #define BITCOIN_PRIMITIVES_TRANSACTION_H
 
-#include <amount.h>
+#include <consensus/amount.h>
 #include <feerate.h>
 #include <primitives/txid.h>
 #include <script/script.h>
@@ -194,13 +194,11 @@ inline void SerializeTransaction(const TxType &tx, Stream &s) {
 class CTransaction {
 public:
     // Default transaction version.
-    static const int32_t CURRENT_VERSION = 2;
+    static constexpr int32_t CURRENT_VERSION = 2;
 
-    // Changing the default transaction version requires a two step process:
-    // first adapting relay policy by bumping MAX_STANDARD_VERSION, and then
-    // later date bumping the default CURRENT_VERSION at which point both
-    // CURRENT_VERSION and MAX_STANDARD_VERSION will be equal.
-    static const int32_t MAX_STANDARD_VERSION = 2;
+    // Consensus: Valid min/max for nVersion, enforced as a consensus rule after
+    // Wellington.
+    static constexpr int32_t MIN_VERSION = 1, MAX_VERSION = 2;
 
     // The local variables are made const to prevent unintended modification
     // without updating the cached hash value. However, CTransaction is not
@@ -316,7 +314,7 @@ static_assert(sizeof(CMutableTransaction) == 56,
               "sizeof CMutableTransaction is expected to be 56 bytes");
 #endif
 
-typedef std::shared_ptr<const CTransaction> CTransactionRef;
+using CTransactionRef = std::shared_ptr<const CTransaction>;
 static inline CTransactionRef MakeTransactionRef() {
     return std::make_shared<const CTransaction>();
 }
@@ -334,6 +332,8 @@ struct PrecomputedTransactionData {
 
     PrecomputedTransactionData(const PrecomputedTransactionData &txdata) =
         default;
+    PrecomputedTransactionData &
+    operator=(const PrecomputedTransactionData &txdata) = default;
 
     template <class T> explicit PrecomputedTransactionData(const T &tx);
 };

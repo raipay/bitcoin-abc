@@ -7,25 +7,44 @@
 #include <avalanche/validation.h>
 #include <coins.h>
 #include <hash.h>
+#include <policy/policy.h>
 #include <script/standard.h>
 #include <streams.h>
 #include <util/strencodings.h>
+#include <util/system.h>
+#include <util/translation.h>
 
 #include <tinyformat.h>
 
+#include <numeric>
 #include <unordered_set>
 
 namespace avalanche {
 
-uint256 Stake::getHash(const ProofId &proofid) const {
+StakeCommitment::StakeCommitment(int64_t expirationTime,
+                                 const CPubKey &master) {
     CHashWriter ss(SER_GETHASH, 0);
-    ss << proofid;
+    ss << expirationTime;
+    ss << master;
+    const uint256 &hash = ss.GetHash();
+    memcpy(m_data, hash.data(), sizeof(m_data));
+}
+
+void Stake::computeStakeId() {
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << *this;
+    stakeid = StakeId(ss.GetHash());
+}
+
+uint256 Stake::getHash(const StakeCommitment &commitment) const {
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << commitment;
     ss << *this;
     return ss.GetHash();
 }
 
-bool SignedStake::verify(const ProofId &proofid) const {
-    return stake.getPubkey().VerifySchnorr(stake.getHash(proofid), sig);
+bool SignedStake::verify(const StakeCommitment &commitment) const {
+    return stake.getPubkey().VerifySchnorr(stake.getHash(commitment), sig);
 }
 
 bool Proof::FromHex(Proof &proof, const std::string &hexProof,
@@ -47,10 +66,17 @@ bool Proof::FromHex(Proof &proof, const std::string &hexProof,
     return true;
 }
 
+std::string Proof::ToHex() const {
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+    ss << *this;
+    return HexStr(ss);
+}
+
 void Proof::computeProofId() {
     CHashWriter ss(SER_GETHASH, 0);
     ss << sequence;
     ss << expirationTime;
+    ss << payoutScriptPubKey;
 
     WriteCompactSize(ss, stakes.size());
     for (const SignedStake &s : stakes) {
@@ -61,16 +87,28 @@ void Proof::computeProofId() {
     proofid = limitedProofId.computeProofId(master);
 }
 
-uint32_t Proof::getScore() const {
+void Proof::computeScore() {
     Amount total = Amount::zero();
     for (const SignedStake &s : stakes) {
         total += s.getStake().getAmount();
     }
 
-    return uint32_t((100 * total) / COIN);
+    score = amountToScore(total);
 }
 
-bool Proof::verify(ProofValidationState &state) const {
+uint32_t Proof::amountToScore(Amount amount) {
+    return (100 * amount) / COIN;
+}
+
+Amount Proof::getStakedAmount() const {
+    return std::accumulate(stakes.begin(), stakes.end(), Amount::zero(),
+                           [](const Amount current, const SignedStake &ss) {
+                               return current + ss.getStake().getAmount();
+                           });
+}
+
+bool Proof::verify(const Amount &stakeUtxoDustThreshold,
+                   ProofValidationState &state) const {
     if (stakes.empty()) {
         return state.Invalid(ProofValidationResult::NO_STAKE, "no-stake");
     }
@@ -81,45 +119,88 @@ bool Proof::verify(ProofValidationState &state) const {
             strprintf("%u > %u", stakes.size(), AVALANCHE_MAX_PROOF_STAKES));
     }
 
+    TxoutType scriptType;
+    if (!IsStandard(payoutScriptPubKey, scriptType)) {
+        return state.Invalid(ProofValidationResult::INVALID_PAYOUT_SCRIPT,
+                             "payout-script-non-standard");
+    }
+
+    if (!master.VerifySchnorr(limitedProofId, signature)) {
+        return state.Invalid(ProofValidationResult::INVALID_PROOF_SIGNATURE,
+                             "invalid-proof-signature");
+    }
+
+    StakeId prevId = uint256::ZERO;
     std::unordered_set<COutPoint, SaltedOutpointHasher> utxos;
     for (const SignedStake &ss : stakes) {
         const Stake &s = ss.getStake();
-        if (s.getAmount() < PROOF_DUST_THRESHOLD) {
-            return state.Invalid(ProofValidationResult::DUST_THRESOLD,
+        if (s.getAmount() < stakeUtxoDustThreshold) {
+            return state.Invalid(ProofValidationResult::DUST_THRESHOLD,
                                  "amount-below-dust-threshold",
                                  strprintf("%s < %s", s.getAmount().ToString(),
-                                           PROOF_DUST_THRESHOLD.ToString()));
+                                           stakeUtxoDustThreshold.ToString()));
         }
+
+        if (s.getId() < prevId) {
+            return state.Invalid(ProofValidationResult::WRONG_STAKE_ORDERING,
+                                 "wrong-stake-ordering");
+        }
+        prevId = s.getId();
 
         if (!utxos.insert(s.getUTXO()).second) {
             return state.Invalid(ProofValidationResult::DUPLICATE_STAKE,
                                  "duplicated-stake");
         }
 
-        if (!ss.verify(proofid)) {
-            return state.Invalid(ProofValidationResult::INVALID_SIGNATURE,
-                                 "invalid-signature");
+        if (!ss.verify(getStakeCommitment())) {
+            return state.Invalid(
+                ProofValidationResult::INVALID_STAKE_SIGNATURE,
+                "invalid-stake-signature",
+                strprintf("TxId: %s", s.getUTXO().GetTxId().ToString()));
         }
     }
 
     return true;
 }
 
-bool Proof::verify(ProofValidationState &state, const CCoinsView &view) const {
-    if (!verify(state)) {
+bool Proof::verify(const Amount &stakeUtxoDustThreshold,
+                   const ChainstateManager &chainman,
+                   ProofValidationState &state) const {
+    AssertLockHeld(cs_main);
+    if (!verify(stakeUtxoDustThreshold, state)) {
         // state is set by verify.
         return false;
     }
+
+    const CBlockIndex *activeTip = chainman.ActiveTip();
+    const int64_t tipMedianTimePast =
+        activeTip ? activeTip->GetMedianTimePast() : 0;
+    if (expirationTime > 0 && tipMedianTimePast >= expirationTime) {
+        return state.Invalid(ProofValidationResult::EXPIRED, "expired-proof");
+    }
+
+    const int64_t activeHeight = chainman.ActiveHeight();
+    const int64_t stakeUtxoMinConfirmations =
+        gArgs.GetIntArg("-avaproofstakeutxoconfirmations",
+                        AVALANCHE_DEFAULT_STAKE_UTXO_CONFIRMATIONS);
 
     for (const SignedStake &ss : stakes) {
         const Stake &s = ss.getStake();
         const COutPoint &utxo = s.getUTXO();
 
         Coin coin;
-        if (!view.GetCoin(utxo, coin)) {
+        if (!chainman.ActiveChainstate().CoinsTip().GetCoin(utxo, coin)) {
             // The coins are not in the UTXO set.
             return state.Invalid(ProofValidationResult::MISSING_UTXO,
                                  "utxo-missing-or-spent");
+        }
+
+        if ((s.getHeight() + stakeUtxoMinConfirmations - 1) > activeHeight) {
+            return state.Invalid(
+                ProofValidationResult::IMMATURE_UTXO, "immature-utxo",
+                strprintf("TxId: %s, block height: %d, chaintip height: %d",
+                          s.getUTXO().GetTxId().ToString(), s.getHeight(),
+                          activeHeight));
         }
 
         if (s.isCoinbase() != coin.IsCoinBase()) {

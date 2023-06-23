@@ -7,6 +7,7 @@
 
 #include <primitives/transaction.h>
 #include <primitives/txid.h>
+#include <util/settings.h> // For util::SettingsValue
 
 #include <cstddef>
 #include <cstdint>
@@ -25,10 +26,14 @@ class CRPCCommand;
 class CScheduler;
 class TxValidationState;
 
+enum class MemPoolRemovalReason;
+
 struct BlockHash;
 struct bilingual_str;
 struct CBlockLocator;
+namespace node {
 struct NodeContext;
+} // namespace node
 
 namespace Consensus {
 struct Params;
@@ -62,6 +67,17 @@ public:
         m_mtp_time = &mtp_time;
         return *this;
     }
+    //! Return whether block is in the active (most-work) chain.
+    FoundBlock &inActiveChain(bool &in_active_chain) {
+        m_in_active_chain = &in_active_chain;
+        return *this;
+    }
+    //! Return next block in the active chain if current block is in the active
+    //! chain.
+    FoundBlock &nextBlock(const FoundBlock &next_block) {
+        m_next_block = &next_block;
+        return *this;
+    }
     //! Read block data from disk. If the block exists but doesn't have data
     //! (for example due to pruning), the CBlock variable will be set to null.
     FoundBlock &data(CBlock &data) {
@@ -74,6 +90,8 @@ public:
     int64_t *m_time = nullptr;
     int64_t *m_max_time = nullptr;
     int64_t *m_mtp_time = nullptr;
+    bool *m_in_active_chain = nullptr;
+    const FoundBlock *m_next_block = nullptr;
     CBlock *m_data = nullptr;
 };
 
@@ -99,9 +117,9 @@ public:
 //!   wallet cache it, fee estimation being driven by node mempool, wallet
 //!   should be the consumer.
 //!
-//! * The `guessVerificationProgress`, `getBlockHeight`, `getBlockHash`, etc
-//!   methods can go away if rescan logic is moved on the node side, and wallet
-//!   only register rescan request.
+//! * `guessVerificationProgress` and similar methods can go away if rescan
+//!   logic moves out of the wallet, and the wallet just requests scans from the
+//!   node (https://github.com/bitcoin/bitcoin/issues/11756)
 class Chain {
 public:
     virtual ~Chain() {}
@@ -111,27 +129,12 @@ public:
     //! contain any blocks)
     virtual std::optional<int> getHeight() = 0;
 
-    //! Get block height above genesis block. Returns 0 for genesis block,
-    //! 1 for following block, and so on. Returns std::nullopt for a block not
-    //! included in the current chain.
-    virtual std::optional<int> getBlockHeight(const BlockHash &hash) = 0;
-
     //! Get block hash. Height must be valid or this function will abort.
     virtual BlockHash getBlockHash(int height) = 0;
 
     //! Check that the block is available on disk (i.e. has not been
     //! pruned), and contains transactions.
     virtual bool haveBlockOnDisk(int height) = 0;
-
-    //! Return height of the first block in the chain with timestamp equal
-    //! or greater than the given time and height equal or greater than the
-    //! given height, or std::nullopt if there is no block with a high enough
-    //! timestamp and height. Also return the block hash as an optional output
-    //! parameter (to avoid the cost of a second lookup in case this information
-    //! is needed.)
-    virtual std::optional<int>
-    findFirstBlockWithTimeAndHeight(int64_t time, int height,
-                                    BlockHash *hash) = 0;
 
     //! Get locator for the current chain tip.
     virtual CBlockLocator getTipLocator() = 0;
@@ -141,11 +144,6 @@ public:
     //! or one of its ancestors.
     virtual std::optional<int>
     findLocatorFork(const CBlockLocator &locator) = 0;
-
-    //! Check if transaction will be final given chain height current time.
-    virtual bool
-    contextualCheckTransactionForCurrentBlock(const CTransaction &tx,
-                                              TxValidationState &state) = 0;
 
     //! Return whether node has the block and optionally return block metadata
     //! or contents.
@@ -159,13 +157,6 @@ public:
     virtual bool
     findFirstBlockWithTimeAndHeight(int64_t min_time, int min_height,
                                     const FoundBlock &block = {}) = 0;
-
-    //! Find next block if block is part of current chain. Also flag if
-    //! there was a reorg and the specified block hash is no longer in the
-    //! current chain, and optionally return block information.
-    virtual bool findNextBlock(const BlockHash &block_hash, int block_height,
-                               const FoundBlock &next = {},
-                               bool *reorg = nullptr) = 0;
 
     //! Find ancestor of block at specified height and optionally return
     //! ancestor information.
@@ -202,9 +193,6 @@ public:
     virtual bool hasBlocks(const BlockHash &block_hash, int min_height = 0,
                            std::optional<int> max_height = {}) = 0;
 
-    //! Check if transaction has descendants in mempool.
-    virtual bool hasDescendantsInMempool(const TxId &txid) = 0;
-
     //! Transaction is added to memory pool, if the transaction fee is below the
     //! amount specified by max_tx_fee, and broadcast to all peers if relay is
     //! set to true. Return false if the transaction could not be added due to
@@ -213,20 +201,6 @@ public:
                                       const CTransactionRef &tx,
                                       const Amount &max_tx_fee, bool relay,
                                       std::string &err_string) = 0;
-
-    //! Calculate mempool ancestor and descendant counts for the given
-    //! transaction.
-    virtual void getTransactionAncestry(const TxId &txid, size_t &ancestors,
-                                        size_t &descendants) = 0;
-
-    //! Get the node's package limits.
-    //! Currently only returns the ancestor and descendant count limits, but
-    //! could be enhanced to return more policy settings.
-    virtual void getPackageLimits(size_t &limit_ancestor_count,
-                                  size_t &limit_descendant_count) = 0;
-
-    //! Check if transaction will pass the mempool's chain limits.
-    virtual bool checkChainLimits(const CTransactionRef &tx) = 0;
 
     //! Estimate fee
     virtual CFeeRate estimateFee() const = 0;
@@ -270,9 +244,11 @@ public:
     class Notifications {
     public:
         virtual ~Notifications() {}
-        virtual void transactionAddedToMempool(const CTransactionRef &tx) {}
-        virtual void transactionRemovedFromMempool(const CTransactionRef &ptx) {
-        }
+        virtual void transactionAddedToMempool(const CTransactionRef &tx,
+                                               uint64_t mempool_sequence) {}
+        virtual void transactionRemovedFromMempool(const CTransactionRef &ptx,
+                                                   MemPoolRemovalReason reason,
+                                                   uint64_t mempool_sequence) {}
         virtual void blockConnected(const CBlock &block, int height) {}
         virtual void blockDisconnected(const CBlock &block, int height) {}
         virtual void updatedBlockTip() {}
@@ -302,6 +278,13 @@ public:
     //! Current RPC serialization flags.
     virtual int rpcSerializationFlags() = 0;
 
+    //! Return <datadir>/settings.json setting value.
+    virtual util::SettingsValue getRwSetting(const std::string &name) = 0;
+
+    //! Write a setting to <datadir>/settings.json.
+    virtual bool updateRwSetting(const std::string &name,
+                                 const util::SettingsValue &value) = 0;
+
     //! Synchronously send transactionAddedToMempool notifications about all
     //! current mempool transactions to the specified handler and return after
     //! the last one is sent. These notifications aren't coordinated with async
@@ -326,10 +309,10 @@ public:
     virtual void registerRpcs() = 0;
 
     //! Check for errors before loading.
-    virtual bool verify(const CChainParams &chainParams) = 0;
+    virtual bool verify() = 0;
 
     //! Load saved state.
-    virtual bool load(const CChainParams &chainParams) = 0;
+    virtual bool load() = 0;
 
     //! Start client execution and provide a scheduler.
     virtual void start(CScheduler &scheduler) = 0;
@@ -342,25 +325,11 @@ public:
 
     //! Set mock time.
     virtual void setMockTime(int64_t time) = 0;
-
-    //! Return interfaces for accessing wallets (if any).
-    virtual std::vector<std::unique_ptr<Wallet>> getWallets() = 0;
 };
 
 //! Return implementation of Chain interface.
-std::unique_ptr<Chain> MakeChain(NodeContext &node, const CChainParams &params);
-
-//! Return implementation of ChainClient interface for a wallet client. This
-//! function will be undefined in builds where ENABLE_WALLET is false.
-//!
-//! Currently, wallets are the only chain clients. But in the future, other
-//! types of chain clients could be added, such as tools for monitoring,
-//! analysis, or fee estimation. These clients need to expose their own
-//! MakeXXXClient functions returning their implementations of the ChainClient
-//! interface.
-std::unique_ptr<ChainClient>
-MakeWalletClient(Chain &chain, ArgsManager &args,
-                 std::vector<std::string> wallet_filenames);
+std::unique_ptr<Chain> MakeChain(node::NodeContext &node,
+                                 const CChainParams &params);
 
 } // namespace interfaces
 

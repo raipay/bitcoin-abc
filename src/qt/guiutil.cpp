@@ -6,6 +6,7 @@
 
 #include <cashaddrenc.h>
 #include <chainparams.h>
+#include <fs.h>
 #include <interfaces/node.h>
 #include <key_io.h>
 #include <policy/policy.h>
@@ -19,6 +20,7 @@
 #include <script/standard.h>
 #include <util/strencodings.h>
 #include <util/system.h>
+#include <util/time.h>
 
 #ifdef WIN32
 #ifndef NOMINMAX
@@ -43,6 +45,7 @@
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QList>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QProcess>
 #include <QProgressDialog>
@@ -55,6 +58,12 @@
 #include <QThread>
 #include <QUrlQuery>
 #include <QtGlobal>
+
+#include <chrono>
+#include <exception>
+#include <fstream>
+#include <string>
+#include <vector>
 
 #if defined(Q_OS_MAC)
 
@@ -205,10 +214,10 @@ QString formatBitcoinURI(const CChainParams &params,
     int paramCount = 0;
 
     if (info.amount != Amount::zero()) {
-        ret +=
-            QString("?amount=%1")
-                .arg(BitcoinUnits::format(BitcoinUnits::base, info.amount,
-                                          false, BitcoinUnits::separatorNever));
+        ret += QString("?amount=%1")
+                   .arg(BitcoinUnits::format(
+                       BitcoinUnits::base, info.amount, false,
+                       BitcoinUnits::SeparatorStyle::NEVER));
         paramCount++;
     }
 
@@ -248,7 +257,7 @@ QString HtmlEscape(const std::string &str, bool fMultiLine) {
     return HtmlEscape(QString::fromStdString(str), fMultiLine);
 }
 
-void copyEntryData(QAbstractItemView *view, int column, int role) {
+void copyEntryData(const QAbstractItemView *view, int column, int role) {
     if (!view || !view->selectionModel()) {
         return;
     }
@@ -260,11 +269,19 @@ void copyEntryData(QAbstractItemView *view, int column, int role) {
     }
 }
 
-QList<QModelIndex> getEntryData(QAbstractItemView *view, int column) {
+QList<QModelIndex> getEntryData(const QAbstractItemView *view, int column) {
     if (!view || !view->selectionModel()) {
         return QList<QModelIndex>();
     }
     return view->selectionModel()->selectedRows(column);
+}
+
+bool hasEntryData(const QAbstractItemView *view, int column, int role) {
+    QModelIndexList selection = getEntryData(view, column);
+    if (selection.isEmpty()) {
+        return false;
+    }
+    return !selection.at(0).data(role).toString().isEmpty();
 }
 
 QString getDefaultDataDirectory() {
@@ -390,7 +407,7 @@ void handleCloseWindowShortcut(QWidget *w) {
 }
 
 void openDebugLogfile() {
-    fs::path pathDebug = GetDataDir() / "debug.log";
+    fs::path pathDebug = gArgs.GetDataDirNet() / "debug.log";
 
     /* Open debug.log with the associated application */
     if (fs::exists(pathDebug)) {
@@ -404,7 +421,7 @@ bool openBitcoinConf() {
         GetConfigFile(gArgs.GetArg("-conf", BITCOIN_CONF_FILENAME));
 
     /* Create the file */
-    fsbridge::ofstream configFile(pathConfig, std::ios_base::app);
+    std::ofstream configFile{pathConfig, std::ios_base::app};
 
     if (!configFile.good()) {
         return false;
@@ -454,6 +471,25 @@ bool ToolTipToRichTextFilter::eventFilter(QObject *obj, QEvent *evt) {
         }
     }
     return QObject::eventFilter(obj, evt);
+}
+
+LabelOutOfFocusEventFilter::LabelOutOfFocusEventFilter(QObject *parent)
+    : QObject(parent) {}
+
+bool LabelOutOfFocusEventFilter::eventFilter(QObject *watched, QEvent *event) {
+    if (event->type() == QEvent::FocusOut) {
+        auto focus_out = static_cast<QFocusEvent *>(event);
+        if (focus_out->reason() != Qt::PopupFocusReason) {
+            auto label = qobject_cast<QLabel *>(watched);
+            if (label) {
+                auto flags = label->textInteractionFlags();
+                label->setTextInteractionFlags(Qt::NoTextInteraction);
+                label->setTextInteractionFlags(flags);
+            }
+        }
+    }
+
+    return QObject::eventFilter(watched, event);
 }
 
 void TableViewLastColumnResizingFixer::connectViewHeadersSignals() {
@@ -669,7 +705,7 @@ static fs::path GetAutostartFilePath() {
 }
 
 bool GetStartOnSystemStartup() {
-    fsbridge::ifstream optionFile(GetAutostartFilePath());
+    std::ifstream optionFile{GetAutostartFilePath()};
     if (!optionFile.good()) {
         return false;
     }
@@ -701,8 +737,8 @@ bool SetStartOnSystemStartup(bool fAutoStart) {
 
         fs::create_directories(GetAutostartDir());
 
-        fsbridge::ofstream optionFile(
-            GetAutostartFilePath(), std::ios_base::out | std::ios_base::trunc);
+        std::ofstream optionFile{GetAutostartFilePath(),
+                                 std::ios_base::out | std::ios_base::trunc};
         if (!optionFile.good()) {
             return false;
         }
@@ -741,14 +777,37 @@ void setClipboard(const QString &str) {
 }
 
 fs::path qstringToBoostPath(const QString &path) {
-    return fs::path(path.toStdString());
+    return fs::u8path(path.toStdString());
 }
 
 QString boostPathToQString(const fs::path &path) {
-    return QString::fromStdString(path.string());
+    return QString::fromStdString(path.u8string());
 }
 
-QString formatDurationStr(int secs) {
+QString NetworkToQString(Network net) {
+    switch (net) {
+        case NET_UNROUTABLE:
+            return QObject::tr("Unroutable");
+        case NET_IPV4:
+            return "IPv4";
+        case NET_IPV6:
+            return "IPv6";
+        case NET_ONION:
+            return "Onion";
+        case NET_I2P:
+            return "I2P";
+        case NET_CJDNS:
+            return "CJDNS";
+        case NET_INTERNAL:
+            return QObject::tr("Internal");
+        case NET_MAX:
+            assert(false);
+    } // no default case, so the compiler can warn about missing cases
+    assert(false);
+}
+
+QString formatDurationStr(std::chrono::seconds dur) {
+    const auto secs = count_seconds(dur);
     QStringList strList;
     int days = secs / 86400;
     int hours = (secs % 86400) / 3600;
@@ -787,11 +846,12 @@ QString formatServicesStr(quint64 mask) {
     }
 }
 
-QString formatPingTime(int64_t ping_usec) {
-    return (ping_usec == std::numeric_limits<int64_t>::max() || ping_usec == 0)
+QString formatPingTime(std::chrono::microseconds ping_time) {
+    return (ping_time == std::chrono::microseconds::max() || ping_time == 0us)
                ? QObject::tr("N/A")
                : QString(QObject::tr("%1 ms"))
-                     .arg(QString::number(int(ping_usec / 1000), 10));
+                     .arg(QString::number(
+                         int(count_microseconds(ping_time) / 1000), 10));
 }
 
 QString formatTimeOffset(int64_t nTimeOffset) {
@@ -919,6 +979,14 @@ void LogQtInfo() {
                   s->name().toStdString(), s->size().width(),
                   s->size().height(), s->devicePixelRatio());
     }
+}
+
+void PopupMenu(QMenu *menu, const QPoint &point, QAction *at_action) {
+    // The qminimal plugin does not provide window system integration.
+    if (QApplication::platformName() == "minimal") {
+        return;
+    }
+    menu->popup(point, at_action);
 }
 
 } // namespace GUIUtil

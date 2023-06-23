@@ -5,30 +5,28 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import json
-import mock
 import os
-import server
 import shelve
-import unittest
-
-from build import BuildStatus
-from teamcity_wrapper import BuildInfo
-from test.abcbot_fixture import ABCBotFixture
 import test.mocks.teamcity
+import unittest
+from test.abcbot_fixture import ABCBotFixture
 from test.mocks.teamcity import DEFAULT_BUILD_ID
 from test.test_endpoint_build import buildRequestQuery
 from test.test_endpoint_status import statusRequestData
 
+import mock
+import server
+from build import BuildStatus
+from teamcity_wrapper import BuildInfo
 
-BUILD_NAME = 'build-name'
-BUILD_TYPE_ID = 'build-type-id'
-BUILD_TARGET_PHID = 'build-target-PHID'
+BUILD_NAME = "build-name"
+BUILD_TYPE_ID = "build-type-id"
+BUILD_TARGET_PHID = "build-target-PHID"
 
 
 class PersistDataTestCase(ABCBotFixture):
     def setUp(self):
-        self.db_file_no_ext = os.path.join(
-            self.test_output_dir, "test_database")
+        self.db_file_no_ext = os.path.join(self.test_output_dir, "test_database")
         super().setUp()
 
         self.phab.get_file_content_from_master = mock.Mock()
@@ -54,30 +52,31 @@ class PersistDataTestCase(ABCBotFixture):
         queryData.PHID = BUILD_TARGET_PHID
 
         triggerBuildResponse = test.mocks.teamcity.buildInfo(
-            test.mocks.teamcity.buildInfo_changes(
-                ['test-change']), buildqueue=True)
+            test.mocks.teamcity.buildInfo_changes(["test-change"]), buildqueue=True
+        )
         self.teamcity.session.send.return_value = triggerBuildResponse
-        response = self.app.post(
-            '/build{}'.format(queryData),
-            headers=self.headers)
+        response = self.app.post(f"/build{queryData}", headers=self.headers)
         self.assertEqual(response.status_code, 200)
 
         # Check the diff target state was persisted
-        with shelve.open(self.db_file_no_ext, flag='r') as db:
-            self.assertIn('diff_targets', db)
-            self.assertIn(BUILD_TARGET_PHID, db['diff_targets'])
+        with shelve.open(self.db_file_no_ext, flag="r") as db:
+            self.assertIn("diff_targets", db)
+            self.assertIn(BUILD_TARGET_PHID, db["diff_targets"])
             self.assertIn(
+                DEFAULT_BUILD_ID, db["diff_targets"][BUILD_TARGET_PHID].builds
+            )
+            self.assertEqual(
+                db["diff_targets"][BUILD_TARGET_PHID].builds[DEFAULT_BUILD_ID].build_id,
                 DEFAULT_BUILD_ID,
-                db['diff_targets'][BUILD_TARGET_PHID].builds)
+            )
             self.assertEqual(
-                db['diff_targets'][BUILD_TARGET_PHID].builds[DEFAULT_BUILD_ID].build_id,
-                DEFAULT_BUILD_ID)
+                db["diff_targets"][BUILD_TARGET_PHID].builds[DEFAULT_BUILD_ID].status,
+                BuildStatus.Queued,
+            )
             self.assertEqual(
-                db['diff_targets'][BUILD_TARGET_PHID].builds[DEFAULT_BUILD_ID].status,
-                BuildStatus.Queued)
-            self.assertEqual(
-                db['diff_targets'][BUILD_TARGET_PHID].builds[DEFAULT_BUILD_ID].name,
-                BUILD_NAME)
+                db["diff_targets"][BUILD_TARGET_PHID].builds[DEFAULT_BUILD_ID].name,
+                BUILD_NAME,
+            )
 
         # Restart the server, which we expect to restore the persisted state
         del self.app
@@ -87,20 +86,20 @@ class PersistDataTestCase(ABCBotFixture):
             self.slackbot,
             self.cirrus,
             db_file_no_ext=self.db_file_no_ext,
-            jsonEncoder=test.mocks.fixture.MockJSONEncoder).test_client()
+            jsonProvider=test.mocks.fixture.MockJSONProvider,
+        ).test_client()
 
         data = statusRequestData()
         data.buildName = BUILD_NAME
         data.buildId = DEFAULT_BUILD_ID
         data.buildTypeId = BUILD_TYPE_ID
         data.buildTargetPHID = BUILD_TARGET_PHID
-        statusResponse = self.app.post(
-            '/status', headers=self.headers, json=data)
+        statusResponse = self.app.post("/status", headers=self.headers, json=data)
         self.assertEqual(statusResponse.status_code, 200)
 
         self.phab.harbormaster.createartifact.assert_called_with(
             buildTargetPHID=BUILD_TARGET_PHID,
-            artifactKey="{}-{}".format(BUILD_NAME, BUILD_TARGET_PHID),
+            artifactKey=f"{BUILD_NAME}-{BUILD_TARGET_PHID}",
             artifactType="uri",
             artifactData={
                 "uri": self.teamcity.build_url(
@@ -116,9 +115,9 @@ class PersistDataTestCase(ABCBotFixture):
         )
 
         # Check the diff target was cleared from persisted state
-        with shelve.open(self.db_file_no_ext, flag='r') as db:
-            self.assertNotIn(BUILD_TARGET_PHID, db['diff_targets'])
+        with shelve.open(self.db_file_no_ext, flag="r") as db:
+            self.assertNotIn(BUILD_TARGET_PHID, db["diff_targets"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

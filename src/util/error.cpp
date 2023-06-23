@@ -20,9 +20,9 @@ bilingual_str TransactionErrorString(const TransactionError error) {
             return Untranslated(
                 "Peer-to-peer functionality missing or disabled");
         case TransactionError::MEMPOOL_REJECTED:
-            return Untranslated("Transaction rejected by AcceptToMemoryPool");
+            return Untranslated("Transaction rejected by mempool");
         case TransactionError::MEMPOOL_ERROR:
-            return Untranslated("AcceptToMemoryPool failed");
+            return Untranslated("Mempool internal error");
         case TransactionError::INVALID_PSBT:
             return Untranslated("PSBT is not sane");
         case TransactionError::PSBT_MISMATCH:
@@ -32,7 +32,8 @@ bilingual_str TransactionErrorString(const TransactionError error) {
             return Untranslated(
                 "Specified sighash value does not match existing value");
         case TransactionError::MAX_FEE_EXCEEDED:
-            return Untranslated("Fee exceeds maximum configured by -maxtxfee");
+            return Untranslated("Fee exceeds maximum configured by user (e.g. "
+                                "-maxtxfee, maxfeerate)");
             // no default case, so the compiler can warn about missing cases
     }
     assert(false);

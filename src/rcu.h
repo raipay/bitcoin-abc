@@ -5,8 +5,6 @@
 #ifndef BITCOIN_RCU_H
 #define BITCOIN_RCU_H
 
-#include <boost/noncopyable.hpp>
-
 #include <atomic>
 #include <cassert>
 #include <cstdint>
@@ -22,6 +20,9 @@ class RCUReadLock;
 class RCUInfos {
     std::atomic<uint64_t> state;
     std::atomic<RCUInfos *> next;
+
+    bool isCleaningUp = false;
+    class RCUCleanupGuard;
 
     std::map<uint64_t, std::function<void()>> cleanups;
 
@@ -57,7 +58,7 @@ class RCUInfos {
     static thread_local RCUInfos infos;
 };
 
-class RCULock : public boost::noncopyable {
+class RCULock {
     RCUInfos *infos;
 
     explicit RCULock(RCUInfos *infosIn) : infos(infosIn) { infos->readLock(); }
@@ -65,7 +66,13 @@ class RCULock : public boost::noncopyable {
 
 public:
     RCULock() : RCULock(&RCUInfos::infos) {}
-    ~RCULock() { infos->readFree(); }
+    ~RCULock() {
+        infos->readFree();
+        infos->runCleanups();
+    }
+
+    RCULock(const RCULock &) = delete;
+    RCULock &operator=(const RCULock &) = delete;
 
     static bool isLocked() { return RCUInfos::infos.isLocked(); }
     static void registerCleanup(const std::function<void()> &f) {
@@ -86,7 +93,7 @@ public:
 
     ~RCUPtr() {
         if (ptr != nullptr) {
-            ptr->release();
+            ptr->decrementRefCount();
         }
     }
 
@@ -102,7 +109,7 @@ public:
     /**
      * Construct a new object that is owned by the pointer.
      */
-    template <typename... Args> static RCUPtr make(Args &&... args) {
+    template <typename... Args> static RCUPtr make(Args &&...args) {
         return RCUPtr(new T(std::forward<Args>(args)...));
     }
 
@@ -111,7 +118,7 @@ public:
      */
     static RCUPtr copy(T *ptr) {
         if (ptr != nullptr) {
-            ptr->acquire();
+            ptr->incrementRefCount();
         }
 
         return RCUPtr::acquire(ptr);
@@ -122,11 +129,27 @@ public:
      */
     RCUPtr(const RCUPtr &src) : ptr(src.ptr) {
         if (ptr != nullptr) {
-            ptr->acquire();
+            ptr->incrementRefCount();
         }
     }
 
     RCUPtr &operator=(const RCUPtr &rhs) {
+        RCUPtr tmp(rhs);
+        std::swap(ptr, tmp.ptr);
+        return *this;
+    }
+
+    /**
+     * Implicit converting constructor from RCUPtr<U> to RCUPtr<T>, where U * is
+     * implicitely convertible to T *.
+     */
+    template <typename U> RCUPtr(const RCUPtr<U> &src) : ptr(src.get()) {
+        if (ptr != nullptr) {
+            ptr->incrementRefCount();
+        }
+    }
+
+    template <typename U> RCUPtr &operator=(const RCUPtr<U> &rhs) {
         RCUPtr tmp(rhs);
         std::swap(ptr, tmp.ptr);
         return *this;
@@ -198,7 +221,7 @@ public:
 private:                                                                       \
     mutable std::atomic<T> refcount{0};                                        \
                                                                                \
-    void acquire() const { refcount++; }                                       \
+    void incrementRefCount() const { refcount++; }                             \
                                                                                \
     bool tryDecrement() const {                                                \
         T count = refcount.load();                                             \
@@ -211,7 +234,7 @@ private:                                                                       \
         return false;                                                          \
     }                                                                          \
                                                                                \
-    void release() const {                                                     \
+    void decrementRefCount() const {                                           \
         if (tryDecrement()) {                                                  \
             return;                                                            \
         }                                                                      \

@@ -5,7 +5,7 @@
 #ifndef BITCOIN_POLICY_FEES_H
 #define BITCOIN_POLICY_FEES_H
 
-#include <amount.h>
+#include <consensus/amount.h>
 #include <random.h>
 #include <uint256.h>
 
@@ -30,7 +30,10 @@ public:
     /** Create new FeeFilterRounder */
     explicit FeeFilterRounder(const CFeeRate &minIncrementalFee);
 
-    /** Quantize a minimum fee for privacy purpose before broadcast **/
+    /**
+     * Quantize a minimum fee for privacy purpose before broadcast.
+     * Not thread-safe due to use of FastRandomContext
+     **/
     Amount round(const Amount currentMinFee);
 
 private:

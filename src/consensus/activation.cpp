@@ -75,12 +75,44 @@ bool IsPhononEnabled(const Consensus::Params &params,
     return IsPhononEnabled(params, pindexPrev->nHeight);
 }
 
+static bool IsAxionEnabled(const Consensus::Params &params, int32_t nHeight) {
+    return nHeight >= params.axionHeight;
+}
+
 bool IsAxionEnabled(const Consensus::Params &params,
                     const CBlockIndex *pindexPrev) {
     if (pindexPrev == nullptr) {
         return false;
     }
 
-    return pindexPrev->GetMedianTimePast() >=
-           gArgs.GetArg("-axionactivationtime", params.axionActivationTime);
+    return IsAxionEnabled(params, pindexPrev->nHeight);
+}
+
+bool IsWellingtonEnabled(const Consensus::Params &params, int32_t nHeight) {
+    return nHeight >= params.wellingtonHeight;
+}
+
+bool IsWellingtonEnabled(const Consensus::Params &params,
+                         const CBlockIndex *pindexPrev) {
+    if (pindexPrev == nullptr) {
+        return false;
+    }
+
+    return IsWellingtonEnabled(params, pindexPrev->nHeight);
+}
+
+bool IsCowperthwaiteEnabled(const Consensus::Params &params,
+                            int64_t nMedianTimePast) {
+    return nMedianTimePast >=
+           gArgs.GetIntArg("-cowperthwaiteactivationtime",
+                           params.cowperthwaiteActivationTime);
+}
+
+bool IsCowperthwaiteEnabled(const Consensus::Params &params,
+                            const CBlockIndex *pindexPrev) {
+    if (pindexPrev == nullptr) {
+        return false;
+    }
+
+    return IsCowperthwaiteEnabled(params, pindexPrev->GetMedianTimePast());
 }

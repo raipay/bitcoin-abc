@@ -4,15 +4,15 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-from test.abcbot_fixture import ABCBotFixture, TEST_USER
 import unittest
+from test.abcbot_fixture import TEST_USER, ABCBotFixture
 
 
 class EndpointGetCurrentUserTestCase(ABCBotFixture):
     def test_currentUser(self):
-        rv = self.app.get('/getCurrentUser', headers=self.headers)
+        rv = self.app.get("/getCurrentUser", headers=self.headers)
         self.assertEqual(rv.data, TEST_USER.encode())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

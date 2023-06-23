@@ -5,7 +5,7 @@
 #ifndef BITCOIN_AVALANCHE_NODE_H
 #define BITCOIN_AVALANCHE_NODE_H
 
-#include <net.h> // For NodeId
+#include <nodeid.h>
 #include <pubkey.h>
 
 #include <chrono>
@@ -22,10 +22,12 @@ struct Node {
     NodeId nodeid;
     PeerId peerid;
     TimePoint nextRequestTime;
+    bool avaproofsSent;
 
     Node(NodeId nodeid_, PeerId peerid_)
         : nodeid(nodeid_), peerid(peerid_),
-          nextRequestTime(std::chrono::steady_clock::now()) {}
+          nextRequestTime(std::chrono::steady_clock::now()),
+          avaproofsSent(false) {}
 };
 
 } // namespace avalanche

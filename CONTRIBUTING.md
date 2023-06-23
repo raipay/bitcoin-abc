@@ -8,15 +8,14 @@ This guide is intended to help developers contribute effectively to Bitcoin ABC.
 Communicating with Developers
 -----------------------------
 
-To get in contact with ABC developers, we monitor a telegram supergroup.  The
-intent of this group is specifically to facilitate development of Bitcoin-ABC,
-and to welcome people who wish to participate.
+To get in contact with Bitcoin ABC developers, you can join the
+[eCash Development Telegram group](https://t.me/eCashDevelopment).
+The intent of this group is to facilitate development of Bitcoin ABC and other
+eCash node implementations. We welcome people who wish to participate.
 
-[Join the ABC Development telegram group](https://t.me/joinchat/HCYr50mxRWjA2uLqii-psw)
+Acceptable use of this group includes the following:
 
-Acceptable use of this supergroup includes the following:
-
-* Introducing yourself to other ABC developers.
+* Introducing yourself to other eCash developers.
 * Getting help with your development environment.
 * Discussing how to complete a patch.
 
@@ -63,7 +62,7 @@ top priority, more important than completing other tasks.
 Here are some handy links for development practices aligned with Bitcoin ABC:
 
 - [Developer Notes](doc/developer-notes.md)
-- [Statement of Bitcoin ABC Values and Visions](https://www.yours.org/content/bitcoin-abc---our-values-and-vision-a282afaade7c)
+- [Statement of Bitcoin ABC Values and Visions](https://archive.md/ulgFI)
 - [How to Make Your Code Reviewer Fall in Love with You](https://mtlynch.io/code-review-love/)
 - [Large Diffs Are Hurting Your Ability To Ship](https://medium.com/@kurtisnusbaum/large-diffs-are-hurting-your-ability-to-ship-e0b2b41e8acf)
 - [Stacked Diffs: Keeping Phabricator Diffs Small](https://medium.com/@kurtisnusbaum/stacked-diffs-keeping-phabricator-diffs-small-d9964f4dcfa6)
@@ -77,6 +76,9 @@ Here are some handy links for development practices aligned with Bitcoin ABC:
 - [Accelerate: The Science of Lean Software and DevOps](https://www.amazon.com/Accelerate-Software-Performing-Technology-Organizations/dp/1942788339)
 - [Facebook Engineering Process with Kent Beck](https://softwareengineeringdaily.com/2019/08/28/facebook-engineering-process-with-kent-beck/)
 - [Trunk Based Development](https://trunkbaseddevelopment.com/)
+- [Step-by-step: Programming incrementally](https://www.gamedeveloper.com/programming/step-by-step-programming-incrementally)
+- [Semantic Compression](https://caseymuratori.com/blog_0015)
+- [Elon Musk's 5-Step Process](https://youtu.be/t705r8ICkRw?t=806)
 
 Getting set up with the Bitcoin ABC Repository
 ----------------------------------------------
@@ -95,9 +97,9 @@ To install these packages on Debian or Ubuntu, type: `sudo apt-get install git a
 
 3. If you do not already have an SSH key set up, follow these steps:
 
-Type: `ssh-keygen -t rsa -b 4096 -C "your_email@example.com"`
+Type: `ssh-keygen -t ed25519 -C "your_email@example.com"`
 
-Enter a file in which to save the key (/home/*username*/.ssh/id_rsa): [Press enter]
+Enter a file in which to save the key (/home/*username*/.ssh/id_ed25519): [Press enter]
 
 4. Upload your SSH public key to <https://reviews.bitcoinabc.org>
 
@@ -105,7 +107,7 @@ Enter a file in which to save the key (/home/*username*/.ssh/id_rsa): [Press ent
 
   - Under "SSH Key Actions", Select "Upload Public Key"
 
-Paste contents from: `/home/*username*/.ssh/id_rsa.pub`
+Paste contents from: `/home/*username*/.ssh/id_ed25519.pub`
 
 5. Clone the repository and install Arcanist certificate:
 
@@ -131,36 +133,22 @@ enforce Bitcoin ABC code formatting standards, and often suggests changes.
 If code formatting tools do not install automatically on your system, you
 will have to install the following:
 
-On Ubuntu 20.04:
+Install all the code formatting tools on Debian Bullseye (11) or Ubuntu 20.04:
 ```
-sudo apt-get install clang-format clang-tidy clang-tools cppcheck python3-autopep8 flake8 php-codesniffer yamllint
+sudo apt-get install python3-pip php-codesniffer shellcheck yamllint
+pip3 install "black>=23.0" "isort>=5.6.4" "mypy>=0.910" "flynt>=0.78" "flake8>=5" flake8-comprehensions flake8-builtins
+echo "export PATH=\"`python3 -m site --user-base`/bin:\$PATH\"" >> ~/.bashrc
+source ~/.bashrc
 ```
 
-If not available in the distribution, `clang-format-10` and `clang-tidy` can be
+If not available in the distribution, `clang-format-12` and `clang-tidy-12` can be
 installed from <https://releases.llvm.org/download.html> or <https://apt.llvm.org>.
-
-On Debian (>= 10), the clang-10 family of tools is available from the https://apt.llvm.org/ repository:
-```
-wget https://apt.llvm.org/llvm.sh
-chmod +x llvm.sh
-sudo ./llvm.sh 10
-```
 
 For example, for macOS:
 ```
-curl -L https://github.com/llvm/llvm-project/releases/download/llvmorg-10.0.0/clang+llvm-10.0.0-x86_64-apple-darwin.tar.xz | tar -xJv
-ln -s $PWD/clang+llvm-10.0.0-x86_64-apple-darwin/bin/clang-format /usr/local/bin/clang-format
-ln -s $PWD/clang+llvm-10.0.0-x86_64-apple-darwin/bin/clang-tidy /usr/local/bin/clang-tidy
-```
-
-If you are modifying a python script, you will need to install `mypy`. The minimum required version is 0.780, because
-the previous ones are known to have issues with some python type annotations.
-On Debian based systems, this can be installed via:
-```
-sudo apt-get install python3-pip
-pip3 install mypy==0.780
-echo "export PATH=\"`python3 -m site --user-base`/bin:\$PATH\"" >> ~/.bashrc
-source ~/.bashrc
+curl -L https://github.com/llvm/llvm-project/releases/download/llvmorg-12.0.0/clang+llvm-12.0.0-x86_64-apple-darwin.tar.xz | tar -xJv
+ln -s $PWD/clang+llvm-12.0.0-x86_64-apple-darwin/bin/clang-format /usr/local/bin/clang-format
+ln -s $PWD/clang+llvm-12.0.0-x86_64-apple-darwin/bin/clang-tidy /usr/local/bin/clang-tidy
 ```
 
 If you are modifying a shell script, you will need to install the `shellcheck` linter.
@@ -172,16 +160,27 @@ Standalone binaries are available for download on
 if another version is already installed, make sure the recent one is found first.
 Arcanist will tell you what version is expected and what is found when running `arc lint` against a shell script.
 
-
 If you are running Debian 10, it is also available in the backports repository:
 ```
 sudo apt-get -t buster-backports install shellcheck
 ```
 
+If you are modifying Rust files, you will need to install a stable rust version,
+plus a nightly toolchain called "abc-nightly" for formatting:
+```bash
+# Install latest stable Rust version
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s
+source ~/.cargo/env
+rustup install nightly-2023-02-17
+rustup component add rustfmt --toolchain nightly-2023-02-17
+# Name the nightly toolchain "abc-nightly"
+rustup toolchain link abc-nightly "$(rustc +nightly-2023-02-17 --print sysroot)"
+```
+
 Contributing to the web projects
 --------------------------------
 
-To contribute to web projects, you will need `nodejs` > 15 and `npm` > 6.14.8.
+To contribute to web projects, you will need `nodejs` > 16 and `npm` > 8.5.0.
 Follow these [installation instructions](https://github.com/nvm-sh/nvm#installing-and-updating)
 to install `nodejs` with node version manager.
 
@@ -189,9 +188,10 @@ Then:
 
 ```
 cd bitcoin-abc
-[sudo] nvm install 15
+[sudo] nvm install 16
 [sudo] npm install -g npm@latest
 [sudo] npm install -g prettier
+[sudo] npm install -g eslint
 ```
 
 To work on the extension, you will need `browserify`
@@ -223,8 +223,10 @@ So all you changes for this Diff should be in one Git commit.
 
 - For large changes, break them into several Diffs, as described in this
 [guide](https://medium.com/@kurtisnusbaum/stacked-diffs-keeping-phabricator-diffs-small-d9964f4dcfa6).
-You can also include "Depends on Dxxx" in the Arcanist message to indicate
-dependence on other Diffs.
+You must also include "Depends on Dxxx" in the Arcanist summary to indicate
+dependence on other Diffs. Note: the `arc land` procedure described in the
+guide above is obsolete. With the most recent version of arcanist, you may
+`arc land` the latest commit of your stacked diff after all parts are approved.
 
 - Log into Phabricator to see review and feedback.
 

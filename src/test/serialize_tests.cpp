@@ -4,6 +4,9 @@
 
 #include <serialize.h>
 
+#include <avalanche/proof.h>
+#include <avalanche/proofbuilder.h>
+#include <avalanche/test/util.h>
 #include <hash.h>
 #include <streams.h>
 #include <util/strencodings.h>
@@ -24,15 +27,18 @@ protected:
     std::string stringval;
     char charstrval[16];
     CTransactionRef txval;
+    avalanche::ProofRef proofval;
 
 public:
     CSerializeMethodsTestSingle() = default;
     CSerializeMethodsTestSingle(int intvalin, bool boolvalin,
                                 std::string stringvalin,
                                 const char *charstrvalin,
-                                const CTransactionRef &txvalin)
+                                const CTransactionRef &txvalin,
+                                const avalanche::ProofRef &proofvalin)
         : intval(intvalin), boolval(boolvalin),
-          stringval(std::move(stringvalin)), txval(txvalin) {
+          stringval(std::move(stringvalin)), txval(txvalin),
+          proofval(proofvalin) {
         memcpy(charstrval, charstrvalin, sizeof(charstrval));
     }
 
@@ -42,12 +48,15 @@ public:
         READWRITE(obj.stringval);
         READWRITE(obj.charstrval);
         READWRITE(obj.txval);
+        READWRITE(obj.proofval);
     }
 
     bool operator==(const CSerializeMethodsTestSingle &rhs) {
         return intval == rhs.intval && boolval == rhs.boolval &&
                stringval == rhs.stringval &&
-               strcmp(charstrval, rhs.charstrval) == 0 && *txval == *rhs.txval;
+               strcmp(charstrval, rhs.charstrval) == 0 &&
+               *txval == *rhs.txval &&
+               proofval->getId() == rhs.proofval->getId();
     }
 };
 
@@ -57,7 +66,7 @@ public:
 
     SERIALIZE_METHODS(CSerializeMethodsTestMany, obj) {
         READWRITE(obj.intval, obj.boolval, obj.stringval, obj.charstrval,
-                  obj.txval);
+                  obj.txval, obj.proofval);
     }
 };
 
@@ -132,13 +141,13 @@ BOOST_AUTO_TEST_CASE(doubles_conversion) {
 Python code to generate the below hashes:
 
     def reversed_hex(x):
-        return binascii.hexlify(''.join(reversed(x)))
+        return b''.join(reversed(x)).hex().encode()
     def dsha256(x):
         return hashlib.sha256(hashlib.sha256(x).digest()).digest()
 
-    reversed_hex(dsha256(''.join(struct.pack('<f', x) for x in range(0,1000))))
+    reversed_hex(dsha256(b''.join(struct.pack('<f', x) for x in range(0,1000))))
 == '8e8b4cf3e4df8b332057e3e23af42ebc663b61e0495d5e7e32d85099d7f3fe0c'
-    reversed_hex(dsha256(''.join(struct.pack('<d', x) for x in range(0,1000))))
+    reversed_hex(dsha256(b''.join(struct.pack('<d', x) for x in range(0,1000))))
 == '43d0c82591953c4eafe114590d392676a01585d25b25d433557f0d7878b23f96'
 */
 BOOST_AUTO_TEST_CASE(floats) {
@@ -420,10 +429,13 @@ BOOST_AUTO_TEST_CASE(class_methods) {
     const char charstrval[16] = "testing charstr";
     CMutableTransaction txval;
     CTransactionRef tx_ref{MakeTransactionRef(txval)};
+    avalanche::ProofBuilder pb(0, 0, CKey::MakeCompressedKey(),
+                               avalanche::UNSPENDABLE_ECREG_PAYOUT_SCRIPT);
+    avalanche::ProofRef proofval = pb.build();
     CSerializeMethodsTestSingle methodtest1(intval, boolval, stringval,
-                                            charstrval, tx_ref);
+                                            charstrval, tx_ref, proofval);
     CSerializeMethodsTestMany methodtest2(intval, boolval, stringval,
-                                          charstrval, tx_ref);
+                                          charstrval, tx_ref, proofval);
     CSerializeMethodsTestSingle methodtest3;
     CSerializeMethodsTestMany methodtest4;
     CDataStream ss(SER_DISK, PROTOCOL_VERSION);
@@ -437,9 +449,143 @@ BOOST_AUTO_TEST_CASE(class_methods) {
     BOOST_CHECK(methodtest3 == methodtest4);
 
     CDataStream ss2(SER_DISK, PROTOCOL_VERSION, intval, boolval, stringval,
-                    charstrval, txval);
+                    charstrval, txval, proofval);
     ss2 >> methodtest3;
     BOOST_CHECK(methodtest3 == methodtest4);
+}
+
+namespace {
+struct DifferentialIndexedItem {
+    uint32_t index;
+    std::string text;
+
+    template <typename Stream> void SerData(Stream &s) { s << text; }
+    template <typename Stream> void UnserData(Stream &s) { s >> text; }
+
+    bool operator==(const DifferentialIndexedItem &other) const {
+        return index == other.index && text == other.text;
+    }
+    bool operator!=(const DifferentialIndexedItem &other) const {
+        return !(*this == other);
+    }
+
+    // Make boost happy
+    friend std::ostream &operator<<(std::ostream &os,
+                                    const DifferentialIndexedItem &item) {
+        os << "index: " << item.index << ", text: " << item.text;
+        return os;
+    }
+
+    DifferentialIndexedItem() {}
+    DifferentialIndexedItem(uint32_t indexIn)
+        : index(indexIn), text(ToString(index)) {}
+};
+
+template <typename Formatter, typename T>
+static void checkDifferentialEncodingRoundtrip() {
+    Formatter formatter;
+
+    const std::vector<T> indicesIn{0, 1, 2, 5, 10, 20, 50, 100};
+    std::vector<T> indicesOut;
+
+    CDataStream ss(SER_DISK, PROTOCOL_VERSION);
+    formatter.Ser(ss, indicesIn);
+    formatter.Unser(ss, indicesOut);
+    BOOST_CHECK_EQUAL_COLLECTIONS(indicesIn.begin(), indicesIn.end(),
+                                  indicesOut.begin(), indicesOut.end());
+}
+
+template <typename Formatter, typename T>
+static void checkDifferentialEncodingOverflow() {
+    Formatter formatter;
+
+    {
+        const std::vector<T> indicesIn{1, 0};
+
+        CDataStream ss(SER_DISK, PROTOCOL_VERSION);
+        BOOST_CHECK_EXCEPTION(formatter.Ser(ss, indicesIn),
+                              std::ios_base::failure,
+                              HasReason("differential value overflow"));
+    }
+}
+} // namespace
+
+BOOST_AUTO_TEST_CASE(difference_formatter) {
+    {
+        // Roundtrip with internals check
+        VectorFormatter<DifferenceFormatter> formatter;
+
+        std::vector<uint32_t> indicesIn{0, 1, 2, 5, 10, 20, 50, 100};
+        std::vector<uint32_t> indicesOut;
+
+        CDataStream ss(SER_DISK, PROTOCOL_VERSION);
+        formatter.Ser(ss, indicesIn);
+
+        // Check the stream is differentially encoded. Don't care about the
+        // prefixes and vector length here (assumed to be < 253).
+        const std::string streamStr = ss.str();
+        const std::string differences =
+            HexStr(streamStr.substr(streamStr.size() - indicesIn.size()));
+        BOOST_CHECK_EQUAL(differences, "0000000204091d31");
+
+        formatter.Unser(ss, indicesOut);
+        BOOST_CHECK_EQUAL_COLLECTIONS(indicesIn.begin(), indicesIn.end(),
+                                      indicesOut.begin(), indicesOut.end());
+    }
+
+    checkDifferentialEncodingRoundtrip<VectorFormatter<DifferenceFormatter>,
+                                       uint32_t>();
+    checkDifferentialEncodingRoundtrip<
+        VectorFormatter<DifferentialIndexedItemFormatter>,
+        DifferentialIndexedItem>();
+
+    {
+        // Checking 32 bits overflow requires to manually create the serialized
+        // stream, so only do it with uint32_t
+        std::vector<uint32_t> indicesOut;
+
+        // Compute the number of MAX_SIZE increment we need to cause an overflow
+        const uint64_t overflow =
+            uint64_t(std::numeric_limits<uint32_t>::max()) + 1;
+        // Due to differential encoding, a value of MAX_SIZE bumps the index by
+        // MAX_SIZE + 1
+        BOOST_CHECK_GE(overflow, MAX_SIZE + 1);
+        const uint64_t overflowIter = overflow / (MAX_SIZE + 1);
+
+        // Make sure the iteration fits in an uint32_t and is <= MAX_SIZE
+        BOOST_CHECK_LE(overflowIter, std::numeric_limits<uint32_t>::max());
+        BOOST_CHECK_LE(overflowIter, MAX_SIZE);
+        uint32_t remainder =
+            uint32_t(overflow - ((MAX_SIZE + 1) * overflowIter));
+
+        auto buildStream = [&](uint32_t lastItemDifference) {
+            CDataStream ss(SER_DISK, PROTOCOL_VERSION);
+            WriteCompactSize(ss, overflowIter + 1);
+            for (uint32_t i = 0; i < overflowIter; i++) {
+                WriteCompactSize(ss, MAX_SIZE);
+            }
+            // This will cause an overflow if lastItemDifference >= remainder
+            WriteCompactSize(ss, lastItemDifference);
+
+            return ss;
+        };
+
+        VectorFormatter<DifferenceFormatter> formatter;
+
+        auto noThrowStream = buildStream(remainder - 1);
+        BOOST_CHECK_NO_THROW(formatter.Unser(noThrowStream, indicesOut));
+
+        auto overflowStream = buildStream(remainder);
+        BOOST_CHECK_EXCEPTION(formatter.Unser(overflowStream, indicesOut),
+                              std::ios_base::failure,
+                              HasReason("differential value overflow"));
+    }
+
+    checkDifferentialEncodingOverflow<VectorFormatter<DifferenceFormatter>,
+                                      uint32_t>();
+    checkDifferentialEncodingOverflow<
+        VectorFormatter<DifferentialIndexedItemFormatter>,
+        DifferentialIndexedItem>();
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -27,13 +27,6 @@
 
 #include <support/events.h>
 
-#ifdef EVENT__HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#ifdef _XOPEN_SOURCE_EXTENDED
-#include <arpa/inet.h>
-#endif
-#endif
-
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -288,7 +281,7 @@ static void http_request_cb(struct evhttp_request *req, void *arg) {
             LogPrintf("WARNING: request rejected because http work queue depth "
                       "exceeded, it can be increased with the -rpcworkqueue= "
                       "setting\n");
-            item->req->WriteReply(HTTP_INTERNAL_SERVER_ERROR,
+            item->req->WriteReply(HTTP_SERVICE_UNAVAILABLE,
                                   "Work queue depth exceeded");
         }
     } else {
@@ -314,7 +307,8 @@ static bool ThreadHTTP(struct event_base *base) {
 
 /** Bind HTTP server to specified addresses */
 static bool HTTPBindAddresses(struct evhttp *http) {
-    int http_port = gArgs.GetArg("-rpcport", BaseParams().RPCPort());
+    uint16_t http_port{static_cast<uint16_t>(
+        gArgs.GetIntArg("-rpcport", BaseParams().RPCPort()))};
     std::vector<std::pair<std::string, uint16_t>> endpoints;
 
     // Determine what addresses to bind to
@@ -334,7 +328,7 @@ static bool HTTPBindAddresses(struct evhttp *http) {
     } else if (gArgs.IsArgSet("-rpcbind")) {
         // Specific bind address.
         for (const std::string &strRPCBind : gArgs.GetArgs("-rpcbind")) {
-            int port = http_port;
+            uint16_t port{http_port};
             std::string host;
             SplitHostPort(strRPCBind, port, host);
             endpoints.push_back(std::make_pair(host, port));
@@ -416,8 +410,8 @@ bool InitHTTPServer(Config &config) {
         return false;
     }
 
-    evhttp_set_timeout(
-        http, gArgs.GetArg("-rpcservertimeout", DEFAULT_HTTP_SERVER_TIMEOUT));
+    evhttp_set_timeout(http, gArgs.GetIntArg("-rpcservertimeout",
+                                             DEFAULT_HTTP_SERVER_TIMEOUT));
     evhttp_set_max_headers_size(http, MAX_HEADERS_SIZE);
     evhttp_set_max_body_size(http, MIN_SUPPORTED_BODY_SIZE +
                                        2 * config.GetMaxBlockSize());
@@ -436,7 +430,7 @@ bool InitHTTPServer(Config &config) {
 
     LogPrint(BCLog::HTTP, "Initialized HTTP server\n");
     int workQueueDepth = std::max(
-        (long)gArgs.GetArg("-rpcworkqueue", DEFAULT_HTTP_WORKQUEUE), 1L);
+        (long)gArgs.GetIntArg("-rpcworkqueue", DEFAULT_HTTP_WORKQUEUE), 1L);
     LogPrintf("HTTP: creating work queue of depth %d\n", workQueueDepth);
 
     workQueue = new WorkQueue<HTTPClosure>(workQueueDepth);
@@ -465,8 +459,8 @@ static std::vector<std::thread> g_thread_http_workers;
 
 void StartHTTPServer() {
     LogPrint(BCLog::HTTP, "Starting HTTP server\n");
-    int rpcThreads =
-        std::max((long)gArgs.GetArg("-rpcthreads", DEFAULT_HTTP_THREADS), 1L);
+    int rpcThreads = std::max(
+        (long)gArgs.GetIntArg("-rpcthreads", DEFAULT_HTTP_THREADS), 1L);
     LogPrintf("HTTP: starting %d worker threads\n", rpcThreads);
     g_thread_http = std::thread(ThreadHTTP, eventBase);
 

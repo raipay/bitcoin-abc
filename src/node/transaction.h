@@ -5,14 +5,22 @@
 #ifndef BITCOIN_NODE_TRANSACTION_H
 #define BITCOIN_NODE_TRANSACTION_H
 
-#include <attributes.h>
 #include <feerate.h>
 #include <primitives/transaction.h>
 #include <util/error.h>
 
+struct BlockHash;
+class CBlockIndex;
 class Config;
-struct NodeContext;
+class CTxMemPool;
 struct TxId;
+
+namespace Consensus {
+struct Params;
+}
+
+namespace node {
+struct NodeContext;
 
 /**
  * Maximum fee rate for sendrawtransaction and testmempoolaccept RPC calls.
@@ -44,8 +52,32 @@ static const CFeeRate DEFAULT_MAX_RAW_TX_FEE_RATE{COIN / 10};
  * stale result due to a sequentially RPC.
  * @return error
  */
-NODISCARD TransactionError BroadcastTransaction(
-    NodeContext &node, const Config &config, CTransactionRef tx,
-    std::string &err_string, Amount max_tx_fee, bool relay, bool wait_callback);
+[[nodiscard]] TransactionError
+BroadcastTransaction(const NodeContext &node, CTransactionRef tx,
+                     std::string &err_string, Amount max_tx_fee, bool relay,
+                     bool wait_callback);
+
+/**
+ * Return transaction with a given txid.
+ * If mempool is provided and block_index is not provided, check it first for
+ * the tx.
+ * If -txindex is available, check it next for the tx.
+ * Finally, if block_index is provided, check for tx by reading entire block
+ * from disk.
+ *
+ * @param[in]  block_index     The block to read from disk, or nullptr
+ * @param[in]  mempool         If provided, check mempool for tx
+ * @param[in]  txid            The txid
+ * @param[in]  consensusParams The params
+ * @param[out] hashBlock       The block hash, if the tx was found via -txindex
+ *                             or block_index
+ * @returns                    The tx if found, otherwise nullptr
+ */
+CTransactionRef GetTransaction(const CBlockIndex *const block_index,
+                               const CTxMemPool *const mempool,
+                               const TxId &txid,
+                               const Consensus::Params &consensusParams,
+                               BlockHash &hashBlock);
+} // namespace node
 
 #endif // BITCOIN_NODE_TRANSACTION_H

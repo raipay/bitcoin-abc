@@ -8,12 +8,15 @@
 #include <config.h>
 #include <consensus/merkle.h>
 #include <key_io.h>
-#include <miner.h>
 #include <node/context.h>
+#include <node/miner.h>
 #include <pow/pow.h>
 #include <script/standard.h>
 #include <util/check.h>
 #include <validation.h>
+
+using node::BlockAssembler;
+using node::NodeContext;
 
 CTxIn generatetoaddress(const Config &config, const NodeContext &node,
                         const std::string &address) {
@@ -44,13 +47,14 @@ CTxIn MineBlock(const Config &config, const NodeContext &node,
 std::shared_ptr<CBlock> PrepareBlock(const Config &config,
                                      const NodeContext &node,
                                      const CScript &coinbase_scriptPubKey) {
-    auto block =
-        std::make_shared<CBlock>(BlockAssembler{config, *Assert(node.mempool)}
-                                     .CreateNewBlock(coinbase_scriptPubKey)
-                                     ->block);
+    auto block = std::make_shared<CBlock>(
+        BlockAssembler{config, Assert(node.chainman)->ActiveChainstate(),
+                       *Assert(node.mempool)}
+            .CreateNewBlock(coinbase_scriptPubKey)
+            ->block);
 
     LOCK(cs_main);
-    block->nTime = ::ChainActive().Tip()->GetMedianTimePast() + 1;
+    block->nTime = Assert(node.chainman)->ActiveTip()->GetMedianTimePast() + 1;
     block->hashMerkleRoot = BlockMerkleRoot(*block);
 
     return block;

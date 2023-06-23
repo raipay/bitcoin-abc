@@ -7,8 +7,8 @@ set(CMAKE_USER_MAKE_RULES_OVERRIDE
 )
 
 project(bitcoin-abc
-	VERSION 0.23.8
-	DESCRIPTION "Bitcoin ABC is a full node implementation of the BCHA protocol."
+	VERSION 0.27.7
+	DESCRIPTION "Bitcoin ABC is a full node implementation of the eCash protocol."
 	HOMEPAGE_URL "https://www.bitcoinabc.org"
 )
 
@@ -22,7 +22,7 @@ set(PACKAGE_NAME "Bitcoin ABC")
 set(PACKAGE_BUGREPORT "https://github.com/Bitcoin-ABC/bitcoin-abc/issues")
 
 # Copyright
-set(COPYRIGHT_YEAR 2021)
+set(COPYRIGHT_YEAR 2023)
 set(COPYRIGHT_HOLDERS "The %s developers")
 set(COPYRIGHT_HOLDERS_SUBSTITUTION Bitcoin)
 string(REPLACE "%s" ${COPYRIGHT_HOLDERS_SUBSTITUTION} COPYRIGHT_HOLDERS_FINAL ${COPYRIGHT_HOLDERS})
@@ -121,6 +121,12 @@ if(ENABLE_COVERAGE)
 endif()
 
 add_subdirectory(src)
+
+option(BUILD_BITCOIN_CHRONIK "Activate the Chronik indexer" OFF)
+if(BUILD_BITCOIN_CHRONIK)
+	add_subdirectory(chronik)
+endif()
+
 add_subdirectory(test)
 
 add_subdirectory(contrib)

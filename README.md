@@ -1,20 +1,18 @@
 [![Bitcoin ABC Logo](share/pixmaps/bitcoinabclogo.png "Bitcoin ABC")](https://www.bitcoinabc.org)
 
 The goal of Bitcoin ABC is to create sound money that is usable by everyone in
-the world. We believe this is a civilization-changing technology which will
-dramatically increase human flourishing, freedom, and prosperity. The project
-aims to achieve this goal by implementing a series of optimizations and
-protocol upgrades that will enable peer-to-peer digital cash to scale many
-orders of magnitude beyond current limits.
+the world. This is a civilization-changing technology which will dramatically
+increase human flourishing, freedom, and prosperity. The project aims to
+achieve this goal by implementing a series of optimizations and protocol
+upgrades that will enable peer-to-peer digital cash to succeed at mankind scale.
 
 What is eCash?
 ---------------------
 
-[eCash](https://e.cash/) is a digital
-currency that enables instant payments to anyone, anywhere in the world. It
-uses peer-to-peer technology to operate with no central authority: managing
-transactions and issuing money are carried out collectively by the network.
-eCash is a descendant of Bitcoin.
+[eCash](https://e.cash/) is a digital currency that enables instant payments to
+anyone, anywhere in the world. It uses peer-to-peer technology to operate with
+no central authority: managing transactions and issuing money are carried out
+collectively by the network. eCash is a descendant of Bitcoin.
 
 What is Bitcoin ABC?
 --------------------

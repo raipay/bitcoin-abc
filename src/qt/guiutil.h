@@ -5,8 +5,9 @@
 #ifndef BITCOIN_QT_GUIUTIL_H
 #define BITCOIN_QT_GUIUTIL_H
 
-#include <amount.h>
+#include <consensus/amount.h>
 #include <fs.h>
+#include <netaddress.h>
 
 #include <QEvent>
 #include <QHeaderView>
@@ -17,6 +18,8 @@
 #include <QProgressBar>
 #include <QString>
 #include <QTableView>
+
+#include <chrono>
 
 class QValidatedLineEdit;
 class SendCoinsRecipient;
@@ -29,9 +32,12 @@ class Node;
 
 QT_BEGIN_NAMESPACE
 class QAbstractItemView;
+class QAction;
 class QDateTime;
 class QFont;
 class QLineEdit;
+class QMenu;
+class QPoint;
 class QProgressDialog;
 class QUrl;
 class QWidget;
@@ -84,7 +90,7 @@ QString HtmlEscape(const std::string &str, bool fMultiLine = false);
    @see  TransactionView::copyLabel, TransactionView::copyAmount,
    TransactionView::copyAddress
  */
-void copyEntryData(QAbstractItemView *view, int column,
+void copyEntryData(const QAbstractItemView *view, int column,
                    int role = Qt::EditRole);
 
 /** Return a field of the currently selected entry as a QString. Does nothing if
@@ -94,7 +100,16 @@ void copyEntryData(QAbstractItemView *view, int column,
    @see  TransactionView::copyLabel, TransactionView::copyAmount,
    TransactionView::copyAddress
  */
-QList<QModelIndex> getEntryData(QAbstractItemView *view, int column);
+QList<QModelIndex> getEntryData(const QAbstractItemView *view, int column);
+
+/**
+ * Returns true if the specified field of the currently selected view entry is
+ * not empty.
+ * @param[in] column  Data column to extract from the model
+ * @param[in] role    Data role to extract from the model
+ * @see  TransactionView::contextualMenu
+ */
+bool hasEntryData(const QAbstractItemView *view, int column, int role);
 
 void setClipboard(const QString &str);
 
@@ -183,6 +198,21 @@ private:
 };
 
 /**
+ * Qt event filter that intercepts QEvent::FocusOut events for QLabel objects,
+ * and resets their `textInteractionFlags' property to get rid of the visible
+ * cursor.
+ *
+ * This is a temporary fix of QTBUG-59514.
+ */
+class LabelOutOfFocusEventFilter : public QObject {
+    Q_OBJECT
+
+public:
+    explicit LabelOutOfFocusEventFilter(QObject *parent);
+    bool eventFilter(QObject *watched, QEvent *event) override;
+};
+
+/**
  * Makes a QTableView last column feel as if it was being resized from its left
  * border.
  * Also makes sure the column widths are never larger than the table's viewport.
@@ -227,25 +257,28 @@ private Q_SLOTS:
 bool GetStartOnSystemStartup();
 bool SetStartOnSystemStartup(bool fAutoStart);
 
-/* Convert QString to OS specific boost path through UTF-8 */
+/** Convert QString to OS specific boost path through UTF-8 */
 fs::path qstringToBoostPath(const QString &path);
 
-/* Convert OS specific boost path to QString through UTF-8 */
+/** Convert OS specific boost path to QString through UTF-8 */
 QString boostPathToQString(const fs::path &path);
 
-/* Convert seconds into a QString with days, hours, mins, secs */
-QString formatDurationStr(int secs);
+/** Convert enum Network to QString */
+QString NetworkToQString(Network net);
 
-/* Format CNodeStats.nServices bitmask into a user-readable string */
+/** Convert seconds into a QString with days, hours, mins, secs */
+QString formatDurationStr(std::chrono::seconds dur);
+
+/** Format CNodeStats.nServices bitmask into a user-readable string */
 QString formatServicesStr(quint64 mask);
 
-/*
- * Format a CNodeStats.m_ping_usec into a user-readable string or display N/A,
- * if 0.
+/**
+ * Format a CNodeStats.m_last_ping_time into a user-readable string or display
+ * N/A, if 0.
  */
-QString formatPingTime(int64_t ping_usec);
+QString formatPingTime(std::chrono::microseconds ping_time);
 
-/* Format a CNodeCombinedStats.nTimeOffset into a user-readable string. */
+/** Format a CNodeCombinedStats.nTimeOffset into a user-readable string. */
 QString formatTimeOffset(int64_t nTimeOffset);
 
 QString formatNiceTimeOffset(qint64 secs);
@@ -312,6 +345,11 @@ int TextWidth(const QFontMetrics &fm, const QString &text);
  * Writes to debug.log short info about the used Qt and the host system.
  */
 void LogQtInfo();
+
+/**
+ * Call QMenu::popup() only on supported QT_QPA_PLATFORM.
+ */
+void PopupMenu(QMenu *menu, const QPoint &point, QAction *at_action = nullptr);
 
 // Fix known bugs in QProgressDialog class.
 void PolishProgressDialog(QProgressDialog *dialog);

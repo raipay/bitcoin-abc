@@ -5,8 +5,9 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 
-from build import BuildStatus, BuildTarget
 import unittest
+
+from build import BuildStatus, BuildTarget
 
 
 class BuildTests(unittest.TestCase):
@@ -28,7 +29,7 @@ class BuildTests(unittest.TestCase):
 
         # Queue a few builds
         for i in range(10):
-            name = "build-{}".format(i)
+            name = f"build-{i}"
             build_target.queue_build(i, name)
             self.assertEqual(len(build_target.builds), i + 1)
             self.assertEqual(build_target.builds[i].status, BuildStatus.Queued)
@@ -47,18 +48,14 @@ class BuildTests(unittest.TestCase):
         build_ids = list(build_target.builds.keys())
         for build_id in build_ids[:-1]:
             build_target.update_build_status(build_id, BuildStatus.Success)
-            self.assertEqual(
-                build_target.builds[build_id].status,
-                BuildStatus.Success)
+            self.assertEqual(build_target.builds[build_id].status, BuildStatus.Success)
             self.assertEqual(build_target.status(), BuildStatus.Running)
             self.assertEqual(build_target.is_finished(), False)
 
         # ... which will change the state to finished/success.
         build_id = build_ids[-1]
         build_target.update_build_status(build_id, BuildStatus.Success)
-        self.assertEqual(
-            build_target.builds[build_id].status,
-            BuildStatus.Success)
+        self.assertEqual(build_target.builds[build_id].status, BuildStatus.Success)
         self.assertEqual(build_target.status(), BuildStatus.Success)
         self.assertEqual(build_target.is_finished(), True)
 
@@ -76,5 +73,5 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(build_target.is_finished(), False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

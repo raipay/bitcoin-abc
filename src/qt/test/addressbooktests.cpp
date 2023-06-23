@@ -1,3 +1,7 @@
+// Copyright (c) 2017-2021 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 #include <qt/test/addressbooktests.h>
 #include <test/util/setup_common.h>
 
@@ -60,9 +64,8 @@ void TestAddAddressesToSendBook(interfaces::Node &node) {
     TestChain100Setup test;
     node.setContext(&test.m_node);
 
-    std::shared_ptr<CWallet> wallet =
-        std::make_shared<CWallet>(node.context()->chain.get(), WalletLocation(),
-                                  CreateMockWalletDatabase());
+    std::shared_ptr<CWallet> wallet = std::make_shared<CWallet>(
+        node.context()->chain.get(), "", CreateMockWalletDatabase());
     wallet->SetupLegacyScriptPubKeyMan();
 
     bool firstRun;
@@ -118,7 +121,7 @@ void TestAddAddressesToSendBook(interfaces::Node &node) {
     AddWallet(wallet);
     WalletModel walletModel(interfaces::MakeWallet(wallet), clientModel,
                             platformStyle.get());
-    RemoveWallet(wallet);
+    RemoveWallet(wallet, std::nullopt);
     EditAddressDialog editAddressDialog(EditAddressDialog::NewSendingAddress);
     editAddressDialog.setModel(walletModel.getAddressTableModel());
 

@@ -11,7 +11,7 @@
 
 #include <qt/optionsdialog.h>
 
-#include <amount.h>
+#include <consensus/amount.h>
 
 #include <QLabel>
 #include <QMainWindow>
@@ -86,6 +86,7 @@ public:
                         interfaces::BlockAndHeaderTipInfo *tip_info = nullptr);
 #ifdef ENABLE_WALLET
     void setWalletController(WalletController *wallet_controller);
+    WalletController *getWalletController();
 #endif
 
 #ifdef ENABLE_WALLET
@@ -102,6 +103,8 @@ public:
 
     /** Disconnect core signals from GUI client */
     void unsubscribeFromCoreSignals();
+
+    bool isPrivacyModeActivated() const;
 
     /**
      * Get the tray icon status.
@@ -163,8 +166,10 @@ private:
     QAction *m_open_wallet_action{nullptr};
     QMenu *m_open_wallet_menu{nullptr};
     QAction *m_close_wallet_action{nullptr};
+    QAction *m_close_all_wallets_action{nullptr};
     QAction *m_wallet_selector_label_action = nullptr;
     QAction *m_wallet_selector_action = nullptr;
+    QAction *m_mask_values_action{nullptr};
 
     QLabel *m_wallet_selector_label = nullptr;
     QComboBox *m_wallet_selector = nullptr;
@@ -218,6 +223,7 @@ Q_SIGNALS:
     void receivedURI(const QString &uri);
     /** Signal raised when RPC console shown */
     void consoleShown(RPCConsole *console);
+    void setPrivacy(bool privacy);
 
 public Q_SLOTS:
     /** Set number of connections shown in the UI */

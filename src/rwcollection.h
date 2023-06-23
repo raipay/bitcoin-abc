@@ -7,16 +7,14 @@
 
 #include <threadsafety.h>
 
-#include <boost/noncopyable.hpp>
 #include <boost/range/iterator.hpp>
-#include <boost/thread/locks.hpp>
-#include <boost/thread/shared_mutex.hpp>
 
 #include <iterator>
+#include <shared_mutex>
 #include <type_traits>
 #include <utility>
 
-template <typename T, typename L> class RWCollectionView : boost::noncopyable {
+template <typename T, typename L> class RWCollectionView {
 private:
     L lock;
     T *collection;
@@ -29,6 +27,9 @@ public:
     RWCollectionView(L l, T &c) : lock(std::move(l)), collection(&c) {}
     RWCollectionView(RWCollectionView &&other)
         : lock(std::move(other.lock)), collection(other.collection) {}
+
+    RWCollectionView(const RWCollectionView &) = delete;
+    const RWCollectionView &operator=(const RWCollectionView) = delete;
 
     T *operator->() { return collection; }
     const T *operator->() const { return collection; }
@@ -65,22 +66,23 @@ public:
 template <typename T> class RWCollection {
 private:
     T collection;
-    mutable boost::shared_mutex rwmutex;
+    mutable std::shared_mutex rwmutex;
 
 public:
     RWCollection() : collection() {}
+    explicit RWCollection(T &&collection_)
+        : collection(std::move(collection_)) {}
 
     using ReadView =
-        RWCollectionView<const T, boost::shared_lock<boost::shared_mutex>>;
+        RWCollectionView<const T, std::shared_lock<std::shared_mutex>>;
     ReadView getReadView() const {
-        return ReadView(boost::shared_lock<boost::shared_mutex>(rwmutex),
+        return ReadView(std::shared_lock<std::shared_mutex>(rwmutex),
                         collection);
     }
 
-    using WriteView =
-        RWCollectionView<T, boost::unique_lock<boost::shared_mutex>>;
+    using WriteView = RWCollectionView<T, std::unique_lock<std::shared_mutex>>;
     WriteView getWriteView() {
-        return WriteView(boost::unique_lock<boost::shared_mutex>(rwmutex),
+        return WriteView(std::unique_lock<std::shared_mutex>(rwmutex),
                          collection);
     }
 };

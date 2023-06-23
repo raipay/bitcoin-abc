@@ -10,13 +10,22 @@
 #include <net_types.h> // For banmap_t
 #include <serialize.h>
 
-#include <map>
+#include <optional>
 #include <string>
+#include <vector>
 
-class CSubNet;
-class CAddrMan;
+class ArgsManager;
+class AddrMan;
+class CAddress;
 class CDataStream;
 class CChainParams;
+struct bilingual_str;
+
+bool DumpPeerAddresses(const CChainParams &chainParams, const ArgsManager &args,
+                       const AddrMan &addr);
+/** Only used by tests. */
+void ReadFromStream(const CChainParams &chainParams, AddrMan &addr,
+                    CDataStream &ssPeers);
 
 class CBanEntry {
 public:
@@ -45,19 +54,6 @@ public:
     }
 };
 
-/** Access to the (IP) address database (peers.dat) */
-class CAddrDB {
-private:
-    fs::path pathAddr;
-    const CChainParams &chainParams;
-
-public:
-    explicit CAddrDB(const CChainParams &chainParams);
-    bool Write(const CAddrMan &addr);
-    bool Read(CAddrMan &addr);
-    bool Read(CAddrMan &addr, CDataStream &ssPeers);
-};
-
 /** Access to the banlist database (banlist.dat) */
 class CBanDB {
 private:
@@ -69,5 +65,31 @@ public:
     bool Write(const banmap_t &banSet);
     bool Read(banmap_t &banSet);
 };
+
+/** Returns an error string on failure */
+std::optional<bilingual_str> LoadAddrman(const CChainParams &chainparams,
+                                         const std::vector<bool> &asmap,
+                                         const ArgsManager &args,
+                                         std::unique_ptr<AddrMan> &addrman);
+
+/**
+ * Dump the anchor IP address database (anchors.dat)
+ *
+ * Anchors are last known outgoing block-relay-only peers that are
+ * tried to re-connect to on startup.
+ */
+void DumpAnchors(const CChainParams &chainParams,
+                 const fs::path &anchors_db_path,
+                 const std::vector<CAddress> &anchors);
+
+/**
+ * Read the anchor IP address database (anchors.dat)
+ *
+ * Deleting anchors.dat is intentional as it avoids renewed peering to anchors
+ * after an unclean shutdown and thus potential exploitation of the anchor peer
+ * policy.
+ */
+std::vector<CAddress> ReadAnchors(const CChainParams &chainParams,
+                                  const fs::path &anchors_db_path);
 
 #endif // BITCOIN_ADDRDB_H

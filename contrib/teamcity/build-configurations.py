@@ -5,17 +5,19 @@
 
 import argparse
 import asyncio
-from deepmerge import always_merger
 import os
-from pathlib import Path, PurePath
+import random
 import shutil
 import stat
-from string import Template
 import subprocess
 import sys
-from teamcity import is_running_under_teamcity
-from teamcity.messages import TeamcityServiceMessages
+from pathlib import Path, PurePath
+from string import Template
+
 import yaml
+from deepmerge import always_merger
+from teamcity import is_running_under_teamcity  # type: ignore
+from teamcity.messages import TeamcityServiceMessages
 
 # Default timeout value in seconds. Should be overridden by the
 # configuration file.
@@ -40,19 +42,25 @@ class BuildConfiguration:
 
         self.project_root = PurePath(
             subprocess.run(
-                ['git', 'rev-parse', '--show-toplevel'],
+                ["git", "rev-parse", "--show-toplevel"],
                 capture_output=True,
                 check=True,
-                encoding='utf-8',
+                encoding="utf-8",
                 text=True,
             ).stdout.strip()
         )
 
+        self.project_commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            check=True,
+            encoding="utf-8",
+            text=True,
+        ).stdout.strip()
+
         if not config_file.is_file():
             raise FileNotFoundError(
-                "The configuration file does not exist {}".format(
-                    str(config_file)
-                )
+                f"The configuration file does not exist {str(config_file)}"
             )
 
         if build_name is not None:
@@ -69,9 +77,8 @@ class BuildConfiguration:
         # it should not be empty.
         if not config.get("builds", None):
             raise AssertionError(
-                "Invalid configuration file {}: the \"builds\" element is missing or empty".format(
-                    str(self.config_file)
-                )
+                'Invalid configuration file {}: the "builds" element is missing or'
+                " empty".format(str(self.config_file))
             )
 
         # Check the target build has an entry in the configuration file
@@ -95,10 +102,8 @@ class BuildConfiguration:
             # Raise an error if the template does not exist
             if template_name not in templates:
                 raise AssertionError(
-                    "Build {} configuration inherits from template {}, but the template does not exist.".format(
-                        self.name,
-                        template_name
-                    )
+                    "Build {} configuration inherits from template {}, but the template"
+                    " does not exist.".format(self.name, template_name)
                 )
             always_merger.merge(template_config, templates.get(template_name))
 
@@ -106,15 +111,15 @@ class BuildConfiguration:
 
         # Create the build directory as needed
         self.build_directory = Path(
-            self.project_root.joinpath(
-                'abc-ci-builds',
-                self.name))
+            self.project_root.joinpath("abc-ci-builds", self.name)
+        )
 
         # Define the junit and logs directories
         self.junit_reports_dir = self.build_directory.joinpath("test/junit")
         self.test_logs_dir = self.build_directory.joinpath("test/log")
         self.functional_test_logs = self.build_directory.joinpath(
-            "test/tmp/test_runner_*")
+            "test/tmp/test_runner_*"
+        )
 
         # We will provide the required environment variables
         self.environment_variables = {
@@ -126,12 +131,14 @@ class BuildConfiguration:
 
     def create_script_file(self, dest, content):
         # Write the content to a script file using a template
-        with open(self.script_root.joinpath("bash_script.sh.in"), encoding='utf-8') as f:
+        with open(
+            self.script_root.joinpath("bash_script.sh.in"), encoding="utf-8"
+        ) as f:
             script_template_content = f.read()
 
         template = Template(script_template_content)
 
-        with open(dest, 'w', encoding='utf-8') as f:
+        with open(dest, "w", encoding="utf-8") as f:
             f.write(
                 template.safe_substitute(
                     **self.environment_variables,
@@ -140,9 +147,10 @@ class BuildConfiguration:
             )
         dest.chmod(dest.stat().st_mode | stat.S_IEXEC)
 
-    def create_build_steps(self, artifact_dir):
-        # There are 2 possibilities to define the build steps:
+    def create_build_steps(self, artifact_dir, preview_url, ip_address):
+        # There are 3 possibilities to define the build steps:
         #  - By manually defining a script to run.
+        #  - By specifying a docker configuration to build
         #  - By defining the configuration options and a list of target groups to
         #    run. The configuration step should be run once then all the targets
         #    groups. Each target group can contain 1 or more targets which
@@ -160,39 +168,159 @@ class BuildConfiguration:
             ]
             return
 
+        # Check for a docker configuration
+        docker_config = self.config.get("docker", None)
+        if docker_config:
+            # Make sure we have at least a context
+            context = docker_config.get("context", None)
+            if context is None:
+                raise AssertionError(
+                    f"The docker configuration for build {self.name} is missing a"
+                    " context, aborting"
+                )
+            # Make the context path absolute
+            context = self.project_root.joinpath(context)
+            # Make sure the context is a subdir of the git repository. This
+            # prevents e.g. the use of .. as a context path.
+            if Path(self.project_root) not in Path(context).resolve().parents:
+                raise AssertionError(
+                    "The docker context should be a subdirectory of the project root"
+                )
+
+            dockerfile = docker_config.get("dockerfile", None)
+            dockerfile_args = (
+                ["-f", str(self.project_root.joinpath(dockerfile))]
+                if dockerfile
+                else []
+            )
+
+            tag_name = "-".join([self.name, self.project_commit])
+
+            # Docker build
+            self.build_steps.append(
+                {
+                    "bin": "docker",
+                    "args": (
+                        ["build"] + dockerfile_args + ["-t", tag_name, str(context)]
+                    ),
+                }
+            )
+
+            inner_port = docker_config.get("port", 80)
+            outer_port = random.randrange(41000, 42000)
+            port_args = ["-p", f"{outer_port}:{inner_port}"]
+            # Docker run. This uses a timeout value to stop the container after
+            # some time. The stop signal is defined to sigterm so the app has a
+            # chance of gracefully handle the stop request, and defaults to a
+            # less subtle SIGKILL if it didn't abort after a minute.
+            self.build_steps.append(
+                {
+                    "bin": "docker",
+                    "args": (
+                        [
+                            "run",
+                            "--rm",
+                            "-d",
+                            "--name",
+                            tag_name,
+                            "--stop-signal",
+                            "SIGTERM",
+                            "--stop-timeout",
+                            "60",
+                        ]
+                        + port_args
+                        + [tag_name]
+                    ),
+                }
+            )
+
+            timeout_minutes = docker_config.get("timeout_minutes", 60)
+
+            # Write the address to stdout and to the preview_url log file
+            preview_msg = (
+                f"Preview is available at http://{ip_address}:{outer_port} for the next"
+                f" {timeout_minutes} minutes."
+            )
+            with open(preview_url, "w", encoding="utf-8") as f:
+                f.write(preview_msg)
+            self.build_steps.append(
+                {
+                    "bin": "echo",
+                    "args": [preview_msg],
+                }
+            )
+
+            # Now we need to schedule a job to stop or kill the container after
+            # the timeout expires. We achieve this via the `at` command, but
+            # there is a catch: `at` memorize the current working directory and
+            # will execute the scheduled command from there. This is a problem
+            # for our build as the build directory might have been deleted by
+            # the time the timeout expires and the command would fail. To
+            # prevent this issue we are changing the working directory before
+            # at is called to something that we are sure will not get deleted:
+            # the user home directory.
+            #
+            # Note for developers: debugging the `at` command failures can be
+            # tricky, but the `at` command will send an email with the command
+            # stdout/stderr upon failure (not upon success by default), so the
+            # issues can be tracked by looking at the /var/mail/<user> file.
+            script_file = self.build_directory.joinpath("docker_timeout.sh")
+            self.create_script_file(
+                script_file,
+                (
+                    f'cd "${{HOME}}" && echo "docker stop {tag_name}" | at now'
+                    f" +{timeout_minutes} minutes"
+                ),
+            )
+
+            self.build_steps.append(
+                {
+                    "bin": str(script_file),
+                    "args": [],
+                }
+            )
+
+            return
+
         # Get the cmake configuration definitions.
         self.cmake_flags = self.config.get("cmake_flags", [])
-        self.cmake_flags.append("-DCMAKE_INSTALL_PREFIX={}".format(
-            str(artifact_dir)))
+        self.cmake_flags.append(f"-DCMAKE_INSTALL_PREFIX={str(artifact_dir)}")
         # Get the targets to build. If none is provided then raise an error.
         targets = self.config.get("targets", None)
         if not targets:
             raise AssertionError(
-                "No build target has been provided for build {} and no script is defined, aborting".format(
-                    self.name
-                )
+                "No build target has been provided for build {} and no script is"
+                " defined, aborting".format(self.name)
             )
 
         # Some more flags for the build_cmake.sh script
         if self.config.get("clang", False):
-            self.cmake_flags.extend([
-                "-DCMAKE_C_COMPILER=clang",
-                "-DCMAKE_CXX_COMPILER=clang++",
-            ])
+            self.cmake_flags.extend(
+                [
+                    "-DCMAKE_C_COMPILER=clang",
+                    "-DCMAKE_CXX_COMPILER=clang++",
+                ]
+            )
         if self.config.get("gcc", False):
-            self.cmake_flags.extend([
-                "-DCMAKE_C_COMPILER=gcc",
-                "-DCMAKE_CXX_COMPILER=g++",
-            ])
+            self.cmake_flags.extend(
+                [
+                    "-DCMAKE_C_COMPILER=gcc",
+                    "-DCMAKE_CXX_COMPILER=g++",
+                ]
+            )
         if self.config.get("junit", True):
-            self.cmake_flags.extend([
-                "-DENABLE_JUNIT_REPORT=ON",
-            ])
+            self.cmake_flags.extend(
+                [
+                    "-DENABLE_JUNIT_REPORT=ON",
+                ]
+            )
         if self.config.get("Werror", False):
-            self.cmake_flags.extend([
-                "-DCMAKE_C_FLAGS=-Werror",
-                "-DCMAKE_CXX_FLAGS=-Werror",
-            ])
+            self.cmake_flags.extend(
+                [
+                    "-DCMAKE_C_FLAGS=-Werror",
+                    "-DCMAKE_CXX_FLAGS=-Werror",
+                ]
+            )
 
         # Get the generator, default to ninja
         generator = self.config.get("generator", {})
@@ -200,15 +328,14 @@ class BuildConfiguration:
         generator_command = generator.get("command", "ninja")
         # If the build runs on diff or has the fail_fast flag, exit on first error.
         # Otherwise keep running so we can gather more test result.
-        fail_fast = self.config.get(
-            "fail_fast", False) or self.config.get(
-            "runOnDiff", False)
-        generator_flags = generator.get(
-            "flags", ["-k0"] if not fail_fast else [])
+        fail_fast = self.config.get("fail_fast", False) or self.config.get(
+            "runOnDiff", False
+        )
+        generator_flags = generator.get("flags", ["-k0"] if not fail_fast else [])
 
         # Max out the jobs by default when the generator uses make
         if generator_command == "make":
-            generator_flags.append("-j{}".format(self.jobs))
+            generator_flags.append(f"-j{self.jobs}")
 
         # Handle cross build configuration
         cross_build = self.config.get("cross_build", None)
@@ -220,36 +347,41 @@ class BuildConfiguration:
             # Both static_depends and toochain are mandatory for cross builds
             if not static_depends:
                 raise AssertionError(
-                    "`static_depends` configuration is required for cross builds")
+                    "`static_depends` configuration is required for cross builds"
+                )
             if not toolchain:
                 raise AssertionError(
-                    "`toolchain` configuration is required for cross builds")
+                    "`toolchain` configuration is required for cross builds"
+                )
 
             self.build_steps.append(
                 {
-                    "bin": str(self.project_root.joinpath("contrib/devtools/build_depends.sh")),
+                    "bin": str(
+                        self.project_root.joinpath("contrib/devtools/build_depends.sh")
+                    ),
                     "args": [static_depends],
                 }
             )
 
             toolchain_file = self.project_root.joinpath(
-                "cmake/platforms/{}.cmake".format(toolchain)
+                f"cmake/platforms/{toolchain}.cmake"
             )
-            self.cmake_flags.append(
-                "-DCMAKE_TOOLCHAIN_FILE={}".format(str(toolchain_file))
-            )
+            self.cmake_flags.append(f"-DCMAKE_TOOLCHAIN_FILE={str(toolchain_file)}")
 
             if emulator:
                 self.cmake_flags.append(
-                    "-DCMAKE_CROSSCOMPILING_EMULATOR={}".format(
-                        shutil.which(emulator))
+                    f"-DCMAKE_CROSSCOMPILING_EMULATOR={shutil.which(emulator)}"
                 )
 
         # Configure using cmake.
         self.build_steps.append(
             {
                 "bin": "cmake",
-                "args": ["-G", generator_name, str(self.project_root)] + self.cmake_flags,
+                "args": [
+                    "-G",
+                    generator_name,
+                    str(self.project_root),
+                ] + self.cmake_flags,
             }
         )
 
@@ -278,7 +410,7 @@ class BuildConfiguration:
         return self.config.get(key, default)
 
 
-class UserBuild():
+class UserBuild:
     def __init__(self, configuration):
         self.configuration = configuration
 
@@ -291,14 +423,16 @@ class UserBuild():
         #  - the clean log will contain the same filtered content as what is
         #    printed to stdout. This filter is done in print_line_to_logs().
         self.logs = {}
-        self.logs["clean_log"] = build_directory.joinpath(
-            "build.clean.log")
+        self.logs["clean_log"] = build_directory.joinpath("build.clean.log")
         self.logs["full_log"] = build_directory.joinpath("build.full.log")
 
         # Clean the build directory before any build step is run.
         if self.configuration.build_directory.is_dir():
             shutil.rmtree(self.configuration.build_directory)
         self.configuration.build_directory.mkdir(exist_ok=True, parents=True)
+
+        self.preview_url = build_directory.joinpath("preview_url.log")
+        self.ip_address = "127.0.0.1"
 
     def copy_artifacts(self, artifacts):
         # Make sure the artifact directory always exists. It is created before
@@ -315,8 +449,11 @@ class UserBuild():
         # from it needs to be excluded from the glob matches to prevent infinite
         # recursion.
         for pattern, dest in artifacts.items():
-            matches = [m for m in sorted(self.configuration.build_directory.glob(
-                pattern)) if self.artifact_dir not in m.parents and self.artifact_dir != m]
+            matches = [
+                m
+                for m in sorted(self.configuration.build_directory.glob(pattern))
+                if self.artifact_dir not in m.parents and self.artifact_dir != m
+            ]
             dest = self.artifact_dir.joinpath(dest)
 
             # Pattern did not match
@@ -346,12 +483,12 @@ class UserBuild():
 
     def print_line_to_logs(self, line):
         # Always print to the full log
-        with open(self.logs["full_log"], 'a', encoding='utf-8') as log:
+        with open(self.logs["full_log"], "a", encoding="utf-8") as log:
             log.write(line)
 
         # Discard the set -x bash output for stdout and the clean log
         if not line.startswith("+"):
-            with open(self.logs["clean_log"], 'a', encoding='utf-8') as log:
+            with open(self.logs["clean_log"], "a", encoding="utf-8") as log:
                 log.write(line)
             print(line.rstrip())
 
@@ -359,7 +496,7 @@ class UserBuild():
         while True:
             try:
                 line = await stdout.readline()
-                line = line.decode('utf-8')
+                line = line.decode("utf-8")
 
                 if not line:
                     break
@@ -404,22 +541,23 @@ class UserBuild():
             await asyncio.wait_for(logging_task, timeout=5)
         except asyncio.TimeoutError:
             self.print_line_to_logs(
-                "Warning: Timed out while waiting for logging to flush. Some log lines may be missing.")
+                "Warning: Timed out while waiting for logging to flush. Some log lines"
+                " may be missing."
+            )
 
         return result
 
     async def wait_for_build(self, timeout, args=None):
         args = args if args is not None else []
-        message = "Build {} completed successfully".format(
-            self.configuration.name
-        )
+        message = f"Build {self.configuration.name} completed successfully"
         try:
             for step in self.configuration.build_steps:
-                return_code = await asyncio.wait_for(self.run_build(step["bin"], step["args"]), timeout)
+                return_code = await asyncio.wait_for(
+                    self.run_build(step["bin"], step["args"]), timeout
+                )
                 if return_code != 0:
                     message = "Build {} failed with exit code {}".format(
-                        self.configuration.name,
-                        return_code
+                        self.configuration.name, return_code
                     )
                     return
 
@@ -439,9 +577,14 @@ class UserBuild():
                 **self.configuration.get("artifacts", {}),
                 str(self.logs["full_log"].relative_to(build_directory)): "",
                 str(self.logs["clean_log"].relative_to(build_directory)): "",
-                str(self.configuration.junit_reports_dir.relative_to(build_directory)): "",
+                str(
+                    self.configuration.junit_reports_dir.relative_to(build_directory)
+                ): "",
                 str(self.configuration.test_logs_dir.relative_to(build_directory)): "",
-                str(self.configuration.functional_test_logs.relative_to(build_directory)): "functional",
+                str(
+                    self.configuration.functional_test_logs.relative_to(build_directory)
+                ): "functional",
+                str(self.preview_url.relative_to(build_directory)): "",
             }
 
             self.copy_artifacts(artifacts)
@@ -454,12 +597,12 @@ class UserBuild():
             shutil.rmtree(self.artifact_dir)
         self.artifact_dir.mkdir(exist_ok=True)
 
-        self.configuration.create_build_steps(self.artifact_dir)
+        self.configuration.create_build_steps(
+            self.artifact_dir, self.preview_url, self.ip_address
+        )
 
         return_code, message = asyncio.run(
-            self.wait_for_build(
-                self.configuration.get(
-                    "timeout", DEFAULT_TIMEOUT))
+            self.wait_for_build(self.configuration.get("timeout", DEFAULT_TIMEOUT))
         )
 
         return (return_code, message)
@@ -478,13 +621,16 @@ class TeamcityBuild(UserBuild):
 
         self.teamcity_messages = TeamcityServiceMessages()
 
+        # Only gather the public IP if we are running on a TC build agent
+        from whatismyip import whatismyip
+
+        self.ip_address = whatismyip()
+
     def copy_artifacts(self, artifacts):
         super().copy_artifacts(artifacts)
 
         # Start loading the junit reports.
-        junit_reports_pattern = "{}/junit/*.xml".format(
-            str(self.artifact_dir.relative_to("/"))
-        )
+        junit_reports_pattern = f"{str(self.artifact_dir.relative_to('/'))}/junit/*.xml"
         self.teamcity_messages.importData("junit", junit_reports_pattern)
 
         # Instruct teamcity to upload our artifact directory
@@ -499,8 +645,7 @@ class TeamcityBuild(UserBuild):
         # Let the user know what build is being run.
         # This makes it easier to retrieve the info from the logs.
         self.teamcity_messages.customMessage(
-            "Starting build {}".format(self.configuration.name),
-            status="NORMAL"
+            f"Starting build {self.configuration.name}", status="NORMAL"
         )
 
         return_code, message = super().run()
@@ -513,20 +658,20 @@ class TeamcityBuild(UserBuild):
             self.teamcity_messages.buildProblem(
                 message,
                 # Let Teamcity calculate an ID from our message
-                None
+                None,
             )
             # Change the final build message
             self.teamcity_messages.buildStatus(
                 # Don't change the status, let Teamcity set it to failure
                 None,
-                message
+                message,
             )
         else:
             # Change the final build message but keep the original one as well
             self.teamcity_messages.buildStatus(
                 # Don't change the status, let Teamcity set it to success
                 None,
-                "{} ({{build.status.text}})".format(message)
+                f"{message} ({{build.status.text}})",
             )
 
         return (return_code, message)
@@ -537,29 +682,23 @@ def main():
 
     # By default search for a configuration file in the same directory as this
     # script.
-    default_config_path = Path(
-        script_dir.joinpath("build-configurations.yml")
-    )
+    default_config_path = Path(script_dir.joinpath("build-configurations.yml"))
 
     parser = argparse.ArgumentParser(description="Run a CI build")
-    parser.add_argument(
-        "build",
-        help="The name of the build to run"
-    )
+    parser.add_argument("build", help="The name of the build to run")
     parser.add_argument(
         "--config",
         "-c",
         help="Path to the builds configuration file (default to {})".format(
             str(default_config_path)
-        )
+        ),
     )
 
     args, unknown_args = parser.parse_known_args()
 
     # Check the configuration file exists
     config_path = Path(args.config) if args.config else default_config_path
-    build_configuration = BuildConfiguration(
-        script_dir, config_path, args.build)
+    build_configuration = BuildConfiguration(script_dir, config_path, args.build)
 
     if is_running_under_teamcity():
         build = TeamcityBuild(build_configuration)
@@ -569,5 +708,5 @@ def main():
     sys.exit(build.run(unknown_args)[0])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

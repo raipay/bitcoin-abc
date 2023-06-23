@@ -56,11 +56,26 @@ endif()
 if(BUILD_BITCOIN_WALLET)
 	list(APPEND _TEST_TARGET_DEPENDS bitcoin-wallet)
 endif()
+if(BUILD_BITCOIN_CHRONIK)
+	find_package(Protobuf 3.0.0 REQUIRED)
+	protobuf_generate_python(
+		PROTOBUF_PY
+		../chronik/chronik-proto/proto/chronik.proto
+	)
+	list(APPEND _TEST_TARGET_DEPENDS "${PROTOBUF_PY}")
+	add_custom_target(protobuf-chronik ALL DEPENDS "${PROTOBUF_PY}")
+endif()
 
 function(add_functional_test_check TARGET DESCRIPTION)
 	if(ENABLE_JUNIT_REPORT)
 		string(REGEX REPLACE " " "_" JUNIT_FILE "${DESCRIPTION}.xml")
 		set(JUNIT_OUTPUT "--junitoutput=${JUNIT_REPORT_DIRECTORY}/${JUNIT_FILE}")
+	endif()
+
+	# Sanitizers can have a lot of overhead, so double the timeout to prevent
+	# false positives.
+	if(ENABLE_SANITIZERS)
+		set(EXTENDED_TIMEOUT "--timeout-factor=2")
 	endif()
 
 	add_test_custom_target(${TARGET}
@@ -69,6 +84,7 @@ function(add_functional_test_check TARGET DESCRIPTION)
 			./functional/test_runner.py
 			"--testsuitename=Bitcoin ABC ${DESCRIPTION}"
 			${JUNIT_OUTPUT}
+			${EXTENDED_TIMEOUT}
 			${ARGN}
 		CUSTOM_TARGET_ARGS
 			COMMENT "Running ${DESCRIPTION}"
@@ -96,14 +112,14 @@ add_dependencies(check-extended check-functional-extended)
 
 add_functional_test_check(check-functional-upgrade-activated
 	"functional tests with the next upgrade activated"
-	--with-axionactivation
+	--with-cowperthwaiteactivation
 )
 add_dependencies(check-upgrade-activated check-functional-upgrade-activated)
 
 add_functional_test_check(check-functional-upgrade-activated-extended
 	"extended functional tests with the next upgrade activated"
 	--extended
-	--with-axionactivation
+	--with-cowperthwaiteactivation
 )
 add_dependencies(check-upgrade-activated-extended check-functional-upgrade-activated-extended)
 

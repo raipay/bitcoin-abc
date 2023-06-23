@@ -96,6 +96,7 @@ add_regular_fuzz_targets(
 	chain
 	checkqueue
 	coins_view
+	connman
 	crypto
 	crypto_aes256
 	crypto_aes256cbc
@@ -150,6 +151,8 @@ add_regular_fuzz_targets(
 	script_sigcache
 	script_sign
 	scriptnum_ops
+	secp256k1_ecdsa_signature_parse_der_lax
+	secp256k1_ec_seckey_import_export_der
 	signature_checker
 	span
 	spanparsing
@@ -191,7 +194,6 @@ add_deserialize_fuzz_targets(
 	out_point_deserialize
 	partial_merkle_tree_deserialize
 	partially_signed_transaction_deserialize
-	prefilled_transaction_deserialize
 	psbt_input_deserialize
 	psbt_output_deserialize
 	pub_key_deserialize

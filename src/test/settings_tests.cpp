@@ -4,6 +4,7 @@
 
 #include <util/settings.h>
 
+#include <fs.h>
 #include <test/util/setup_common.h>
 #include <test/util/str.h>
 #include <util/strencodings.h>
@@ -14,6 +15,10 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <fstream>
+#include <map>
+#include <string>
+#include <system_error>
 #include <vector>
 
 inline bool operator==(const util::SettingsValue &a,
@@ -37,7 +42,7 @@ operator<<(std::ostream &os,
 }
 
 inline void WriteText(const fs::path &path, const std::string &text) {
-    fsbridge::ofstream file;
+    std::ofstream file;
     file.open(path);
     file << text;
 }
@@ -45,7 +50,7 @@ inline void WriteText(const fs::path &path, const std::string &text) {
 BOOST_FIXTURE_TEST_SUITE(settings_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(ReadWrite) {
-    fs::path path = GetDataDir() / "settings.json";
+    fs::path path = m_args.GetDataDirBase() / "settings.json";
 
     WriteText(path, R"({
         "string": "string",
@@ -81,8 +86,9 @@ BOOST_AUTO_TEST_CASE(ReadWrite) {
         "dupe": "dupe"
     })");
     BOOST_CHECK(!util::ReadSettings(path, values, errors));
-    std::vector<std::string> dup_keys = {strprintf(
-        "Found duplicate key dupe in settings file %s", path.string())};
+    std::vector<std::string> dup_keys = {
+        strprintf("Found duplicate key dupe in settings file %s",
+                  fs::PathToString(path))};
     BOOST_CHECK_EQUAL_COLLECTIONS(errors.begin(), errors.end(),
                                   dup_keys.begin(), dup_keys.end());
 
@@ -91,7 +97,7 @@ BOOST_AUTO_TEST_CASE(ReadWrite) {
     BOOST_CHECK(!util::ReadSettings(path, values, errors));
     std::vector<std::string> non_kv = {
         strprintf("Found non-object value \"non-kv\" in settings file %s",
-                  path.string())};
+                  fs::PathToString(path))};
     BOOST_CHECK_EQUAL_COLLECTIONS(errors.begin(), errors.end(), non_kv.begin(),
                                   non_kv.end());
 
@@ -99,7 +105,7 @@ BOOST_AUTO_TEST_CASE(ReadWrite) {
     WriteText(path, R"(invalid json)");
     BOOST_CHECK(!util::ReadSettings(path, values, errors));
     std::vector<std::string> fail_parse = {
-        strprintf("Unable to parse settings file %s", path.string())};
+        strprintf("Unable to parse settings file %s", fs::PathToString(path))};
     BOOST_CHECK_EQUAL_COLLECTIONS(errors.begin(), errors.end(),
                                   fail_parse.begin(), fail_parse.end());
 }

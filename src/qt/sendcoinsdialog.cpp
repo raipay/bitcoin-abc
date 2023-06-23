@@ -26,6 +26,12 @@
 #include <wallet/fees.h>
 #include <wallet/wallet.h>
 
+#include <validation.h>
+
+#include <array>
+#include <fstream>
+#include <memory>
+
 #include <QScrollBar>
 #include <QSettings>
 #include <QTextDocument>
@@ -137,7 +143,7 @@ void SendCoinsDialog::setClientModel(ClientModel *_clientModel) {
 
     if (_clientModel) {
         connect(_clientModel, &ClientModel::numBlocksChanged, this,
-                &SendCoinsDialog::updateSmartFeeLabel);
+                &SendCoinsDialog::updateNumberOfBlocks);
     }
 }
 
@@ -464,7 +470,8 @@ void SendCoinsDialog::on_sendButton_clicked() {
                 if (filename.isEmpty()) {
                     return;
                 }
-                std::ofstream out(filename.toLocal8Bit().data());
+                std::ofstream out{filename.toLocal8Bit().data(),
+                                  std::ofstream::out | std::ofstream::binary};
                 out << ssTx.str();
                 out.close();
                 Q_EMIT message(tr("PSBT saved"), "PSBT saved to disk",
@@ -774,6 +781,16 @@ void SendCoinsDialog::updateCoinControlState(CCoinControl &ctrl) {
     }
     // Include watch-only for wallets without private key
     ctrl.fAllowWatchOnly = model->wallet().privateKeysDisabled();
+}
+
+void SendCoinsDialog::updateNumberOfBlocks(int count,
+                                           const QDateTime &blockDate,
+                                           double nVerificationProgress,
+                                           bool headers,
+                                           SynchronizationState sync_state) {
+    if (sync_state == SynchronizationState::POST_INIT) {
+        updateSmartFeeLabel();
+    }
 }
 
 void SendCoinsDialog::updateSmartFeeLabel() {

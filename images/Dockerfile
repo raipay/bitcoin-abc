@@ -1,6 +1,4 @@
 FROM rust:latest as build
-## Needed to compile `ring` crate
-ENV AR=llvm-ar
 
 ## Install dependencies
 RUN apt-get update \
@@ -28,13 +26,13 @@ RUN wget https://api.github.com/repos/corrosion-rs/corrosion/tarball/v0.3.0 -O c
     && cmake --build ${CORROSION_BUILD_FOLDER} --config Release \
     && cmake --install ${CORROSION_BUILD_FOLDER} --config Release
 
-## Build bitcoin-abc (eCash node)
-RUN mkdir /bitcoin-abc
-COPY . /bitcoin-abc
-RUN git clone https://github.com/givelotus/bitcoinsuite.git /bitcoinsuite \
-    && mkdir -p /target/bitcoind \
-    && mkdir -p /bitcoinsuite/downloads/bitcoin-abc/bin/ \
-    && cd /target/bitcoind \
+## Build the node
+## Copy bitcoin-abc executables into /bitcoin-abc/bin
+RUN mkdir /bitcoin-abc-src
+COPY . /bitcoin-abc-src
+RUN mkdir -p /build \
+    && mkdir -p /bitcoin-abc/bin/ \
+    && cd /build \
     && cmake -GNinja \
         -DBUILD_BITCOIN_CHRONIK=on \
         -DUSE_JEMALLOC=off \
@@ -43,11 +41,7 @@ RUN git clone https://github.com/givelotus/bitcoinsuite.git /bitcoinsuite \
         -DBUILD_BITCOIN_ZMQ=off \
         -DENABLE_NATPMP=off \
         -DENABLE_UPNP=off \
-        /bitcoin-abc \
+        /bitcoin-abc-src \
     && ninja \
-    && cp /target/bitcoind/src/bitcoin* /bitcoinsuite/downloads/bitcoin-abc/bin/ \
-    && rm -r /target/bitcoind \
-    && cd /bitcoinsuite \
-    && git checkout 0a30e0a717315cddd3403ff2111ec9c3b640a236
-
-CMD ls /bitcoinsuite/downloads/
+    && cp /build/src/bitcoin* /bitcoin-abc/bin/ \
+    && rm -r /build

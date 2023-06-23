@@ -36,6 +36,7 @@
 #include <util/translation.h>
 #include <validation.h>
 
+#include <functional>
 #include <memory>
 
 #include <QAction>
@@ -109,6 +110,8 @@ BitcoinGUI::BitcoinGUI(interfaces::Node &node, const Config *configIn,
         setCentralWidget(rpcConsole);
         Q_EMIT consoleShown(rpcConsole);
     }
+
+    modalOverlay = new ModalOverlay(enableWallet, this->centralWidget());
 
     // Accept D&D of URIs
     setAcceptDrops(true);
@@ -203,7 +206,6 @@ BitcoinGUI::BitcoinGUI(interfaces::Node &node, const Config *configIn,
     connect(labelProxyIcon, &GUIUtil::ClickableLabel::clicked,
             [this] { openOptionsDialogWithTab(OptionsDialog::TAB_NETWORK); });
 
-    modalOverlay = new ModalOverlay(enableWallet, this->centralWidget());
     connect(labelBlocksIcon, &GUIUtil::ClickableLabel::clicked, this,
             &BitcoinGUI::showModalOverlay);
     connect(progressBar, &GUIUtil::ClickableProgressBar::clicked, this,
@@ -243,6 +245,8 @@ BitcoinGUI::~BitcoinGUI() {
 
 void BitcoinGUI::createActions() {
     QActionGroup *tabGroup = new QActionGroup(this);
+    connect(modalOverlay, &ModalOverlay::triggered, tabGroup,
+            &QActionGroup::setEnabled);
 
     overviewAction =
         new QAction(platformStyle->SingleColorIcon(":/icons/overview"),
@@ -393,12 +397,22 @@ void BitcoinGUI::createActions() {
     m_create_wallet_action->setEnabled(false);
     m_create_wallet_action->setStatusTip(tr("Create a new wallet"));
 
+    m_close_all_wallets_action = new QAction(tr("Close All Wallets..."), this);
+    m_close_all_wallets_action->setStatusTip(tr("Close all wallets"));
+
     showHelpMessageAction = new QAction(tr("&Command-line options"), this);
     showHelpMessageAction->setMenuRole(QAction::NoRole);
     showHelpMessageAction->setStatusTip(
         tr("Show the %1 help message to get a list with possible Bitcoin "
            "command-line options")
             .arg(PACKAGE_NAME));
+
+    m_mask_values_action = new QAction(tr("&Mask values"), this);
+    m_mask_values_action->setShortcut(
+        QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_M));
+    m_mask_values_action->setStatusTip(
+        tr("Mask the values in the Overview tab"));
+    m_mask_values_action->setCheckable(true);
 
     connect(quitAction, &QAction::triggered, qApp, QApplication::quit);
     connect(aboutAction, &QAction::triggered, this, &BitcoinGUI::aboutClicked);
@@ -461,8 +475,7 @@ void BitcoinGUI::createActions() {
 
                 connect(action, &QAction::triggered, [this, path] {
                     auto activity =
-                        new OpenWalletActivity(m_wallet_controller, this,
-                                               this->config->GetChainParams());
+                        new OpenWalletActivity(m_wallet_controller, this);
                     connect(activity, &OpenWalletActivity::opened, this,
                             &BitcoinGUI::setCurrentWallet);
                     connect(activity, &OpenWalletActivity::finished, activity,
@@ -481,14 +494,17 @@ void BitcoinGUI::createActions() {
                                              this);
         });
         connect(m_create_wallet_action, &QAction::triggered, [this] {
-            auto activity = new CreateWalletActivity(
-                m_wallet_controller, this, this->config->GetChainParams());
+            auto activity = new CreateWalletActivity(m_wallet_controller, this);
             connect(activity, &CreateWalletActivity::created, this,
                     &BitcoinGUI::setCurrentWallet);
             connect(activity, &CreateWalletActivity::finished, activity,
                     &QObject::deleteLater);
             activity->create();
         });
+        connect(m_close_all_wallets_action, &QAction::triggered,
+                [this] { m_wallet_controller->closeAllWallets(this); });
+        connect(m_mask_values_action, &QAction::toggled, this,
+                &BitcoinGUI::setPrivacy);
     }
 #endif // ENABLE_WALLET
 
@@ -515,6 +531,7 @@ void BitcoinGUI::createMenuBar() {
         file->addAction(m_create_wallet_action);
         file->addAction(m_open_wallet_action);
         file->addAction(m_close_wallet_action);
+        file->addAction(m_close_all_wallets_action);
         file->addSeparator();
         file->addAction(openAction);
         file->addAction(backupWalletAction);
@@ -529,6 +546,8 @@ void BitcoinGUI::createMenuBar() {
     if (walletFrame) {
         settings->addAction(encryptWalletAction);
         settings->addAction(changePassphraseAction);
+        settings->addSeparator();
+        settings->addAction(m_mask_values_action);
         settings->addSeparator();
     }
     settings->addAction(optionsAction);
@@ -732,6 +751,10 @@ void BitcoinGUI::setWalletController(WalletController *wallet_controller) {
     }
 }
 
+WalletController *BitcoinGUI::getWalletController() {
+    return m_wallet_controller;
+}
+
 void BitcoinGUI::addWallet(WalletModel *walletModel) {
     if (!walletFrame) {
         return;
@@ -739,14 +762,15 @@ void BitcoinGUI::addWallet(WalletModel *walletModel) {
     if (!walletFrame->addWallet(walletModel)) {
         return;
     }
-    const QString display_name = walletModel->getDisplayName();
-    setWalletActionsEnabled(true);
     rpcConsole->addWallet(walletModel);
-    m_wallet_selector->addItem(display_name, QVariant::fromValue(walletModel));
-    if (m_wallet_selector->count() == 2) {
+    if (m_wallet_selector->count() == 0) {
+        setWalletActionsEnabled(true);
+    } else if (m_wallet_selector->count() == 1) {
         m_wallet_selector_label_action->setVisible(true);
         m_wallet_selector_action->setVisible(true);
     }
+    const QString display_name = walletModel->getDisplayName();
+    m_wallet_selector->addItem(display_name, QVariant::fromValue(walletModel));
 }
 
 void BitcoinGUI::removeWallet(WalletModel *walletModel) {
@@ -761,6 +785,7 @@ void BitcoinGUI::removeWallet(WalletModel *walletModel) {
     m_wallet_selector->removeItem(index);
     if (m_wallet_selector->count() == 0) {
         setWalletActionsEnabled(false);
+        overviewAction->setChecked(true);
     } else if (m_wallet_selector->count() == 1) {
         m_wallet_selector_label_action->setVisible(false);
         m_wallet_selector_action->setVisible(false);
@@ -818,6 +843,7 @@ void BitcoinGUI::setWalletActionsEnabled(bool enabled) {
     usedReceivingAddressesAction->setEnabled(enabled);
     openAction->setEnabled(enabled);
     m_close_wallet_action->setEnabled(enabled);
+    m_close_all_wallets_action->setEnabled(enabled);
 }
 
 void BitcoinGUI::createTrayIcon() {
@@ -1144,7 +1170,7 @@ void BitcoinGUI::setNumBlocks(int count, const QDateTime &blockDate,
         if (count != prevBlocks) {
             labelBlocksIcon->setPixmap(
                 platformStyle
-                    ->SingleColorIcon(QString(":/movies/spinner-%1")
+                    ->SingleColorIcon(QString(":/animation/spinner-%1")
                                           .arg(spinnerFrame, 3, 10, QChar('0')))
                     .pixmap(STATUSBAR_ICONSIZE, STATUSBAR_ICONSIZE));
             spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES;
@@ -1297,7 +1323,8 @@ void BitcoinGUI::incomingTransaction(const QString &date, int unit,
     QString msg = tr("Date: %1\n").arg(date) +
                   tr("Amount: %1\n")
                       .arg(BitcoinUnits::formatWithUnit(unit, amount, true));
-    if (m_node.getWallets().size() > 1 && !walletName.isEmpty()) {
+    if (m_node.walletClient().getWallets().size() > 1 &&
+        !walletName.isEmpty()) {
         msg += tr("Wallet: %1\n").arg(walletName);
     }
     msg += tr("Type: %1\n").arg(type);
@@ -1354,15 +1381,13 @@ bool BitcoinGUI::handlePaymentRequest(const SendCoinsRecipient &recipient) {
 void BitcoinGUI::setHDStatus(bool privkeyDisabled, int hdEnabled) {
     labelWalletHDStatusIcon->setPixmap(
         platformStyle
-            ->SingleColorIcon(privkeyDisabled
-                                  ? ":/icons/eye"
-                                  : hdEnabled ? ":/icons/hd_enabled"
+            ->SingleColorIcon(privkeyDisabled ? ":/icons/eye"
+                              : hdEnabled     ? ":/icons/hd_enabled"
                                               : ":/icons/hd_disabled")
             .pixmap(STATUSBAR_ICONSIZE, STATUSBAR_ICONSIZE));
     labelWalletHDStatusIcon->setToolTip(
-        privkeyDisabled
-            ? tr("Private key <b>disabled</b>")
-            : hdEnabled ? tr("HD key generation is <b>enabled</b>")
+        privkeyDisabled ? tr("Private key <b>disabled</b>")
+        : hdEnabled     ? tr("HD key generation is <b>enabled</b>")
                         : tr("HD key generation is <b>disabled</b>"));
     labelWalletHDStatusIcon->show();
     // eventually disable the QLabel to set its opacity to 50%
@@ -1553,6 +1578,11 @@ void BitcoinGUI::unsubscribeFromCoreSignals() {
     // Disconnect signals from client
     m_handler_message_box->disconnect();
     m_handler_question->disconnect();
+}
+
+bool BitcoinGUI::isPrivacyModeActivated() const {
+    assert(m_mask_values_action);
+    return m_mask_values_action->isChecked();
 }
 
 UnitDisplayStatusBarControl::UnitDisplayStatusBarControl(

@@ -4,6 +4,7 @@
 
 #include <addrdb.h>
 #include <addrman.h>
+#include <addrman_impl.h>
 #include <blockencodings.h>
 #include <blockfileinfo.h>
 #include <blockfilter.h>
@@ -31,6 +32,8 @@
 #include <stdexcept>
 #include <unistd.h>
 #include <vector>
+
+using node::SnapshotMetadata;
 
 void initialize() {
     // Fuzzers using pubkey must hold an ECCVerifyHandle.
@@ -83,7 +86,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         BlockFilter block_filter;
         DeserializeFromFuzzingInput(buffer, block_filter);
 #elif ADDR_INFO_DESERIALIZE
-        CAddrInfo addr_info;
+        AddrInfo addr_info;
         DeserializeFromFuzzingInput(buffer, addr_info);
 #elif BLOCK_FILE_INFO_DESERIALIZE
         CBlockFileInfo block_file_info;
@@ -132,9 +135,6 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
 #elif PARTIALLY_SIGNED_TRANSACTION_DESERIALIZE
         PartiallySignedTransaction partially_signed_transaction;
         DeserializeFromFuzzingInput(buffer, partially_signed_transaction);
-#elif PREFILLED_TRANSACTION_DESERIALIZE
-        PrefilledTransaction prefilled_transaction;
-        DeserializeFromFuzzingInput(buffer, prefilled_transaction);
 #elif PSBT_INPUT_DESERIALIZE
         PSBTInput psbt_input;
         DeserializeFromFuzzingInput(buffer, psbt_input);
@@ -153,7 +153,8 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         bool mutated;
         BlockMerkleRoot(block, &mutated);
 #elif ADDRMAN_DESERIALIZE
-        CAddrMan am;
+        AddrMan am(/* asmap= */ std::vector<bool>(),
+                   /* consistency_check_ratio= */ 0);
         DeserializeFromFuzzingInput(buffer, am);
 #elif BLOCKHEADER_DESERIALIZE
         CBlockHeader bh;

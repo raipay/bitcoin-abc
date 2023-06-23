@@ -13,7 +13,10 @@ set -euo pipefail
 : "${TOPLEVEL:=$(git rev-parse --show-toplevel)}"
 
 EXPECTED_CIRCULAR_DEPENDENCIES=(
-    "index/txindex -> validation -> index/txindex"
+    "node/blockstorage -> validation -> node/blockstorage"
+    "index/blockfilterindex -> node/blockstorage -> validation -> index/blockfilterindex"
+    "index/base -> validation -> index/blockfilterindex -> index/base"
+    "index/coinstatsindex -> node/coinstats -> index/coinstatsindex"
     "qt/addresstablemodel -> qt/walletmodel -> qt/addresstablemodel"
     "qt/bitcoingui -> qt/walletframe -> qt/bitcoingui"
     "qt/recentrequeststablemodel -> qt/walletmodel -> qt/recentrequeststablemodel"
@@ -23,17 +26,13 @@ EXPECTED_CIRCULAR_DEPENDENCIES=(
     "wallet/rpcwallet -> wallet/wallet -> wallet/rpcwallet"
     "wallet/wallet -> wallet/walletdb -> wallet/wallet"
     "avalanche/processor -> validation -> avalanche/processor"
-    "avalanche/processor -> net_processing -> avalanche/processor"
     "chainparams -> protocol -> chainparams"
     "chainparamsbase -> util/system -> chainparamsbase"
-    "minerfund -> validation -> minerfund"
     "script/scriptcache -> validation -> script/scriptcache"
     "seeder/bitcoin -> seeder/db -> seeder/bitcoin"
     "chainparams -> protocol -> config -> chainparams"
-    "checkpoints -> validation -> checkpoints"
-    "pow/aserti32d -> validation -> pow/aserti32d"
-    "pow/aserti32d -> validation -> pow/pow -> pow/aserti32d"
-    "avalanche/orphanproofpool -> avalanche/peermanager -> avalanche/orphanproofpool"
+    "avalanche/peermanager -> avalanche/proofpool -> avalanche/peermanager"
+    "node/coinstats -> validation -> node/coinstats"
 )
 
 EXIT_CODE=0

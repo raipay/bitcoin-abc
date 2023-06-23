@@ -2,7 +2,7 @@
 
 # Pattern rule to print variables, e.g. make print-build_arch
 print-%:
-	@echo $* = $($*)
+	@echo '$*'='$($*)'
 
 # When invoking a sub-make, keep only the command line variable definitions
 # matching the pattern in the filter function.
@@ -38,6 +38,7 @@ NO_QR ?=
 NO_WALLET ?=
 NO_ZMQ ?=
 NO_UPNP ?=
+NO_NATPMP ?=
 NO_JEMALLOC ?=
 FALLBACK_DOWNLOAD_PATH ?= https://download.bitcoinabc.org/depends-sources
 
@@ -97,10 +98,6 @@ host_prefix=$($(host_arch)_$(host_os)_prefix)
 build_prefix=$(host_prefix)/native
 build_host=$(build)
 
-AT_$(V):=
-AT_:=@
-AT:=$(AT_$(V))
-
 all: install
 
 include hosts/$(host_os).mk
@@ -109,38 +106,50 @@ include builders/$(build_os).mk
 include builders/default.mk
 include packages/packages.mk
 
-build_id_string:=$(BUILD_ID_SALT)
-build_id_string+=$(shell $(build_CC) --version 2>/dev/null)
-build_id_string+=$(shell $(build_AR) --version 2>/dev/null)
-build_id_string+=$(shell $(build_CXX) --version 2>/dev/null)
-build_id_string+=$(shell $(build_RANLIB) --version 2>/dev/null)
-build_id_string+=$(shell $(build_STRIP) --version 2>/dev/null)
-
-$(host_arch)_$(host_os)_id_string:=$(HOST_ID_SALT)
-$(host_arch)_$(host_os)_id_string+=$(shell $(host_CC) --version 2>/dev/null)
-$(host_arch)_$(host_os)_id_string+=$(shell $(host_AR) --version 2>/dev/null)
-$(host_arch)_$(host_os)_id_string+=$(shell $(host_CXX) --version 2>/dev/null)
-$(host_arch)_$(host_os)_id_string+=$(shell $(host_RANLIB) --version 2>/dev/null)
-$(host_arch)_$(host_os)_id_string+=$(shell $(host_STRIP) --version 2>/dev/null)
-
-ifneq ($(strip $(FORCE_USE_SYSTEM_CLANG)),)
-build_id_string+=system_clang
-$(host_arch)_$(host_os)_id_string+=system_clang
-endif
+# Previously, we directly invoked the well-known programs using $(shell ...)
+# to contruct build_id_string. However, that was problematic because:
+#
+# 1. When invoking a shell, GNU Make special-cases exit code 127 (command not
+#    found) by not capturing the output but instead passing it through. This is
+#    not done for any other exit code.
+#
+# 2. Characters like '#' (from these programs' output) would end up in make
+#    variables like build_id_string, which would be wrongly interpreted by make
+#    when these variables were used.
+#
+# Therefore, we should avoid having arbitrary strings in make variables where
+# possible. The gen_id script used here hashes the output to construct a
+# "make-safe" id.
+#
+# Also note that these lines need to be:
+#
+#     1. After including {hosts,builders}/*.mk, since they rely on the tool
+#        variables (e.g. build_CC, host_STRIP, etc.) to be set.
+#
+#     2. Before including packages/*.mk (excluding packages/packages.mk), since
+#        they rely on the build_id variables
+#
+build_id:=$(shell env CC='$(build_CC)' CXX='$(build_CXX)' AR='$(build_AR)' RANLIB='$(build_RANLIB)' STRIP='$(build_STRIP)' SHA256SUM='$(build_SHA256SUM)' DEBUG='$(DEBUG)' ./gen_id '$(BUILD_ID_SALT)' 'GUIX_ENVIRONMENT=$(realpath $(GUIX_ENVIRONMENT))')
+$(host_arch)_$(host_os)_id:=$(shell env CC='$(host_CC)' CXX='$(host_CXX)' AR='$(host_AR)' RANLIB='$(host_RANLIB)' STRIP='$(host_STRIP)' SHA256SUM='$(build_SHA256SUM)' DEBUG='$(DEBUG)' ./gen_id '$(HOST_ID_SALT)' 'GUIX_ENVIRONMENT=$(realpath $(GUIX_ENVIRONMENT))')
 
 qrencode_packages_$(NO_QR) = $(qrencode_packages)
 
 qt_packages_$(NO_QT) = $(qt_packages) $(qt_$(host_os)_packages) $(qt_$(host_arch)_$(host_os)_packages) $(qrencode_packages_)
 
-wallet_packages_$(NO_WALLET) = $(wallet_packages)
+bdb_packages_$(NO_BDB) = $(bdb_packages)
+sqlite_packages_$(NO_SQLITE) = $(sqlite_packages)
+wallet_packages_$(NO_WALLET) = $(bdb_packages_) $(sqlite_packages_)
+
 upnp_packages_$(NO_UPNP) = $(upnp_packages)
+natpmp_packages_$(NO_NATPMP) = $(natpmp_packages)
+
 zmq_packages_$(NO_ZMQ) = $(zmq_packages)
 
 protobuf_packages_$(NO_PROTOBUF) = $(protobuf_packages)
 
 jemalloc_packages_$(NO_JEMALLOC) = $(jemalloc_packages)
 
-packages += $($(host_arch)_$(host_os)_packages) $($(host_os)_packages) $(qt_packages_) $(wallet_packages_) $(upnp_packages_)
+packages += $($(host_arch)_$(host_os)_packages) $($(host_os)_packages) $(qt_packages_) $(wallet_packages_) $(upnp_packages_) $(natpmp_packages_)
 native_packages += $($(host_arch)_$(host_os)_native_packages) $($(host_os)_native_packages)
 
 ifneq ($(protobuf_packages_),)
@@ -168,12 +177,12 @@ include funcs.mk
 final_build_id_long+=$(shell $(build_SHA256SUM) config.sub)
 final_build_id+=$(shell echo -n "$(final_build_id_long)" | $(build_SHA256SUM) | cut -c-$(HASH_LENGTH))
 $(host_prefix)/.stamp_$(final_build_id): $(native_packages) $(packages)
-	$(AT)rm -rf $(@D)
-	$(AT)mkdir -p $(@D)
-	$(AT)echo copying packages: $^
-	$(AT)echo to: $(@D)
-	$(AT)cd $(@D); $(foreach package,$^, tar xf $($(package)_cached); )
-	$(AT)touch $@
+	rm -rf $(@D)
+	mkdir -p $(@D)
+	echo copying packages: $^
+	echo to: $(@D)
+	cd $(@D); $(foreach package,$^, tar xf $($(package)_cached); )
+	touch $@
 
 define check_or_remove_cached
   mkdir -p $(BASE_CACHE)/$(host)/$(package) && cd $(BASE_CACHE)/$(host)/$(package); \
@@ -207,7 +216,7 @@ install: check-packages $(host_prefix)/.stamp_$(final_build_id)
 download-one: check-sources $(all_sources)
 
 download-osx:
-	@$(MAKE) -s HOST=x86_64-apple-darwin16 download-one
+	@$(MAKE) -s HOST=x86_64-apple-darwin download-one
 download-linux:
 	@$(MAKE) -s HOST=x86_64-unknown-linux-gnu download-one
 download-win:
@@ -223,7 +232,7 @@ build-linux-arm: download-linux
 build-linux-aarch64: download-linux
 	@$(MAKE) -s HOST=aarch64-linux-gnu install
 build-osx: download-osx
-	@$(MAKE) -s HOST=x86_64-apple-darwin16 install
+	@$(MAKE) -s HOST=x86_64-apple-darwin install
 build-win64: download-win
 	@$(MAKE) -s HOST=x86_64-w64-mingw32 install
 
@@ -232,3 +241,4 @@ build-all: build-linux64 build-linux32 build-linux-arm build-linux-aarch64 build
 $(foreach package,$(all_packages),$(eval $(call ext_add_stages,$(package))))
 
 .PHONY: install cached clean clean-all download-one download-osx download-linux download-win download check-packages check-sources
+$(V).SILENT:

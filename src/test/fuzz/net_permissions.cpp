@@ -21,15 +21,16 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     const NetPermissionFlags net_permission_flags =
         fuzzed_data_provider.ConsumeBool()
             ? fuzzed_data_provider.PickValueInArray<NetPermissionFlags>({
-                  NetPermissionFlags::PF_NONE,
-                  NetPermissionFlags::PF_BLOOMFILTER,
-                  NetPermissionFlags::PF_RELAY,
-                  NetPermissionFlags::PF_FORCERELAY,
-                  NetPermissionFlags::PF_NOBAN,
-                  NetPermissionFlags::PF_MEMPOOL,
-                  NetPermissionFlags::PF_BYPASS_PROOF_REQUEST_LIMITS,
-                  NetPermissionFlags::PF_ISIMPLICIT,
-                  NetPermissionFlags::PF_ALL,
+                  NetPermissionFlags::None,
+                  NetPermissionFlags::BloomFilter,
+                  NetPermissionFlags::Relay,
+                  NetPermissionFlags::ForceRelay,
+                  NetPermissionFlags::NoBan,
+                  NetPermissionFlags::Mempool,
+                  NetPermissionFlags::Addr,
+                  NetPermissionFlags::BypassProofRequestLimits,
+                  NetPermissionFlags::Implicit,
+                  NetPermissionFlags::All,
               })
             : static_cast<NetPermissionFlags>(
                   fuzzed_data_provider.ConsumeIntegral<uint32_t>());
@@ -44,7 +45,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         assert(NetPermissions::HasFlag(net_whitebind_permissions.m_flags,
                                        net_permission_flags));
         (void)NetPermissions::ClearFlag(net_whitebind_permissions.m_flags,
-                                        net_permission_flags);
+                                        NetPermissionFlags::Implicit);
         (void)NetPermissions::ToStrings(net_whitebind_permissions.m_flags);
     }
 
@@ -58,7 +59,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         assert(NetPermissions::HasFlag(net_whitelist_permissions.m_flags,
                                        net_permission_flags));
         (void)NetPermissions::ClearFlag(net_whitelist_permissions.m_flags,
-                                        net_permission_flags);
+                                        NetPermissionFlags::Implicit);
         (void)NetPermissions::ToStrings(net_whitelist_permissions.m_flags);
     }
 }

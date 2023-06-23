@@ -5,42 +5,49 @@
         },
         "clang-format": {
             "type": "clang-format",
-            "version": ">=10.0",
-            "bin": ["clang-format-10", "clang-format"],
-            "include": "(^src/.*\\.(h|c|cpp|mm)$)",
+            "version": ">=12.0",
+            "bin": [
+                "clang-format-12",
+                "clang-format"
+            ],
+            "include": "(^(src|chronik)/.*\\.(h|c|cpp|mm)$)",
             "exclude": [
                 "(^src/(secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)"
             ]
         },
-        "autopep8": {
-            "type": "autopep8",
-            "version": ">=1.3.4",
+        "black": {
+            "type": "black",
+            "version": ">=22.8.0",
             "include": "(\\.py$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/electrumabc_gui/qt/icons.py)",
+                "(\\_pb2.py$)"
             ],
             "flags": [
-                "--aggressive",
-                "--ignore=W503,W504"
+                "--preview"
             ]
         },
         "flake8": {
             "type": "flake8",
-            "version": ">=3.0",
+            "version": ">=5.0",
             "include": "(\\.py$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/)",
+                "(\\_pb2.py$)"
             ],
             "flags": [
-                "--ignore=E501,E704,W503,W504"
+                "--ignore=A003,E203,E303,E305,E501,E704,W503,W504",
+                "--require-plugins=flake8-comprehensions,flake8-builtins"
             ]
         },
         "lint-format-strings": {
             "type": "lint-format-strings",
-            "include": "(^src/.*\\.(h|c|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|c|cpp)$)",
             "exclude": [
                 "(^src/(secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)",
@@ -49,20 +56,11 @@
         },
         "check-doc": {
             "type": "check-doc",
-            "include": "(^src/.*\\.(h|c|cpp)$)"
+            "include": "(^(src|chronik)/.*\\.(h|c|cpp)$)"
         },
         "lint-tests": {
             "type": "lint-tests",
             "include": "(^src/(seeder/|rpc/|wallet/)?test/.*\\.(cpp)$)"
-        },
-        "lint-python-format": {
-            "type": "lint-python-format",
-            "include": "(\\.py$)",
-            "exclude": [
-                "(^test/lint/lint-python-format\\.py$)",
-                "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
-            ]
         },
         "phpcs": {
             "type": "phpcs",
@@ -74,7 +72,7 @@
         },
         "lint-locale-dependence": {
             "type": "lint-locale-dependence",
-            "include": "(^src/.*\\.(h|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|cpp)$)",
             "exclude": [
                 "(^src/(crypto/ctaes/|leveldb/|secp256k1/|tinyformat.h|univalue/))",
                 "(^src/bench/nanobench.h$)"
@@ -82,7 +80,7 @@
         },
         "lint-cheader": {
             "type": "lint-cheader",
-            "include": "(^src/.*\\.(h|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|cpp)$)",
             "exclude": [
                 "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)"
@@ -96,7 +94,10 @@
                 "(^doc/release-notes/)",
                 "(^contrib/gitian-builder/)",
                 "(^src/(qt/locale|secp256k1|univalue|leveldb)/)",
-                "(^test/lint/dictionary/)"
+                "(^test/lint/dictionary/)",
+                "(^web/e.cash/public/animations/)",
+                "(package-lock.json)",
+                "(^electrum/electrumabc/wordlist/)"
             ],
             "spelling.dictionaries": [
                 "test/lint/dictionary/english.json"
@@ -104,7 +105,7 @@
         },
         "lint-assert-with-side-effects": {
             "type": "lint-assert-with-side-effects",
-            "include": "(^src/.*\\.(h|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|cpp)$)",
             "exclude": [
                 "(^src/(secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)"
@@ -112,7 +113,7 @@
         },
         "lint-include-quotes": {
             "type": "lint-include-quotes",
-            "include": "(^src/.*\\.(h|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|cpp)$)",
             "exclude": [
                 "(^src/(secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)"
@@ -120,7 +121,7 @@
         },
         "lint-include-guard": {
             "type": "lint-include-guard",
-            "include": "(^src/.*\\.h$)",
+            "include": "(^(src|chronik)/.*\\.h$)",
             "exclude": [
                 "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)",
@@ -129,15 +130,19 @@
         },
         "lint-include-source": {
             "type": "lint-include-source",
-            "include": "(^src/.*\\.(h|c|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|c|cpp)$)",
             "exclude": [
                 "(^src/(secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)"
             ]
         },
+        "lint-std-chrono": {
+            "type": "lint-std-chrono",
+            "include": "(^(src|chronik)/.*\\.(h|cpp)$)"
+        },
         "lint-stdint": {
             "type": "lint-stdint",
-            "include": "(^src/.*\\.(h|c|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|c|cpp)$)",
             "exclude": [
                 "(^src/(secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)",
@@ -146,7 +151,7 @@
         },
         "lint-source-filename": {
             "type": "lint-source-filename",
-            "include": "(^src/.*\\.(h|c|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|c|cpp)$)",
             "exclude": [
                 "(^src/(secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)"
@@ -154,18 +159,15 @@
         },
         "lint-boost-dependencies": {
             "type": "lint-boost-dependencies",
-            "include": "(^src/.*\\.(h|cpp)$)"
-        },
-        "check-rpc-mappings": {
-            "type": "check-rpc-mappings",
-            "include": "(^src/(rpc/|wallet/rpc).*\\.cpp$)"
+            "include": "(^(src|chronik)/.*\\.(h|cpp)$)"
         },
         "lint-python-encoding": {
             "type": "lint-python-encoding",
             "include": "(\\.py$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/)"
             ]
         },
         "lint-python-shebang": {
@@ -174,12 +176,13 @@
             "exclude": [
                 "(__init__\\.py$)",
                 "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/electrumabc.*)"
             ]
         },
         "lint-bash-shebang": {
             "type": "lint-bash-shebang",
-            "include": "(\\.sh$)",
+            "include": "(\\.(sh|bash)$)",
             "exclude": [
                 "(^contrib/gitian-builder/)"
             ]
@@ -191,15 +194,16 @@
                 "--external-sources",
                 "--source-path=SCRIPTDIR"
             ],
-            "include": "(\\.sh$)",
+            "include": "(\\.(sh|bash)$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^src/(secp256k1|univalue)/)"
+                "(^src/(secp256k1|univalue)/)",
+                "(^electrum/)"
             ]
         },
         "lint-shell-locale": {
             "type": "lint-shell-locale",
-            "include": "(\\.sh$)",
+            "include": "(\\.(sh|bash)$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
                 "(^src/(secp256k1|univalue)/)",
@@ -208,7 +212,7 @@
         },
         "lint-cpp-void-parameters": {
             "type": "lint-cpp-void-parameters",
-            "include": "(^src/.*\\.(h|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|cpp)$)",
             "exclude": [
                 "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)",
@@ -217,7 +221,7 @@
         },
         "lint-logs": {
             "type": "lint-logs",
-            "include": "(^src/.*\\.(h|cpp)$)"
+            "include": "(^(src|chronik)/.*\\.(h|cpp|rs)$)"
         },
         "lint-qt": {
             "type": "lint-qt",
@@ -228,7 +232,7 @@
         },
         "lint-doxygen": {
             "type": "lint-doxygen",
-            "include": "(^src/.*\\.(h|c|cpp)$)",
+            "include": "(^(src|chronik)/.*\\.(h|c|cpp)$)",
             "exclude": [
                 "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)"
@@ -236,18 +240,10 @@
         },
         "lint-whitespace": {
             "type": "lint-whitespace",
-            "include": "(\\.(ac|am|cmake|conf|in|include|json|m4|md|openrc|php|pl|sh|txt|yml)$)",
+            "include": "(\\.(ac|am|cmake|conf|in|include|json|m4|md|openrc|php|pl|rs|sh|txt|yml)$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
                 "(^src/(secp256k1|univalue|leveldb)/)",
-                "(^src/bench/nanobench.h$)"
-            ]
-        },
-        "lint-cppcheck": {
-            "type": "lint-cppcheck",
-            "include": "(^src/.*\\.(h|c|cpp)$)",
-            "exclude": [
-                "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)"
             ]
         },
@@ -273,11 +269,18 @@
         },
         "lint-python-mypy": {
             "type": "lint-python-mypy",
-            "version": ">=0.780",
+            "version": ">=0.910",
             "include": "(\\.py$)",
-            "exclude": "(^contrib/)",
+            "exclude": [
+                "(^contrib/gitian-builder/)",
+                "(^contrib/apple-sdk-tools/)",
+                "(^contrib/macdeploy/)",
+                "(^electrum/)"
+            ],
             "flags": [
-                "--ignore-missing-imports"
+                "--ignore-missing-imports",
+                "--install-types",
+                "--non-interactive"
             ]
         },
         "lint-python-mutable-default": {
@@ -290,8 +293,54 @@
         },
         "prettier": {
             "type": "prettier",
-            "include": "(^web/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
-            "exclude": "(^web/.*/translations/.*\\.json$)"
+            "version": ">=2.6.0",
+            "include": [
+                "(^apps/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
+                "(^doc/standards/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
+                "(^cashtab/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
+                "(^modules/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
+                "(^web/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)"
+            ],
+            "exclude": [
+                "(^web/.*/translations/.*\\.json$)",
+                "(^web/e.cash/public/animations/)"
+            ]
+        },
+        "lint-python-isort": {
+            "type": "lint-python-isort",
+            "version": ">=5.6.4",
+            "include": "(\\.py$)",
+            "exclude": [
+                "(^contrib/gitian-builder/)",
+                "(^contrib/apple-sdk-tools/)",
+                "(\\_pb2.py$)"
+            ]
+        },
+        "rustfmt": {
+            "type": "rustfmt",
+            "version": ">=1.5.1",
+            "include": "(\\.rs$)"
+        },
+        "eslint": {
+            "type": "eslint",
+            "version": ">=8.0.0",
+            "include": [
+                "(cashtab/.*\\.js$)",
+                "(apps/alias-server/.*\\.js$)",
+                "(modules/ecashaddrjs/.*\\.js$)",
+                "(apps/ecash-herald/.*\\.js$)",
+                "(modules/chronik-client/.*\\.(js|jsx|ts|tsx)$)"
+            ]
+        },
+        "lint-python-flynt": {
+            "type": "lint-python-flynt",
+            "version": ">=0.78",
+            "include": "(\\.py$)",
+            "exclude": [
+                "(^contrib/gitian-builder/)",
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/)"
+            ]
         }
     }
 }

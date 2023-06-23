@@ -18,7 +18,7 @@ only succeeds past a given node once its nMinimumChainWork has been exceeded.
 import time
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, connect_nodes
+from test_framework.util import assert_equal
 
 # 2 hashes required per regtest block (with no difficulty adjustment)
 REGTEST_WORK_PER_BLOCK = 2
@@ -28,8 +28,7 @@ class MinimumChainWorkTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 3
-        self.extra_args = [[], ["-minimumchainwork=0x65"],
-                           ["-minimumchainwork=0x65"]]
+        self.extra_args = [[], ["-minimumchainwork=0x65"], ["-minimumchainwork=0x65"]]
         self.node_min_work = [0, 101, 101]
 
     def setup_network(self):
@@ -40,27 +39,30 @@ class MinimumChainWorkTest(BitcoinTestFramework):
         # block relay to inbound peers.
         self.setup_nodes()
         for i in range(self.num_nodes - 1):
-            connect_nodes(self.nodes[i + 1], self.nodes[i])
+            self.connect_nodes(i + 1, i)
 
     def run_test(self):
         # Start building a chain on node0.  node2 shouldn't be able to sync until node1's
         # minchainwork is exceeded
         starting_chain_work = REGTEST_WORK_PER_BLOCK  # Genesis block's work
         self.log.info(
-            "Testing relay across node {} (minChainWork = {})".format(
-                1, self.node_min_work[1]))
+            f"Testing relay across node 1 (minChainWork = {self.node_min_work[1]})"
+        )
 
         starting_blockcount = self.nodes[2].getblockcount()
 
         num_blocks_to_generate = int(
-            (self.node_min_work[1] - starting_chain_work) / REGTEST_WORK_PER_BLOCK)
-        self.log.info("Generating {} blocks on node0".format(
-                      num_blocks_to_generate))
-        hashes = self.nodes[0].generatetoaddress(num_blocks_to_generate,
-                                                 self.nodes[0].get_deterministic_priv_key().address)
+            (self.node_min_work[1] - starting_chain_work) / REGTEST_WORK_PER_BLOCK
+        )
+        self.log.info(f"Generating {num_blocks_to_generate} blocks on node0")
+        hashes = self.generate(
+            self.nodes[0], num_blocks_to_generate, sync_fun=self.no_op
+        )
 
-        self.log.info("Node0 current chain work: {}".format(
-                      self.nodes[0].getblockheader(hashes[-1])['chainwork']))
+        self.log.info(
+            "Node0 current chain work: "
+            f"{self.nodes[0].getblockheader(hashes[-1])['chainwork']}"
+        )
 
         # Sleep a few seconds and verify that node2 didn't get any new blocks
         # or headers.  We sleep, rather than sync_blocks(node0, node1) because
@@ -69,20 +71,17 @@ class MinimumChainWorkTest(BitcoinTestFramework):
         time.sleep(3)
 
         self.log.info("Verifying node 2 has no more blocks than before")
-        self.log.info("Blockcounts: {}".format(
-                      [n.getblockcount() for n in self.nodes]))
+        self.log.info(f"Blockcounts: {[n.getblockcount() for n in self.nodes]}")
         # Node2 shouldn't have any new headers yet, because node1 should not
         # have relayed anything.
         assert_equal(len(self.nodes[2].getchaintips()), 1)
-        assert_equal(self.nodes[2].getchaintips()[0]['height'], 0)
+        assert_equal(self.nodes[2].getchaintips()[0]["height"], 0)
 
-        assert self.nodes[1].getbestblockhash(
-        ) != self.nodes[0].getbestblockhash()
+        assert self.nodes[1].getbestblockhash() != self.nodes[0].getbestblockhash()
         assert_equal(self.nodes[2].getblockcount(), starting_blockcount)
 
         self.log.info("Generating one more block")
-        self.nodes[0].generatetoaddress(
-            1, self.nodes[0].get_deterministic_priv_key().address)
+        self.generate(self.nodes[0], 1)
 
         self.log.info("Verifying nodes are all synced")
 
@@ -93,9 +92,8 @@ class MinimumChainWorkTest(BitcoinTestFramework):
         # continue the test.
 
         self.sync_all()
-        self.log.info("Blockcounts: {}".format(
-                      [n.getblockcount() for n in self.nodes]))
+        self.log.info(f"Blockcounts: {[n.getblockcount() for n in self.nodes]}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     MinimumChainWorkTest().main()

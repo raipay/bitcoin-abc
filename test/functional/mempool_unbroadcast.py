@@ -10,11 +10,7 @@ import time
 from test_framework.blocktools import create_confirmed_utxos
 from test_framework.p2p import P2PTxInvStore
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import (
-    assert_equal,
-    connect_nodes,
-    disconnect_nodes,
-)
+from test_framework.util import assert_equal
 
 # 15 minutes in seconds
 MAX_INITIAL_BROADCAST_DELAY = 15 * 60
@@ -33,13 +29,14 @@ class MempoolUnbroadcastTest(BitcoinTestFramework):
 
     def test_broadcast(self):
         self.log.info(
-            "Test that mempool reattempts delivery of locally submitted transaction")
+            "Test that mempool reattempts delivery of locally submitted transaction"
+        )
         node = self.nodes[0]
 
         min_relay_fee = node.getnetworkinfo()["relayfee"]
-        create_confirmed_utxos(node, 10)
+        create_confirmed_utxos(self, node, 10)
 
-        disconnect_nodes(node, self.nodes[1])
+        self.disconnect_nodes(node.index, 1)
 
         self.log.info("Generate transactions that only node 0 knows about")
 
@@ -60,10 +57,10 @@ class MempoolUnbroadcastTest(BitcoinTestFramework):
 
         # check transactions are in unbroadcast using rpc
         mempoolinfo = self.nodes[0].getmempoolinfo()
-        assert_equal(mempoolinfo['unbroadcastcount'], 2)
+        assert_equal(mempoolinfo["unbroadcastcount"], 2)
         mempool = self.nodes[0].getrawmempool(True)
         for tx in mempool:
-            assert_equal(mempool[tx]['unbroadcast'], True)
+            assert_equal(mempool[tx]["unbroadcast"], True)
 
         # check that second node doesn't have these two txns
         mempool = self.nodes[1].getrawmempool()
@@ -74,7 +71,7 @@ class MempoolUnbroadcastTest(BitcoinTestFramework):
         self.restart_node(0)
 
         self.log.info("Reconnect nodes & check if they are sent to node 1")
-        connect_nodes(node, self.nodes[1])
+        self.connect_nodes(node.index, 1)
 
         # fast forward into the future & ensure that the second node has the
         # txns
@@ -87,10 +84,11 @@ class MempoolUnbroadcastTest(BitcoinTestFramework):
         # check that transactions are no longer in first node's unbroadcast set
         mempool = self.nodes[0].getrawmempool(True)
         for tx in mempool:
-            assert_equal(mempool[tx]['unbroadcast'], False)
+            assert_equal(mempool[tx]["unbroadcast"], False)
 
         self.log.info(
-            "Add another connection & ensure transactions aren't broadcast again")
+            "Add another connection & ensure transactions aren't broadcast again"
+        )
 
         conn = node.add_p2p_connection(P2PTxInvStore())
         node.mockscheduler(MAX_INITIAL_BROADCAST_DELAY)
@@ -98,12 +96,23 @@ class MempoolUnbroadcastTest(BitcoinTestFramework):
         time.sleep(2)
         assert_equal(len(conn.get_invs()), 0)
 
-        disconnect_nodes(node, self.nodes[1])
+        self.disconnect_nodes(node.index, 1)
         node.disconnect_p2ps()
+
+        self.log.info(
+            "Rebroadcast transaction and ensure it is not added to unbroadcast set when"
+            " already in mempool"
+        )
+        rpc_tx_hsh = node.sendrawtransaction(txFS["hex"])
+        mempool = node.getrawmempool(True)
+        assert rpc_tx_hsh in mempool
+        assert not mempool[rpc_tx_hsh]["unbroadcast"]
 
     def test_txn_removal(self):
         self.log.info(
-            "Test that transactions removed from mempool are removed from unbroadcast set")
+            "Test that transactions removed from mempool are removed from"
+            " unbroadcast set"
+        )
         node = self.nodes[0]
 
         # since the node doesn't have any connections, it will not receive
@@ -114,10 +123,12 @@ class MempoolUnbroadcastTest(BitcoinTestFramework):
 
         # check transaction was removed from unbroadcast set due to presence in
         # a block
-        removal_reason = "Removed {} from set of unbroadcast txns before " \
-                         "confirmation that txn was sent out".format(txhsh)
+        removal_reason = (
+            f"Removed {txhsh} from set of unbroadcast txns before confirmation that "
+            "txn was sent out"
+        )
         with node.assert_debug_log([removal_reason]):
-            node.generate(1)
+            self.generate(node, 1, sync_fun=self.no_op)
 
 
 if __name__ == "__main__":

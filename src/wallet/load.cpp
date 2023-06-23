@@ -5,68 +5,88 @@
 
 #include <wallet/load.h>
 
+#include <fs.h>
 #include <interfaces/chain.h>
 #include <scheduler.h>
 #include <util/string.h>
 #include <util/system.h>
 #include <util/translation.h>
+#include <wallet/spend.h>
 #include <wallet/wallet.h>
 #include <wallet/walletdb.h>
 
-bool VerifyWallets(const CChainParams &chainParams, interfaces::Chain &chain,
-                   const std::vector<std::string> &wallet_files) {
+#include <univalue.h>
+
+#include <system_error>
+
+bool VerifyWallets(interfaces::Chain &chain) {
     if (gArgs.IsArgSet("-walletdir")) {
-        fs::path wallet_dir = gArgs.GetArg("-walletdir", "");
-        boost::system::error_code error;
+        const fs::path wallet_dir{gArgs.GetPathArg("-walletdir")};
+        std::error_code error;
         // The canonical path cleans the path, preventing >1 Berkeley
         // environment instances for the same directory
         fs::path canonical_wallet_dir = fs::canonical(wallet_dir, error);
-        if (error || !fs::exists(wallet_dir)) {
+        if (error || !fs::exists(canonical_wallet_dir)) {
             chain.initError(
                 strprintf(_("Specified -walletdir \"%s\" does not exist"),
-                          wallet_dir.string()));
+                          fs::PathToString(wallet_dir)));
             return false;
-        } else if (!fs::is_directory(wallet_dir)) {
+        } else if (!fs::is_directory(canonical_wallet_dir)) {
             chain.initError(
                 strprintf(_("Specified -walletdir \"%s\" is not a directory"),
-                          wallet_dir.string()));
+                          fs::PathToString(wallet_dir)));
             return false;
             // The canonical path transforms relative paths into absolute ones,
             // so we check the non-canonical version
         } else if (!wallet_dir.is_absolute()) {
             chain.initError(
                 strprintf(_("Specified -walletdir \"%s\" is a relative path"),
-                          wallet_dir.string()));
+                          fs::PathToString(wallet_dir)));
             return false;
         }
-        gArgs.ForceSetArg("-walletdir", canonical_wallet_dir.string());
+        gArgs.ForceSetArg("-walletdir", fs::PathToString(canonical_wallet_dir));
     }
 
-    LogPrintf("Using wallet directory %s\n", GetWalletDir().string());
+    LogPrintf("Using wallet directory %s\n", fs::PathToString(GetWalletDir()));
 
     chain.initMessage(_("Verifying wallet(s)...").translated);
+
+    // For backwards compatibility if an unnamed top level wallet exists in the
+    // wallets directory, include it in the default list of wallets to load.
+    if (!gArgs.IsArgSet("wallet")) {
+        DatabaseOptions options;
+        DatabaseStatus status;
+        bilingual_str error_string;
+        options.require_existing = true;
+        options.verify = false;
+        if (MakeWalletDatabase("", options, status, error_string)) {
+            gArgs.LockSettings([&](util::Settings &settings) {
+                util::SettingsValue wallets(util::SettingsValue::VARR);
+                // Default wallet name is ""
+                wallets.push_back("");
+                settings.rw_settings["wallet"] = wallets;
+            });
+        }
+    }
 
     // Keep track of each wallet absolute path to detect duplicates.
     std::set<fs::path> wallet_paths;
 
-    for (const auto &wallet_file : wallet_files) {
-        WalletLocation location(wallet_file);
+    for (const auto &wallet_file : gArgs.GetArgs("-wallet")) {
+        const fs::path path = fsbridge::AbsPathJoin(
+            GetWalletDir(), fs::PathFromString(wallet_file));
 
-        if (!wallet_paths.insert(location.GetPath()).second) {
-            chain.initError(strprintf(_("Error loading wallet %s. Duplicate "
-                                        "-wallet filename specified."),
-                                      wallet_file));
-            return false;
+        if (!wallet_paths.insert(path).second) {
+            chain.initWarning(
+                strprintf(_("Ignoring duplicate -wallet %s."), wallet_file));
+            continue;
         }
 
+        DatabaseOptions options;
+        DatabaseStatus status;
+        options.verify = true;
         bilingual_str error_string;
-        std::vector<bilingual_str> warnings;
-        bool verify_success = CWallet::Verify(chainParams, chain, location,
-                                              error_string, warnings);
-        if (!warnings.empty()) {
-            chain.initWarning(Join(warnings, Untranslated("\n")));
-        }
-        if (!verify_success) {
+        if (!MakeWalletDatabase(wallet_file, options, status, error_string)) {
             chain.initError(error_string);
             return false;
         }
@@ -75,15 +95,27 @@ bool VerifyWallets(const CChainParams &chainParams, interfaces::Chain &chain,
     return true;
 }
 
-bool LoadWallets(const CChainParams &chainParams, interfaces::Chain &chain,
-                 const std::vector<std::string> &wallet_files) {
+bool LoadWallets(interfaces::Chain &chain) {
     try {
-        for (const std::string &walletFile : wallet_files) {
+        std::set<fs::path> wallet_paths;
+        for (const std::string &name : gArgs.GetArgs("-wallet")) {
+            if (!wallet_paths.insert(fs::PathFromString(name)).second) {
+                continue;
+            }
+            DatabaseOptions options;
+            DatabaseStatus status;
+            // No need to verify, assuming verified earlier in VerifyWallets()
+            options.verify = false;
             bilingual_str error;
             std::vector<bilingual_str> warnings;
-            std::shared_ptr<CWallet> pwallet = CWallet::CreateWalletFromFile(
-                chainParams, chain, WalletLocation(walletFile), error,
-                warnings);
+            std::unique_ptr<WalletDatabase> database =
+                MakeWalletDatabase(name, options, status, error);
+            std::shared_ptr<CWallet> pwallet =
+                database
+                    ? CWallet::Create(chain, name, std::move(database),
+                                      options.create_flags, error, warnings)
+                    : nullptr;
+
             if (!warnings.empty()) {
                 chain.initWarning(Join(warnings, Untranslated("\n")));
             }
@@ -124,13 +156,13 @@ void StartWallets(CScheduler &scheduler, const ArgsManager &args) {
 
 void FlushWallets() {
     for (const std::shared_ptr<CWallet> &pwallet : GetWallets()) {
-        pwallet->Flush(false);
+        pwallet->Flush();
     }
 }
 
 void StopWallets() {
     for (const std::shared_ptr<CWallet> &pwallet : GetWallets()) {
-        pwallet->Flush(true);
+        pwallet->Close();
     }
 }
 
@@ -139,7 +171,8 @@ void UnloadWallets() {
     while (!wallets.empty()) {
         auto wallet = wallets.back();
         wallets.pop_back();
-        RemoveWallet(wallet);
+        std::vector<bilingual_str> warnings;
+        RemoveWallet(wallet, std::nullopt, warnings);
         UnloadWallet(std::move(wallet));
     }
 }

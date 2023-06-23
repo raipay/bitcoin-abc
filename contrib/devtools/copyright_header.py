@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # Copyright (c) 2016 The Bitcoin Core developers
-# Copyright (c) 2017 The Bitcoin developers
+# Copyright (c) 2017-2019 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-import re
-import fnmatch
-import sys
-import subprocess
 import datetime
+import fnmatch
 import os
+import re
+import subprocess
+import sys
 
 ##########################################################################
 # file filtering
@@ -17,17 +17,18 @@ import os
 
 EXCLUDE = [
     # auto generated:
-    'src/qt/bitcoinstrings.cpp',
-    'src/chainparamsseeds.h',
+    "src/qt/bitcoinstrings.cpp",
+    "src/chainparamsseeds.h",
     # other external copyrights:
-    'src/tinyformat.h',
-    'src/bench/nanobench.h',
-    'test/functional/test_framework/bignum.py',
+    "src/reverse_iterator.h",
+    "src/test/fuzz/FuzzedDataProvider.h",
+    "src/tinyformat.h",
+    "src/bench/nanobench.h",
+    "test/functional/test_framework/bignum.py",
     # python init:
-    '*__init__.py',
+    "*__init__.py",
 ]
-EXCLUDE_COMPILED = re.compile(
-    '|'.join([fnmatch.translate(m) for m in EXCLUDE]))
+EXCLUDE_COMPILED = re.compile("|".join([fnmatch.translate(m) for m in EXCLUDE]))
 
 EXCLUDE_DIRS = [
     # git subtrees
@@ -37,82 +38,85 @@ EXCLUDE_DIRS = [
     "src/univalue/",
 ]
 
-INCLUDE = ['*.h', '*.cpp', '*.cc', '*.c', '*.py']
-INCLUDE_COMPILED = re.compile(
-    '|'.join([fnmatch.translate(m) for m in INCLUDE]))
+INCLUDE = ["*.h", "*.cpp", "*.cc", "*.c", "*.mm", "*.py", "*.sh", "*.bash-completion"]
+INCLUDE_COMPILED = re.compile("|".join([fnmatch.translate(m) for m in INCLUDE]))
 
 
 def applies_to_file(filename):
     for excluded_dir in EXCLUDE_DIRS:
         if filename.startswith(excluded_dir):
             return False
-    return ((EXCLUDE_COMPILED.match(filename) is None)
-            and (INCLUDE_COMPILED.match(filename) is not None))
+    return (EXCLUDE_COMPILED.match(filename) is None) and (
+        INCLUDE_COMPILED.match(filename) is not None
+    )
+
 
 ##########################################################################
 # obtain list of files in repo according to INCLUDE and EXCLUDE
 ##########################################################################
 
 
-GIT_LS_CMD = 'git ls-files'
+GIT_LS_CMD = "git ls-files --full-name".split(" ")
+GIT_TOPLEVEL_CMD = "git rev-parse --show-toplevel".split(" ")
 
 
-def call_git_ls():
-    out = subprocess.check_output(GIT_LS_CMD.split(' '))
-    return [f for f in out.decode("utf-8").split('\n') if f != '']
+def call_git_ls(base_directory):
+    out = subprocess.check_output([*GIT_LS_CMD, base_directory])
+    return [f for f in out.decode("utf-8").split("\n") if f != ""]
 
 
-def get_filenames_to_examine():
-    filenames = call_git_ls()
-    return sorted([filename for filename in filenames if
-                   applies_to_file(filename)])
+def call_git_toplevel():
+    "Returns the absolute path to the project root"
+    return subprocess.check_output(GIT_TOPLEVEL_CMD).strip().decode("utf-8")
+
+
+def get_filenames_to_examine(base_directory):
+    "Returns an array of absolute paths to any project files in the base_directory that pass the include/exclude filters"
+    root = call_git_toplevel()
+    filenames = call_git_ls(base_directory)
+    return sorted(
+        [
+            os.path.join(root, filename)
+            for filename in filenames
+            if applies_to_file(filename)
+        ]
+    )
+
 
 ##########################################################################
 # define and compile regexes for the patterns we are looking for
 ##########################################################################
 
 
-COPYRIGHT_WITH_C = r'Copyright \(c\)'
-COPYRIGHT_WITHOUT_C = 'Copyright'
-ANY_COPYRIGHT_STYLE = '({}|{})'.format(COPYRIGHT_WITH_C, COPYRIGHT_WITHOUT_C)
+COPYRIGHT_WITH_C = r"Copyright \(c\)"
+COPYRIGHT_WITHOUT_C = "Copyright"
+ANY_COPYRIGHT_STYLE = f"({COPYRIGHT_WITH_C}|{COPYRIGHT_WITHOUT_C})"
 
 YEAR = "20[0-9][0-9]"
-YEAR_RANGE = '({})(-{})?'.format(YEAR, YEAR)
-YEAR_LIST = '({})(, {})+'.format(YEAR, YEAR)
-ANY_YEAR_STYLE = '({}|{})'.format(YEAR_RANGE, YEAR_LIST)
-ANY_COPYRIGHT_STYLE_OR_YEAR_STYLE = (
-    "{} {}".format(ANY_COPYRIGHT_STYLE, ANY_YEAR_STYLE))
+YEAR_RANGE = f"({YEAR})(-{YEAR})?"
+YEAR_LIST = f"({YEAR})(, {YEAR})+"
+ANY_YEAR_STYLE = f"({YEAR_RANGE}|{YEAR_LIST})"
+ANY_COPYRIGHT_STYLE_OR_YEAR_STYLE = f"{ANY_COPYRIGHT_STYLE} {ANY_YEAR_STYLE}"
 
 ANY_COPYRIGHT_COMPILED = re.compile(ANY_COPYRIGHT_STYLE_OR_YEAR_STYLE)
 
 
 def compile_copyright_regex(copyright_style, year_style, name):
-    return re.compile('{} {},? {}'.format(copyright_style, year_style, name))
+    return re.compile(f"{copyright_style} {year_style},? {name}")
 
 
 EXPECTED_HOLDER_NAMES = [
     r"Satoshi Nakamoto\n",
     r"The Bitcoin Core developers\n",
-    r"The Bitcoin Core developers \n",
-    r"Bitcoin Core Developers\n",
-    r"the Bitcoin Core developers\n",
     r"The Bitcoin developers\n",
-    r"The LevelDB Authors\. All rights reserved\.\n",
+    r"The Bitcoin ABC developers\n",
     r"BitPay Inc\.\n",
-    r"BitPay, Inc\.\n",
     r"University of Illinois at Urbana-Champaign\.\n",
-    r"MarcoFalke\n",
     r"Pieter Wuille\n",
-    r"Pieter Wuille +\*\n",
-    r"Pieter Wuille, Gregory Maxwell +\*\n",
-    r"Pieter Wuille, Andrew Poelstra +\*\n",
-    r"Andrew Poelstra +\*\n",
+    r"Pieter Wuille, Shammah Chancellor, Neil Booth",
     r"Wladimir J. van der Laan\n",
     r"Jeff Garzik\n",
-    r"Diederik Huys, Pieter Wuille +\*\n",
-    r"Thomas Daede, Cory Fields +\*\n",
     r"Jan-Klaas Kollhof\n",
-    r"Sam Rushing\n",
     r"ArtForz -- public domain half-a-node\n",
     r"Amaury SÉCHET\n",
     r"Intel Corporation\n",
@@ -125,13 +129,15 @@ YEAR_LIST_STYLE_COMPILED = {}
 WITHOUT_C_STYLE_COMPILED = {}
 
 for holder_name in EXPECTED_HOLDER_NAMES:
-    DOMINANT_STYLE_COMPILED[holder_name] = (
-        compile_copyright_regex(COPYRIGHT_WITH_C, YEAR_RANGE, holder_name))
-    YEAR_LIST_STYLE_COMPILED[holder_name] = (
-        compile_copyright_regex(COPYRIGHT_WITH_C, YEAR_LIST, holder_name))
-    WITHOUT_C_STYLE_COMPILED[holder_name] = (
-        compile_copyright_regex(COPYRIGHT_WITHOUT_C, ANY_YEAR_STYLE,
-                                holder_name))
+    DOMINANT_STYLE_COMPILED[holder_name] = compile_copyright_regex(
+        COPYRIGHT_WITH_C, YEAR_RANGE, holder_name
+    )
+    YEAR_LIST_STYLE_COMPILED[holder_name] = compile_copyright_regex(
+        COPYRIGHT_WITH_C, YEAR_LIST, holder_name
+    )
+    WITHOUT_C_STYLE_COMPILED[holder_name] = compile_copyright_regex(
+        COPYRIGHT_WITHOUT_C, ANY_YEAR_STYLE, holder_name
+    )
 
 ##########################################################################
 # search file contents for copyright message of particular category
@@ -156,138 +162,158 @@ def file_has_without_c_style_copyright_for_holder(contents, holder_name):
     match = WITHOUT_C_STYLE_COMPILED[holder_name].search(contents)
     return match is not None
 
+
 ##########################################################################
 # get file info
 ##########################################################################
 
 
 def read_file(filename):
-    return open(os.path.abspath(filename), 'r', encoding="utf8").read()
+    return open(filename, "r", encoding="utf8").read()
 
 
 def gather_file_info(filename):
     info = {}
-    info['filename'] = filename
+    info["filename"] = filename
     c = read_file(filename)
-    info['contents'] = c
+    info["contents"] = c
 
-    info['all_copyrights'] = get_count_of_copyrights_of_any_style_any_holder(c)
+    info["all_copyrights"] = get_count_of_copyrights_of_any_style_any_holder(c)
 
-    info['classified_copyrights'] = 0
-    info['dominant_style'] = {}
-    info['year_list_style'] = {}
-    info['without_c_style'] = {}
+    info["classified_copyrights"] = 0
+    info["dominant_style"] = {}
+    info["year_list_style"] = {}
+    info["without_c_style"] = {}
     for holder_name in EXPECTED_HOLDER_NAMES:
-        has_dominant_style = (
-            file_has_dominant_style_copyright_for_holder(c, holder_name))
-        has_year_list_style = (
-            file_has_year_list_style_copyright_for_holder(c, holder_name))
-        has_without_c_style = (
-            file_has_without_c_style_copyright_for_holder(c, holder_name))
-        info['dominant_style'][holder_name] = has_dominant_style
-        info['year_list_style'][holder_name] = has_year_list_style
-        info['without_c_style'][holder_name] = has_without_c_style
+        has_dominant_style = file_has_dominant_style_copyright_for_holder(
+            c, holder_name
+        )
+        has_year_list_style = file_has_year_list_style_copyright_for_holder(
+            c, holder_name
+        )
+        has_without_c_style = file_has_without_c_style_copyright_for_holder(
+            c, holder_name
+        )
+        info["dominant_style"][holder_name] = has_dominant_style
+        info["year_list_style"][holder_name] = has_year_list_style
+        info["without_c_style"][holder_name] = has_without_c_style
         if has_dominant_style or has_year_list_style or has_without_c_style:
-            info['classified_copyrights'] = info['classified_copyrights'] + 1
+            info["classified_copyrights"] = info["classified_copyrights"] + 1
     return info
+
 
 ##########################################################################
 # report execution
 ##########################################################################
 
 
-SEPARATOR = '-'.join(['' for _ in range(80)])
+SEPARATOR = "-".join(["" for _ in range(80)])
 
 
 def print_filenames(filenames, verbose):
     if not verbose:
         return
     for filename in filenames:
-        print("\t{}".format(filename))
+        print(f"\t{filename}")
 
 
 def print_report(file_infos, verbose):
     print(SEPARATOR)
-    examined = [i['filename'] for i in file_infos]
-    print("{} files examined according to INCLUDE and EXCLUDE fnmatch rules".format(
-        len(examined)))
+    examined = [i["filename"] for i in file_infos]
+    print(
+        f"{len(examined)} files examined according to INCLUDE and EXCLUDE fnmatch rules"
+    )
     print_filenames(examined, verbose)
 
     print(SEPARATOR)
-    print('')
-    zero_copyrights = [i['filename'] for i in file_infos if
-                       i['all_copyrights'] == 0]
-    print("{:4d} with zero copyrights".format(len(zero_copyrights)))
+    print("")
+    zero_copyrights = [i["filename"] for i in file_infos if i["all_copyrights"] == 0]
+    print(f"{len(zero_copyrights):4d} with zero copyrights")
     print_filenames(zero_copyrights, verbose)
-    one_copyright = [i['filename'] for i in file_infos if
-                     i['all_copyrights'] == 1]
-    print("{:4d} with one copyright".format(len(one_copyright)))
+    one_copyright = [i["filename"] for i in file_infos if i["all_copyrights"] == 1]
+    print(f"{len(one_copyright):4d} with one copyright")
     print_filenames(one_copyright, verbose)
-    two_copyrights = [i['filename'] for i in file_infos if
-                      i['all_copyrights'] == 2]
-    print("{:4d} with two copyrights".format(len(two_copyrights)))
+    two_copyrights = [i["filename"] for i in file_infos if i["all_copyrights"] == 2]
+    print(f"{len(two_copyrights):4d} with two copyrights")
     print_filenames(two_copyrights, verbose)
-    three_copyrights = [i['filename'] for i in file_infos if
-                        i['all_copyrights'] == 3]
-    print("{:4d} with three copyrights".format(len(three_copyrights)))
+    three_copyrights = [i["filename"] for i in file_infos if i["all_copyrights"] == 3]
+    print(f"{len(three_copyrights):4d} with three copyrights")
     print_filenames(three_copyrights, verbose)
-    four_or_more_copyrights = [i['filename'] for i in file_infos if
-                               i['all_copyrights'] >= 4]
-    print("{:4d} with four or more copyrights".format(
-        len(four_or_more_copyrights)))
+    four_or_more_copyrights = [
+        i["filename"] for i in file_infos if i["all_copyrights"] >= 4
+    ]
+    print(f"{len(four_or_more_copyrights):4d} with four or more copyrights")
     print_filenames(four_or_more_copyrights, verbose)
-    print('')
+    print("")
     print(SEPARATOR)
-    print('Copyrights with dominant style:\ne.g. "Copyright (c)" and '
-          '"<year>" or "<startYear>-<endYear>":\n')
+    print(
+        'Copyrights with dominant style:\ne.g. "Copyright (c)" and '
+        '"<year>" or "<startYear>-<endYear>":\n'
+    )
     for holder_name in EXPECTED_HOLDER_NAMES:
-        dominant_style = [i['filename'] for i in file_infos if
-                          i['dominant_style'][holder_name]]
+        dominant_style = [
+            i["filename"] for i in file_infos if i["dominant_style"][holder_name]
+        ]
         if len(dominant_style) > 0:
-            print("{:4d} with '{}'".format(
-                len(dominant_style), holder_name.replace('\n', '\\n')))
+            print(
+                "{:4d} with '{}'".format(
+                    len(dominant_style), holder_name.replace("\n", "\\n")
+                )
+            )
             print_filenames(dominant_style, verbose)
-    print('')
+    print("")
     print(SEPARATOR)
-    print('Copyrights with year list style:\ne.g. "Copyright (c)" and '
-          '"<year1>, <year2>, ...":\n')
+    print(
+        'Copyrights with year list style:\ne.g. "Copyright (c)" and '
+        '"<year1>, <year2>, ...":\n'
+    )
     for holder_name in EXPECTED_HOLDER_NAMES:
-        year_list_style = [i['filename'] for i in file_infos if
-                           i['year_list_style'][holder_name]]
+        year_list_style = [
+            i["filename"] for i in file_infos if i["year_list_style"][holder_name]
+        ]
         if len(year_list_style) > 0:
-            print("{:4d} with '{}'".format(
-                len(year_list_style), holder_name.replace('\n', '\\n')))
+            print(
+                "{:4d} with '{}'".format(
+                    len(year_list_style), holder_name.replace("\n", "\\n")
+                )
+            )
             print_filenames(year_list_style, verbose)
-    print('')
+    print("")
     print(SEPARATOR)
-    print('Copyrights with no "(c)" style:\ne.g. "Copyright" and "<year>" or '
-          '"<startYear>-<endYear>":\n')
+    print(
+        'Copyrights with no "(c)" style:\ne.g. "Copyright" and "<year>" or '
+        '"<startYear>-<endYear>":\n'
+    )
     for holder_name in EXPECTED_HOLDER_NAMES:
-        without_c_style = [i['filename'] for i in file_infos if
-                           i['without_c_style'][holder_name]]
+        without_c_style = [
+            i["filename"] for i in file_infos if i["without_c_style"][holder_name]
+        ]
         if len(without_c_style) > 0:
-            print("{:4d} with '{}'".format(
-                len(without_c_style), holder_name.replace('\n', '\\n')))
+            print(
+                "{:4d} with '{}'".format(
+                    len(without_c_style), holder_name.replace("\n", "\\n")
+                )
+            )
             print_filenames(without_c_style, verbose)
 
-    print('')
+    print("")
     print(SEPARATOR)
 
-    unclassified_copyrights = [i['filename'] for i in file_infos if
-                               i['classified_copyrights'] < i['all_copyrights']]
-    print("{} with unexpected copyright holder names".format(
-        len(unclassified_copyrights)))
+    unclassified_copyrights = [
+        i["filename"]
+        for i in file_infos
+        if i["classified_copyrights"] < i["all_copyrights"]
+    ]
+    print(f"{len(unclassified_copyrights)} with unexpected copyright holder names")
     print_filenames(unclassified_copyrights, verbose)
     print(SEPARATOR)
 
 
 def exec_report(base_directory, verbose):
-    original_cwd = os.getcwd()
-    os.chdir(base_directory)
-    filenames = get_filenames_to_examine()
+    filenames = get_filenames_to_examine(base_directory)
     file_infos = [gather_file_info(f) for f in filenames]
     print_report(file_infos, verbose)
-    os.chdir(original_cwd)
+
 
 ##########################################################################
 # report cmd
@@ -313,16 +339,17 @@ def report_cmd(argv):
 
     base_directory = argv[2]
     if not os.path.exists(base_directory):
-        sys.exit("*** bad <base_directory>: {}".format(base_directory))
+        sys.exit(f"*** bad <base_directory>: {base_directory}")
 
     if len(argv) == 3:
         verbose = False
-    elif argv[3] == 'verbose':
+    elif argv[3] == "verbose":
         verbose = True
     else:
-        sys.exit("*** unknown argument: {}".format(argv[2]))
+        sys.exit(f"*** unknown argument: {argv[2]}")
 
     exec_report(base_directory, verbose)
+
 
 ##########################################################################
 # query git for year of last change
@@ -333,8 +360,8 @@ GIT_LOG_CMD = "git log --pretty=format:%ai {}"
 
 
 def call_git_log(filename):
-    out = subprocess.check_output((GIT_LOG_CMD.format(filename)).split(' '))
-    return out.decode("utf-8").split('\n')
+    out = subprocess.check_output((GIT_LOG_CMD.format(filename)).split(" "))
+    return out.decode("utf-8").split("\n")
 
 
 def get_git_change_years(filename):
@@ -342,11 +369,12 @@ def get_git_change_years(filename):
     if len(git_log_lines) == 0:
         return [datetime.date.today().year]
     # timestamp is in ISO 8601 format. e.g. "2016-09-05 14:25:32 -0600"
-    return [line.split(' ')[0].split('-')[0] for line in git_log_lines]
+    return [line.split(" ")[0].split("-")[0] for line in git_log_lines]
 
 
 def get_most_recent_git_change_year(filename):
     return max(get_git_change_years(filename))
+
 
 ##########################################################################
 # read and write to file
@@ -354,31 +382,32 @@ def get_most_recent_git_change_year(filename):
 
 
 def read_file_lines(filename):
-    f = open(os.path.abspath(filename), 'r', encoding="utf8")
+    f = open(filename, "r", encoding="utf8")
     file_lines = f.readlines()
     f.close()
     return file_lines
 
 
 def write_file_lines(filename, file_lines):
-    f = open(os.path.abspath(filename), 'w', encoding="utf8")
-    f.write(''.join(file_lines))
+    f = open(filename, "w", encoding="utf8")
+    f.write("".join(file_lines))
     f.close()
+
 
 ##########################################################################
 # update header years execution
 ##########################################################################
 
 
-COPYRIGHT = r'Copyright \(c\)'
+COPYRIGHT = r"Copyright \(c\)"
 YEAR = "20[0-9][0-9]"
-YEAR_RANGE = '({})(-{})?'.format(YEAR, YEAR)
-HOLDER = 'The Bitcoin developers'
-UPDATEABLE_LINE_COMPILED = re.compile(
-    ' '.join([COPYRIGHT, YEAR_RANGE, HOLDER]))
+YEAR_RANGE = f"({YEAR})(-{YEAR})?"
+HOLDER = "The Bitcoin developers"
+UPDATEABLE_LINE_COMPILED = re.compile(" ".join([COPYRIGHT, YEAR_RANGE, HOLDER]))
 
 DISTRIBUTION_LINE = re.compile(
-    r"Distributed under the MIT software license, see the accompanying")
+    r"Distributed under the MIT software license, see the accompanying"
+)
 
 
 def get_updatable_copyright_line(file_lines):
@@ -400,7 +429,7 @@ def find_distribution_line_index(file_lines):
 
 
 def parse_year_range(year_range):
-    year_split = year_range.split('-')
+    year_split = year_range.split("-")
     start_year = year_split[0]
     if len(year_split) == 1:
         return start_year, start_year
@@ -410,25 +439,29 @@ def parse_year_range(year_range):
 def year_range_to_str(start_year, end_year):
     if start_year == end_year:
         return start_year
-    return "{}-{}".format(start_year, end_year)
+    return f"{start_year}-{end_year}"
 
 
 def create_updated_copyright_line(line, last_git_change_year):
-    copyright_splitter = 'Copyright (c) '
+    copyright_splitter = "Copyright (c) "
     copyright_split = line.split(copyright_splitter)
     # Preserve characters on line that are ahead of the start of the copyright
     # notice - they are part of the comment block and vary from file-to-file.
     before_copyright = copyright_split[0]
     after_copyright = copyright_split[1]
 
-    space_split = after_copyright.split(' ')
+    space_split = after_copyright.split(" ")
     year_range = space_split[0]
     start_year, end_year = parse_year_range(year_range)
     if end_year == last_git_change_year:
         return line
-    return (before_copyright + copyright_splitter
-            + year_range_to_str(start_year, last_git_change_year) + ' '
-            + ' '.join(space_split[1:]))
+    return (
+        before_copyright
+        + copyright_splitter
+        + year_range_to_str(start_year, last_git_change_year)
+        + " "
+        + " ".join(space_split[1:])
+    )
 
 
 def update_updatable_copyright(filename):
@@ -444,17 +477,13 @@ def update_updatable_copyright(filename):
         return
     file_lines[index] = new_line
     write_file_lines(filename, file_lines)
-    print_file_action_message(filename,
-                              "Copyright updated! -> {}".format(
-                                  last_git_change_year))
+    print_file_action_message(filename, f"Copyright updated! -> {last_git_change_year}")
 
 
 def exec_update_header_year(base_directory):
-    original_cwd = os.getcwd()
-    os.chdir(base_directory)
-    for filename in get_filenames_to_examine():
+    for filename in get_filenames_to_examine(base_directory):
         update_updatable_copyright(filename)
-    os.chdir(original_cwd)
+
 
 ##########################################################################
 # update cmd
@@ -492,7 +521,7 @@ Arguments:
 
 
 def print_file_action_message(filename, action):
-    print("{:52s} {}".format(filename, action))
+    print(f"{filename:52s} {action}")
 
 
 def update_cmd(argv):
@@ -501,8 +530,9 @@ def update_cmd(argv):
 
     base_directory = argv[2]
     if not os.path.exists(base_directory):
-        sys.exit("*** bad base_directory: {}".format(base_directory))
+        sys.exit(f"*** bad base_directory: {base_directory}")
     exec_update_header_year(base_directory)
+
 
 ##########################################################################
 # inserted copyright header format
@@ -510,31 +540,32 @@ def update_cmd(argv):
 
 
 def get_header_lines(header, start_year, end_year):
-    lines = header.split('\n')[1:-1]
+    lines = header.split("\n")[1:-1]
     lines[0] = lines[0].format(year_range_to_str(start_year, end_year))
-    return [line + '\n' for line in lines]
+    return [line + "\n" for line in lines]
 
 
-CPP_HEADER = '''
+CPP_HEADER = """
 // Copyright (c) {} The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
-'''
+"""
 
 
 def get_cpp_header_lines_to_insert(start_year, end_year):
     return reversed(get_header_lines(CPP_HEADER, start_year, end_year))
 
 
-PYTHON_HEADER = '''
+SCRIPT_HEADER = """
 # Copyright (c) {} The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-'''
+"""
 
 
-def get_python_header_lines_to_insert(start_year, end_year):
-    return reversed(get_header_lines(PYTHON_HEADER, start_year, end_year))
+def get_script_header_lines_to_insert(start_year, end_year):
+    return reversed(get_header_lines(SCRIPT_HEADER, start_year, end_year))
+
 
 ##########################################################################
 # query git for year of last change
@@ -545,6 +576,7 @@ def get_git_change_year_range(filename):
     years = get_git_change_years(filename)
     return min(years), max(years)
 
+
 ##########################################################################
 # check for existing ABC copyright
 ##########################################################################
@@ -553,6 +585,7 @@ def get_git_change_year_range(filename):
 def file_already_has_bitcoin_copyright(file_lines):
     index, _ = get_updatable_copyright_line(file_lines)
     return index is not None
+
 
 ##########################################################################
 # insert header execution
@@ -564,11 +597,11 @@ def file_has_hashbang(file_lines):
         return False
     if len(file_lines[0]) <= 2:
         return False
-    return file_lines[0][:2] == '#!'
+    return file_lines[0][:2] == "#!"
 
 
-def insert_python_header(filename, file_lines, start_year, end_year):
-    header_lines = get_python_header_lines_to_insert(start_year, end_year)
+def insert_script_header(filename, file_lines, start_year, end_year):
+    header_lines = get_script_header_lines_to_insert(start_year, end_year)
     insert_idx = find_distribution_line_index(file_lines)
     if insert_idx is not None:
         file_lines.insert(insert_idx, list(header_lines)[-1])
@@ -583,6 +616,7 @@ def insert_python_header(filename, file_lines, start_year, end_year):
 
 
 def insert_cpp_header(filename, file_lines, start_year, end_year):
+    file_lines.insert(0, "\n")
     header_lines = get_cpp_header_lines_to_insert(start_year, end_year)
     insert_idx = find_distribution_line_index(file_lines)
     if insert_idx is not None:
@@ -596,13 +630,13 @@ def insert_cpp_header(filename, file_lines, start_year, end_year):
 def exec_insert_header(filename, style):
     file_lines = read_file_lines(filename)
     if file_already_has_bitcoin_copyright(file_lines):
-        sys.exit('*** {} already has a copyright by The Bitcoin developers'.format(
-            filename))
+        sys.exit(f"*** {filename} already has a copyright by The Bitcoin developers")
     start_year, end_year = get_git_change_year_range(filename)
-    if style == 'python':
-        insert_python_header(filename, file_lines, start_year, end_year)
+    if style in ["python", "shell"]:
+        insert_script_header(filename, file_lines, start_year, end_year)
     else:
         insert_cpp_header(filename, file_lines, start_year, end_year)
+
 
 ##########################################################################
 # insert cmd
@@ -641,16 +675,19 @@ def insert_cmd(argv):
 
     filename = argv[2]
     if not os.path.isfile(filename):
-        sys.exit("*** bad filename: {}".format(filename))
+        sys.exit(f"*** bad filename: {filename}")
     _, extension = os.path.splitext(filename)
-    if extension not in ['.h', '.cpp', '.cc', '.c', '.py']:
-        sys.exit("*** cannot insert for file extension {}".format(extension))
+    if extension not in [".h", ".cpp", ".cc", ".c", ".py", ".sh"]:
+        sys.exit(f"*** cannot insert for file extension {extension}")
 
-    if extension == '.py':
-        style = 'python'
+    if extension == ".py":
+        style = "python"
+    elif extension == ".sh":
+        style = "shell"
     else:
-        style = 'cpp'
+        style = "cpp"
     exec_insert_header(filename, style)
+
 
 ##########################################################################
 # UI
@@ -672,7 +709,7 @@ Subcommands:
 To see subcommand usage, run them without arguments.
 """
 
-SUBCOMMANDS = ['report', 'update', 'insert']
+SUBCOMMANDS = ["report", "update", "insert"]
 
 if __name__ == "__main__":
     if len(sys.argv) == 1:
@@ -680,9 +717,9 @@ if __name__ == "__main__":
     subcommand = sys.argv[1]
     if subcommand not in SUBCOMMANDS:
         sys.exit(USAGE)
-    if subcommand == 'report':
+    if subcommand == "report":
         report_cmd(sys.argv)
-    elif subcommand == 'update':
+    elif subcommand == "update":
         update_cmd(sys.argv)
-    elif subcommand == 'insert':
+    elif subcommand == "insert":
         insert_cmd(sys.argv)

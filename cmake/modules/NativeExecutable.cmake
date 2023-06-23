@@ -1,6 +1,10 @@
 # Allow to easily build native executable.
 # Useful for cross compilation.
 
+if (POLICY CMP0116)
+	cmake_policy(SET CMP0116 NEW)
+endif()
+
 if(NOT DEFINED __IS_NATIVE_BUILD)
 	# Check if we are in a native build or not.
 	set(__IS_NATIVE_BUILD 0 CACHE INTERNAL "Indicate if this is a native build")
@@ -25,6 +29,19 @@ function(non_native_target_link_libraries TARGET LIB VERSION)
 			find_package(${LIB} ${VERSION} REQUIRED COMPONENTS ${COMPONENT})
 		endif()
 
+		target_link_libraries(${TARGET} ${LIB}::${COMPONENT})
+	endforeach()
+endfunction()
+
+function(non_native_target_link_headers_only TARGET LIB VERSION)
+	# Drop dependency during native builds
+	if(__IS_NATIVE_BUILD)
+		return()
+	endif()
+
+	# Header only libraries have imported targets with no associated component
+	find_package(${LIB} ${VERSION} REQUIRED)
+	foreach(COMPONENT ${ARGN})
 		target_link_libraries(${TARGET} ${LIB}::${COMPONENT})
 	endforeach()
 endfunction()

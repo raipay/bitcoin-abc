@@ -43,6 +43,7 @@ add_executable(bitcoin-bench
 	ccoins_caching.cpp
 	chacha_poly_aead.cpp
 	chacha20.cpp
+	chained_tx.cpp
 	checkblock.cpp
 	checkqueue.cpp
 	crypto_aes.cpp
@@ -57,6 +58,7 @@ add_executable(bitcoin-bench
 	mempool_stress.cpp
 	merkle_root.cpp
 	nanobench.cpp
+	peer_eviction.cpp
 	poly1305.cpp
 	prevector.cpp
 	rollingbloom.cpp

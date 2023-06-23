@@ -12,11 +12,13 @@
 #include <scheduler.h>
 #include <script/script.h>
 #include <streams.h>
+#include <txorphanage.h>
 #include <validationinterface.h>
 #include <version.h>
 
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
+#include <test/fuzz/util.h>
 #include <test/util/mining.h>
 #include <test/util/net.h>
 #include <test/util/setup_common.h>
@@ -45,14 +47,8 @@ const TestingSetup *g_setup;
 } // namespace
 
 void initialize() {
-    static TestingSetup setup{
-        CBaseChainParams::REGTEST,
-        {
-            "-nodebuglogfile",
-        },
-    };
-    g_setup = &setup;
-
+    static const auto testing_setup = MakeFuzzingContext<const TestingSetup>();
+    g_setup = testing_setup.get();
     for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
         MineBlock(GetConfig(), g_setup->m_node, CScript() << OP_TRUE);
     }
@@ -75,9 +71,10 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         PROTOCOL_VERSION};
     CNode &p2p_node =
         *std::make_unique<CNode>(
-             0, ServiceFlags(NODE_NETWORK | NODE_BLOOM), 0, INVALID_SOCKET,
+             0, ServiceFlags(NODE_NETWORK | NODE_BLOOM), INVALID_SOCKET,
              CAddress{CService{in_addr{0x0100007f}, 7777}, NODE_NETWORK}, 0, 0,
-             0, CAddress{}, std::string{}, ConnectionType::OUTBOUND)
+             0, CAddress{}, std::string{}, ConnectionType::OUTBOUND_FULL_RELAY,
+             false)
              .release();
     p2p_node.fSuccessfullyConnected = true;
     p2p_node.nVersion = PROTOCOL_VERSION;
@@ -91,7 +88,5 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     } catch (const std::ios_base::failure &) {
     }
     SyncWithValidationInterfaceQueue();
-    // See init.cpp for rationale for implicit locking order requirement
-    LOCK2(::cs_main, g_cs_orphans);
     g_setup->m_node.connman->StopNodes();
 }

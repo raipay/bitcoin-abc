@@ -5,6 +5,7 @@
 
 #include <script/sign.h>
 
+#include <consensus/amount.h>
 #include <key.h>
 #include <policy/policy.h>
 #include <primitives/transaction.h>
@@ -363,7 +364,7 @@ bool SignSignature(const SigningProvider &provider, const CTransaction &txFrom,
                    CMutableTransaction &txTo, unsigned int nIn,
                    SigHashType sigHashType) {
     assert(nIn < txTo.vin.size());
-    CTxIn &txin = txTo.vin[nIn];
+    const CTxIn &txin = txTo.vin[nIn];
     assert(txin.prevout.GetN() < txFrom.vout.size());
     const CTxOut &txout = txFrom.vout[txin.prevout.GetN()];
 

@@ -5,7 +5,7 @@
 #ifndef BITCOIN_QT_TRANSACTIONRECORD_H
 #define BITCOIN_QT_TRANSACTIONRECORD_H
 
-#include <amount.h>
+#include <consensus/amount.h>
 #include <primitives/blockhash.h>
 #include <primitives/txid.h>
 
@@ -35,10 +35,6 @@ public:
          */
         Confirmed,
         /// Normal (sent/received) transactions
-        /** Transaction not yet final, waiting for date */
-        OpenUntilDate,
-        /** Transaction not yet final, waiting for block */
-        OpenUntilBlock,
         /** Not yet mined into a block **/
         Unconfirmed,
         /**

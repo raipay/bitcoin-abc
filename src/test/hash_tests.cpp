@@ -117,13 +117,13 @@ BOOST_AUTO_TEST_CASE(siphash) {
 
     // Check test vectors from spec, one byte at a time
     CSipHasher hasher2(0x0706050403020100ULL, 0x0F0E0D0C0B0A0908ULL);
-    for (uint8_t x = 0; x < ARRAYLEN(siphash_4_2_testvec); ++x) {
+    for (uint8_t x = 0; x < std::size(siphash_4_2_testvec); ++x) {
         BOOST_CHECK_EQUAL(hasher2.Finalize(), siphash_4_2_testvec[x]);
         hasher2.Write(&x, 1);
     }
     // Check test vectors from spec, eight bytes at a time
     CSipHasher hasher3(0x0706050403020100ULL, 0x0F0E0D0C0B0A0908ULL);
-    for (uint8_t x = 0; x < ARRAYLEN(siphash_4_2_testvec); x += 8) {
+    for (uint8_t x = 0; x < std::size(siphash_4_2_testvec); x += 8) {
         BOOST_CHECK_EQUAL(hasher3.Finalize(), siphash_4_2_testvec[x]);
         hasher3.Write(uint64_t(x) | (uint64_t(x + 1) << 8) |
                       (uint64_t(x + 2) << 16) | (uint64_t(x + 3) << 24) |
@@ -199,6 +199,26 @@ BOOST_AUTO_TEST_CASE(hashverifier_tests) {
     CHashWriter h1(SER_DISK, CLIENT_VERSION);
     h1 << dummy;
     BOOST_CHECK(h1.GetHash() != checksum);
+}
+
+BOOST_AUTO_TEST_CASE(sh256_tests) {
+    CHashWriter h0(SER_DISK, CLIENT_VERSION);
+    h0.write("abc", 3);
+    BOOST_CHECK_EQUAL(
+        h0.GetSHA256().GetHex(),
+        "ad1500f261ff10b49c7a1796a36103b02322ae5dde404141eacf018fbf1678ba");
+
+    CHashWriter h1(SER_DISK, CLIENT_VERSION);
+    h1.write("", 0);
+    BOOST_CHECK_EQUAL(
+        h1.GetSHA256().GetHex(),
+        "55b852781b9995a44c939b64e441ae2724b96f99c8f4fb9a141cfc9842c4b0e3");
+
+    CHashWriter h2(SER_DISK, CLIENT_VERSION);
+    h2.write("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", 56);
+    BOOST_CHECK_EQUAL(
+        h2.GetSHA256().GetHex(),
+        "c106db19d4edecf66721ff6459e43ca339603e0c9326c0e5b83806d2616a8d24");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

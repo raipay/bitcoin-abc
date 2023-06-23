@@ -12,41 +12,38 @@
 
 namespace avalanche {
 
+struct TestProofBuilder;
+
 class ProofBuilder {
     uint64_t sequence;
     int64_t expirationTime;
-    CPubKey master;
+    CKey masterKey;
+    CScript payoutScriptPubKey;
 
-    struct StakeSigner {
-        Stake stake;
-        CKey key;
-
-        StakeSigner(Stake stake_, CKey key_)
-            : stake(std::move(stake_)), key(std::move(key_)) {}
-
-        SignedStake sign(const ProofId &proofid);
+    struct SignedStakeComparator {
+        bool operator()(const SignedStake &lhs, const SignedStake &rhs) const {
+            return lhs.getStake().getId() < rhs.getStake().getId();
+        }
     };
-
-    std::vector<StakeSigner> stakes;
+    std::set<SignedStake, SignedStakeComparator> stakes;
 
 public:
-    ProofBuilder(uint64_t sequence_, int64_t expirationTime_, CPubKey master_)
+    ProofBuilder(uint64_t sequence_, int64_t expirationTime_, CKey masterKey_,
+                 const CScript &payoutScriptPubKey_)
         : sequence(sequence_), expirationTime(expirationTime_),
-          master(std::move(master_)) {}
+          masterKey(std::move(masterKey_)),
+          payoutScriptPubKey(payoutScriptPubKey_) {}
 
-    bool addUTXO(COutPoint utxo, Amount amount, uint32_t height,
-                 bool is_coinbase, CKey key);
+    [[nodiscard]] bool addUTXO(COutPoint utxo, Amount amount, uint32_t height,
+                               bool is_coinbase, CKey key);
 
-    Proof build();
-
-    /**
-     * Builds a randomized (and therefore invalid) Proof.
-     * Useful for tests.
-     */
-    static Proof buildRandom(uint32_t score);
+    ProofRef build();
 
 private:
+    LimitedProofId getLimitedProofId() const;
     ProofId getProofId() const;
+
+    friend struct TestProofBuilder;
 };
 
 } // namespace avalanche

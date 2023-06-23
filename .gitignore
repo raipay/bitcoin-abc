@@ -52,13 +52,13 @@ src/qt/bitcoin-qt.includes
 # Only ignore unexpected patches
 *.patch
 !depends/patches/**/*.patch
+!contrib/guix/**/*.patch
 
 # Compilation and Qt preprocessor part
 *.qm
 Makefile
 bitcoin-qt
 Bitcoin-Qt.app
-background.tiff*
 
 # Resources cpp
 qrc_*.cpp
@@ -83,3 +83,16 @@ contrib/devtools/split-debug.sh
 
 # Ignore node_modules at every level
 node_modules/
+
+# Ignore secrets.js for JS apps that use secret keys, e.g. databases or telegram bots
+secrets.js
+
+# Local Netlify folder
+.netlify
+
+# arc liberate cache file
+.phutil_module_cache
+
+# GUIX
+/output/
+/var/

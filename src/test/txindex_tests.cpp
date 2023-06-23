@@ -7,6 +7,7 @@
 #include <chainparams.h>
 #include <script/standard.h>
 #include <util/time.h>
+#include <validation.h>
 
 #include <test/util/setup_common.h>
 
@@ -29,7 +30,7 @@ BOOST_FIXTURE_TEST_CASE(txindex_initial_sync, TestChain100Setup) {
     // started.
     BOOST_CHECK(!txindex.BlockUntilSyncedToCurrentChain());
 
-    txindex.Start();
+    BOOST_REQUIRE(txindex.Start(m_node.chainman->ActiveChainstate()));
 
     // Allow tx index to catch up with the block index.
     constexpr int64_t timeout_ms = 10 * 1000;

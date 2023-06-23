@@ -519,7 +519,7 @@ public:
         return first;
     }
 
-    template <typename... Args> void emplace_back(Args &&... args) {
+    template <typename... Args> void emplace_back(Args &&...args) {
         size_type new_size = size() + 1;
         if (capacity() < new_size) {
             change_capacity(new_size + (new_size >> 1));
@@ -540,7 +540,7 @@ public:
 
     const T &back() const { return *item_ptr(size() - 1); }
 
-    void swap(prevector<N, T, Size, Diff> &other) {
+    void swap(prevector<N, T, Size, Diff> &other) noexcept {
         std::swap(_union, other._union);
         std::swap(_size, other._size);
     }

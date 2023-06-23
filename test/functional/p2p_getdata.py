@@ -5,10 +5,7 @@
 """Test GETDATA processing behavior"""
 from collections import defaultdict
 
-from test_framework.messages import (
-    CInv,
-    msg_getdata,
-)
+from test_framework.messages import CInv, msg_getdata
 from test_framework.p2p import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
 
@@ -31,7 +28,8 @@ class GetdataTest(BitcoinTestFramework):
         p2p_block_store = self.nodes[0].add_p2p_connection(P2PStoreBlock())
 
         self.log.info(
-            "test that an invalid GETDATA doesn't prevent processing of future messages")
+            "test that an invalid GETDATA doesn't prevent processing of future messages"
+        )
 
         # Send invalid message and verify that node responds to later ping
         invalid_getdata = msg_getdata()
@@ -43,9 +41,8 @@ class GetdataTest(BitcoinTestFramework):
         good_getdata = msg_getdata()
         good_getdata.inv.append(CInv(t=2, h=best_block))
         p2p_block_store.send_and_ping(good_getdata)
-        p2p_block_store.wait_until(
-            lambda: self.nodes[0].p2ps[0].blocks[best_block] == 1)
+        p2p_block_store.wait_until(lambda: p2p_block_store.blocks[best_block] == 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     GetdataTest().main()

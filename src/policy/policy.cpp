@@ -57,7 +57,7 @@ bool IsStandard(const CScript &scriptPubKey, TxoutType &whichType) {
         }
 
         unsigned nMaxDatacarrierBytes =
-            gArgs.GetArg("-datacarriersize", MAX_OP_RETURN_RELAY);
+            gArgs.GetIntArg("-datacarriersize", MAX_OP_RETURN_RELAY);
         if (scriptPubKey.size() > nMaxDatacarrierBytes) {
             return false;
         }
@@ -68,7 +68,10 @@ bool IsStandard(const CScript &scriptPubKey, TxoutType &whichType) {
 
 bool IsStandardTx(const CTransaction &tx, bool permit_bare_multisig,
                   const CFeeRate &dust_relay_fee, std::string &reason) {
-    if (tx.nVersion > CTransaction::MAX_STANDARD_VERSION || tx.nVersion < 1) {
+    // Only allow these tx versions, there is no point accepting a tx that
+    // violates the consensus rules
+    if (tx.nVersion > CTransaction::MAX_VERSION ||
+        tx.nVersion < CTransaction::MIN_VERSION) {
         reason = "version";
         return false;
     }
@@ -159,19 +162,19 @@ bool AreInputsStandard(const CTransaction &tx, const CCoinsViewCache &mapInputs,
     return true;
 }
 
-int64_t GetVirtualTransactionSize(int64_t nSize, int64_t nSigOpCount,
-                                  unsigned int bytes_per_sigop) {
-    return std::max(nSize, nSigOpCount * bytes_per_sigop);
+int64_t GetVirtualTransactionSize(int64_t nSize, int64_t nSigChecks,
+                                  unsigned int bytes_per_sigCheck) {
+    return std::max(nSize, nSigChecks * bytes_per_sigCheck);
 }
 
-int64_t GetVirtualTransactionSize(const CTransaction &tx, int64_t nSigOpCount,
-                                  unsigned int bytes_per_sigop) {
+int64_t GetVirtualTransactionSize(const CTransaction &tx, int64_t nSigChecks,
+                                  unsigned int bytes_per_sigCheck) {
     return GetVirtualTransactionSize(::GetSerializeSize(tx, PROTOCOL_VERSION),
-                                     nSigOpCount, bytes_per_sigop);
+                                     nSigChecks, bytes_per_sigCheck);
 }
 
-int64_t GetVirtualTransactionInputSize(const CTxIn &txin, int64_t nSigOpCount,
-                                       unsigned int bytes_per_sigop) {
+int64_t GetVirtualTransactionInputSize(const CTxIn &txin, int64_t nSigChecks,
+                                       unsigned int bytes_per_sigCheck) {
     return GetVirtualTransactionSize(::GetSerializeSize(txin, PROTOCOL_VERSION),
-                                     nSigOpCount, bytes_per_sigop);
+                                     nSigChecks, bytes_per_sigCheck);
 }

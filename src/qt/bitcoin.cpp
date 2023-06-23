@@ -25,7 +25,6 @@
 #include <qt/utilitydialog.h>
 #include <qt/winshutdownmonitor.h>
 #include <uint256.h>
-#include <util/ref.h>
 #include <util/system.h>
 #include <util/threadnames.h>
 #include <util/translation.h>
@@ -49,6 +48,8 @@
 
 #include <boost/signals2/connection.hpp>
 
+#include <any>
+
 #if defined(QT_STATICPLUGIN)
 #include <QtPlugin>
 #if defined(QT_QPA_PLATFORM_XCB)
@@ -57,6 +58,7 @@ Q_IMPORT_PLUGIN(QXcbIntegrationPlugin);
 Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin);
 #elif defined(QT_QPA_PLATFORM_COCOA)
 Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin);
+Q_IMPORT_PLUGIN(QMacStylePlugin);
 #endif
 #endif
 
@@ -68,6 +70,8 @@ Q_DECLARE_METATYPE(uint256)
 
 // Config is non-copyable so we can only register pointers to it
 Q_DECLARE_METATYPE(Config *)
+
+using node::NodeContext;
 
 static void RegisterMetaTypes() {
     // Register meta types used for QMetaObject::invokeMethod and
@@ -185,9 +189,8 @@ void BitcoinABC::handleRunawayException(const std::exception *e) {
 void BitcoinABC::initialize(Config *config, RPCServer *rpcServer,
                             HTTPRPCRequestProcessor *httpRPCRequestProcessor) {
     try {
-        qDebug() << __func__ << ": Running initialization in thread";
         util::ThreadRename("qt-init");
-
+        qDebug() << __func__ << ": Running initialization in thread";
         interfaces::BlockAndHeaderTipInfo tip_info;
         bool rv = m_node.appInitMain(*config, *rpcServer,
                                      *httpRPCRequestProcessor, &tip_info);
@@ -219,6 +222,7 @@ BitcoinApplication::BitcoinApplication()
     : QApplication(qt_argc, const_cast<char **>(&qt_argv)), coreThread(nullptr),
       optionsModel(nullptr), clientModel(nullptr), window(nullptr),
       pollShutdownTimer(nullptr), returnValue(0), platformStyle(nullptr) {
+    // Qt runs setlocale(LC_ALL, "") on initialization.
     RegisterMetaTypes();
     setQuitOnLastWindowClosed(false);
 }
@@ -279,6 +283,8 @@ void BitcoinApplication::createSplashScreen(const NetworkStyle *networkStyle) {
     // the splash screen will take care of deleting itself when finish()
     // happens.
     m_splash->show();
+    connect(this, &BitcoinApplication::requestedInitialize, m_splash,
+            &SplashScreen::handleLoadWallet);
     connect(this, &BitcoinApplication::splashFinished, m_splash,
             &SplashScreen::finish);
     connect(this, &BitcoinApplication::requestedShutdown, m_splash,
@@ -469,7 +475,7 @@ void BitcoinApplication::handleRunawayException(const QString &message) {
         BitcoinGUI::tr("A fatal error occurred. %1 can no longer continue "
                        "safely and will quit.")
                 .arg(PACKAGE_NAME) +
-            QString("\n\n") + message);
+            QString("<br><br>") + message);
     ::exit(EXIT_FAILURE);
 }
 
@@ -641,6 +647,11 @@ int GuiMain(int argc, char *argv[]) {
         return EXIT_SUCCESS;
     }
 
+    // Install global event filter that makes sure that long tooltips can be
+    // word-wrapped
+    app.installEventFilter(
+        new GUIUtil::ToolTipToRichTextFilter(TOOLTIP_WRAP_THRESHOLD, &app));
+
     /// 5. Now that settings and translations are available, ask user for data
     /// directory. User language is set up: pick a data directory.
     bool did_show_intro = false;
@@ -653,7 +664,7 @@ int GuiMain(int argc, char *argv[]) {
 
     /// 6. Determine availability of data directory and parse
     /// bitcoin.conf
-    /// - Do not call GetDataDir(true) before this step finishes.
+    /// - Do not call gArgs.GetDataDirNet() before this step finishes.
     if (!CheckDataDirOption()) {
         InitError(strprintf(
             Untranslated("Specified data directory \"%s\" does not exist.\n"),
@@ -737,10 +748,9 @@ int GuiMain(int argc, char *argv[]) {
 #endif // ENABLE_WALLET
 
     /// 9. Main GUI initialization
-    // Install global event filter that makes sure that long tooltips can be
-    // word-wrapped.
-    app.installEventFilter(
-        new GUIUtil::ToolTipToRichTextFilter(TOOLTIP_WRAP_THRESHOLD, &app));
+    // Install global event filter that makes sure that out-of-focus labels do
+    // not contain text cursor.
+    app.installEventFilter(new GUIUtil::LabelOutOfFocusEventFilter(&app));
 #if defined(Q_OS_WIN)
     // Install global event filter for processing Windows session related
     // Windows messages (WM_QUERYENDSESSION and WM_ENDSESSION)
@@ -770,7 +780,7 @@ int GuiMain(int argc, char *argv[]) {
     app.setNode(*node);
 
     RPCServer rpcServer;
-    util::Ref context{node_context};
+    std::any context{&node_context};
     HTTPRPCRequestProcessor httpRPCRequestProcessor(config, rpcServer, context);
 
     try {

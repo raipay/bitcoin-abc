@@ -6,8 +6,10 @@
 #ifndef BITCOIN_NETMESSAGEMAKER_H
 #define BITCOIN_NETMESSAGEMAKER_H
 
-#include <net.h>
 #include <serialize.h>
+
+struct CSerializedNetMsg;
+class CVectorWriter;
 
 class CNetMsgMaker {
 public:
@@ -15,7 +17,7 @@ public:
 
     template <typename... Args>
     CSerializedNetMsg Make(int nFlags, std::string msg_type,
-                           Args &&... args) const {
+                           Args &&...args) const {
         CSerializedNetMsg msg;
         msg.m_type = std::move(msg_type);
         CVectorWriter{SER_NETWORK, nFlags | nVersion, msg.data, 0,
@@ -24,7 +26,7 @@ public:
     }
 
     template <typename... Args>
-    CSerializedNetMsg Make(std::string msg_type, Args &&... args) const {
+    CSerializedNetMsg Make(std::string msg_type, Args &&...args) const {
         return Make(0, std::move(msg_type), std::forward<Args>(args)...);
     }
 

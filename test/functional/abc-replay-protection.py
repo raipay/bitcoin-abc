@@ -18,21 +18,14 @@ from test_framework.blocktools import (
     make_conform_to_ctor,
 )
 from test_framework.key import ECKey
-from test_framework.messages import (
-    COIN,
-    COutPoint,
-    CTransaction,
-    CTxIn,
-    CTxOut,
-    ToHex,
-)
+from test_framework.messages import COIN, COutPoint, CTransaction, CTxIn, CTxOut, ToHex
 from test_framework.p2p import P2PDataStore
 from test_framework.script import (
-    CScript,
     OP_CHECKSIG,
     OP_TRUE,
     SIGHASH_ALL,
     SIGHASH_FORKID,
+    CScript,
     SignatureHashForkId,
 )
 from test_framework.test_framework import BitcoinTestFramework
@@ -42,28 +35,32 @@ from test_framework.util import assert_equal, assert_raises_rpc_error
 REPLAY_PROTECTION_START_TIME = 2000000000
 
 # Error due to invalid signature
-RPC_INVALID_SIGNATURE_ERROR = "mandatory-script-verify-flag-failed (Signature must be zero for failed CHECK(MULTI)SIG operation)"
+RPC_INVALID_SIGNATURE_ERROR = (
+    "mandatory-script-verify-flag-failed (Signature must be zero for failed"
+    " CHECK(MULTI)SIG operation)"
+)
 
 
 class PreviousSpendableOutput(object):
-
     def __init__(self, tx=CTransaction(), n=-1):
         self.tx = tx
         self.n = n
 
 
 class ReplayProtectionTest(BitcoinTestFramework):
-
     def set_test_params(self):
         self.num_nodes = 1
         self.setup_clean_chain = True
         self.block_heights = {}
         self.tip = None
         self.blocks = {}
-        self.extra_args = [['-whitelist=noban@127.0.0.1',
-                            "-replayprotectionactivationtime={}".format(
-                                REPLAY_PROTECTION_START_TIME),
-                            "-acceptnonstdtxn=1"]]
+        self.extra_args = [
+            [
+                "-whitelist=noban@127.0.0.1",
+                f"-replayprotectionactivationtime={REPLAY_PROTECTION_START_TIME}",
+                "-acceptnonstdtxn=1",
+            ]
+        ]
 
     def next_block(self, number):
         if self.tip is None:
@@ -75,7 +72,6 @@ class ReplayProtectionTest(BitcoinTestFramework):
         # First create the coinbase
         height = self.block_heights[base_block_hash] + 1
         coinbase = create_coinbase(height)
-        coinbase.rehash()
         block = create_block(base_block_hash, coinbase, block_time)
 
         # Do PoW, which is cheap on regnet
@@ -86,9 +82,15 @@ class ReplayProtectionTest(BitcoinTestFramework):
         self.blocks[number] = block
         return block
 
+    def set_tip(self, number: int):
+        """
+        Move the tip back to a previous block.
+        """
+        self.tip = self.blocks[number]
+
     def run_test(self):
         node = self.nodes[0]
-        node.add_p2p_connection(P2PDataStore())
+        peer = node.add_p2p_connection(P2PDataStore())
         node.setmocktime(REPLAY_PROTECTION_START_TIME)
 
         self.genesis_hash = int(node.getbestblockhash(), 16)
@@ -103,10 +105,6 @@ class ReplayProtectionTest(BitcoinTestFramework):
         def get_spendable_output():
             return PreviousSpendableOutput(spendable_outputs.pop(0).vtx[0], 0)
 
-        # move the tip back to a previous block
-        def tip(number):
-            self.tip = self.blocks[number]
-
         # adds transactions to the block and updates state
         def update_block(block_number, new_transactions):
             block = self.blocks[block_number]
@@ -118,8 +116,7 @@ class ReplayProtectionTest(BitcoinTestFramework):
             # Update the internal state just like in next_block
             self.tip = block
             if block.sha256 != old_sha256:
-                self.block_heights[
-                    block.sha256] = self.block_heights[old_sha256]
+                self.block_heights[block.sha256] = self.block_heights[old_sha256]
                 del self.block_heights[old_sha256]
             self.blocks[block_number] = block
             return block
@@ -130,7 +127,7 @@ class ReplayProtectionTest(BitcoinTestFramework):
         # Create a new block
         block(0)
         save_spendable_output()
-        node.p2p.send_blocks_and_test([self.tip], node)
+        peer.send_blocks_and_test([self.tip], node)
 
         # Now we need that block to mature so we can spend the coinbase.
         maturity_blocks = []
@@ -138,14 +135,14 @@ class ReplayProtectionTest(BitcoinTestFramework):
             block(5000 + i)
             maturity_blocks.append(self.tip)
             save_spendable_output()
-        node.p2p.send_blocks_and_test(maturity_blocks, node)
+        peer.send_blocks_and_test(maturity_blocks, node)
 
         # collect spendable outputs now to avoid cluttering the code later on
         out = []
         for i in range(100):
             out.append(get_spendable_output())
 
-        # Generate a key pair to test P2SH sigops count
+        # Generate a key pair to test P2SH sigCheck count
         private_key = ECKey()
         private_key.generate()
         public_key = private_key.get_pubkey().get_bytes()
@@ -155,20 +152,23 @@ class ReplayProtectionTest(BitcoinTestFramework):
             # Fund transaction
             script = CScript([public_key, OP_CHECKSIG])
             txfund = create_tx_with_script(
-                spend.tx, spend.n, b'', amount=50 * COIN - 1000, script_pub_key=script)
+                spend.tx, spend.n, b"", amount=50 * COIN - 1000, script_pub_key=script
+            )
             txfund.rehash()
 
             # Spend transaction
             txspend = CTransaction()
             txspend.vout.append(CTxOut(50 * COIN - 2000, CScript([OP_TRUE])))
-            txspend.vin.append(CTxIn(COutPoint(txfund.sha256, 0), b''))
+            txspend.vin.append(CTxIn(COutPoint(txfund.sha256, 0), b""))
 
             # Sign the transaction
             sighashtype = (forkvalue << 8) | SIGHASH_ALL | SIGHASH_FORKID
             sighash = SignatureHashForkId(
-                script, txspend, 0, sighashtype, 50 * COIN - 1000)
-            sig = private_key.sign_ecdsa(sighash) + \
-                bytes(bytearray([SIGHASH_ALL | SIGHASH_FORKID]))
+                script, txspend, 0, sighashtype, 50 * COIN - 1000
+            )
+            sig = private_key.sign_ecdsa(sighash) + bytes(
+                bytearray([SIGHASH_ALL | SIGHASH_FORKID])
+            )
             txspend.vin[0].scriptSig = CScript([sig])
             txspend.rehash()
 
@@ -187,51 +187,61 @@ class ReplayProtectionTest(BitcoinTestFramework):
         # And txns get mined in a block properly.
         block(1)
         update_block(1, txns)
-        node.p2p.send_blocks_and_test([self.tip], node)
+        peer.send_blocks_and_test([self.tip], node)
 
         # Replay protected transactions are rejected.
-        replay_txns = create_fund_and_spend_tx(out[1], 0xffdead)
+        replay_txns = create_fund_and_spend_tx(out[1], 0xFFDEAD)
         send_transaction_to_mempool(replay_txns[0])
-        assert_raises_rpc_error(-26, RPC_INVALID_SIGNATURE_ERROR,
-                                node.sendrawtransaction, ToHex(replay_txns[1]))
+        assert_raises_rpc_error(
+            -26,
+            RPC_INVALID_SIGNATURE_ERROR,
+            node.sendrawtransaction,
+            ToHex(replay_txns[1]),
+        )
 
         # And block containing them are rejected as well.
         block(2)
         update_block(2, replay_txns)
-        node.p2p.send_blocks_and_test(
-            [self.tip], node, success=False, reject_reason='blk-bad-inputs')
+        peer.send_blocks_and_test(
+            [self.tip], node, success=False, reject_reason="blk-bad-inputs"
+        )
 
         # Rewind bad block
-        tip(1)
+        self.set_tip(1)
 
         # Create a block that would activate the replay protection.
         bfork = block(5555)
         bfork.nTime = REPLAY_PROTECTION_START_TIME - 1
         update_block(5555, [])
-        node.p2p.send_blocks_and_test([self.tip], node)
+        peer.send_blocks_and_test([self.tip], node)
 
         activation_blocks = []
         for i in range(5):
             block(5100 + i)
             activation_blocks.append(self.tip)
-        node.p2p.send_blocks_and_test(activation_blocks, node)
+        peer.send_blocks_and_test(activation_blocks, node)
 
         # Check we are just before the activation time
         assert_equal(
-            node.getblockchaininfo()['mediantime'],
-            REPLAY_PROTECTION_START_TIME - 1)
+            node.getblockchaininfo()["mediantime"], REPLAY_PROTECTION_START_TIME - 1
+        )
 
         # We are just before the fork, replay protected txns still are rejected
-        assert_raises_rpc_error(-26, RPC_INVALID_SIGNATURE_ERROR,
-                                node.sendrawtransaction, ToHex(replay_txns[1]))
+        assert_raises_rpc_error(
+            -26,
+            RPC_INVALID_SIGNATURE_ERROR,
+            node.sendrawtransaction,
+            ToHex(replay_txns[1]),
+        )
 
         block(3)
         update_block(3, replay_txns)
-        node.p2p.send_blocks_and_test(
-            [self.tip], node, success=False, reject_reason='blk-bad-inputs')
+        peer.send_blocks_and_test(
+            [self.tip], node, success=False, reject_reason="blk-bad-inputs"
+        )
 
         # Rewind bad block
-        tip(5104)
+        self.set_tip(5104)
 
         # Send some non replay protected txns in the mempool to check
         # they get cleaned at activation.
@@ -241,12 +251,12 @@ class ReplayProtectionTest(BitcoinTestFramework):
 
         # Activate the replay protection
         block(5556)
-        node.p2p.send_blocks_and_test([self.tip], node)
+        peer.send_blocks_and_test([self.tip], node)
 
         # Check we just activated the replay protection
         assert_equal(
-            node.getblockchaininfo()['mediantime'],
-            REPLAY_PROTECTION_START_TIME)
+            node.getblockchaininfo()["mediantime"], REPLAY_PROTECTION_START_TIME
+        )
 
         # Non replay protected transactions are not valid anymore,
         # so they should be removed from the mempool.
@@ -254,17 +264,19 @@ class ReplayProtectionTest(BitcoinTestFramework):
 
         # Good old transactions are now invalid.
         send_transaction_to_mempool(txns[0])
-        assert_raises_rpc_error(-26, RPC_INVALID_SIGNATURE_ERROR,
-                                node.sendrawtransaction, ToHex(txns[1]))
+        assert_raises_rpc_error(
+            -26, RPC_INVALID_SIGNATURE_ERROR, node.sendrawtransaction, ToHex(txns[1])
+        )
 
         # They also cannot be mined
         block(4)
         update_block(4, txns)
-        node.p2p.send_blocks_and_test(
-            [self.tip], node, success=False, reject_reason='blk-bad-inputs')
+        peer.send_blocks_and_test(
+            [self.tip], node, success=False, reject_reason="blk-bad-inputs"
+        )
 
         # Rewind bad block
-        tip(5556)
+        self.set_tip(5556)
 
         # The replay protected transaction is now valid
         replay_tx0_id = send_transaction_to_mempool(replay_txns[0])
@@ -276,8 +288,8 @@ class ReplayProtectionTest(BitcoinTestFramework):
         found_id0 = False
         found_id1 = False
 
-        for txn in tmpl['transactions']:
-            txid = txn['txid']
+        for txn in tmpl["transactions"]:
+            txid = txn["txid"]
             if txid == replay_tx0_id:
                 found_id0 = True
             elif txid == replay_tx1_id:
@@ -292,7 +304,7 @@ class ReplayProtectionTest(BitcoinTestFramework):
         # They also can also be mined
         block(5)
         update_block(5, replay_txns)
-        node.p2p.send_blocks_and_test([self.tip], node)
+        peer.send_blocks_and_test([self.tip], node)
 
         # Ok, now we check if a reorg work properly across the activation.
         postforkblockid = node.getbestblockhash()
@@ -316,5 +328,5 @@ class ReplayProtectionTest(BitcoinTestFramework):
         assert replay_tx1_id not in set(node.getrawmempool())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     ReplayProtectionTest().main()

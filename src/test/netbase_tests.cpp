@@ -5,6 +5,7 @@
 #include <netbase.h>
 
 #include <net_permissions.h>
+#include <netaddress.h>
 #include <protocol.h>
 #include <serialize.h>
 #include <streams.h>
@@ -17,6 +18,8 @@
 #include <boost/test/unit_test.hpp>
 
 #include <string>
+
+using namespace std::literals;
 
 BOOST_FIXTURE_TEST_SUITE(netbase_tests, BasicTestingSetup)
 
@@ -78,30 +81,31 @@ BOOST_AUTO_TEST_CASE(netbase_properties) {
     BOOST_CHECK(CreateInternal("bar.com").IsInternal());
 }
 
-static bool TestSplitHost(std::string test, std::string host, int port) {
+static bool TestSplitHost(const std::string &test, const std::string &host,
+                          uint16_t port) {
     std::string hostOut;
-    int portOut = -1;
+    uint16_t portOut{0};
     SplitHostPort(test, portOut, hostOut);
     return hostOut == host && port == portOut;
 }
 
 BOOST_AUTO_TEST_CASE(netbase_splithost) {
-    BOOST_CHECK(TestSplitHost("www.bitcoin.org", "www.bitcoin.org", -1));
-    BOOST_CHECK(TestSplitHost("[www.bitcoin.org]", "www.bitcoin.org", -1));
+    BOOST_CHECK(TestSplitHost("www.bitcoin.org", "www.bitcoin.org", 0));
+    BOOST_CHECK(TestSplitHost("[www.bitcoin.org]", "www.bitcoin.org", 0));
     BOOST_CHECK(TestSplitHost("www.bitcoin.org:80", "www.bitcoin.org", 80));
     BOOST_CHECK(TestSplitHost("[www.bitcoin.org]:80", "www.bitcoin.org", 80));
-    BOOST_CHECK(TestSplitHost("127.0.0.1", "127.0.0.1", -1));
+    BOOST_CHECK(TestSplitHost("127.0.0.1", "127.0.0.1", 0));
     BOOST_CHECK(TestSplitHost("127.0.0.1:8333", "127.0.0.1", 8333));
-    BOOST_CHECK(TestSplitHost("[127.0.0.1]", "127.0.0.1", -1));
+    BOOST_CHECK(TestSplitHost("[127.0.0.1]", "127.0.0.1", 0));
     BOOST_CHECK(TestSplitHost("[127.0.0.1]:8333", "127.0.0.1", 8333));
-    BOOST_CHECK(TestSplitHost("::ffff:127.0.0.1", "::ffff:127.0.0.1", -1));
+    BOOST_CHECK(TestSplitHost("::ffff:127.0.0.1", "::ffff:127.0.0.1", 0));
     BOOST_CHECK(
         TestSplitHost("[::ffff:127.0.0.1]:8333", "::ffff:127.0.0.1", 8333));
     BOOST_CHECK(TestSplitHost("[::]:8333", "::", 8333));
-    BOOST_CHECK(TestSplitHost("::8333", "::8333", -1));
+    BOOST_CHECK(TestSplitHost("::8333", "::8333", 0));
     BOOST_CHECK(TestSplitHost(":8333", "", 8333));
     BOOST_CHECK(TestSplitHost("[]:8333", "", 8333));
-    BOOST_CHECK(TestSplitHost("", "", -1));
+    BOOST_CHECK(TestSplitHost("", "", 0));
 }
 
 static bool TestParse(std::string src, std::string canon) {
@@ -405,58 +409,101 @@ BOOST_AUTO_TEST_CASE(netpermissions_test) {
     BOOST_CHECK(NetWhitebindPermissions::TryParse("1.2.3.4:32",
                                                   whitebindPermissions, error));
     BOOST_CHECK(error.empty());
-    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, PF_ISIMPLICIT);
-    BOOST_CHECK(
-        NetPermissions::HasFlag(whitebindPermissions.m_flags, PF_ISIMPLICIT));
-    NetPermissions::ClearFlag(whitebindPermissions.m_flags, PF_ISIMPLICIT);
-    BOOST_CHECK(
-        !NetPermissions::HasFlag(whitebindPermissions.m_flags, PF_ISIMPLICIT));
-    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, PF_NONE);
-    NetPermissions::AddFlag(whitebindPermissions.m_flags, PF_ISIMPLICIT);
-    BOOST_CHECK(
-        NetPermissions::HasFlag(whitebindPermissions.m_flags, PF_ISIMPLICIT));
+    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags,
+                      NetPermissionFlags::Implicit);
+    BOOST_CHECK(NetPermissions::HasFlag(whitebindPermissions.m_flags,
+                                        NetPermissionFlags::Implicit));
+    NetPermissions::ClearFlag(whitebindPermissions.m_flags,
+                              NetPermissionFlags::Implicit);
+    BOOST_CHECK(!NetPermissions::HasFlag(whitebindPermissions.m_flags,
+                                         NetPermissionFlags::Implicit));
+    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, NetPermissionFlags::None);
+    NetPermissions::AddFlag(whitebindPermissions.m_flags,
+                            NetPermissionFlags::Implicit);
+    BOOST_CHECK(NetPermissions::HasFlag(whitebindPermissions.m_flags,
+                                        NetPermissionFlags::Implicit));
 
     // Can set one permission
     BOOST_CHECK(NetWhitebindPermissions::TryParse("bloom@1.2.3.4:32",
                                                   whitebindPermissions, error));
-    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, PF_BLOOMFILTER);
+    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags,
+                      NetPermissionFlags::BloomFilter);
     BOOST_CHECK(NetWhitebindPermissions::TryParse("@1.2.3.4:32",
                                                   whitebindPermissions, error));
-    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, PF_NONE);
+    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, NetPermissionFlags::None);
+
+    NetWhitebindPermissions noban, noban_download, download_noban, download;
+
+    // "noban" implies "download"
+    BOOST_REQUIRE(
+        NetWhitebindPermissions::TryParse("noban@1.2.3.4:32", noban, error));
+    BOOST_CHECK_EQUAL(noban.m_flags, NetPermissionFlags::NoBan);
+    BOOST_CHECK(
+        NetPermissions::HasFlag(noban.m_flags, NetPermissionFlags::Download));
+    BOOST_CHECK(
+        NetPermissions::HasFlag(noban.m_flags, NetPermissionFlags::NoBan));
+
+    // "noban,download" is equivalent to "noban"
+    BOOST_REQUIRE(NetWhitebindPermissions::TryParse("noban,download@1.2.3.4:32",
+                                                    noban_download, error));
+    BOOST_CHECK_EQUAL(noban_download.m_flags, noban.m_flags);
+
+    // "download,noban" is equivalent to "noban"
+    BOOST_REQUIRE(NetWhitebindPermissions::TryParse("download,noban@1.2.3.4:32",
+                                                    download_noban, error));
+    BOOST_CHECK_EQUAL(download_noban.m_flags, noban.m_flags);
+
+    // "download" excludes (does not imply) "noban"
+    BOOST_REQUIRE(NetWhitebindPermissions::TryParse("download@1.2.3.4:32",
+                                                    download, error));
+    BOOST_CHECK_EQUAL(download.m_flags, NetPermissionFlags::Download);
+    BOOST_CHECK(NetPermissions::HasFlag(download.m_flags,
+                                        NetPermissionFlags::Download));
+    BOOST_CHECK(
+        !NetPermissions::HasFlag(download.m_flags, NetPermissionFlags::NoBan));
 
     // Happy path, can parse flags
     BOOST_CHECK(NetWhitebindPermissions::TryParse("bloom,forcerelay@1.2.3.4:32",
                                                   whitebindPermissions, error));
     // forcerelay should also activate the relay permission
     BOOST_CHECK_EQUAL(whitebindPermissions.m_flags,
-                      PF_BLOOMFILTER | PF_FORCERELAY | PF_RELAY);
+                      NetPermissionFlags::BloomFilter |
+                          NetPermissionFlags::ForceRelay |
+                          NetPermissionFlags::Relay);
     BOOST_CHECK(NetWhitebindPermissions::TryParse(
         "bloom,relay,noban@1.2.3.4:32", whitebindPermissions, error));
     BOOST_CHECK_EQUAL(whitebindPermissions.m_flags,
-                      PF_BLOOMFILTER | PF_RELAY | PF_NOBAN);
+                      NetPermissionFlags::BloomFilter |
+                          NetPermissionFlags::Relay |
+                          NetPermissionFlags::NoBan);
     BOOST_CHECK(NetWhitebindPermissions::TryParse(
         "bloom,forcerelay,noban@1.2.3.4:32", whitebindPermissions, error));
     BOOST_CHECK(NetWhitebindPermissions::TryParse("all@1.2.3.4:32",
                                                   whitebindPermissions, error));
-    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, PF_ALL);
+    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, NetPermissionFlags::All);
 
     // Allow dups
     BOOST_CHECK(NetWhitebindPermissions::TryParse(
         "bloom,relay,noban,noban@1.2.3.4:32", whitebindPermissions, error));
-    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags,
-                      PF_BLOOMFILTER | PF_RELAY | PF_NOBAN);
+    // "noban" implies "download"
+    BOOST_CHECK_EQUAL(
+        whitebindPermissions.m_flags,
+        NetPermissionFlags::BloomFilter | NetPermissionFlags::Relay |
+            NetPermissionFlags::NoBan | NetPermissionFlags::Download);
 
     // Allow empty
     BOOST_CHECK(NetWhitebindPermissions::TryParse(
         "bloom,relay,,noban@1.2.3.4:32", whitebindPermissions, error));
     BOOST_CHECK_EQUAL(whitebindPermissions.m_flags,
-                      PF_BLOOMFILTER | PF_RELAY | PF_NOBAN);
+                      NetPermissionFlags::BloomFilter |
+                          NetPermissionFlags::Relay |
+                          NetPermissionFlags::NoBan);
     BOOST_CHECK(NetWhitebindPermissions::TryParse(",@1.2.3.4:32",
                                                   whitebindPermissions, error));
-    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, PF_NONE);
+    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, NetPermissionFlags::None);
     BOOST_CHECK(NetWhitebindPermissions::TryParse(",,@1.2.3.4:32",
                                                   whitebindPermissions, error));
-    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, PF_NONE);
+    BOOST_CHECK_EQUAL(whitebindPermissions.m_flags, NetPermissionFlags::None);
 
     // Detect invalid flag
     BOOST_CHECK(!NetWhitebindPermissions::TryParse(
@@ -464,7 +511,7 @@ BOOST_AUTO_TEST_CASE(netpermissions_test) {
     BOOST_CHECK(error.original.find("Invalid P2P permission") !=
                 std::string::npos);
 
-    // Check whitelist error
+    // Check netmask error
     BOOST_CHECK(!NetWhitelistPermissions::TryParse(
         "bloom,forcerelay,noban@1.2.3.4:32", whitelistPermissions, error));
     BOOST_CHECK(
@@ -474,21 +521,26 @@ BOOST_AUTO_TEST_CASE(netpermissions_test) {
     // Happy path for whitelist parsing
     BOOST_CHECK(NetWhitelistPermissions::TryParse("noban@1.2.3.4",
                                                   whitelistPermissions, error));
-    BOOST_CHECK_EQUAL(whitelistPermissions.m_flags, PF_NOBAN);
+    BOOST_CHECK_EQUAL(whitelistPermissions.m_flags, NetPermissionFlags::NoBan);
+    BOOST_CHECK(NetPermissions::HasFlag(whitelistPermissions.m_flags,
+                                        NetPermissionFlags::NoBan));
+
     BOOST_CHECK(NetWhitelistPermissions::TryParse(
         "bloom,forcerelay,noban,relay,bypass_proof_request_limits@1.2.3.4/32",
         whitelistPermissions, error));
-    BOOST_CHECK_EQUAL(whitelistPermissions.m_flags,
-                      PF_BLOOMFILTER | PF_FORCERELAY | PF_NOBAN | PF_RELAY |
-                          PF_BYPASS_PROOF_REQUEST_LIMITS);
+    BOOST_CHECK_EQUAL(
+        whitelistPermissions.m_flags,
+        NetPermissionFlags::BloomFilter | NetPermissionFlags::ForceRelay |
+            NetPermissionFlags::NoBan | NetPermissionFlags::Relay |
+            NetPermissionFlags::BypassProofRequestLimits);
     BOOST_CHECK(error.empty());
     BOOST_CHECK_EQUAL(whitelistPermissions.m_subnet.ToString(), "1.2.3.4/32");
     BOOST_CHECK(NetWhitelistPermissions::TryParse(
         "bloom,forcerelay,noban,relay,mempool@1.2.3.4/32", whitelistPermissions,
         error));
 
-    const auto strings = NetPermissions::ToStrings(PF_ALL);
-    BOOST_CHECK_EQUAL(strings.size(), 7U);
+    const auto strings = NetPermissions::ToStrings(NetPermissionFlags::All);
+    BOOST_CHECK_EQUAL(strings.size(), 8U);
     BOOST_CHECK(std::find(strings.begin(), strings.end(), "bloomfilter") !=
                 strings.end());
     BOOST_CHECK(std::find(strings.begin(), strings.end(), "forcerelay") !=
@@ -501,6 +553,8 @@ BOOST_AUTO_TEST_CASE(netpermissions_test) {
                 strings.end());
     BOOST_CHECK(std::find(strings.begin(), strings.end(), "download") !=
                 strings.end());
+    BOOST_CHECK(std::find(strings.begin(), strings.end(), "addr") !=
+                strings.end());
     BOOST_CHECK(std::find(strings.begin(), strings.end(),
                           "bypass_proof_request_limits") != strings.end());
 }
@@ -508,26 +562,20 @@ BOOST_AUTO_TEST_CASE(netpermissions_test) {
 BOOST_AUTO_TEST_CASE(
     netbase_dont_resolve_strings_with_embedded_nul_characters) {
     CNetAddr addr;
-    BOOST_CHECK(LookupHost(std::string("127.0.0.1", 9), addr, false));
-    BOOST_CHECK(!LookupHost(std::string("127.0.0.1\0", 10), addr, false));
-    BOOST_CHECK(
-        !LookupHost(std::string("127.0.0.1\0example.com", 21), addr, false));
-    BOOST_CHECK(
-        !LookupHost(std::string("127.0.0.1\0example.com\0", 22), addr, false));
+    BOOST_CHECK(LookupHost("127.0.0.1"s, addr, false));
+    BOOST_CHECK(!LookupHost("127.0.0.1\0"s, addr, false));
+    BOOST_CHECK(!LookupHost("127.0.0.1\0example.com"s, addr, false));
+    BOOST_CHECK(!LookupHost("127.0.0.1\0example.com\0"s, addr, false));
     CSubNet ret;
-    BOOST_CHECK(LookupSubNet(std::string("1.2.3.0/24", 10), ret));
-    BOOST_CHECK(!LookupSubNet(std::string("1.2.3.0/24\0", 11), ret));
-    BOOST_CHECK(!LookupSubNet(std::string("1.2.3.0/24\0example.com", 22), ret));
-    BOOST_CHECK(
-        !LookupSubNet(std::string("1.2.3.0/24\0example.com\0", 23), ret));
+    BOOST_CHECK(LookupSubNet("1.2.3.0/24"s, ret));
+    BOOST_CHECK(!LookupSubNet("1.2.3.0/24\0"s, ret));
+    BOOST_CHECK(!LookupSubNet("1.2.3.0/24\0example.com"s, ret));
+    BOOST_CHECK(!LookupSubNet("1.2.3.0/24\0example.com\0"s, ret));
     // We only do subnetting for IPv4 and IPv6
-    BOOST_CHECK(!LookupSubNet(std::string("5wyqrzbvrdsumnok.onion", 22), ret));
-    BOOST_CHECK(
-        !LookupSubNet(std::string("5wyqrzbvrdsumnok.onion\0", 23), ret));
-    BOOST_CHECK(!LookupSubNet(
-        std::string("5wyqrzbvrdsumnok.onion\0example.com", 34), ret));
-    BOOST_CHECK(!LookupSubNet(
-        std::string("5wyqrzbvrdsumnok.onion\0example.com\0", 35), ret));
+    BOOST_CHECK(!LookupSubNet("5wyqrzbvrdsumnok.onion"s, ret));
+    BOOST_CHECK(!LookupSubNet("5wyqrzbvrdsumnok.onion\0"s, ret));
+    BOOST_CHECK(!LookupSubNet("5wyqrzbvrdsumnok.onion\0example.com"s, ret));
+    BOOST_CHECK(!LookupSubNet("5wyqrzbvrdsumnok.onion\0example.com\0"s, ret));
 }
 
 // Since CNetAddr (un)ser is tested separately in net_tests.cpp here we only
@@ -656,6 +704,26 @@ BOOST_AUTO_TEST_CASE(caddress_unserialize_v2) {
 
     s >> addresses_unserialized;
     BOOST_CHECK(fixture_addresses == addresses_unserialized);
+}
+
+BOOST_AUTO_TEST_CASE(isbadport) {
+    BOOST_CHECK(IsBadPort(1));
+    BOOST_CHECK(IsBadPort(22));
+    BOOST_CHECK(IsBadPort(6000));
+
+    BOOST_CHECK(!IsBadPort(80));
+    BOOST_CHECK(!IsBadPort(443));
+    BOOST_CHECK(!IsBadPort(8333));
+
+    // Check all ports, there must be 80 bad ports in total.
+    size_t total_bad_ports{0};
+    for (uint16_t port = std::numeric_limits<uint16_t>::max(); port > 0;
+         --port) {
+        if (IsBadPort(port)) {
+            ++total_bad_ports;
+        }
+    }
+    BOOST_CHECK_EQUAL(total_bad_ports, 80);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

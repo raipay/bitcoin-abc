@@ -4,7 +4,7 @@ templates:
   gitian_builds:
     script: |
       "${TOPLEVEL}/contrib/teamcity/gitian.sh"
-    timeout: 7200
+    timeout: 9000
     artifacts:
       gitian-results: ''
 
@@ -51,6 +51,59 @@ templates:
     artifacts:
       ibd/debug.log: log/debug.log
 
+  # This template expect the following environment variables to be set:
+  #  - JS_PROJECT_ROOT: the root directory for the js project being tested,
+  #    relative to the repository top level (no trailing /).
+  js-mocha:
+    artifacts:
+      coverage.tar.gz: coverage.tar.gz
+    script: |
+      # Convert hyphen separated words to space separated capitalized words
+      project_to_suite() {
+        HYPHEN_SEPARATED=$1
+        WORD_SEPARATED=($(echo "${HYPHEN_SEPARATED//-/ }"))
+        echo "${WORD_SEPARATED[@]^}"
+      }
+
+      PROJECT_NAME="$(basename ${JS_PROJECT_ROOT})"
+      TEST_SUITE_NAME="$(project_to_suite ${PROJECT_NAME})"
+
+      pushd "${TOPLEVEL}/${JS_PROJECT_ROOT}"
+
+      MOCHA_JUNIT_DIR="test_results"
+      MOCHA_JUNIT_PATH="${MOCHA_JUNIT_DIR}/${PROJECT_NAME}-junit.xml"
+      rm -rf "${MOCHA_JUNIT_DIR}" && mkdir -p "${MOCHA_JUNIT_DIR}"
+
+      npm ci
+
+      # Make sure the report is available even if the tests fail
+      move_junit_report() {
+        mv "${MOCHA_JUNIT_PATH}" "${BUILD_DIR}/"
+      }
+      trap "move_junit_report" EXIT
+
+      nyc \
+        --reporter=text \
+        --reporter=lcov \
+        --reporter=teamcity \
+        npm test -- \
+          --reporter mocha-junit-reporter \
+          --reporter-options mochaFile="${MOCHA_JUNIT_PATH}" \
+          --reporter-options testsuitesTitle="${TEST_SUITE_NAME} Unit Tests" \
+          --reporter-options rootSuiteTitle="${TEST_SUITE_NAME}"
+
+      # Generate a summary report
+      lcov \
+        --rc lcov_branch_coverage=1 \
+        --summary coverage/lcov.info \
+        > coverage/lcov-report/coverage-summary.txt 2>&1
+
+      pushd coverage/lcov-report
+      tar -czf ../coverage.tar.gz -- *
+      popd
+      mv coverage/coverage.tar.gz "${BUILD_DIR}/"
+      rm -rf coverage
+
 # The build descriptions.
 # If a script is defined, then this will be the only step to run.
 # Otherwise a list of targets can be specified, grouped by parallel runs.
@@ -95,6 +148,18 @@ builds:
       "${TOPLEVEL}/contrib/teamcity/nanobench_json_to_teamcity_messages.py" \
         "Bitcoin ABC Benchmark" \
         "${BUILD_DIR}/src/bench/BitcoinABC_Bench.json"
+
+  build-chronik:
+    runOnDiffRegex:
+      - chronik/
+    cmake_flags:
+      - '-DBUILD_BITCOIN_CHRONIK=ON'
+    targets:
+      - - check-crates
+      - - all
+        - install
+      - - check
+        - check-functional
 
   build-clang:
     Werror: true
@@ -187,6 +252,8 @@ builds:
     cross_build:
       static_depends: linux32
       toolchain: Linux32
+    cmake_flags:
+      - '-DBUILD_BITCOIN_CHRONIK=ON'
     templates:
       - check+secp256k1
     timeout: 3600
@@ -195,6 +262,8 @@ builds:
     cross_build:
       static_depends: linux64
       toolchain: Linux64
+    cmake_flags:
+      - '-DBUILD_BITCOIN_CHRONIK=ON'
     templates:
       - check+secp256k1
     timeout: 3600
@@ -205,6 +274,7 @@ builds:
       toolchain: LinuxAArch64
       emulator: qemu-aarch64-static
     cmake_flags:
+      - '-DBUILD_BITCOIN_CHRONIK=ON'
       # The ZMQ functional test will fail with qemu (due to a qemu limitation),
       # so disable it to avoid the failure.
       # Extracted from stderr:
@@ -235,6 +305,7 @@ builds:
       toolchain: LinuxARM
       emulator: qemu-arm-static
     cmake_flags:
+      - '-DBUILD_BITCOIN_CHRONIK=ON'
       # The ZMQ functional test will fail with qemu (due to a qemu limitation),
       # so disable it to avoid the failure.
       # Extracted from stderr:
@@ -288,13 +359,16 @@ builds:
     cross_build:
       static_depends: osx
       toolchain: OSX
+    # Uncomment to build Chronik once the cxx crate is working for OSX
+    # cmake_flags:
+    #  - '-DBUILD_BITCOIN_CHRONIK=ON'
     targets:
       - - all
         - install
         - install-secp256k1
         - install-tests
     post_build: |
-      export PYTHONPATH="${TOPLEVEL}/depends/x86_64-apple-darwin16/native/lib/python3/dist-packages:${PYTHONPATH:-}"
+      export PYTHONPATH="${TOPLEVEL}/depends/x86_64-apple-darwin/native/lib/python3/dist-packages:${PYTHONPATH:-}"
       ninja osx-dmg
     timeout: 3600
     artifacts:
@@ -364,6 +438,7 @@ builds:
       static_depends: win64
       toolchain: Win64
     cmake_flags:
+      - '-DBUILD_BITCOIN_CHRONIK=ON'
       - "-DBUILD_BITCOIN_SEEDER=OFF"
       - "-DCPACK_STRIP_FILES=ON"
       - "-DUSE_JEMALLOC=OFF"
@@ -371,7 +446,16 @@ builds:
       - - all
         - install
         - install-secp256k1
-        - install-tests
+        # install-tests is broken on debian bullseye because the leveldb tests
+        # do not export any symbol and trigger a mingw linker bug:
+        # https://sourceware.org/bugzilla/show_bug.cgi?id=26588
+        # We still install most test suites so we can use the artifacts and run
+        # them on the native platform.
+        #- install-tests
+        - install-test-suite-bitcoin
+        - install-test-suite-bitcoin-qt
+        - install-test-suite-avalanche
+        - install-test-suite-pow
       - - package
     post_build: |
       wine "${ARTIFACT_DIR}/bin/test_bitcoin.exe" --run_test=\!radix_tests,rcu_tests
@@ -487,7 +571,7 @@ builds:
 
   cashtab-tests:
     runOnDiffRegex:
-      - web/cashtab/
+      - cashtab/
     artifacts:
       coverage.tar.gz: coverage.tar.gz
     env:
@@ -498,7 +582,7 @@ builds:
       JEST_JUNIT_OUTPUT_DIR: "test/junit"
       JEST_JUNIT_OUTPUT_NAME: "cashtab.xml"
     script: |
-      pushd "${TOPLEVEL}/web/cashtab"
+      pushd "${TOPLEVEL}/cashtab"
       npm ci
       npm run build
 
@@ -528,7 +612,7 @@ builds:
 
   cashtab-components-tests:
     runOnDiffRegex:
-      - web/cashtab-components/
+      - modules/cashtab-components/
     env:
       # Any string will work, CI just needs to be defined
       CI: 'teamcity'
@@ -537,7 +621,7 @@ builds:
       JEST_JUNIT_OUTPUT_DIR: "test/junit"
       JEST_JUNIT_OUTPUT_NAME: "cashtab-components.xml"
     script: |
-      pushd "${TOPLEVEL}/web/cashtab-components"
+      pushd "${TOPLEVEL}/modules/cashtab-components"
       npm ci
       npm run build
 
@@ -550,3 +634,49 @@ builds:
       npm run test -- \
         --reporters=default \
         --reporters=jest-junit
+
+  alias-server-tests:
+    runOnDiffRegex:
+      - apps/alias-server/
+    env:
+      JS_PROJECT_ROOT: apps/alias-server
+    templates:
+      - js-mocha
+
+  ecash-herald-tests:
+    runOnDiffRegex:
+      - apps/ecash-herald/
+    env:
+      JS_PROJECT_ROOT: apps/ecash-herald
+    templates:
+      - js-mocha
+
+  ecashaddrjs-tests:
+    runOnDiffRegex:
+      - modules/ecashaddrjs/
+    env:
+      JS_PROJECT_ROOT: modules/ecashaddrjs
+    templates:
+      - js-mocha
+
+  ecash-script-tests:
+    runOnDiffRegex:
+      - modules/ecash-script/
+    env:
+      JS_PROJECT_ROOT: modules/ecash-script
+    templates:
+      - js-mocha
+
+  preview-e.cash:
+    docker:
+      context: web/e.cash
+      port: 3000
+
+  preview-explorer:
+    docker:
+      context: web/explorer
+      port: 3035
+
+  preview-cashtab:
+    docker:
+      context: cashtab

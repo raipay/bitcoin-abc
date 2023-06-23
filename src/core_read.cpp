@@ -18,15 +18,14 @@
 #include <univalue.h>
 
 #include <boost/algorithm/string/classification.hpp>
-#include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/split.hpp>
 
 #include <algorithm>
 #include <string>
 
-CScript ParseScript(const std::string &s) {
-    CScript result;
+namespace {
 
+opcodetype ParseOpCode(const std::string &s) {
     static std::map<std::string, opcodetype> mapOpNames;
 
     if (mapOpNames.empty()) {
@@ -42,10 +41,24 @@ CScript ParseScript(const std::string &s) {
 
             mapOpNames[strName] = static_cast<opcodetype>(op);
             // Convenience: OP_ADD and just ADD are both recognized:
-            boost::algorithm::replace_first(strName, "OP_", "");
-            mapOpNames[strName] = static_cast<opcodetype>(op);
+            // strName starts with "OP_"
+            if (strName.compare(0, 3, "OP_") == 0) {
+                mapOpNames[strName.substr(3)] = static_cast<opcodetype>(op);
+            }
         }
     }
+
+    auto it = mapOpNames.find(s);
+    if (it == mapOpNames.end()) {
+        throw std::runtime_error("script parse error: unknown opcode " + s);
+    }
+    return it->second;
+}
+
+} // namespace
+
+CScript ParseScript(const std::string &s) {
+    CScript result;
 
     std::vector<std::string> words;
     boost::algorithm::split(words, s, boost::algorithm::is_any_of(" \t\n"),
@@ -116,15 +129,8 @@ CScript ParseScript(const std::string &s) {
             goto next;
         }
 
-        if (mapOpNames.count(w)) {
-            // opcode, e.g. OP_ADD or ADD:
-            opcodetype op = mapOpNames[w];
-
-            result << op;
-            goto next;
-        }
-
-        throw std::runtime_error("Error parsing script: " + s);
+        // opcode, e.g. OP_ADD or ADD:
+        result << ParseOpCode(w);
 
     next:
         size_t size_change = result.size() - script_size;

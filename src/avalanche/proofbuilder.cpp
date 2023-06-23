@@ -5,19 +5,9 @@
 #include <avalanche/proofbuilder.h>
 
 #include <random.h>
+#include <util/system.h>
 
 namespace avalanche {
-
-SignedStake ProofBuilder::StakeSigner::sign(const ProofId &proofid) {
-    const uint256 h = stake.getHash(proofid);
-
-    SchnorrSig sig;
-    if (!key.SignSchnorr(h, sig)) {
-        sig.fill(0);
-    }
-
-    return SignedStake(std::move(stake), std::move(sig));
-}
 
 bool ProofBuilder::addUTXO(COutPoint utxo, Amount amount, uint32_t height,
                            bool is_coinbase, CKey key) {
@@ -25,52 +15,57 @@ bool ProofBuilder::addUTXO(COutPoint utxo, Amount amount, uint32_t height,
         return false;
     }
 
-    stakes.emplace_back(
-        Stake(std::move(utxo), amount, height, is_coinbase, key.GetPubKey()),
-        std::move(key));
-    return true;
+    const StakeCommitment commitment(expirationTime, masterKey.GetPubKey());
+    auto stake =
+        Stake(std::move(utxo), amount, height, is_coinbase, key.GetPubKey());
+    const uint256 h = stake.getHash(commitment);
+    SchnorrSig sig;
+    if (!key.SignSchnorr(h, sig)) {
+        sig.fill(0);
+    }
+
+    return stakes.emplace(std::move(stake), std::move(sig)).second;
 }
 
-Proof ProofBuilder::build() {
-    const ProofId proofid = getProofId();
-
+ProofRef ProofBuilder::build() {
+    SchnorrSig proofSignature;
+    const LimitedProofId limitedProofId = getLimitedProofId();
+    if (!masterKey.SignSchnorr(limitedProofId, proofSignature)) {
+        proofSignature.fill(0);
+    }
     std::vector<SignedStake> signedStakes;
     signedStakes.reserve(stakes.size());
 
-    for (auto &s : stakes) {
-        signedStakes.push_back(s.sign(proofid));
+    while (!stakes.empty()) {
+        auto handle = stakes.extract(stakes.begin());
+        signedStakes.push_back(handle.value());
     }
 
-    stakes.clear();
-    return Proof(sequence, expirationTime, std::move(master),
-                 std::move(signedStakes));
+    return ProofRef::make(sequence, expirationTime, masterKey.GetPubKey(),
+                          std::move(signedStakes), payoutScriptPubKey,
+                          std::move(proofSignature));
+}
+
+LimitedProofId ProofBuilder::getLimitedProofId() const {
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << sequence;
+    ss << expirationTime;
+    ss << payoutScriptPubKey;
+
+    WriteCompactSize(ss, stakes.size());
+    for (const auto &s : stakes) {
+        ss << s.getStake();
+    }
+
+    return LimitedProofId(ss.GetHash());
 }
 
 ProofId ProofBuilder::getProofId() const {
     CHashWriter ss(SER_GETHASH, 0);
-    ss << sequence;
-    ss << expirationTime;
+    ss << getLimitedProofId();
+    ss << masterKey.GetPubKey();
 
-    WriteCompactSize(ss, stakes.size());
-    for (const auto &s : stakes) {
-        ss << s.stake;
-    }
-
-    CHashWriter ss2(SER_GETHASH, 0);
-    ss2 << ss.GetHash();
-    ss2 << master;
-
-    return ProofId(ss2.GetHash());
-}
-
-Proof ProofBuilder::buildRandom(uint32_t score) {
-    CKey key;
-    key.MakeNewKey(true);
-
-    ProofBuilder pb(0, std::numeric_limits<uint32_t>::max(), CPubKey());
-    pb.addUTXO(COutPoint(TxId(GetRandHash()), 0), (int64_t(score) * COIN) / 100,
-               0, false, std::move(key));
-    return pb.build();
+    return ProofId(ss.GetHash());
 }
 
 } // namespace avalanche

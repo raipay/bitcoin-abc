@@ -1,10 +1,11 @@
-// Copyright (c) 2017-2019 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #ifndef BITCOIN_RPC_UTIL_H
 #define BITCOIN_RPC_UTIL_H
 
+#include <node/coinstats.h>
 #include <node/transaction.h>
 #include <outputtype.h>
 #include <protocol.h>
@@ -16,9 +17,8 @@
 #include <univalue.h>
 #include <util/check.h>
 
-#include <boost/variant.hpp>
-
 #include <string>
+#include <variant>
 #include <vector>
 
 class CChainParams;
@@ -80,10 +80,16 @@ extern std::vector<uint8_t> ParseHexV(const UniValue &v, std::string strName);
 extern std::vector<uint8_t> ParseHexO(const UniValue &o, std::string strKey);
 
 extern Amount AmountFromValue(const UniValue &value);
+
+using RPCArgList = std::vector<std::pair<std::string, UniValue>>;
 extern std::string HelpExampleCli(const std::string &methodname,
                                   const std::string &args);
+extern std::string HelpExampleCliNamed(const std::string &methodname,
+                                       const RPCArgList &args);
 extern std::string HelpExampleRpc(const std::string &methodname,
                                   const std::string &args);
+extern std::string HelpExampleRpcNamed(const std::string &methodname,
+                                       const RPCArgList &args);
 
 CPubKey HexToPubKey(const std::string &hex_in);
 CPubKey AddrToPubKey(const CChainParams &chainparams,
@@ -96,6 +102,7 @@ CTxDestination AddAndGetMultisigDestination(const int required,
                                             CScript &script_out);
 
 UniValue DescribeAddress(const CTxDestination &dest);
+std::string GetAllOutputTypes();
 
 RPCErrorCode RPCErrorFromTransactionError(TransactionError terr);
 UniValue JSONRPCTransactionError(TransactionError terr,
@@ -165,13 +172,14 @@ struct RPCArg {
         OMITTED,
     };
     using Fallback =
-        boost::variant<Optional,
-                       /* default value for optional args */ std::string>;
+        std::variant<Optional,
+                     /* default value for optional args */ std::string>;
 
     //! The name of the arg (can be empty for inner args, can contain multiple
     //! aliases separated by | for named request arguments)
     const std::string m_names;
     const Type m_type;
+    const bool m_hidden;
     //! Only used for arrays or dicts
     const std::vector<RPCArg> m_inner;
     const Fallback m_fallback;
@@ -190,8 +198,9 @@ struct RPCArg {
     RPCArg(const std::string name, const Type type, const Fallback fallback,
            const std::string description,
            const std::string oneline_description = "",
-           const std::vector<std::string> type_str = {})
-        : m_names{std::move(name)}, m_type{std::move(type)},
+           const std::vector<std::string> type_str = {},
+           const bool hidden = false)
+        : m_names{std::move(name)}, m_type{std::move(type)}, m_hidden{hidden},
           m_fallback{std::move(fallback)}, m_description{std::move(
                                                description)},
           m_oneline_description{std::move(oneline_description)},
@@ -203,10 +212,9 @@ struct RPCArg {
            const std::string description, const std::vector<RPCArg> inner,
            const std::string oneline_description = "",
            const std::vector<std::string> type_str = {})
-        : m_names{std::move(name)}, m_type{std::move(type)}, m_inner{std::move(
-                                                                 inner)},
-          m_fallback{std::move(fallback)}, m_description{std::move(
-                                               description)},
+        : m_names{std::move(name)}, m_type{std::move(type)}, m_hidden{false},
+          m_inner{std::move(inner)}, m_fallback{std::move(fallback)},
+          m_description{std::move(description)},
           m_oneline_description{std::move(oneline_description)},
           m_type_str{std::move(type_str)} {
         CHECK_NONFATAL(type == Type::ARR || type == Type::OBJ);
@@ -246,9 +254,11 @@ struct RPCResult {
         NUM,
         BOOL,
         NONE,
+        ANY,        //!< Special type to disable type checks (for testing only)
         STR_AMOUNT, //!< Special string to represent a floating point amount
         STR_HEX,    //!< Special string with only hex chars
         OBJ_DYN,    //!< Special dictionary with keys that are not literals
+        OBJ_EMPTY,  //!< Special type to allow empty OBJ
         ARR_FIXED,  //!< Special array that has a fixed number of entries
         NUM_TIME,   //!< Special numeric to denote unix epoch time
         ELISION,    //!< Special type to denote elision (...)
@@ -302,6 +312,8 @@ struct RPCResult {
     std::string ToStringObj() const;
     /** Return the description string, including the result type. */
     std::string ToDescriptionString() const;
+    /** Check whether the result JSON type matches. */
+    bool MatchesType(const UniValue &result) const;
 };
 
 struct RPCResults {
@@ -330,22 +342,28 @@ public:
     RPCHelpMan(std::string name, std::string description,
                std::vector<RPCArg> args, RPCResults results,
                RPCExamples examples);
+    using RPCMethodImpl = std::function<UniValue(
+        const RPCHelpMan &, const Config &config, const JSONRPCRequest &)>;
+    RPCHelpMan(std::string name, std::string description,
+               std::vector<RPCArg> args, RPCResults results,
+               RPCExamples examples, RPCMethodImpl fun);
 
+    UniValue HandleRequest(const Config &config,
+                           const JSONRPCRequest &request) const;
     std::string ToString() const;
+    /**
+     * Return the named args that need to be converted from string to another
+     * JSON type
+     */
+    UniValue GetArgMap() const;
     /** If the supplied number of args is neither too small nor too high */
     bool IsValidNumArgs(size_t num_args) const;
-    /**
-     * Check if the given request is valid according to this command or if
-     * the user is asking for help information, and throw help when appropriate.
-     */
-    inline void Check(const JSONRPCRequest &request) const {
-        if (request.fHelp || !IsValidNumArgs(request.params.size())) {
-            throw std::runtime_error(ToString());
-        }
-    }
+    std::vector<std::string> GetArgNames() const;
+
+    const std::string m_name;
 
 private:
-    const std::string m_name;
+    const RPCMethodImpl m_fun;
     const std::string m_description;
     const std::vector<RPCArg> m_args;
     const RPCResults m_results;

@@ -8,13 +8,13 @@
 
 #include <chainparams.h>
 #include <config.h>
-#include <util/ref.h>
 #include <util/system.h>
 
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
+#include <any>
 #include <string>
 
 BOOST_FIXTURE_TEST_SUITE(rpc_server_tests, TestingSetup)
@@ -23,6 +23,9 @@ class ArgsTestRPCCommand : public RPCCommandWithArgsContext {
 public:
     explicit ArgsTestRPCCommand(const std::string &nameIn)
         : RPCCommandWithArgsContext(nameIn) {}
+
+    // Suppress a [-Werror=overloaded-virtual] warning
+    using RPCCommandWithArgsContext::Execute;
 
     UniValue Execute(const UniValue &args) const override {
         BOOST_CHECK_EQUAL(args["arg1"].get_str(), "value1");
@@ -45,15 +48,16 @@ BOOST_AUTO_TEST_CASE(rpc_server_execute_command) {
     args.pushKV("arg1", "value1");
 
     // Registered commands execute and return values correctly
-    util::Ref context{m_node};
-    JSONRPCRequest request(context);
+    JSONRPCRequest request;
+    request.context = &m_node;
     request.strMethod = commandName;
     request.params = args;
     UniValue output = rpcServer.ExecuteCommand(config, request);
     BOOST_CHECK_EQUAL(output.get_str(), "testing1");
 
     // Not-registered commands throw an exception as expected
-    JSONRPCRequest badCommandRequest(context);
+    JSONRPCRequest badCommandRequest;
+    badCommandRequest.context = &m_node;
     badCommandRequest.strMethod = "this-command-does-not-exist";
     BOOST_CHECK_EXCEPTION(rpcServer.ExecuteCommand(config, badCommandRequest),
                           UniValue, isRpcMethodNotFound);
@@ -85,8 +89,8 @@ BOOST_AUTO_TEST_CASE(rpc_server_execute_command_from_request_context) {
     args.pushKV("arg2", "value2");
 
     // Registered commands execute and return values correctly
-    util::Ref context{m_node};
-    JSONRPCRequest request(context);
+    JSONRPCRequest request;
+    request.context = &m_node;
     request.strMethod = commandName;
     request.params = args;
     UniValue output = rpcServer.ExecuteCommand(config, request);

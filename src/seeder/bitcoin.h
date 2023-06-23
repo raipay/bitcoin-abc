@@ -9,10 +9,11 @@
 #include <protocol.h>
 #include <streams.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
-static inline unsigned short GetDefaultPort() {
+static inline uint16_t GetDefaultPort() {
     return Params().GetDefaultPort();
 }
 
@@ -25,6 +26,8 @@ enum class PeerMessagingState {
     Finished,
 };
 
+class Sock;
+
 namespace {
 class CSeederNodeTest;
 }
@@ -33,7 +36,7 @@ class CSeederNode {
     friend class ::CSeederNodeTest;
 
 private:
-    SOCKET sock;
+    std::unique_ptr<Sock> sock;
     CDataStream vSend;
     CDataStream vRecv;
     uint32_t nHeaderStart;
@@ -76,6 +79,8 @@ public:
     std::string GetClientSubVersion() { return strSubVer; }
 
     int GetStartingHeight() { return nStartingHeight; }
+
+    uint64_t GetServices() { return you.nServices; }
 };
 
 #endif // BITCOIN_SEEDER_BITCOIN_H

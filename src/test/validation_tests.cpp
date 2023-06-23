@@ -8,10 +8,12 @@
 #include <chainparams.h>
 #include <clientversion.h>
 #include <config.h>
+#include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <net.h>
 #include <primitives/transaction.h>
 #include <streams.h>
+#include <uint256.h>
 #include <util/system.h>
 #include <validation.h>
 
@@ -92,9 +94,9 @@ static CBlock makeLargeDummyBlock(const size_t num_tx) {
  * 10 * MAX_TX_SIZE.
  */
 BOOST_AUTO_TEST_CASE(validation_load_external_block_file) {
-    fs::path tmpfile_name = GetDataDir() / "block.dat";
+    fs::path tmpfile_name = gArgs.GetDataDirNet() / "block.dat";
 
-    FILE *fp = fopen(tmpfile_name.string().c_str(), "wb+");
+    FILE *fp = fopen(fs::PathToString(tmpfile_name).c_str(), "wb+");
 
     BOOST_CHECK(fp != nullptr);
 
@@ -127,7 +129,36 @@ BOOST_AUTO_TEST_CASE(validation_load_external_block_file) {
     }
 
     fseek(fp, 0, SEEK_SET);
-    BOOST_CHECK_NO_THROW({ LoadExternalBlockFile(config, fp, 0); });
+    BOOST_CHECK_NO_THROW({
+        m_node.chainman->ActiveChainstate().LoadExternalBlockFile(config, fp,
+                                                                  0);
+    });
+}
+
+//! Test retrieval of valid assumeutxo values.
+BOOST_AUTO_TEST_CASE(test_assumeutxo) {
+    const auto params = CreateChainParams(CBaseChainParams::REGTEST);
+
+    // These heights don't have assumeutxo configurations associated, per the
+    // contents of chainparams.cpp.
+    std::vector<int> bad_heights{0, 100, 111, 115, 209, 211};
+
+    for (auto empty : bad_heights) {
+        const auto out = ExpectedAssumeutxo(empty, *params);
+        BOOST_CHECK(!out);
+    }
+
+    const auto out110 = *ExpectedAssumeutxo(110, *params);
+    BOOST_CHECK_EQUAL(
+        out110.hash_serialized.ToString(),
+        "ff755939f6fd81bf966e2f347f5d3660d6239334050eb557a6f005d7d8184ea9");
+    BOOST_CHECK_EQUAL(out110.nChainTx, (unsigned int)110);
+
+    const auto out210 = *ExpectedAssumeutxo(210, *params);
+    BOOST_CHECK_EQUAL(
+        out210.hash_serialized.ToString(),
+        "d6089fa8d2100926326cacdd452231e30bb4e64f07aa5bfec96e055ac2a9a87a");
+    BOOST_CHECK_EQUAL(out210.nChainTx, (unsigned int)210);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

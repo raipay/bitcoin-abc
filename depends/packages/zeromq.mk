@@ -11,7 +11,7 @@ define $(package)_set_vars
   $(package)_config_opts += --disable-libunwind --disable-radix-tree --without-gcov --disable-dependency-tracking
   $(package)_config_opts += --disable-Werror --disable-drafts --enable-option-checking
   $(package)_config_opts_linux=--with-pic
-  $(package)_cxxflags=-std=c++11
+  $(package)_cxxflags+=-std=c++17
 endef
 
 define $(package)_preprocess_cmds
@@ -19,6 +19,7 @@ define $(package)_preprocess_cmds
 endef
 
 define $(package)_config_cmds
+  cp -f $(BASEDIR)/config.guess $(BASEDIR)/config.sub config && \
   $($(package)_autoconf)
 endef
 

@@ -8,42 +8,12 @@
 #include <script/sighashtype.h>
 #include <span.h>
 
-#include <memory>
-#include <string>
-#include <vector>
-
 class CRPCCommand;
-class CTransaction;
-class CWallet;
-class Config;
-class JSONRPCRequest;
-class LegacyScriptPubKeyMan;
-struct PartiallySignedTransaction;
-class UniValue;
-struct WalletContext;
-
-namespace util {
-class Ref;
-}
+class RPCHelpMan;
 
 Span<const CRPCCommand> GetWalletRPCCommands();
 
-/**
- * Figures out what wallet, if any, to use for a JSONRPCRequest.
- *
- * @param[in] request JSONRPCRequest that wishes to access a wallet
- * @return NULL if no wallet should be used, or a pointer to the CWallet
- */
-std::shared_ptr<CWallet>
-GetWalletForJSONRPCRequest(const JSONRPCRequest &request);
-
-void EnsureWalletIsUnlocked(const CWallet *);
-WalletContext &EnsureWalletContext(const util::Ref &context);
-LegacyScriptPubKeyMan &EnsureLegacyScriptPubKeyMan(CWallet &wallet,
-                                                   bool also_create = false);
-
-UniValue signrawtransactionwithwallet(const Config &config,
-                                      const JSONRPCRequest &request);
-UniValue getaddressinfo(const Config &config, const JSONRPCRequest &request);
+RPCHelpMan signrawtransactionwithwallet();
+RPCHelpMan getaddressinfo();
 
 #endif // BITCOIN_WALLET_RPCWALLET_H

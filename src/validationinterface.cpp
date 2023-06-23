@@ -5,6 +5,7 @@
 
 #include <validationinterface.h>
 
+#include <attributes.h>
 #include <chain.h>
 #include <consensus/validation.h>
 #include <logging.h>
@@ -17,14 +18,16 @@
 #include <unordered_map>
 #include <utility>
 
-//! The MainSignalsInstance manages a list of shared_ptr<CValidationInterface>
-//! callbacks.
-//!
-//! A std::unordered_map is used to track what callbacks are currently
-//! registered, and a std::list is to used to store the callbacks that are
-//! currently registered as well as any callbacks that are just unregistered
-//! and about to be deleted when they are done executing.
-struct MainSignalsInstance {
+/**
+ * MainSignalsImpl manages a list of shared_ptr<CValidationInterface>
+ * callbacks.
+ *
+ * A std::unordered_map is used to track what callbacks are currently
+ * registered, and a std::list is used to store the callbacks that are
+ * currently registered as well as any callbacks that are just unregistered
+ * and about to be deleted when they are done executing.
+ */
+class MainSignalsImpl {
 private:
     Mutex m_mutex;
     //! List entries consist of a callback pointer and reference count. The
@@ -45,8 +48,8 @@ public:
     // our own queue here :(
     SingleThreadedSchedulerClient m_schedulerClient;
 
-    explicit MainSignalsInstance(CScheduler *pscheduler)
-        : m_schedulerClient(pscheduler) {}
+    explicit MainSignalsImpl(CScheduler &scheduler LIFETIMEBOUND)
+        : m_schedulerClient(scheduler) {}
 
     void Register(std::shared_ptr<CValidationInterface> callbacks) {
         LOCK(m_mutex);
@@ -99,7 +102,7 @@ static CMainSignals g_signals;
 
 void CMainSignals::RegisterBackgroundSignalScheduler(CScheduler &scheduler) {
     assert(!m_internals);
-    m_internals.reset(new MainSignalsInstance(&scheduler));
+    m_internals = std::make_unique<MainSignalsImpl>(scheduler);
 }
 
 void CMainSignals::UnregisterBackgroundSignalScheduler() {
@@ -203,24 +206,28 @@ void CMainSignals::UpdatedBlockTip(const CBlockIndex *pindexNew,
         fInitialDownload);
 }
 
-void CMainSignals::TransactionAddedToMempool(const CTransactionRef &ptx) {
-    auto event = [ptx, this] {
+void CMainSignals::TransactionAddedToMempool(const CTransactionRef &tx,
+                                             uint64_t mempool_sequence) {
+    auto event = [tx, mempool_sequence, this] {
         m_internals->Iterate([&](CValidationInterface &callbacks) {
-            callbacks.TransactionAddedToMempool(ptx);
+            callbacks.TransactionAddedToMempool(tx, mempool_sequence);
         });
     };
     ENQUEUE_AND_LOG_EVENT(event, "%s: txid=%s", __func__,
-                          ptx->GetHash().ToString());
+                          tx->GetHash().ToString());
 }
 
-void CMainSignals::TransactionRemovedFromMempool(const CTransactionRef &ptx) {
-    auto event = [ptx, this] {
+void CMainSignals::TransactionRemovedFromMempool(const CTransactionRef &tx,
+                                                 MemPoolRemovalReason reason,
+                                                 uint64_t mempool_sequence) {
+    auto event = [tx, reason, mempool_sequence, this] {
         m_internals->Iterate([&](CValidationInterface &callbacks) {
-            callbacks.TransactionRemovedFromMempool(ptx);
+            callbacks.TransactionRemovedFromMempool(tx, reason,
+                                                    mempool_sequence);
         });
     };
     ENQUEUE_AND_LOG_EVENT(event, "%s: txid=%s", __func__,
-                          ptx->GetHash().ToString());
+                          tx->GetHash().ToString());
 }
 
 void CMainSignals::BlockConnected(const std::shared_ptr<const CBlock> &pblock,
@@ -270,5 +277,13 @@ void CMainSignals::NewPoWValidBlock(
     LOG_EVENT("%s: block hash=%s", __func__, block->GetHash().ToString());
     m_internals->Iterate([&](CValidationInterface &callbacks) {
         callbacks.NewPoWValidBlock(pindex, block);
+    });
+}
+
+void CMainSignals::BlockFinalized(const CBlockIndex *pindex) {
+    LOG_EVENT("%s: block hash=%s", __func__,
+              pindex ? pindex->GetBlockHash().ToString() : "null");
+    m_internals->Iterate([&](CValidationInterface &callbacks) {
+        callbacks.BlockFinalized(pindex);
     });
 }

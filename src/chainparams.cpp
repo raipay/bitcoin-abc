@@ -10,9 +10,7 @@
 #include <chainparamsseeds.h>
 #include <consensus/merkle.h>
 #include <currencyunit.h>
-#include <network.h>
 #include <tinyformat.h>
-#include <util/strencodings.h>
 #include <util/system.h>
 
 #include <cassert>
@@ -102,20 +100,8 @@ public:
         // two days
         consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
 
-        // nPowTargetTimespan / nPowTargetSpacing
-        consensus.nMinerConfirmationWindow = 2016;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY] = {
-            .bit = 28,
-            // 95% of 2016
-            .nActivationThreshold = 1916,
-            // January 1, 2008
-            .nStartTime = 1199145601,
-            // December 31, 2008
-            .nTimeout = 1230767999,
-        };
-
         // The miner fund is enabled by default on mainnet.
-        consensus.enableMinerFund = ENABLE_MINER_FUND;
+        consensus.enableMinerFund = true;
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork =
@@ -142,13 +128,13 @@ public:
         consensus.phononHeight = 635258;
 
         // Nov 15, 2020 12:00:00 UTC protocol upgrade
-        consensus.axionActivationTime = 1605441600;
+        consensus.axionHeight = 661647;
 
-        // May 15, 2021 12:00:00 UTC protocol upgrade
-        consensus.tachyonActivationTime = 1621080000;
+        // May 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.wellingtonHeight = 792116;
 
-        // Nov 15, 2021 12:00:00 UTC protocol upgrade
-        consensus.selectronActivationTime = 1636977600;
+        // Nov 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.cowperthwaiteActivationTime = 1700049600;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -188,16 +174,13 @@ public:
         // possible.
         // Bitcoin ABC seeder
         vSeeds.emplace_back("seed.bitcoinabc.org");
-        // BU backed seeder
-        vSeeds.emplace_back("btccash-seeder.bitcoinunlimited.info");
-        // Jason B. Cox
-        vSeeds.emplace_back("seeder.jasonbcox.com");
         // Amaury SÉCHET
         vSeeds.emplace_back("seed.deadalnix.me");
-        // BCHD
-        vSeeds.emplace_back("seed.bchd.cash");
         // Fabien
         vSeeds.emplace_back("seeder.fabien.cash");
+        vSeeds.emplace_back("seeder2.fabien.cash");
+        // status.cash
+        vSeeds.emplace_back("seeder.status.cash");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 0);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 5);
@@ -207,8 +190,8 @@ public:
         cashaddrPrefix =
             gArgs.GetBoolArg("-ecash", DEFAULT_ECASH) ? "ecash" : "bitcoincash";
 
-        vFixedSeeds = std::vector<SeedSpec6>(
-            pnSeed6_main, pnSeed6_main + ARRAYLEN(pnSeed6_main));
+        vFixedSeeds = std::vector<SeedSpec6>(std::begin(pnSeed6_main),
+                                             std::end(pnSeed6_main));
 
         fDefaultConsistencyChecks = false;
         fRequireStandard = true;
@@ -216,6 +199,10 @@ public:
         m_is_mockable_chain = false;
 
         checkpointData = CheckpointData(CBaseChainParams::MAIN);
+
+        m_assumeutxo_data = MapAssumeutxo{
+            // TODO to be specified in a future patch.
+        };
 
         // Data as of block
         // 000000000000000001d2ce557406b017a928be25ee98906397d339c3f68eec5d
@@ -262,18 +249,6 @@ public:
         // two days
         consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
 
-        // nPowTargetTimespan / nPowTargetSpacing
-        consensus.nMinerConfirmationWindow = 2016;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY] = {
-            .bit = 28,
-            // 75% of 2016
-            .nActivationThreshold = 1512,
-            // January 1, 2008
-            .nStartTime = 1199145601,
-            // December 31, 2008
-            .nTimeout = 1230767999,
-        };
-
         // The miner fund is disabled by default on testnet.
         consensus.enableMinerFund = false;
 
@@ -302,13 +277,13 @@ public:
         consensus.phononHeight = 1378460;
 
         // Nov 15, 2020 12:00:00 UTC protocol upgrade
-        consensus.axionActivationTime = 1605441600;
+        consensus.axionHeight = 1421481;
 
-        // May 15, 2021 12:00:00 UTC protocol upgrade
-        consensus.tachyonActivationTime = 1621080000;
+        // May 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.wellingtonHeight = 1556117;
 
-        // Nov 15, 2021 12:00:00 UTC protocol upgrade
-        consensus.selectronActivationTime = 1636977600;
+        // Nov 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.cowperthwaiteActivationTime = 1700049600;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -342,10 +317,10 @@ public:
         vSeeds.emplace_back("testnet-seed.bitcoinabc.org");
         // Amaury SÉCHET
         vSeeds.emplace_back("testnet-seed.deadalnix.me");
-        // BCHD
-        vSeeds.emplace_back("testnet-seed.bchd.cash");
         // Fabien
         vSeeds.emplace_back("testnet-seeder.fabien.cash");
+        // status.cash
+        vSeeds.emplace_back("testnet-seeder.status.cash");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 111);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 196);
@@ -355,8 +330,8 @@ public:
         cashaddrPrefix =
             gArgs.GetBoolArg("-ecash", DEFAULT_ECASH) ? "ectest" : "bchtest";
 
-        vFixedSeeds = std::vector<SeedSpec6>(
-            pnSeed6_test, pnSeed6_test + ARRAYLEN(pnSeed6_test));
+        vFixedSeeds = std::vector<SeedSpec6>(std::begin(pnSeed6_test),
+                                             std::end(pnSeed6_test));
 
         fDefaultConsistencyChecks = false;
         fRequireStandard = false;
@@ -364,6 +339,10 @@ public:
         m_is_mockable_chain = false;
 
         checkpointData = CheckpointData(CBaseChainParams::TESTNET);
+
+        m_assumeutxo_data = MapAssumeutxo{
+            // TODO to be specified in a future patch.
+        };
 
         // Data as of block
         // 000000000005b07ecf85563034d13efd81c1a29e47e22b20f4fc6919d5b09cd6
@@ -402,14 +381,6 @@ public:
         // two days
         consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
 
-        // Faster than normal for regtest (144 instead of 2016)
-        consensus.nMinerConfirmationWindow = 144;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY] = {
-            .bit = 28,
-            // 75% of 144
-            .nActivationThreshold = 108,
-        };
-
         // The miner fund is disabled by default on regnet.
         consensus.enableMinerFund = false;
 
@@ -436,13 +407,13 @@ public:
         consensus.phononHeight = 0;
 
         // Nov 15, 2020 12:00:00 UTC protocol upgrade
-        consensus.axionActivationTime = 1605441600;
+        consensus.axionHeight = 0;
 
-        // May 15, 2021 12:00:00 UTC protocol upgrade
-        consensus.tachyonActivationTime = 1621080000;
+        // May 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.wellingtonHeight = 0;
 
-        // Nov 15, 2021 12:00:00 UTC protocol upgrade
-        consensus.selectronActivationTime = 1636977600;
+        // Nov 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.cowperthwaiteActivationTime = 1700049600;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;
@@ -453,7 +424,7 @@ public:
         netMagic[2] = 0xbf;
         netMagic[3] = 0xfa;
         nDefaultPort = 18444;
-        nPruneAfterHeight = 1000;
+        nPruneAfterHeight = gArgs.GetBoolArg("-fastprune", false) ? 100 : 1000;
         m_assumed_blockchain_size = 0;
         m_assumed_chain_state_size = 0;
 
@@ -477,6 +448,21 @@ public:
         m_is_mockable_chain = true;
 
         checkpointData = CheckpointData(CBaseChainParams::REGTEST);
+
+        m_assumeutxo_data = MapAssumeutxo{
+            {
+                110,
+                {AssumeutxoHash{uint256S("0xff755939f6fd81bf966e2f347f5d3660d62"
+                                         "39334050eb557a6f005d7d8184ea9")},
+                 110},
+            },
+            {
+                210,
+                {AssumeutxoHash{uint256S("0xd6089fa8d2100926326cacdd452231e30bb"
+                                         "4e64f07aa5bfec96e055ac2a9a87a")},
+                 210},
+            },
+        };
 
         chainTxData = ChainTxData{0, 0, 0};
 

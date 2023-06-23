@@ -5,15 +5,23 @@
 #ifndef BITCOIN_AVALANCHE_PROCESSOR_H
 #define BITCOIN_AVALANCHE_PROCESSOR_H
 
+#include <avalanche/config.h>
 #include <avalanche/node.h>
-#include <avalanche/peermanager.h>
+#include <avalanche/proof.h>
+#include <avalanche/proofcomparator.h>
 #include <avalanche/protocol.h>
-#include <blockindexworkcomparator.h>
+#include <avalanche/voterecord.h> // For AVALANCHE_MAX_INFLIGHT_POLL
+#include <blockindex.h>
+#include <blockindexcomparators.h>
+#include <bloom.h>
 #include <eventloop.h>
 #include <interfaces/chain.h>
 #include <interfaces/handler.h>
 #include <key.h>
+#include <net.h>
+#include <primitives/transaction.h>
 #include <rwcollection.h>
+#include <util/variant.h>
 
 #include <boost/multi_index/composite_key.hpp>
 #include <boost/multi_index/hashed_index.hpp>
@@ -25,21 +33,16 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <variant>
 #include <vector>
 
 class ArgsManager;
-class Config;
-class CBlockIndex;
+class CConnman;
+class CNode;
 class CScheduler;
+class Config;
 class PeerManager;
 struct bilingual_str;
-
-using NodePeerManager = PeerManager;
-
-/**
- * Finalization score.
- */
-static constexpr int AVALANCHE_FINALIZATION_SCORE = 128;
 
 /**
  * Maximum item that can be polled at once.
@@ -53,133 +56,118 @@ static constexpr std::chrono::milliseconds AVALANCHE_DEFAULT_QUERY_TIMEOUT{
     10000};
 
 /**
- * How many inflight requests can exist for one item.
+ * The size of the finalized items filter. It should be large enough that an
+ * influx of inventories cannot roll any particular item out of the filter on
+ * demand. For example, transactions will roll blocks out of the filter.
+ * Tracking many more items than can possibly be polled at once ensures that
+ * recently polled items will come to a stable state on the network before
+ * rolling out of the filter.
  */
-static constexpr int AVALANCHE_MAX_INFLIGHT_POLL = 10;
+static constexpr uint32_t AVALANCHE_FINALIZED_ITEMS_FILTER_NUM_ELEMENTS =
+    AVALANCHE_MAX_INFLIGHT_POLL * 20;
 
 namespace avalanche {
 
 class Delegation;
 class PeerManager;
-class Proof;
+class ProofRegistrationState;
+struct VoteRecord;
 
-/**
- * Vote history.
- */
-struct VoteRecord {
-private:
-    // confidence's LSB bit is the result. Higher bits are actual confidence
-    // score.
-    uint16_t confidence = 0;
-
-    // Historical record of votes.
-    uint8_t votes = 0;
-    // Each bit indicate if the vote is to be considered.
-    uint8_t consider = 0;
-    // How many in flight requests exists for this element.
-    mutable std::atomic<uint8_t> inflight{0};
-
-    // Seed for pseudorandom operations.
-    const uint32_t seed = 0;
-
-    // Track how many successful votes occured.
-    uint32_t successfulVotes = 0;
-
-    // Track the nodes which are part of the quorum.
-    std::array<uint16_t, 8> nodeFilter{{0, 0, 0, 0, 0, 0, 0, 0}};
-
-public:
-    explicit VoteRecord(bool accepted) : confidence(accepted) {}
-
-    /**
-     * Copy semantic
-     */
-    VoteRecord(const VoteRecord &other)
-        : confidence(other.confidence), votes(other.votes),
-          consider(other.consider), inflight(other.inflight.load()),
-          successfulVotes(other.successfulVotes), nodeFilter(other.nodeFilter) {
-    }
-
-    /**
-     * Vote accounting facilities.
-     */
-    bool isAccepted() const { return confidence & 0x01; }
-
-    uint16_t getConfidence() const { return confidence >> 1; }
-    bool hasFinalized() const {
-        return getConfidence() >= AVALANCHE_FINALIZATION_SCORE;
-    }
-
-    /**
-     * Register a new vote for an item and update confidence accordingly.
-     * Returns true if the acceptance or finalization state changed.
-     */
-    bool registerVote(NodeId nodeid, uint32_t error);
-
-    /**
-     * Register that a request is being made regarding that item.
-     * The method is made const so that it can be accessed via a read only view
-     * of vote_records. It's not a problem as it is made thread safe.
-     */
-    bool registerPoll() const;
-
-    /**
-     * Return if this item is in condition to be polled at the moment.
-     */
-    bool shouldPoll() const { return inflight < AVALANCHE_MAX_INFLIGHT_POLL; }
-
-    /**
-     * Clear `count` inflight requests.
-     */
-    void clearInflightRequest(uint8_t count = 1) { inflight -= count; }
-
-private:
-    /**
-     * Add the node to the quorum.
-     * Returns true if the node was added, false if the node already was in the
-     * quorum.
-     */
-    bool addNodeToQuorum(NodeId nodeid);
+enum struct VoteStatus : uint8_t {
+    Invalid,
+    Rejected,
+    Accepted,
+    Finalized,
+    Stale,
 };
 
-class BlockUpdate {
-    union {
-        CBlockIndex *pindex;
-        uintptr_t raw;
-    };
+using AnyVoteItem =
+    std::variant<const ProofRef, const CBlockIndex *, const CTransactionRef>;
 
-    static const size_t STATUS_BITS = 2;
-    static const uintptr_t MASK = (1 << STATUS_BITS) - 1;
-
-    static_assert(
-        alignof(CBlockIndex) >= (1 << STATUS_BITS),
-        "CBlockIndex alignement doesn't allow for Status to be stored.");
+class VoteItemUpdate {
+    AnyVoteItem item;
+    VoteStatus status;
 
 public:
-    enum Status : uint8_t {
-        Invalid,
-        Rejected,
-        Accepted,
-        Finalized,
-    };
+    VoteItemUpdate(AnyVoteItem itemIn, VoteStatus statusIn)
+        : item(std::move(itemIn)), status(statusIn) {}
 
-    BlockUpdate(CBlockIndex *pindexIn, Status statusIn) : pindex(pindexIn) {
-        raw |= statusIn;
-    }
-
-    Status getStatus() const { return Status(raw & MASK); }
-
-    CBlockIndex *getBlockIndex() {
-        return reinterpret_cast<CBlockIndex *>(raw & ~MASK);
-    }
-
-    const CBlockIndex *getBlockIndex() const {
-        return const_cast<BlockUpdate *>(this)->getBlockIndex();
-    }
+    const VoteStatus &getStatus() const { return status; }
+    const AnyVoteItem &getVoteItem() const { return item; }
 };
 
-using BlockVoteMap =
-    std::map<const CBlockIndex *, VoteRecord, CBlockIndexWorkComparator>;
+class VoteMapComparator {
+    const CTxMemPool *mempool{nullptr};
+
+public:
+    VoteMapComparator() {}
+    VoteMapComparator(const CTxMemPool *mempoolIn) : mempool(mempoolIn) {}
+
+    bool operator()(const AnyVoteItem &lhs, const AnyVoteItem &rhs) const {
+        // If the variants are of different types, sort them by variant index
+        if (lhs.index() != rhs.index()) {
+            return lhs.index() < rhs.index();
+        }
+
+        return std::visit(
+            variant::overloaded{
+                [](const ProofRef &lhs, const ProofRef &rhs) {
+                    return ProofComparatorByScore()(lhs, rhs);
+                },
+                [](const CBlockIndex *lhs, const CBlockIndex *rhs) {
+                    // Reverse ordering so we get the highest work first
+                    return CBlockIndexWorkComparator()(rhs, lhs);
+                },
+                [this](const CTransactionRef &lhs, const CTransactionRef &rhs) {
+                    const TxId &lhsTxId = lhs->GetId();
+                    const TxId &rhsTxId = rhs->GetId();
+
+                    // If there is no mempool, sort by TxId. Note that polling
+                    // for txs is currently not supported if there is no mempool
+                    // so this is only a safety net.
+                    if (!mempool) {
+                        return lhsTxId < rhsTxId;
+                    }
+
+                    LOCK(mempool->cs);
+
+                    auto lhsOptIter = mempool->GetIter(lhsTxId);
+                    auto rhsOptIter = mempool->GetIter(rhsTxId);
+
+                    // If the transactions are not in the mempool, tie by TxId
+                    if (!lhsOptIter && !rhsOptIter) {
+                        return lhsTxId < rhsTxId;
+                    }
+
+                    // If only one is in the mempool, pick that one
+                    if (lhsOptIter.has_value() != rhsOptIter.has_value()) {
+                        return !!lhsOptIter;
+                    }
+
+                    // Both are in the mempool, select the highest fee rate
+                    // including the fee deltas
+                    return CompareTxMemPoolEntryByModifiedFeeRate{}(
+                        **lhsOptIter, **rhsOptIter);
+                },
+                [](const auto &lhs, const auto &rhs) {
+                    // This serves 2 purposes:
+                    //  - This makes sure that we don't forget to implement a
+                    //    comparison case when adding a new variant type.
+                    //  - This avoids having to write all the cross type cases
+                    //    which are already handled by the index sort above.
+                    //    Because the compiler has no way to determine that, we
+                    //    cannot use static assertions here without having to
+                    //    define the whole type matrix also.
+                    assert(false);
+                    // Return any bool, it's only there to make the compiler
+                    // happy.
+                    return false;
+                },
+            },
+            lhs, rhs);
+    }
+};
+using VoteMap = std::map<AnyVoteItem, VoteRecord, VoteMapComparator>;
 
 struct query_timeout {};
 
@@ -187,15 +175,18 @@ namespace {
     struct AvalancheTest;
 }
 
-class Processor {
+// FIXME Implement a proper notification handler for node disconnection instead
+// of implementing the whole NetEventsInterface for a single interesting event.
+class Processor final : public NetEventsInterface {
+    Config avaconfig;
     CConnman *connman;
-    NodePeerManager *nodePeerManager;
-    std::chrono::milliseconds queryTimeoutDuration;
+    ChainstateManager &chainman;
+    CTxMemPool *mempool;
 
     /**
-     * Blocks to run avalanche on.
+     * Items to run avalanche on.
      */
-    RWCollection<BlockVoteMap> vote_records;
+    RWCollection<VoteMap> voteRecords;
 
     /**
      * Keep track of peers and queries sent.
@@ -246,79 +237,168 @@ class Processor {
     /** Event loop machinery. */
     EventLoop eventLoop;
 
+    /**
+     * Quorum management.
+     */
+    uint32_t minQuorumScore;
+    double minQuorumConnectedScoreRatio;
+    std::atomic<bool> quorumIsEstablished{false};
+    std::atomic<bool> m_canShareLocalProof{false};
+    int64_t minAvaproofsNodeCount;
+    std::atomic<int64_t> avaproofsNodeCounter{0};
+
+    /** Voting parameters. */
+    const uint32_t staleVoteThreshold;
+    const uint32_t staleVoteFactor;
+
     /** Registered interfaces::Chain::Notifications handler. */
     class NotificationsHandler;
     std::unique_ptr<interfaces::Handler> chainNotificationsHandler;
 
-    /**
-     * Flag indicating that the proof must be registered at first new block
-     * after IBD
-     */
-    bool mustRegisterProof = false;
+    mutable Mutex cs_finalizationTip;
+    const CBlockIndex *finalizationTip GUARDED_BY(cs_finalizationTip){nullptr};
 
-    Processor(interfaces::Chain &chain, CConnman *connmanIn,
-              NodePeerManager *nodePeerManagerIn,
-              std::unique_ptr<PeerData> peerDataIn, CKey sessionKeyIn);
+    mutable Mutex cs_delayedAvahelloNodeIds;
+    /**
+     * A list of the nodes that did not get our proof announced via avahello
+     * yet because we had no inbound connection.
+     */
+    std::unordered_set<NodeId>
+        delayedAvahelloNodeIds GUARDED_BY(cs_delayedAvahelloNodeIds);
+
+    Processor(Config avaconfig, interfaces::Chain &chain, CConnman *connmanIn,
+              ChainstateManager &chainman, CTxMemPool *mempoolIn,
+              CScheduler &scheduler, std::unique_ptr<PeerData> peerDataIn,
+              CKey sessionKeyIn, uint32_t minQuorumTotalScoreIn,
+              double minQuorumConnectedScoreRatioIn,
+              int64_t minAvaproofsNodeCountIn, uint32_t staleVoteThresholdIn,
+              uint32_t staleVoteFactorIn, Amount stakeUtxoDustThresholdIn);
 
 public:
     ~Processor();
 
     static std::unique_ptr<Processor>
     MakeProcessor(const ArgsManager &argsman, interfaces::Chain &chain,
-                  CConnman *connman, NodePeerManager *nodePeerManager,
+                  CConnman *connman, ChainstateManager &chainman,
+                  CTxMemPool *mempoolIn, CScheduler &scheduler,
                   bilingual_str &error);
 
-    void setQueryTimeoutDuration(std::chrono::milliseconds d) {
-        queryTimeoutDuration = d;
-    }
+    bool addToReconcile(const AnyVoteItem &item);
+    bool isAccepted(const AnyVoteItem &item) const;
+    int getConfidence(const AnyVoteItem &item) const;
 
-    bool addBlockToReconcile(const CBlockIndex *pindex);
-    bool isAccepted(const CBlockIndex *pindex) const;
-    int getConfidence(const CBlockIndex *pindex) const;
-
-    // TDOD: Refactor the API to remove the dependency on avalanche/protocol.h
+    // TODO: Refactor the API to remove the dependency on avalanche/protocol.h
     void sendResponse(CNode *pfrom, Response response) const;
     bool registerVotes(NodeId nodeid, const Response &response,
-                       std::vector<BlockUpdate> &updates);
+                       std::vector<VoteItemUpdate> &updates, int &banscore,
+                       std::string &error);
 
-    bool addNode(NodeId nodeid, const ProofId &proofid);
-    bool forNode(NodeId nodeid, std::function<bool(const Node &n)> func) const;
+    template <typename Callable> auto withPeerManager(Callable &&func) const {
+        LOCK(cs_peerManager);
+        return func(*peerManager);
+    }
 
     CPubKey getSessionPubKey() const;
-    bool sendHello(CNode *pfrom) const;
+    /**
+     * @brief Send a avahello message
+     *
+     * @param pfrom The node to send the message to
+     * @return True if a non-null delegation has been announced
+     */
+    bool sendHello(CNode *pfrom);
+    void sendDelayedAvahello();
 
-    bool addProof(const std::shared_ptr<Proof> &proof);
-    std::shared_ptr<Proof> getProof(const ProofId &proofid) const;
-    std::shared_ptr<Proof> getLocalProof() const;
-    Peer::Timestamp getProofTime(const ProofId &proofid) const;
-    std::shared_ptr<Proof> getOrphan(const ProofId &proofid) const;
+    ProofRef getLocalProof() const;
+    ProofRegistrationState getLocalProofRegistrationState() const;
 
     /*
      * Return whether the avalanche service flag should be set.
      */
     bool isAvalancheServiceAvailable() { return !!peerData; }
 
-    std::vector<avalanche::Peer> getPeers() const;
-    std::vector<NodeId> getNodeIdsForPeer(PeerId peerId) const;
-
     bool startEventLoop(CScheduler &scheduler);
     bool stopEventLoop();
 
-    void addUnbroadcastProof(const ProofId &proofid);
-    void removeUnbroadcastProof(const ProofId &proofid);
-    void broadcastProofs();
+    void avaproofsSent(NodeId nodeid) LOCKS_EXCLUDED(cs_main);
+    int64_t getAvaproofsNodeCounter() const {
+        return avaproofsNodeCounter.load();
+    }
+    bool isQuorumEstablished() LOCKS_EXCLUDED(cs_main);
+    bool canShareLocalProof();
+
+    // Implement NetEventInterface. Only FinalizeNode is of interest.
+    void InitializeNode(const ::Config &config, CNode *pnode) override {}
+    bool ProcessMessages(const ::Config &config, CNode *pnode,
+                         std::atomic<bool> &interrupt) override {
+        return false;
+    }
+    bool SendMessages(const ::Config &config, CNode *pnode) override {
+        return false;
+    }
+
+    /** Handle removal of a node */
+    void FinalizeNode(const ::Config &config, const CNode &node) override
+        LOCKS_EXCLUDED(cs_main);
 
 private:
     void runEventLoop();
     void clearTimedoutRequests();
     std::vector<CInv> getInvsForNextPoll(bool forPoll = true);
-    NodeId getSuitableNodeToQuery();
+    bool sendHelloInternal(CNode *pfrom)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_delayedAvahelloNodeIds);
+    AnyVoteItem getVoteItemFromInv(const CInv &inv) const;
 
     /**
-     * Build and return the challenge whose signature is included in the
-     * AVAHELLO message that we send to a peer.
+     * We don't need many blocks but a low false positive rate.
+     * In the event of a false positive the node might skip polling this block.
+     * Such a block will not get marked as finalized until it is reconsidered
+     * for polling (if the filter changed its state) or another block is found.
      */
-    uint256 buildLocalSighash(CNode *pfrom) const;
+    mutable Mutex cs_invalidatedBlocks;
+    CRollingBloomFilter invalidatedBlocks GUARDED_BY(cs_invalidatedBlocks){
+        100, 0.0000001};
+
+    /**
+     * Rolling bloom filter to track recently finalized inventory items of any
+     * type. Once placed in this filter, those items will not be polled again
+     * unless they roll out. Note that this one filter tracks all types so
+     * blocks may be rolled out by transaction activity for example.
+     *
+     * We want a low false positive rate to prevent accidentally not polling
+     * for an item when it is first seen.
+     */
+    mutable Mutex cs_finalizedItems;
+    CRollingBloomFilter finalizedItems GUARDED_BY(cs_finalizedItems){
+        AVALANCHE_FINALIZED_ITEMS_FILTER_NUM_ELEMENTS, 0.0000001};
+
+    struct IsWorthPolling {
+        const Processor &processor;
+
+        IsWorthPolling(const Processor &_processor) : processor(_processor){};
+
+        bool operator()(const CBlockIndex *pindex) const
+            LOCKS_EXCLUDED(cs_main);
+        bool operator()(const ProofRef &proof) const
+            LOCKS_EXCLUDED(cs_peerManager);
+        bool operator()(const CTransactionRef &tx) const;
+    };
+    bool isWorthPolling(const AnyVoteItem &item) const;
+
+    struct GetLocalAcceptance {
+        const Processor &processor;
+
+        GetLocalAcceptance(const Processor &_processor)
+            : processor(_processor){};
+
+        bool operator()(const CBlockIndex *pindex) const
+            LOCKS_EXCLUDED(cs_main);
+        bool operator()(const ProofRef &proof) const
+            LOCKS_EXCLUDED(cs_peerManager);
+        bool operator()(const CTransactionRef &tx) const;
+    };
+    bool getLocalAcceptance(const AnyVoteItem &item) const {
+        return std::visit(GetLocalAcceptance(*this), item);
+    }
 
     friend struct ::avalanche::AvalancheTest;
 };

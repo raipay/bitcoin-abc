@@ -4,25 +4,26 @@
 
 #include <avalanche/peermanager.h>
 
+#include <avalanche/avalanche.h>
 #include <avalanche/delegation.h>
 #include <avalanche/validation.h>
-#include <net_processing.h> // For RelayProof
 #include <random.h>
-#include <validation.h> // For ChainstateActive()
+#include <scheduler.h>
+#include <validation.h> // For ChainstateManager
 
+#include <algorithm>
 #include <cassert>
 
 namespace avalanche {
-
-static bool isOrphanState(const ProofValidationState &state) {
-    return state.GetResult() == ProofValidationResult::MISSING_UTXO ||
-           state.GetResult() == ProofValidationResult::HEIGHT_MISMATCH;
-}
-
 bool PeerManager::addNode(NodeId nodeid, const ProofId &proofid) {
-    auto &pview = peers.get<proof_index>();
+    auto &pview = peers.get<by_proofid>();
     auto it = pview.find(proofid);
     if (it == pview.end()) {
+        // If the node exists, it is actually updating its proof to an unknown
+        // one. In this case we need to remove it so it is not both active and
+        // pending at the same time.
+        removeNode(nodeid);
+        pendingNodes.emplace(proofid, nodeid);
         return false;
     }
 
@@ -53,6 +54,9 @@ bool PeerManager::addOrUpdateNode(const PeerSet::iterator &it, NodeId nodeid) {
     bool success = addNodeToPeer(it);
     assert(success);
 
+    // If the added node was in the pending set, remove it
+    pendingNodes.get<by_nodeid>().erase(nodeid);
+
     return true;
 }
 
@@ -70,10 +74,18 @@ bool PeerManager::addNodeToPeer(const PeerSet::iterator &it) {
         const uint64_t start = slotCount;
         slots.emplace_back(start, score, it->peerid);
         slotCount = start + score;
+
+        // Add to our allocated score when we allocate a new peer in the slots
+        connectedPeersScore += score;
     });
 }
 
 bool PeerManager::removeNode(NodeId nodeid) {
+    if (pendingNodes.get<by_nodeid>().erase(nodeid) > 0) {
+        // If this was a pending node, there is nothing else to do.
+        return true;
+    }
+
     auto it = nodes.find(nodeid);
     if (it == nodes.end()) {
         return false;
@@ -91,7 +103,13 @@ bool PeerManager::removeNode(NodeId nodeid) {
 
 bool PeerManager::removeNodeFromPeer(const PeerSet::iterator &it,
                                      uint32_t count) {
-    assert(it != peers.end());
+    // It is possible for nodes to be dangling. If there was an inflight query
+    // when the peer gets removed, the node was not erased. In this case there
+    // is nothing to do.
+    if (it == peers.end()) {
+        return true;
+    }
+
     assert(count <= it->node_count);
     if (count == 0) {
         // This is a NOOP.
@@ -108,9 +126,13 @@ bool PeerManager::removeNodeFromPeer(const PeerSet::iterator &it,
         return true;
     }
 
-    // There are no more node left, we need to cleanup.
+    // There are no more nodes left, we need to clean up. Subtract allocated
+    // score and remove from slots.
     const size_t i = it->index;
     assert(i < slots.size());
+    assert(connectedPeersScore >= slots[i].getScore());
+    connectedPeersScore -= slots[i].getScore();
+
     if (i + 1 == slots.size()) {
         slots.pop_back();
         slotCount = slots.empty() ? 0 : slots.back().getStop();
@@ -122,12 +144,6 @@ bool PeerManager::removeNodeFromPeer(const PeerSet::iterator &it,
     return true;
 }
 
-bool PeerManager::forNode(NodeId nodeid,
-                          std::function<bool(const Node &n)> func) const {
-    auto it = nodes.find(nodeid);
-    return it != nodes.end() && func(*it);
-}
-
 bool PeerManager::updateNextRequestTime(NodeId nodeid, TimePoint timeout) {
     auto it = nodes.find(nodeid);
     if (it == nodes.end()) {
@@ -135,6 +151,307 @@ bool PeerManager::updateNextRequestTime(NodeId nodeid, TimePoint timeout) {
     }
 
     return nodes.modify(it, [&](Node &n) { n.nextRequestTime = timeout; });
+}
+
+bool PeerManager::latchAvaproofsSent(NodeId nodeid) {
+    auto it = nodes.find(nodeid);
+    if (it == nodes.end()) {
+        return false;
+    }
+
+    return !it->avaproofsSent &&
+           nodes.modify(it, [&](Node &n) { n.avaproofsSent = true; });
+}
+
+static bool isImmatureState(const ProofValidationState &state) {
+    return state.GetResult() == ProofValidationResult::IMMATURE_UTXO;
+}
+
+bool PeerManager::updateNextPossibleConflictTime(
+    PeerId peerid, const std::chrono::seconds &nextTime) {
+    auto it = peers.find(peerid);
+    if (it == peers.end()) {
+        // No such peer
+        return false;
+    }
+
+    // Make sure we don't move the time in the past.
+    peers.modify(it, [&](Peer &p) {
+        p.nextPossibleConflictTime =
+            std::max(p.nextPossibleConflictTime, nextTime);
+    });
+
+    return it->nextPossibleConflictTime == nextTime;
+}
+
+bool PeerManager::setFinalized(PeerId peerid) {
+    auto it = peers.find(peerid);
+    if (it == peers.end()) {
+        // No such peer
+        return false;
+    }
+
+    peers.modify(it, [&](Peer &p) { p.hasFinalized = true; });
+
+    return true;
+}
+
+template <typename ProofContainer>
+void PeerManager::moveToConflictingPool(const ProofContainer &proofs) {
+    auto &peersView = peers.get<by_proofid>();
+    for (const ProofRef &proof : proofs) {
+        auto it = peersView.find(proof->getId());
+        if (it != peersView.end()) {
+            removePeer(it->peerid);
+        }
+
+        conflictingProofPool.addProofIfPreferred(proof);
+    }
+}
+
+bool PeerManager::registerProof(const ProofRef &proof,
+                                ProofRegistrationState &registrationState,
+                                RegistrationMode mode) {
+    assert(proof);
+
+    const ProofId &proofid = proof->getId();
+
+    auto invalidate = [&](ProofRegistrationResult result,
+                          const std::string &message) {
+        return registrationState.Invalid(
+            result, message, strprintf("proofid: %s", proofid.ToString()));
+    };
+
+    if ((mode != RegistrationMode::FORCE_ACCEPT ||
+         !isInConflictingPool(proofid)) &&
+        exists(proofid)) {
+        // In default mode, we expect the proof to be unknown, i.e. in none of
+        // the pools.
+        // In forced accept mode, the proof can be in the conflicting pool.
+        return invalidate(ProofRegistrationResult::ALREADY_REGISTERED,
+                          "proof-already-registered");
+    }
+
+    if (danglingProofIds.contains(proofid) &&
+        pendingNodes.count(proofid) == 0) {
+        // Don't attempt to register a proof that we already evicted because it
+        // was dangling, but rather attempt to retrieve an associated node.
+        needMoreNodes = true;
+        return invalidate(ProofRegistrationResult::DANGLING, "dangling-proof");
+    }
+
+    // Check the proof's validity.
+    ProofValidationState validationState;
+    if (!WITH_LOCK(cs_main, return proof->verify(stakeUtxoDustThreshold,
+                                                 chainman, validationState))) {
+        if (isImmatureState(validationState)) {
+            immatureProofPool.addProofIfPreferred(proof);
+            if (immatureProofPool.countProofs() >
+                AVALANCHE_MAX_IMMATURE_PROOFS) {
+                // Adding this proof exceeds the immature pool limit, so evict
+                // the lowest scoring proof.
+                immatureProofPool.removeProof(
+                    immatureProofPool.getLowestScoreProof()->getId());
+            }
+
+            return invalidate(ProofRegistrationResult::IMMATURE,
+                              "immature-proof");
+        }
+
+        if (validationState.GetResult() ==
+            ProofValidationResult::MISSING_UTXO) {
+            return invalidate(ProofRegistrationResult::MISSING_UTXO,
+                              "utxo-missing-or-spent");
+        }
+
+        // Reject invalid proof.
+        return invalidate(ProofRegistrationResult::INVALID, "invalid-proof");
+    }
+
+    auto now = GetTime<std::chrono::seconds>();
+    auto nextCooldownTimePoint =
+        now + std::chrono::seconds(gArgs.GetIntArg(
+                  "-avalancheconflictingproofcooldown",
+                  AVALANCHE_DEFAULT_CONFLICTING_PROOF_COOLDOWN));
+
+    ProofPool::ConflictingProofSet conflictingProofs;
+    switch (validProofPool.addProofIfNoConflict(proof, conflictingProofs)) {
+        case ProofPool::AddProofStatus::REJECTED: {
+            if (mode != RegistrationMode::FORCE_ACCEPT) {
+                auto bestPossibleConflictTime = std::chrono::seconds(0);
+                auto &pview = peers.get<by_proofid>();
+                for (auto &conflictingProof : conflictingProofs) {
+                    auto it = pview.find(conflictingProof->getId());
+                    assert(it != pview.end());
+
+                    // Search the most recent time over the peers
+                    bestPossibleConflictTime = std::max(
+                        bestPossibleConflictTime, it->nextPossibleConflictTime);
+
+                    updateNextPossibleConflictTime(it->peerid,
+                                                   nextCooldownTimePoint);
+                }
+
+                if (bestPossibleConflictTime > now) {
+                    // Cooldown not elapsed, reject the proof.
+                    return invalidate(
+                        ProofRegistrationResult::COOLDOWN_NOT_ELAPSED,
+                        "cooldown-not-elapsed");
+                }
+
+                // Give the proof a chance to replace the conflicting ones.
+                if (validProofPool.addProofIfPreferred(proof)) {
+                    // If we have overridden other proofs due to conflict,
+                    // remove the peers and attempt to move them to the
+                    // conflicting pool.
+                    moveToConflictingPool(conflictingProofs);
+
+                    // Replacement is successful, continue to peer creation
+                    break;
+                }
+
+                // Not the preferred proof, or replacement is not enabled
+                return conflictingProofPool.addProofIfPreferred(proof) ==
+                               ProofPool::AddProofStatus::REJECTED
+                           ? invalidate(ProofRegistrationResult::REJECTED,
+                                        "rejected-proof")
+                           : invalidate(ProofRegistrationResult::CONFLICTING,
+                                        "conflicting-utxos");
+            }
+
+            conflictingProofPool.removeProof(proofid);
+
+            // Move the conflicting proofs from the valid pool to the
+            // conflicting pool
+            moveToConflictingPool(conflictingProofs);
+
+            auto status = validProofPool.addProofIfNoConflict(proof);
+            assert(status == ProofPool::AddProofStatus::SUCCEED);
+
+            break;
+        }
+        case ProofPool::AddProofStatus::DUPLICATED:
+            // If the proof was already in the pool, don't duplicate the peer.
+            return invalidate(ProofRegistrationResult::ALREADY_REGISTERED,
+                              "proof-already-registered");
+        case ProofPool::AddProofStatus::SUCCEED:
+            break;
+
+            // No default case, so the compiler can warn about missing cases
+    }
+
+    // At this stage we are going to create a peer so the proof should never
+    // exist in the conflicting pool, but use belt and suspenders.
+    conflictingProofPool.removeProof(proofid);
+
+    // New peer means new peerid!
+    const PeerId peerid = nextPeerId++;
+
+    // We have no peer for this proof, time to create it.
+    auto inserted = peers.emplace(peerid, proof, nextCooldownTimePoint);
+    assert(inserted.second);
+
+    auto insertedRadixTree = shareableProofs.insert(proof);
+    assert(insertedRadixTree);
+
+    // Add to our registered score when adding to the peer list
+    totalPeersScore += proof->getScore();
+
+    // If there are nodes waiting for this proof, add them
+    auto &pendingNodesView = pendingNodes.get<by_proofid>();
+    auto range = pendingNodesView.equal_range(proofid);
+
+    // We want to update the nodes then remove them from the pending set. That
+    // will invalidate the range iterators, so we need to save the node ids
+    // first before we can loop over them.
+    std::vector<NodeId> nodeids;
+    nodeids.reserve(std::distance(range.first, range.second));
+    std::transform(range.first, range.second, std::back_inserter(nodeids),
+                   [](const PendingNode &n) { return n.nodeid; });
+
+    for (const NodeId &nodeid : nodeids) {
+        addOrUpdateNode(inserted.first, nodeid);
+    }
+
+    return true;
+}
+
+bool PeerManager::rejectProof(const ProofId &proofid, RejectionMode mode) {
+    if (!exists(proofid)) {
+        return false;
+    }
+
+    if (immatureProofPool.removeProof(proofid)) {
+        return true;
+    }
+
+    if (mode == RejectionMode::DEFAULT &&
+        conflictingProofPool.getProof(proofid)) {
+        // In default mode we keep the proof in the conflicting pool
+        return true;
+    }
+
+    if (mode == RejectionMode::INVALIDATE &&
+        conflictingProofPool.removeProof(proofid)) {
+        // In invalidate mode we remove the proof completely
+        return true;
+    }
+
+    auto &pview = peers.get<by_proofid>();
+    auto it = pview.find(proofid);
+    assert(it != pview.end());
+
+    const ProofRef proof = it->proof;
+
+    if (!removePeer(it->peerid)) {
+        return false;
+    }
+
+    // If there was conflicting proofs, attempt to pull them back
+    for (const SignedStake &ss : proof->getStakes()) {
+        const ProofRef conflictingProof =
+            conflictingProofPool.getProof(ss.getStake().getUTXO());
+        if (!conflictingProof) {
+            continue;
+        }
+
+        conflictingProofPool.removeProof(conflictingProof->getId());
+        registerProof(conflictingProof);
+    }
+
+    if (mode == RejectionMode::DEFAULT) {
+        conflictingProofPool.addProofIfPreferred(proof);
+    }
+
+    return true;
+}
+
+void PeerManager::cleanupDanglingProofs(const ProofRef &localProof) {
+    const auto now = GetTime<std::chrono::seconds>();
+
+    std::vector<ProofId> newlyDanglingProofIds;
+    for (const Peer &peer : peers) {
+        // If the peer is not our local proof, has been registered for some
+        // time and has no node attached, discard it.
+        if ((!localProof || peer.getProofId() != localProof->getId()) &&
+            peer.node_count == 0 &&
+            (peer.registration_time + Peer::DANGLING_TIMEOUT) <= now) {
+            newlyDanglingProofIds.push_back(peer.getProofId());
+        }
+    }
+
+    for (const ProofId &proofid : newlyDanglingProofIds) {
+        rejectProof(proofid, RejectionMode::INVALIDATE);
+        danglingProofIds.insert(proofid);
+        LogPrint(
+            BCLog::AVALANCHE,
+            "Proof dropped for dangling too long (no connected node): %s\n",
+            proofid.GetHex());
+    }
+
+    // If we have dangling proof, this is a good indicator that we need to
+    // request more nodes from our peers.
+    needMoreNodes = !newlyDanglingProofIds.empty();
 }
 
 NodeId PeerManager::selectNode() {
@@ -157,119 +474,80 @@ NodeId PeerManager::selectNode() {
         }
     }
 
+    // We failed to find a node to query, flag this so we can request more
+    needMoreNodes = true;
+
     return NO_NODE;
 }
 
-void PeerManager::updatedBlockTip() {
-    std::vector<PeerId> invalidPeers;
-    std::vector<std::shared_ptr<Proof>> newOrphans;
+std::unordered_set<ProofRef, SaltedProofHasher> PeerManager::updatedBlockTip() {
+    std::vector<ProofId> invalidProofIds;
+    std::vector<ProofRef> newImmatures;
 
     {
         LOCK(cs_main);
 
-        const CCoinsViewCache &coins = ::ChainstateActive().CoinsTip();
         for (const auto &p : peers) {
             ProofValidationState state;
-            if (!p.proof->verify(state, coins)) {
-                if (isOrphanState(state)) {
-                    newOrphans.push_back(p.proof);
+            if (!p.proof->verify(stakeUtxoDustThreshold, chainman, state)) {
+                if (isImmatureState(state)) {
+                    newImmatures.push_back(p.proof);
                 }
-                invalidPeers.push_back(p.peerid);
+                invalidProofIds.push_back(p.getProofId());
+
+                LogPrint(BCLog::AVALANCHE,
+                         "Invalidating proof %s: verification failed (%s)\n",
+                         p.proof->getId().GetHex(), state.ToString());
             }
         }
     }
 
-    orphanProofs.rescan(*this);
-
-    for (auto &p : newOrphans) {
-        orphanProofs.addProof(p);
+    // Remove the invalid proofs before the immature rescan. This makes it
+    // possible to pull back proofs with utxos that conflicted with these
+    // invalid proofs.
+    for (const ProofId &invalidProofId : invalidProofIds) {
+        rejectProof(invalidProofId, RejectionMode::INVALIDATE);
     }
 
-    for (const auto &pid : invalidPeers) {
-        removePeer(pid);
+    auto registeredProofs = immatureProofPool.rescan(*this);
+
+    for (auto &p : newImmatures) {
+        immatureProofPool.addProofIfPreferred(p);
     }
+
+    return registeredProofs;
 }
 
-PeerId PeerManager::getPeerId(const std::shared_ptr<Proof> &proof) {
-    auto it = fetchOrCreatePeer(proof);
-    return it == peers.end() ? NO_PEER : it->peerid;
+ProofRef PeerManager::getProof(const ProofId &proofid) const {
+    ProofRef proof;
+
+    forPeer(proofid, [&](const Peer &p) {
+        proof = p.proof;
+        return true;
+    });
+
+    if (!proof) {
+        proof = conflictingProofPool.getProof(proofid);
+    }
+
+    if (!proof) {
+        proof = immatureProofPool.getProof(proofid);
+    }
+
+    return proof;
 }
 
-std::shared_ptr<Proof> PeerManager::getProof(const ProofId &proofid) const {
-    auto &pview = peers.get<proof_index>();
-    auto it = pview.find(proofid);
-    return it == pview.end() ? nullptr : it->proof;
+bool PeerManager::isBoundToPeer(const ProofId &proofid) const {
+    auto &pview = peers.get<by_proofid>();
+    return pview.find(proofid) != pview.end();
 }
 
-Peer::Timestamp PeerManager::getProofTime(const ProofId &proofid) const {
-    auto &pview = peers.get<proof_index>();
-    auto it = pview.find(proofid);
-    return it == pview.end() ? Peer::Timestamp::max() : it->time;
+bool PeerManager::isImmature(const ProofId &proofid) const {
+    return immatureProofPool.getProof(proofid) != nullptr;
 }
 
-PeerManager::PeerSet::iterator
-PeerManager::fetchOrCreatePeer(const std::shared_ptr<Proof> &proof) {
-    {
-        // Check if we already know of that peer.
-        auto &pview = peers.get<proof_index>();
-        auto it = pview.find(proof->getId());
-        if (it != pview.end()) {
-            return peers.project<0>(it);
-        }
-    }
-
-    // Check the proof's validity.
-    ProofValidationState state;
-    bool valid = [&](ProofValidationState &state) {
-        LOCK(cs_main);
-        const CCoinsViewCache &coins = ::ChainstateActive().CoinsTip();
-        return proof->verify(state, coins);
-    }(state);
-
-    if (!valid) {
-        if (isOrphanState(state)) {
-            orphanProofs.addProof(proof);
-        }
-
-        // Reject invalid proof.
-        return peers.end();
-    }
-
-    orphanProofs.removeProof(proof->getId());
-
-    // New peer means new peerid!
-    const PeerId peerid = nextPeerId++;
-
-    // Attach UTXOs to this proof.
-    std::unordered_set<PeerId> conflicting_peerids;
-    for (const auto &s : proof->getStakes()) {
-        auto p = utxos.emplace(s.getStake().getUTXO(), peerid);
-        if (!p.second) {
-            // We have a collision with an existing proof.
-            conflicting_peerids.insert(p.first->second);
-        }
-    }
-
-    // For now, if there is a conflict, just cleanup the mess.
-    if (conflicting_peerids.size() > 0) {
-        for (const auto &s : proof->getStakes()) {
-            auto it = utxos.find(s.getStake().getUTXO());
-            assert(it != utxos.end());
-
-            // We need to delete that one.
-            if (it->second == peerid) {
-                utxos.erase(it);
-            }
-        }
-
-        return peers.end();
-    }
-
-    // We have no peer for this proof, time to create it.
-    auto inserted = peers.emplace(peerid, proof);
-    assert(inserted.second);
-
-    return inserted.first;
+bool PeerManager::isInConflictingPool(const ProofId &proofid) const {
+    return conflictingProofPool.getProof(proofid) != nullptr;
 }
 
 bool PeerManager::removePeer(const PeerId peerid) {
@@ -281,22 +559,33 @@ bool PeerManager::removePeer(const PeerId peerid) {
     // Remove all nodes from this peer.
     removeNodeFromPeer(it, it->node_count);
 
+    auto &nview = nodes.get<next_request_time>();
+
+    // Add the nodes to the pending set
+    auto range = nview.equal_range(peerid);
+    for (auto &nit = range.first; nit != range.second; ++nit) {
+        pendingNodes.emplace(it->getProofId(), nit->nodeid);
+    };
+
     // Remove nodes associated with this peer, unless their timeout is still
     // active. This ensure that we don't overquery them in case they are
     // subsequently added to another peer.
-    auto &nview = nodes.get<next_request_time>();
     nview.erase(nview.lower_bound(boost::make_tuple(peerid, TimePoint())),
                 nview.upper_bound(boost::make_tuple(
                     peerid, std::chrono::steady_clock::now())));
 
     // Release UTXOs attached to this proof.
-    for (const auto &s : it->proof->getStakes()) {
-        bool deleted = utxos.erase(s.getStake().getUTXO()) > 0;
-        assert(deleted);
-    }
+    validProofPool.removeProof(it->getProofId());
 
-    m_unbroadcast_proofids.erase(it->proof->getId());
+    auto removed = shareableProofs.remove(Uint256RadixKey(it->getProofId()));
+    assert(removed != nullptr);
 
+    m_unbroadcast_proofids.erase(it->getProofId());
+
+    // Remove the peer from the PeerSet and remove its score from the registered
+    // score total.
+    assert(totalPeersScore >= it->getScore());
+    totalPeersScore -= it->getScore();
     peers.erase(it);
     return true;
 }
@@ -351,6 +640,7 @@ uint64_t PeerManager::compact() {
 
 bool PeerManager::verify() const {
     uint64_t prevStop = 0;
+    uint32_t scoreFromSlots = 0;
     for (size_t i = 0; i < slots.size(); i++) {
         const Slot &s = slots[i];
 
@@ -371,9 +661,49 @@ bool PeerManager::verify() const {
         if (it == peers.end() || it->index != i) {
             return false;
         }
+
+        // Accumulate score across slots
+        scoreFromSlots += slots[i].getScore();
     }
 
+    // Score across slots must be the same as our allocated score
+    if (scoreFromSlots != connectedPeersScore) {
+        return false;
+    }
+
+    uint32_t scoreFromAllPeers = 0;
+    uint32_t scoreFromPeersWithNodes = 0;
+
+    std::unordered_set<COutPoint, SaltedOutpointHasher> peersUtxos;
     for (const auto &p : peers) {
+        // Accumulate the score across peers to compare with total known score
+        scoreFromAllPeers += p.getScore();
+
+        // A peer should have a proof attached
+        if (!p.proof) {
+            return false;
+        }
+
+        // Check proof pool consistency
+        for (const auto &ss : p.proof->getStakes()) {
+            const COutPoint &outpoint = ss.getStake().getUTXO();
+            auto proof = validProofPool.getProof(outpoint);
+
+            if (!proof) {
+                // Missing utxo
+                return false;
+            }
+            if (proof != p.proof) {
+                // Wrong proof
+                return false;
+            }
+
+            if (!peersUtxos.emplace(outpoint).second) {
+                // Duplicated utxo
+                return false;
+            }
+        }
+
         // Count node attached to this peer.
         const auto count_nodes = [&]() {
             size_t count = 0;
@@ -399,6 +729,7 @@ bool PeerManager::verify() const {
             continue;
         }
 
+        scoreFromPeersWithNodes += p.getScore();
         // The index must point to a slot refering to this peer.
         if (p.index >= slots.size() || slots[p.index].getPeerId() != p.peerid) {
             return false;
@@ -408,9 +739,31 @@ bool PeerManager::verify() const {
         if (slots[p.index].getScore() != p.getScore()) {
             return false;
         }
+
+        // Check the proof is in the radix tree
+        if (shareableProofs.get(p.getProofId()) == nullptr) {
+            return false;
+        }
     }
 
-    return true;
+    // Check our accumulated scores against our registred and allocated scores
+    if (scoreFromAllPeers != totalPeersScore) {
+        return false;
+    }
+    if (scoreFromPeersWithNodes != connectedPeersScore) {
+        return false;
+    }
+
+    // We checked the utxo consistency for all our peers utxos already, so if
+    // the pool size differs from the expected one there are dangling utxos.
+    if (validProofPool.size() != peersUtxos.size()) {
+        return false;
+    }
+
+    // Check there is no dangling proof in the radix tree
+    return shareableProofs.forEachLeaf([&](RCUPtr<const Proof> pLeaf) {
+        return isBoundToPeer(pLeaf->getId());
+    });
 }
 
 PeerId selectPeerImpl(const std::vector<Slot> &slots, const uint64_t slot,
@@ -470,55 +823,15 @@ PeerId selectPeerImpl(const std::vector<Slot> &slots, const uint64_t slot,
     return NO_PEER;
 }
 
-std::vector<Peer> PeerManager::getPeers() const {
-    std::vector<Peer> vpeers;
-    for (auto &it : peers.get<0>()) {
-        vpeers.emplace_back(it);
-    }
-    return vpeers;
-}
-
-std::vector<NodeId> PeerManager::getNodeIdsForPeer(PeerId peerId) const {
-    std::vector<NodeId> nodeids;
-    auto &nview = nodes.get<next_request_time>();
-    auto nodeRange = nview.equal_range(peerId);
-    for (auto it = nodeRange.first; it != nodeRange.second; ++it) {
-        nodeids.emplace_back(it->nodeid);
-    }
-    return nodeids;
-}
-
-bool PeerManager::isOrphan(const ProofId &id) const {
-    return orphanProofs.getProof(id) != nullptr;
-}
-
-std::shared_ptr<Proof> PeerManager::getOrphan(const ProofId &id) const {
-    return orphanProofs.getProof(id);
-}
-
 void PeerManager::addUnbroadcastProof(const ProofId &proofid) {
-    // The proof should be known
-    if (getProof(proofid)) {
+    // The proof should be bound to a peer
+    if (isBoundToPeer(proofid)) {
         m_unbroadcast_proofids.insert(proofid);
     }
 }
 
 void PeerManager::removeUnbroadcastProof(const ProofId &proofid) {
     m_unbroadcast_proofids.erase(proofid);
-}
-
-void PeerManager::broadcastProofs(const CConnman &connman) {
-    // For some reason SaltedProofIdHasher prevents the set from being swappable
-    std::unordered_set<ProofId, SaltedProofIdHasher>
-        previous_unbroadcasted_proofids = std::move(m_unbroadcast_proofids);
-    m_unbroadcast_proofids.clear();
-
-    for (auto &proofid : previous_unbroadcasted_proofids) {
-        if (getProof(proofid)) {
-            m_unbroadcast_proofids.insert(proofid);
-            RelayProof(proofid, connman);
-        }
-    }
 }
 
 } // namespace avalanche

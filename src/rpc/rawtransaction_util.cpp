@@ -6,6 +6,7 @@
 #include <rpc/rawtransaction_util.h>
 
 #include <coins.h>
+#include <consensus/amount.h>
 #include <core_io.h>
 #include <key_io.h>
 #include <policy/policy.h>
@@ -22,13 +23,19 @@ CMutableTransaction ConstructTransaction(const CChainParams &params,
                                          const UniValue &inputs_in,
                                          const UniValue &outputs_in,
                                          const UniValue &locktime) {
-    if (inputs_in.isNull() || outputs_in.isNull()) {
+    if (outputs_in.isNull()) {
         throw JSONRPCError(
             RPC_INVALID_PARAMETER,
-            "Invalid parameter, arguments 1 and 2 must be non-null");
+            "Invalid parameter, output argument must be non-null");
     }
 
-    UniValue inputs = inputs_in.get_array();
+    UniValue inputs;
+    if (inputs_in.isNull()) {
+        inputs = UniValue::VARR;
+    } else {
+        inputs = inputs_in.get_array();
+    }
+
     const bool outputs_is_obj = outputs_in.isObject();
     UniValue outputs =
         outputs_is_obj ? outputs_in.get_obj() : outputs_in.get_array();
@@ -65,7 +72,7 @@ CMutableTransaction ConstructTransaction(const CChainParams &params,
         int nOutput = vout_v.get_int();
         if (nOutput < 0) {
             throw JSONRPCError(RPC_INVALID_PARAMETER,
-                               "Invalid parameter, vout must be positive");
+                               "Invalid parameter, vout cannot be negative");
         }
 
         uint32_t nSequence =
@@ -196,7 +203,7 @@ void ParsePrevouts(const UniValue &prevTxsUnival,
             int nOut = find_value(prevOut, "vout").get_int();
             if (nOut < 0) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR,
-                                   "vout must be positive");
+                                   "vout cannot be negative");
             }
 
             COutPoint out(txid, nOut);
@@ -272,7 +279,7 @@ void SignTransaction(CMutableTransaction &mtx, const SigningProvider *keystore,
 
 void SignTransactionResultToJSON(CMutableTransaction &mtx, bool complete,
                                  const std::map<COutPoint, Coin> &coins,
-                                 std::map<int, std::string> &input_errors,
+                                 const std::map<int, std::string> &input_errors,
                                  UniValue &result) {
     // Make errors UniValue
     UniValue vErrors(UniValue::VARR);

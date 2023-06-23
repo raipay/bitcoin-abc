@@ -5,7 +5,6 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import mock
-
 from phabricator_wrapper import PhabWrapper
 
 
@@ -75,11 +74,13 @@ def differential_revision_search_result(total=1):
     results = []
     for i in range(total):
         revisionId = DEFAULT_REVISION_ID + i
-        results.append({
-            'id': revisionId,
-            'phid': 'PHID-DREV-{}'.format(revisionId),
-            'fields': {
-                'authorPHID': 'PHID-USER-{}'.format(DEFAULT_USER_ID + i),
+        results.append(
+            {
+                "id": revisionId,
+                "phid": f"PHID-DREV-{revisionId}",
+                "fields": {
+                    "authorPHID": f"PHID-USER-{DEFAULT_USER_ID + i}",
+                },
             }
-        })
+        )
     return Result(results)

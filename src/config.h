@@ -5,10 +5,8 @@
 #ifndef BITCOIN_CONFIG_H
 #define BITCOIN_CONFIG_H
 
-#include <amount.h>
+#include <consensus/amount.h>
 #include <feerate.h>
-
-#include <boost/noncopyable.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -16,7 +14,7 @@
 
 class CChainParams;
 
-class Config : public boost::noncopyable {
+class Config {
 public:
     virtual bool SetMaxBlockSize(uint64_t maxBlockSize) = 0;
     virtual uint64_t GetMaxBlockSize() const = 0;
@@ -26,6 +24,10 @@ public:
 
     virtual void SetExcessUTXOCharge(Amount amt) = 0;
     virtual Amount GetExcessUTXOCharge() const = 0;
+
+    Config() = default;
+    Config(const Config &) = delete;
+    Config &operator=(const Config &) = delete;
 };
 
 class GlobalConfig final : public Config {

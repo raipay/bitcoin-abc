@@ -9,9 +9,11 @@
 #include <chainparams.h>
 #include <clientversion.h>
 #include <coins.h>
+#include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <core_io.h>
 #include <currencyunit.h>
+#include <fs.h>
 #include <key_io.h>
 #include <primitives/transaction.h>
 #include <rpc/util.h>
@@ -26,7 +28,7 @@
 
 #include <univalue.h>
 
-#include <boost/algorithm/string.hpp>
+#include <boost/algorithm/string.hpp> // trim_right
 
 #include <cstdio>
 #include <functional>
@@ -188,7 +190,7 @@ static void RegisterLoad(const std::string &strInput) {
     std::string key = strInput.substr(0, pos);
     std::string filename = strInput.substr(pos + 1, std::string::npos);
 
-    FILE *f = fopen(filename.c_str(), "r");
+    FILE *f = fsbridge::fopen(filename.c_str(), "r");
     if (!f) {
         std::string strErr = "Cannot open file " + filename;
         throw std::runtime_error(strErr);
@@ -230,8 +232,9 @@ static Amount ExtractAndValidateValue(const std::string &strValue) {
 static void MutateTxVersion(CMutableTransaction &tx,
                             const std::string &cmdVal) {
     int64_t newVersion;
-    if (!ParseInt64(cmdVal, &newVersion) || newVersion < 1 ||
-        newVersion > CTransaction::MAX_STANDARD_VERSION) {
+    if (!ParseInt64(cmdVal, &newVersion) ||
+        newVersion < CTransaction::MIN_VERSION ||
+        newVersion > CTransaction::MAX_VERSION) {
         throw std::runtime_error("Invalid TX version requested: '" + cmdVal +
                                  "'");
     }
@@ -253,8 +256,7 @@ static void MutateTxLocktime(CMutableTransaction &tx,
 
 static void MutateTxAddInput(CMutableTransaction &tx,
                              const std::string &strInput) {
-    std::vector<std::string> vStrInputParts;
-    boost::split(vStrInputParts, strInput, boost::is_any_of(":"));
+    std::vector<std::string> vStrInputParts = SplitString(strInput, ':');
 
     // separate TXID:VOUT in string
     if (vStrInputParts.size() < 2) {
@@ -295,8 +297,7 @@ static void MutateTxAddOutAddr(CMutableTransaction &tx,
                                const std::string &strInput,
                                const CChainParams &chainParams) {
     // Separate into VALUE:ADDRESS
-    std::vector<std::string> vStrInputParts;
-    boost::split(vStrInputParts, strInput, boost::is_any_of(":"));
+    std::vector<std::string> vStrInputParts = SplitString(strInput, ':');
 
     if (vStrInputParts.size() != 2) {
         throw std::runtime_error("TX output missing or too many separators");
@@ -321,8 +322,7 @@ static void MutateTxAddOutAddr(CMutableTransaction &tx,
 static void MutateTxAddOutPubKey(CMutableTransaction &tx,
                                  const std::string &strInput) {
     // Separate into VALUE:PUBKEY[:FLAGS]
-    std::vector<std::string> vStrInputParts;
-    boost::split(vStrInputParts, strInput, boost::is_any_of(":"));
+    std::vector<std::string> vStrInputParts = SplitString(strInput, ':');
 
     if (vStrInputParts.size() < 2 || vStrInputParts.size() > 3) {
         throw std::runtime_error("TX output missing or too many separators");
@@ -360,8 +360,7 @@ static void MutateTxAddOutPubKey(CMutableTransaction &tx,
 static void MutateTxAddOutMultiSig(CMutableTransaction &tx,
                                    const std::string &strInput) {
     // Separate into VALUE:REQUIRED:NUMKEYS:PUBKEY1:PUBKEY2:....[:FLAGS]
-    std::vector<std::string> vStrInputParts;
-    boost::split(vStrInputParts, strInput, boost::is_any_of(":"));
+    std::vector<std::string> vStrInputParts = SplitString(strInput, ':');
 
     // Check that there are enough parameters
     if (vStrInputParts.size() < 3) {
@@ -439,13 +438,16 @@ static void MutateTxAddOutData(CMutableTransaction &tx,
         throw std::runtime_error("TX output value not specified");
     }
 
-    if (pos != std::string::npos) {
+    if (pos == std::string::npos) {
+        pos = 0;
+    } else {
         // Extract and validate VALUE
         value = ExtractAndValidateValue(strInput.substr(0, pos));
+        ++pos;
     }
 
     // extract and validate DATA
-    std::string strData = strInput.substr(pos + 1, std::string::npos);
+    const std::string strData{strInput.substr(pos, std::string::npos)};
 
     if (!IsHex(strData)) {
         throw std::runtime_error("invalid TX output data");
@@ -460,8 +462,7 @@ static void MutateTxAddOutData(CMutableTransaction &tx,
 static void MutateTxAddOutScript(CMutableTransaction &tx,
                                  const std::string &strInput) {
     // separate VALUE:SCRIPT[:FLAGS]
-    std::vector<std::string> vStrInputParts;
-    boost::split(vStrInputParts, strInput, boost::is_any_of(":"));
+    std::vector<std::string> vStrInputParts = SplitString(strInput, ':');
     if (vStrInputParts.size() < 2) {
         throw std::runtime_error("TX output missing separator");
     }
@@ -627,7 +628,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
 
         const int nOut = prevOut["vout"].get_int();
         if (nOut < 0) {
-            throw std::runtime_error("vout must be positive");
+            throw std::runtime_error("vout cannot be negative");
         }
 
         COutPoint out(txid, nOut);
@@ -745,7 +746,7 @@ static void MutateTx(CMutableTransaction &tx, const std::string &command,
 
 static void OutputTxJSON(const CTransaction &tx) {
     UniValue entry(UniValue::VOBJ);
-    TxToUniv(tx, uint256(), entry);
+    TxToUniv(tx, BlockHash(), entry);
 
     std::string jsonOutput = entry.write(4);
     tfm::format(std::cout, "%s\n", jsonOutput);

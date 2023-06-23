@@ -13,11 +13,15 @@ add_boost_unit_tests_to_suite(avalanche test-avalanche
 	util.cpp
 
 	TESTS
+		compactproofs_tests.cpp
 		delegation_tests.cpp
-		orphanproofpool_tests.cpp
+		init_tests.cpp
 		peermanager_tests.cpp
 		processor_tests.cpp
 		proof_tests.cpp
+		proofcomparator_tests.cpp
+		proofpool_tests.cpp
+		voterecord_tests.cpp
 )
 
 target_link_libraries(test-avalanche server testutil)

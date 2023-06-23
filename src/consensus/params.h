@@ -13,45 +13,19 @@
 
 namespace Consensus {
 
-enum DeploymentPos {
-    DEPLOYMENT_TESTDUMMY,
-    // NOTE: Also add new deployments to VersionBitsDeploymentInfo in
-    // versionbitsinfo.cpp
-    MAX_VERSION_BITS_DEPLOYMENTS,
+enum BuriedDeployment : int16_t {
+    // buried deployments get negative values to avoid overlap with
+    // DeploymentPos
+    DEPLOYMENT_P2SH = std::numeric_limits<int16_t>::min(),
+    DEPLOYMENT_HEIGHTINCB,
+    DEPLOYMENT_CLTV,
+    DEPLOYMENT_DERSIG,
+    DEPLOYMENT_CSV,
 };
 
-/**
- * Struct for each individual consensus rule change using BIP9.
- */
-struct BIP9Deployment {
-    /** Bit position to select the particular bit in nVersion. */
-    int bit;
-    /**
-     * Minimum number of blocks within an activation window that must signal to
-     * activate the deployement.
-     * Default to 75% of 2016.
-     */
-    uint32_t nActivationThreshold = 1512;
-    /**
-     * Start MedianTime for version bits miner confirmation. Can be a date in
-     * the past.
-     */
-    int64_t nStartTime = 0;
-    /** Timeout/expiry MedianTime for the deployment attempt. */
-    int64_t nTimeout = NO_TIMEOUT;
-
-    /** Constant for nTimeout very far in the future. */
-    static constexpr int64_t NO_TIMEOUT = std::numeric_limits<int64_t>::max();
-
-    /**
-     * Special value for nStartTime indicating that the deployment is always
-     * active. This is useful for testing, as it means tests don't need to deal
-     * with the activation process (which takes at least 3 BIP9 intervals). Only
-     * tests that specifically test the behaviour during activation cannot use
-     * this.
-     */
-    static constexpr int64_t ALWAYS_ACTIVE = -1;
-};
+constexpr bool ValidDeployment(BuriedDeployment dep) {
+    return dep <= DEPLOYMENT_CSV;
+}
 
 /**
  * Parameters that influence chain consensus.
@@ -80,20 +54,12 @@ struct Params {
     int gravitonHeight;
     /** Block height at which the phonon activation becomes active */
     int phononHeight;
-    /** Unix time used for MTP activation of 15 Nov 2020 12:00:00 UTC upgrade */
-    int axionActivationTime;
-    /** Unix time used for MTP activation of 15 May 2021 12:00:00 UTC upgrade */
-    int tachyonActivationTime;
-    /** Unix time used for MTP activation of 15 Nov 2021 12:00:00 UTC upgrade */
-    int selectronActivationTime;
-
-    /**
-     * Don't warn about unknown BIP 9 activations below this height.
-     * This prevents us from warning about the CSV and segwit activations.
-     */
-    int MinBIP9WarningHeight;
-    uint32_t nMinerConfirmationWindow;
-    BIP9Deployment vDeployments[MAX_VERSION_BITS_DEPLOYMENTS];
+    /** Block height at which the axion activation becomes active */
+    int axionHeight;
+    /** Block height at which the wellington activation becomes active */
+    int wellingtonHeight;
+    /** Unix time used for MTP activation of 15 Nov 2023 12:00:00 UTC upgrade */
+    int cowperthwaiteActivationTime;
 
     /** Enable or disable the miner fund by default */
     bool enableMinerFund;
@@ -110,7 +76,24 @@ struct Params {
     }
     uint256 nMinimumChainWork;
     BlockHash defaultAssumeValid;
+
+    int DeploymentHeight(BuriedDeployment dep) const {
+        switch (dep) {
+            case DEPLOYMENT_P2SH:
+                return BIP16Height;
+            case DEPLOYMENT_HEIGHTINCB:
+                return BIP34Height;
+            case DEPLOYMENT_CLTV:
+                return BIP65Height;
+            case DEPLOYMENT_DERSIG:
+                return BIP66Height;
+            case DEPLOYMENT_CSV:
+                return CSVHeight;
+        } // no default case, so the compiler can warn about missing cases
+        return std::numeric_limits<int>::max();
+    }
 };
+
 } // namespace Consensus
 
 #endif // BITCOIN_CONSENSUS_PARAMS_H

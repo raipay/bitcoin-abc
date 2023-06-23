@@ -46,12 +46,14 @@ add_dependencies(check check-bitcoin)
 # An utility library for bitcoin related test suites.
 add_library(testutil OBJECT
 	util/blockfilter.cpp
+	util/blockindex.cpp
 	util/logging.cpp
 	util/mining.cpp
 	util/net.cpp
 	util/setup_common.cpp
 	util/str.cpp
 	util/transaction_utils.cpp
+	util/validation.cpp
 	util/wallet.cpp
 )
 
@@ -101,6 +103,14 @@ gen_asmap_headers(ASMAP_HEADERS
 	data/asmap.raw
 )
 
+if(BUILD_BITCOIN_CHRONIK)
+	set(BITCOIN_CHRONIK_TESTS
+		../../chronik/test/bridgecompression_tests.cpp
+		../../chronik/test/bridgeprimitives_tests.cpp
+		../../chronik/test/chronikbridge_tests.cpp
+	)
+endif()
+
 add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 	fixture.cpp
 	jsonutil.cpp
@@ -133,6 +143,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		blockfilter_index_tests.cpp
 		blockindex_tests.cpp
 		blockstatus_tests.cpp
+		blockstorage_tests.cpp
 		bloom_tests.cpp
 		bswap_tests.cpp
 		cashaddr_tests.cpp
@@ -141,6 +152,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		checkpoints_tests.cpp
 		checkqueue_tests.cpp
 		coins_tests.cpp
+		coinstatsindex_tests.cpp
 		compilerbug_tests.cpp
 		compress_tests.cpp
 		config_tests.cpp
@@ -152,14 +164,15 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		descriptor_tests.cpp
 		dnsseeds_tests.cpp
 		dstencode_tests.cpp
-		excessiveblock_tests.cpp
 		feerate_tests.cpp
-		finalization_tests.cpp
 		flatfile_tests.cpp
 		fs_tests.cpp
 		getarg_tests.cpp
 		hash_tests.cpp
+		hasher_tests.cpp
+		i2p_tests.cpp
 		interfaces_tests.cpp
+		intmath_tests.cpp
 		inv_tests.cpp
 		key_io_tests.cpp
 		key_tests.cpp
@@ -169,12 +182,15 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		merkle_tests.cpp
 		merkleblock_tests.cpp
 		miner_tests.cpp
+		minerfund_tests.cpp
 		monolith_opcodes_tests.cpp
 		multisig_tests.cpp
+		net_peer_eviction_tests.cpp
 		net_tests.cpp
 		netbase_tests.cpp
 		op_reversebytes_tests.cpp
 		pmt_tests.cpp
+		policy_block_tests.cpp
 		policy_fee_tests.cpp
 		policyestimator_tests.cpp
 		prevector_tests.cpp
@@ -182,7 +198,6 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		raii_event_tests.cpp
 		random_tests.cpp
 		rcu_tests.cpp
-		ref_tests.cpp
 		reverselock_tests.cpp
 		rpc_tests.cpp
 		rpc_server_tests.cpp
@@ -198,18 +213,21 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		scriptnum_tests.cpp
 		serialize_tests.cpp
 		settings_tests.cpp
+		shortidprocessor_tests.cpp
 		sigcache_tests.cpp
 		sigencoding_tests.cpp
 		sighash_tests.cpp
 		sighashtype_tests.cpp
 		sigcheckcount_tests.cpp
 		skiplist_tests.cpp
+		sock_tests.cpp
 		streams_tests.cpp
 		sync_tests.cpp
 		timedata_tests.cpp
 		torcontrol_tests.cpp
 		transaction_tests.cpp
 		txindex_tests.cpp
+		txpackage_tests.cpp
 		txrequest_tests.cpp
 		txvalidation_tests.cpp
 		txvalidationcache_tests.cpp
@@ -223,14 +241,16 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		validation_flush_tests.cpp
 		validation_tests.cpp
 		validationinterface_tests.cpp
-		versionbits_tests.cpp
-		work_comparator_tests.cpp
+        blockindex_comparator_tests.cpp
 
 		# RPC Tests
 		../rpc/test/server_tests.cpp
 
 		# Wallet tests
 		${BITCOIN_WALLET_TESTS}
+
+		# Chronik tests
+		${BITCOIN_CHRONIK_TESTS}
 )
 
 function(add_boost_test_runners_with_upgrade_activated SUITE EXECUTABLE)
@@ -266,10 +286,10 @@ function(add_boost_test_runners_with_upgrade_activated SUITE EXECUTABLE)
 			"--run_test=${_test_name}"
 			"--logger=${HRF_LOGGER}${JUNIT_LOGGER}"
 			"--catch_system_errors=no"
-			# Dec. 1st, 2019 at 00:00:00
 			--
 			"-testsuitename=Bitcoin ABC unit tests with next upgrade activated"
-			-axionactivationtime=1575158400
+			# Jun. 10th, 2023 at 12:00:00
+			-cowperthwaiteactivationtime=1686398400
 		)
 	endforeach()
 endfunction()

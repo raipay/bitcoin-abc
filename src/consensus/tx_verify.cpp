@@ -4,15 +4,16 @@
 
 #include <consensus/tx_verify.h>
 
-#include <amount.h>
 #include <chain.h>
 #include <coins.h>
 #include <consensus/activation.h>
+#include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <consensus/params.h>
 #include <consensus/validation.h>
 #include <primitives/transaction.h>
 #include <script/script_flags.h>
+#include <util/check.h>
 #include <util/moneystr.h> // For FormatMoney
 #include <version.h>       // For PROTOCOL_VERSION
 
@@ -40,9 +41,8 @@ static bool IsFinalTx(const CTransaction &tx, int nBlockHeight,
 bool ContextualCheckTransaction(const Consensus::Params &params,
                                 const CTransaction &tx,
                                 TxValidationState &state, int nHeight,
-                                int64_t nLockTimeCutoff,
                                 int64_t nMedianTimePast) {
-    if (!IsFinalTx(tx, nHeight, nLockTimeCutoff)) {
+    if (!IsFinalTx(tx, nHeight, nMedianTimePast)) {
         // While this is only one transaction, we use txns in the error to
         // ensure continuity with other clients.
         return state.Invalid(TxValidationResult::TX_CONSENSUS,
@@ -54,6 +54,15 @@ bool ContextualCheckTransaction(const Consensus::Params &params,
         if (::GetSerializeSize(tx, PROTOCOL_VERSION) < MIN_TX_SIZE) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS,
                                  "bad-txns-undersize");
+        }
+    }
+
+    if (IsWellingtonEnabled(params, nHeight)) {
+        // Restrict version to 1 and 2
+        if (tx.nVersion > CTransaction::MAX_VERSION ||
+            tx.nVersion < CTransaction::MIN_VERSION) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS,
+                                 "bad-txns-version");
         }
     }
 
@@ -107,8 +116,9 @@ std::pair<int, int64_t> CalculateSequenceLocks(const CTransaction &tx,
         int nCoinHeight = prevHeights[txinIndex];
 
         if (txin.nSequence & CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG) {
-            int64_t nCoinTime = block.GetAncestor(std::max(nCoinHeight - 1, 0))
-                                    ->GetMedianTimePast();
+            const int64_t nCoinTime{
+                Assert(block.GetAncestor(std::max(nCoinHeight - 1, 0)))
+                    ->GetMedianTimePast()};
             // NOTE: Subtract 1 to maintain nLockTime semantics.
             // BIP 68 relative lock times have the semantics of calculating the
             // first block or time at which the transaction would be valid. When

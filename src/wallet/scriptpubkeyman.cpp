@@ -77,7 +77,7 @@ bool HaveKeys(const std::vector<valtype> &pubkeys,
 //! Recursively solve script and return spendable/watchonly/invalid status.
 //!
 //! @param keystore            legacy key and script store
-//! @param script              script to solve
+//! @param scriptPubKey        script to solve
 //! @param sigversion          script type (top-level / redeemscript /
 //! witnessscript)
 //! @param recurse_scripthash  whether to recurse into nested p2sh and p2wsh
@@ -275,7 +275,7 @@ bool LegacyScriptPubKeyMan::TopUpInactiveHDChain(const CKeyID seed_id,
 
     // Top up key pool
     int64_t target_size =
-        std::max(gArgs.GetArg("-keypool", DEFAULT_KEYPOOL_SIZE), (int64_t)1);
+        std::max(gArgs.GetIntArg("-keypool", DEFAULT_KEYPOOL_SIZE), (int64_t)1);
 
     // "size" of the keypools. Not really the size, actually the difference
     // between index and the chain counter Since chain counter is 1 based and
@@ -429,8 +429,7 @@ bool LegacyScriptPubKeyMan::Upgrade(int prev_version, bilingual_str &error) {
         hd_upgrade = true;
     }
     // Upgrade to HD chain split if necessary
-    if (m_storage.CanSupportFeature(FEATURE_HD_SPLIT) &&
-        CHDChain::VERSION_HD_CHAIN_SPLIT) {
+    if (m_storage.CanSupportFeature(FEATURE_HD_SPLIT)) {
         WalletLogPrintf("Upgrading wallet to use HD chain split\n");
         m_storage.SetMinVersion(FEATURE_PRE_SPLIT_KEYPOOL);
         split_upgrade = FEATURE_HD_SPLIT > prev_version;
@@ -1230,7 +1229,7 @@ bool LegacyScriptPubKeyMan::TopUp(unsigned int kpSize) {
             nTargetSize = kpSize;
         } else {
             nTargetSize = std::max<int64_t>(
-                gArgs.GetArg("-keypool", DEFAULT_KEYPOOL_SIZE), 0);
+                gArgs.GetIntArg("-keypool", DEFAULT_KEYPOOL_SIZE), 0);
         }
 
         // count amount of available keys (internal, external)
@@ -1794,8 +1793,8 @@ bool DescriptorScriptPubKeyMan::TopUp(unsigned int size) {
     if (size > 0) {
         target_size = size;
     } else {
-        target_size = std::max(gArgs.GetArg("-keypool", DEFAULT_KEYPOOL_SIZE),
-                               int64_t(1));
+        target_size = std::max(
+            gArgs.GetIntArg("-keypool", DEFAULT_KEYPOOL_SIZE), int64_t(1));
     }
 
     // Calculate the new range_end
@@ -1978,9 +1977,8 @@ bool DescriptorScriptPubKeyMan::SetupDescriptorGeneration(
             desc_prefix = "pkh(" + xpub + "/44'";
             break;
         }
-        default:
-            assert(false);
-    }
+    } // no default case, so the compiler can warn about missing cases
+    assert(!desc_prefix.empty());
 
     // Mainnet derives at 0', testnet and regtest derive at 1'
     if (m_storage.GetChainParams().IsTestChain()) {

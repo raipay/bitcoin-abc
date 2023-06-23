@@ -8,13 +8,15 @@
 #include <rcu.h>
 #include <util/system.h>
 
-#include <boost/noncopyable.hpp>
-
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <type_traits>
+
+template <typename T> struct PassthroughAdapter {
+    auto &&getId(const T &e) const { return e.getId(); }
+};
 
 /**
  * This is a radix tree storing values identified by a unique key.
@@ -33,20 +35,18 @@
  * is reading the tree, which allows deletion to wait for other readers to be up
  * to speed before destroying anything. It is therefore crucial that the lock be
  * taken before reading anything in the tree.
- *
- * It is not possible to delete anything from the tree at this time. The tree
- * itself cannot be destroyed and will leak memory instead of cleaning up after
- * itself. This obviously needs to be fixed in subsequent revisions.
  */
-template <typename T> struct RadixTree : public boost::noncopyable {
+template <typename T, typename Adapter = PassthroughAdapter<T>>
+struct RadixTree : private Adapter {
 private:
     static const int BITS = 4;
     static const int MASK = (1 << BITS) - 1;
     static const size_t CHILD_PER_LEVEL = 1 << BITS;
 
-    typedef typename std::remove_reference<decltype(
-        std::declval<T &>().getId())>::type K;
-    static const size_t KEY_BITS = 8 * sizeof(K);
+    using KeyType =
+        typename std::remove_reference<decltype(std::declval<Adapter &>().getId(
+            std::declval<T &>()))>::type;
+    static const size_t KEY_BITS = 8 * sizeof(KeyType);
     static const uint32_t TOP_LEVEL = (KEY_BITS - 1) / BITS;
 
     struct RadixElement;
@@ -56,21 +56,66 @@ private:
 
 public:
     RadixTree() : root(RadixElement()) {}
-    ~RadixTree() { root.load().release(); }
+    ~RadixTree() { root.load().decrementRefCount(); }
+
+    /**
+     * Copy semantic.
+     */
+    RadixTree(const RadixTree &src) : RadixTree() {
+        {
+            RCULock lock;
+            RadixElement e = src.root.load();
+            e.incrementRefCount();
+            root = e;
+        }
+
+        // Make sure we the writes in the tree are behind us so
+        // this copy won't mutate behind our back.
+        RCULock::synchronize();
+    }
+
+    RadixTree &operator=(const RadixTree &rhs) {
+        {
+            RCULock lock;
+            RadixElement e = rhs.root.load();
+            e.incrementRefCount();
+            root.load().decrementRefCount();
+            root = e;
+        }
+
+        // Make sure we the writes in the tree are behind us so
+        // this copy won't mutate behind our back.
+        RCULock::synchronize();
+
+        return *this;
+    }
+
+    /**
+     * Move semantic.
+     */
+    RadixTree(RadixTree &&src) : RadixTree() { *this = std::move(src); }
+    RadixTree &operator=(RadixTree &&rhs) {
+        {
+            RCULock lock;
+            RadixElement e = rhs.root.load();
+            rhs.root = root.load();
+            root = e;
+        }
+
+        return *this;
+    }
 
     /**
      * Insert a value into the tree.
      * Returns true if the value was inserted, false if it was already present.
      */
-    bool insert(const RCUPtr<T> &value) {
-        return insert(value->getId(), value);
-    }
+    bool insert(const RCUPtr<T> &value) { return insert(getId(*value), value); }
 
     /**
      * Get the value corresponding to a key.
      * Returns the value if found, nullptr if not.
      */
-    RCUPtr<T> get(const K &key) {
+    RCUPtr<T> get(const KeyType &key) {
         uint32_t level = TOP_LEVEL;
 
         RCULock lock;
@@ -82,7 +127,7 @@ public:
         }
 
         T *leaf = e.getLeaf();
-        if (leaf == nullptr || leaf->getId() != key) {
+        if (leaf == nullptr || getId(*leaf) != key) {
             // We failed to find the proper element.
             return RCUPtr<T>();
         }
@@ -91,32 +136,58 @@ public:
         return RCUPtr<T>::copy(leaf);
     }
 
-    RCUPtr<const T> get(const K &key) const {
+    RCUPtr<const T> get(const KeyType &key) const {
         T const *ptr = const_cast<RadixTree *>(this)->get(key).release();
         return RCUPtr<const T>::acquire(ptr);
     }
+
+    template <typename Callable> bool forEachLeaf(Callable &&func) const {
+        RCULock lock;
+        return forEachLeaf(root.load(), std::move(func));
+    }
+
+#define SEEK_LEAF_LOOP()                                                       \
+    RadixElement e = eptr->load();                                             \
+                                                                               \
+    /* Walk down the tree until we find a leaf for our node. */                \
+    do {                                                                       \
+        while (e.isNode()) {                                                   \
+        Node:                                                                  \
+            auto nptr = e.getNode();                                           \
+            if (!nptr->isShared()) {                                           \
+                eptr = nptr->get(level--, key);                                \
+                e = eptr->load();                                              \
+                continue;                                                      \
+            }                                                                  \
+                                                                               \
+            auto copy = std::make_unique<RadixNode>(*nptr);                    \
+            if (!eptr->compare_exchange_strong(e, RadixElement(copy.get()))) { \
+                /* We failed to insert our subtree, just try again. */         \
+                continue;                                                      \
+            }                                                                  \
+                                                                               \
+            /* We have a subtree, resume normal operations from there. */      \
+            e.decrementRefCount();                                             \
+            eptr = copy->get(level--, key);                                    \
+            e = eptr->load();                                                  \
+            copy.release();                                                    \
+        }                                                                      \
+    } while (0)
 
     /**
      * Remove an element from the tree.
      * Returns the removed element, or nullptr if there isn't one.
      */
-    RCUPtr<T> remove(const K &key) {
+    RCUPtr<T> remove(const KeyType &key) {
         uint32_t level = TOP_LEVEL;
 
         RCULock lock;
         std::atomic<RadixElement> *eptr = &root;
 
-        RadixElement e = eptr->load();
-
-        // Walk down the tree until we find a leaf for our node.
-        while (e.isNode()) {
-        Node:
-            eptr = e.getNode()->get(level--, key);
-            e = eptr->load();
-        }
+        SEEK_LEAF_LOOP();
 
         T *leaf = e.getLeaf();
-        if (leaf == nullptr || leaf->getId() != key) {
+        if (leaf == nullptr || getId(*leaf) != key) {
             // We failed to find the proper element.
             return RCUPtr<T>();
         }
@@ -136,21 +207,16 @@ public:
     }
 
 private:
-    bool insert(const K &key, RCUPtr<T> value) {
+    KeyType getId(const T &value) const { return Adapter::getId(value); }
+
+    bool insert(const KeyType &key, RCUPtr<T> value) {
         uint32_t level = TOP_LEVEL;
 
         RCULock lock;
         std::atomic<RadixElement> *eptr = &root;
 
         while (true) {
-            RadixElement e = eptr->load();
-
-            // Walk down the tree until we find a leaf for our node.
-            while (e.isNode()) {
-            Node:
-                eptr = e.getNode()->get(level--, key);
-                e = eptr->load();
-            }
+            SEEK_LEAF_LOOP();
 
             // If the slot is empty, try to insert right there.
             if (e.getLeaf() == nullptr) {
@@ -167,7 +233,7 @@ private:
             }
 
             // The element was already in the tree.
-            const K &leafKey = e.getLeaf()->getId();
+            const KeyType &leafKey = getId(*e.getLeaf());
             if (key == leafKey) {
                 return false;
             }
@@ -184,6 +250,25 @@ private:
                 newChild->get(level, leafKey)->store(RadixElement());
             }
         }
+    }
+
+#undef SEEK_LEAF_LOOP
+
+    template <typename Callable>
+    bool forEachLeaf(RadixElement e, Callable &&func) const {
+        if (e.isLeaf()) {
+            T *leaf = e.getLeaf();
+            if (leaf != nullptr) {
+                return func(RCUPtr<T>::copy(leaf));
+            }
+
+            return true;
+        }
+
+        return e.getNode()->forEachChild(
+            [&](const std::atomic<RadixElement> *pElement) {
+                return forEachLeaf(pElement->load(), func);
+            });
     }
 
     struct RadixElement {
@@ -208,7 +293,15 @@ private:
          * RadixElement is designed to be a dumb wrapper. This allows any
          * container to release what is held by the RadixElement.
          */
-        void release() {
+        void incrementRefCount() {
+            if (isNode()) {
+                RCUPtr<RadixNode>::copy(getNode()).release();
+            } else {
+                RCUPtr<T>::copy(getLeaf()).release();
+            }
+        }
+
+        void decrementRefCount() {
             if (isNode()) {
                 RadixNode *ptr = getNode();
                 RCUPtr<RadixNode>::acquire(ptr);
@@ -249,7 +342,7 @@ private:
         }
     };
 
-    struct RadixNode : public boost::noncopyable {
+    struct RadixNode {
         IMPLEMENT_RCU_REFCOUNT(uint64_t);
 
     private:
@@ -260,19 +353,40 @@ private:
         };
 
     public:
-        RadixNode(uint32_t level, const K &key, RadixElement e)
+        RadixNode(uint32_t level, const KeyType &key, RadixElement e)
             : non_atomic_children_DO_NOT_USE() {
             get(level, key)->store(e);
         }
 
         ~RadixNode() {
             for (RadixElement e : non_atomic_children_DO_NOT_USE) {
-                e.release();
+                e.decrementRefCount();
             }
         }
 
-        std::atomic<RadixElement> *get(uint32_t level, const K &key) {
-            return &children[(key >> (level * BITS)) & MASK];
+        RadixNode(const RadixNode &rhs) : non_atomic_children_DO_NOT_USE() {
+            for (size_t i = 0; i < CHILD_PER_LEVEL; i++) {
+                auto e = rhs.children[i].load();
+                e.incrementRefCount();
+                non_atomic_children_DO_NOT_USE[i] = e;
+            }
+        }
+
+        RadixNode &operator=(const RadixNode &) = delete;
+
+        std::atomic<RadixElement> *get(uint32_t level, const KeyType &key) {
+            return &children[(key >> uint32_t(level * BITS)) & MASK];
+        }
+
+        bool isShared() const { return refcount > 0; }
+
+        template <typename Callable> bool forEachChild(Callable &&func) const {
+            for (size_t i = 0; i < CHILD_PER_LEVEL; i++) {
+                if (!func(&children[i])) {
+                    return false;
+                }
+            }
+            return true;
         }
     };
 

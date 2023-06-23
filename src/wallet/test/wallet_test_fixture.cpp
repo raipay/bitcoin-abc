@@ -5,15 +5,22 @@
 #include <wallet/test/wallet_test_fixture.h>
 
 #include <chainparams.h>
+#include <scheduler.h>
 #include <validationinterface.h>
-#include <wallet/rpcdump.h>
+#include <wallet/rpc/backup.h>
 
 WalletTestingSetup::WalletTestingSetup(const std::string &chainName)
-    : TestingSetup(chainName), m_chain(interfaces::MakeChain(m_node, Params())),
-      m_wallet(m_chain.get(), WalletLocation(), CreateMockWalletDatabase()) {
+    : TestingSetup(chainName),
+      m_wallet(m_node.chain.get(), "", CreateMockWalletDatabase()) {
     bool fFirstRun;
     m_wallet.LoadWallet(fFirstRun);
     m_chain_notifications_handler =
-        m_chain->handleNotifications({&m_wallet, [](CWallet *) {}});
-    m_chain_client->registerRpcs();
+        m_node.chain->handleNotifications({&m_wallet, [](CWallet *) {}});
+    m_wallet_client->registerRpcs();
+}
+
+WalletTestingSetup::~WalletTestingSetup() {
+    if (m_node.scheduler) {
+        m_node.scheduler->stop();
+    }
 }

@@ -24,8 +24,11 @@ option(ENABLE_GLIBC_BACK_COMPAT "Enable Glibc compatibility features" OFF)
 option(ENABLE_QRCODE "Enable QR code display" ON)
 option(ENABLE_UPNP "Enable UPnP support" ON)
 option(START_WITH_UPNP "Make UPnP the default to map ports" OFF)
+option(ENABLE_NATPMP "Enable NAT-PMP support" ON)
+option(START_WITH_NATPMP "Make NAT-PMP the default to map ports" OFF)
 option(ENABLE_CLANG_TIDY "Enable clang-tidy checks for Bitcoin ABC" OFF)
 option(ENABLE_PROFILING "Select the profiling tool to use" OFF)
+option(ENABLE_TRACING "Enable eBPF user static defined tracepoints" OFF)
 
 # Linker option
 if(CMAKE_CROSSCOMPILING)
@@ -73,13 +76,16 @@ endif(CCACHE)
 include(NativeExecutable)
 native_add_cmake_flags(
 	"-DBUILD_BITCOIN_WALLET=OFF"
+	"-DBUILD_BITCOIN_CHRONIK=OFF"
 	"-DBUILD_BITCOIN_QT=OFF"
 	"-DBUILD_BITCOIN_ZMQ=OFF"
 	"-DENABLE_QRCODE=OFF"
+	"-DENABLE_NATPMP=OFF"
 	"-DENABLE_UPNP=OFF"
 	"-DUSE_JEMALLOC=OFF"
 	"-DENABLE_CLANG_TIDY=OFF"
 	"-DENABLE_BIP70=OFF"
+	"-DUSE_LINKER="
 )
 
 if(ENABLE_CLANG_TIDY)
@@ -95,11 +101,16 @@ include(AddCompilerFlags)
 
 if(USE_LINKER)
 	set(LINKER_FLAG "-fuse-ld=${USE_LINKER}")
-	check_linker_flag(IS_LINKER_SUPPORTED ${LINKER_FLAG})
+	custom_check_linker_flag(IS_LINKER_SUPPORTED ${LINKER_FLAG})
 	if(NOT IS_LINKER_SUPPORTED)
 		message(FATAL_ERROR "The ${USE_LINKER} linker is not supported, make sure ${USE_LINKER} is properly installed or use -DUSE_LINKER= to use the system's linker")
 	endif()
+
 	add_linker_flags(${LINKER_FLAG})
+
+	# Remember the selected linker, it will be used for the subsequent
+	# custom_check_linker_flag calls
+	set(GLOBAL_LINKER_FLAGS ${LINKER_FLAG} CACHE INTERNAL "Additional linker flags for flag support checking")
 endif()
 
 # Prefer -g3, defaults to -g if unavailable
@@ -141,6 +152,9 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 		# RPC, Shell, and Windows Sockets.
 		WIN32_LEAN_AND_MEAN
 	)
+
+	# We require Windows 7 (NT 6.1) or later
+	add_linker_flags(-Wl,--major-subsystem-version,6 -Wl,--minor-subsystem-version,1)
 endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -173,16 +187,29 @@ if(ENABLE_HARDENING)
 	# Enable stack protection
 	add_cxx_compiler_flags(-fstack-protector-all -Wstack-protector)
 
+	# Enable control-flow enforcement
+	add_cxx_compiler_flags(-fcf-protection=full)
+
+	if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		# stack-clash-protection does not work properly when building for Windows.
+		# See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=90458
+		add_cxx_compiler_flags(-fstack-clash-protection)
+	endif()
+
 	# Enable some buffer overflow checking, except in -O0 builds which
 	# do not support them
 	add_compiler_flags(-U_FORTIFY_SOURCE)
 	add_compile_options($<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=2>)
 
 	# Enable ASLR (these flags are primarily targeting MinGw)
-	add_linker_flags(-Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va)
+	add_linker_flags(-Wl,--enable-reloc-section -Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va)
 
 	# Make the relocated sections read-only
 	add_linker_flags(-Wl,-z,relro -Wl,-z,now)
+
+	# Avoids mixing code pages with data to improve cache performance as well
+	# as security
+	add_linker_flags(-Wl,-z,separate-code)
 
 	# CMake provides the POSITION_INDEPENDENT_CODE property to set PIC/PIE.
 	cmake_policy(SET CMP0083 NEW)
@@ -228,10 +255,15 @@ add_compiler_flags(
 	-Wunreachable-code-loop-increment
 	-Wsign-compare
 	-Wconditional-uninitialized
+	-Wduplicated-branches
+	-Wduplicated-cond
+	-Wlogical-op
+	-Wdocumentation
 )
 add_compiler_flag_group(-Wformat -Wformat-security)
 add_cxx_compiler_flags(
 	-Wredundant-move
+	-Woverloaded-virtual
 )
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -248,8 +280,11 @@ option(EXTRA_WARNINGS "Enable extra warnings" OFF)
 if(EXTRA_WARNINGS)
 	add_cxx_compiler_flags(-Wsuggest-override)
 else()
-	add_compiler_flags(-Wno-unused-parameter)
-	add_compiler_flags(-Wno-implicit-fallthrough)
+	add_compiler_flags(
+		-Wno-unused-parameter
+		-Wno-implicit-fallthrough
+		-Wno-psabi
+	)
 endif()
 
 # libtool style configure
@@ -265,8 +300,9 @@ endif()
 
 if(ENABLE_GLIBC_BACK_COMPAT)
 	# Wrap some glibc functions with ours
-	add_linker_flags(-Wl,--wrap=__divmoddi4)
-	add_linker_flags(-Wl,--wrap=log2f)
+	add_linker_flags(-Wl,--wrap=exp)
+	add_linker_flags(-Wl,--wrap=log)
+	add_linker_flags(-Wl,--wrap=pow)
 
 	if(NOT HAVE_LARGE_FILE_SUPPORT)
 		add_linker_flags(-Wl,--wrap=fcntl -Wl,--wrap=fcntl64)
@@ -283,6 +319,19 @@ if(USE_JEMALLOC)
 		find_package(Jemalloc 3.6.0 REQUIRED)
 		link_libraries(Jemalloc::jemalloc)
 	endif()
+endif()
+
+# These flags are needed for using std::filesystem with GCC < 9.1 & Clang < 9.0
+# Since these are optional libraries they need to be placed accordingly on the
+# command line.
+add_linker_flags(-lstdc++fs -lc++fs)
+custom_check_linker_flag(LINKER_HAS_STDCXXFS "-lstdc++fs")
+if(LINKER_HAS_STDCXXFS)
+    link_libraries(stdc++fs)
+endif()
+custom_check_linker_flag(LINKER_HAS_CXXFS "-lc++fs")
+if(LINKER_HAS_CXXFS)
+    link_libraries(c++fs)
 endif()
 
 
@@ -366,7 +415,6 @@ add_library(util
 	randomenv.cpp
 	rcu.cpp
 	rpc/request.cpp
-	blockdb.cpp
 	support/cleanse.cpp
 	support/lockedpool.cpp
 	sync.cpp
@@ -375,16 +423,23 @@ add_library(util
 	util/asmap.cpp
 	util/bip32.cpp
 	util/bytevectorhash.cpp
+	util/hasher.cpp
 	util/error.cpp
+	util/getuniquepath.cpp
 	util/message.cpp
 	util/moneystr.cpp
+	util/readwritefile.cpp
 	util/settings.cpp
+	util/string.cpp
+	util/sock.cpp
 	util/spanparsing.cpp
 	util/strencodings.cpp
 	util/string.cpp
 	util/system.cpp
+	util/thread.cpp
 	util/threadnames.cpp
 	util/time.cpp
+	util/tokenpipe.cpp
 	util/url.cpp
 
 	# obj/build.h
@@ -403,9 +458,18 @@ if(ENABLE_GLIBC_BACK_COMPAT)
 	target_sources(util PRIVATE compat/glibc_compat.cpp)
 endif()
 
+# Work around jemalloc printing harmless warnings to stderr with qemu.
+# We match the emulator against qemu but not ^qemu so we are compatible with the
+# use of absolute paths.
+if(CMAKE_CROSSCOMPILING AND USE_JEMALLOC AND CMAKE_CROSSCOMPILING_EMULATOR MATCHES "qemu-.+")
+	message(WARNING "Overriding Jemalloc malloc_message() function for use with QEMU.")
+	target_sources(util PRIVATE jemalloc_message.cpp)
+endif()
+
+set(Boost_USE_STATIC_LIBS ON)
+
 # Target specific configs
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	set(Boost_USE_STATIC_LIBS ON)
 	set(Boost_USE_STATIC_RUNTIME ON)
 	set(Boost_THREADAPI win32)
 
@@ -414,8 +478,6 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 
 	find_library(WS2_32_LIBRARY NAMES ws2_32)
 	target_link_libraries(util ${WS2_32_LIBRARY})
-
-	target_compile_definitions(util PUBLIC BOOST_THREAD_USE_LIB)
 endif()
 
 target_link_libraries(util univalue crypto)
@@ -426,13 +488,15 @@ endmacro()
 
 link_event(util event)
 
-macro(link_boost TARGET)
-	non_native_target_link_libraries(${TARGET} Boost 1.59 ${ARGN})
+macro(link_boost_headers_only TARGET)
+	non_native_target_link_headers_only(${TARGET} Boost 1.64 ${ARGN})
 endmacro()
 
-link_boost(util filesystem thread)
-# Make sure boost uses std::atomic (it doesn't before 1.63)
-target_compile_definitions(util PUBLIC BOOST_SP_USE_STD_ATOMIC BOOST_AC_USE_STD_ATOMIC)
+link_boost_headers_only(util headers)
+
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+target_link_libraries(util Threads::Threads)
 
 function(add_network_sources NETWORK_SOURCES)
 	set(NETWORK_DIR abc)
@@ -447,14 +511,12 @@ endfunction()
 
 add_network_sources(NETWORK_SOURCES
 	checkpoints.cpp
-	network.cpp
 	chainparamsconstants.cpp
 )
 
 # More completely unrelated features shared by all executables.
 # Because nothing says this is different from util than "common"
 add_library(common
-	amount.cpp
 	base58.cpp
 	bloom.cpp
 	cashaddr.cpp
@@ -482,8 +544,6 @@ add_library(common
 	rpc/rawtransaction_util.cpp
 	rpc/util.cpp
 	scheduler.cpp
-	salteduint256hasher.cpp
-	versionbitsinfo.cpp
 	warnings.cpp
 
 	${NETWORK_SOURCES}
@@ -514,6 +574,7 @@ add_library(bitcoinconsensus
 	pubkey.cpp
 	uint256.cpp
 	util/strencodings.cpp
+	consensus/amount.cpp
 	consensus/tx_check.cpp
 )
 
@@ -538,16 +599,19 @@ add_library(server
 	addrdb.cpp
 	addrman.cpp
 	avalanche/avalanche.cpp
+	avalanche/compactproofs.cpp
 	avalanche/delegation.cpp
 	avalanche/delegationbuilder.cpp
-	avalanche/orphanproofpool.cpp
 	avalanche/peermanager.cpp
 	avalanche/processor.cpp
 	avalanche/proof.cpp
 	avalanche/proofid.cpp
 	avalanche/proofbuilder.cpp
+	avalanche/proofpool.cpp
+	avalanche/voterecord.cpp
 	banman.cpp
 	blockencodings.cpp
+	blockfileinfo.cpp
 	blockfilter.cpp
 	blockindex.cpp
 	chain.cpp
@@ -556,29 +620,38 @@ add_library(server
 	consensus/activation.cpp
 	consensus/tx_verify.cpp
 	dbwrapper.cpp
+	deploymentstatus.cpp
 	dnsseeds.cpp
 	flatfile.cpp
 	httprpc.cpp
 	httpserver.cpp
+	i2p.cpp
 	index/base.cpp
 	index/blockfilterindex.cpp
+	index/coinstatsindex.cpp
 	index/txindex.cpp
 	init.cpp
-	interfaces/chain.cpp
-	interfaces/node.cpp
+	init/common.cpp
 	invrequest.cpp
-	miner.cpp
+	mapport.cpp
 	minerfund.cpp
 	net.cpp
 	net_processing.cpp
+	node/blockstorage.cpp
+	node/caches.cpp
+	node/chainstate.cpp
 	node/coin.cpp
 	node/coinstats.cpp
 	node/context.cpp
+	node/interfaces.cpp
+	node/miner.cpp
 	node/psbt.cpp
 	node/transaction.cpp
 	node/ui_interface.cpp
 	noui.cpp
+	policy/block/minerfund.cpp
 	policy/fees.cpp
+	policy/packages.cpp
 	policy/settings.cpp
 	pow/aserti32d.cpp
 	pow/daa.cpp
@@ -595,6 +668,8 @@ add_library(server
 	rpc/net.cpp
 	rpc/rawtransaction.cpp
 	rpc/server.cpp
+	rpc/server_util.cpp
+	rpc/txoutproof.cpp
 	script/scriptcache.cpp
 	script/sigcache.cpp
 	shutdown.cpp
@@ -602,6 +677,7 @@ add_library(server
 	torcontrol.cpp
 	txdb.cpp
 	txmempool.cpp
+	txorphanage.cpp
 	validation.cpp
 	validationinterface.cpp
 	versionbits.cpp
@@ -631,6 +707,18 @@ if(ENABLE_UPNP)
 		target_compile_definitions(server
 			PUBLIC -DSTATICLIB
 			PUBLIC -DMINIUPNP_STATICLIB
+		)
+	endif()
+endif()
+
+if(ENABLE_NATPMP)
+	find_package(NATPMP REQUIRED)
+	target_link_libraries(server NATPMP::natpmp)
+
+	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		target_compile_definitions(server
+			PUBLIC -DSTATICLIB
+			PUBLIC -DNATPMP_STATICLIB
 		)
 	endif()
 endif()
@@ -672,6 +760,10 @@ endif()
 if(BUILD_BITCOIN_ZMQ)
 	add_subdirectory(zmq)
 	target_link_libraries(server zmq)
+
+	# FIXME: This is needed because of an unwanted dependency:
+	# zmqpublishnotifier.cpp -> blockstorage.h -> txdb.h -> dbwrapper.h -> leveldb/db.h
+	target_link_libraries(zmq leveldb)
 endif()
 
 # RPC client support

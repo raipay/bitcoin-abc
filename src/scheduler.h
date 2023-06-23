@@ -5,53 +5,55 @@
 #ifndef BITCOIN_SCHEDULER_H
 #define BITCOIN_SCHEDULER_H
 
+#include <attributes.h>
 #include <sync.h>
+#include <threadsafety.h>
 
-//
-// NOTE:
-// boost::thread should be ported to std::thread
-// when we support C++11.
-//
+#include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <functional>
 #include <list>
 #include <map>
+#include <thread>
+#include <utility>
 
-//
-// Simple class for background tasks that should be run periodically or once
-// "after a while"
-//
-// Usage:
-//
-// CScheduler* s = new CScheduler();
-// // Assuming a: void doSomething() { }
-// s->scheduleFromNow(doSomething, std::chrono::milliseconds{11});
-// s->scheduleFromNow([=] { this->func(argument); },
-//                    std::chrono::milliseconds{3});
-// boost::thread *t = new boost::thread(std::bind(CScheduler::serviceQueue, s));
-//
-// ... then at program shutdown, make sure to call stop() to clean up the
-// thread(s) running serviceQueue:
-// s->stop();
-// t->join();
-// delete t;
-// delete s; // Must be done after thread is interrupted/joined.
-//
-
+/**
+ * Simple class for background tasks that should be run periodically or once
+ * "after a while"
+ *
+ * Usage:
+ *
+ * CScheduler* s = new CScheduler();
+ *  * Assuming a: void doSomething() { }
+ * s->scheduleFromNow(doSomething, std::chrono::milliseconds{11});
+ * s->scheduleFromNow([=] { this->func(argument); },
+ *                    std::chrono::milliseconds{3});
+ * std::thread *t = new std::thread([?] { s->serviceQueue(); });
+ *
+ * ... then at program shutdown, make sure to call stop() to clean up the
+ * thread(s) running serviceQueue:
+ * s->stop();
+ * t->join();
+ * delete t;
+ * delete s; // Must be done after thread is interrupted/joined.
+ */
 class CScheduler {
 public:
     CScheduler();
     ~CScheduler();
 
+    std::thread m_service_thread;
+
     typedef std::function<void()> Function;
     typedef std::function<bool()> Predicate;
 
-    // Call func at/after time t
-    void schedule(Function f, std::chrono::system_clock::time_point t);
+    /** Call func at/after time t */
+    void schedule(Function f, std::chrono::steady_clock::time_point t);
 
     /** Call f once after the delta has passed */
     void scheduleFromNow(Function f, std::chrono::milliseconds delta) {
-        schedule(std::move(f), std::chrono::system_clock::now() + delta);
+        schedule(std::move(f), std::chrono::steady_clock::now() + delta);
     }
 
     /**
@@ -70,29 +72,49 @@ public:
      */
     void MockForward(std::chrono::seconds delta_seconds);
 
-    // To keep things as simple as possible, there is no unschedule.
-
-    // Services the queue 'forever'. Should be run in a thread, and interrupted
-    // using boost::interrupt_thread
+    /**
+     * Services the queue 'forever'. Should be run in a thread.
+     */
     void serviceQueue();
 
-    // Tell any threads running serviceQueue to stop as soon as they're done
-    // servicing whatever task they're currently servicing (drain=false) or when
-    // there is no work left to be done (drain=true)
-    void stop(bool drain = false);
+    /**
+     * Tell any threads running serviceQueue to stop as soon as the current
+     * task is done
+     */
+    void stop() {
+        WITH_LOCK(newTaskMutex, stopRequested = true);
+        newTaskScheduled.notify_all();
+        if (m_service_thread.joinable()) {
+            m_service_thread.join();
+        }
+    }
 
-    // Returns number of tasks waiting to be serviced,
-    // and first and last task times
-    size_t getQueueInfo(std::chrono::system_clock::time_point &first,
-                        std::chrono::system_clock::time_point &last) const;
+    /**
+     * Tell any threads running serviceQueue to stop when there is no work
+     * left to be done
+     */
+    void StopWhenDrained() {
+        WITH_LOCK(newTaskMutex, stopWhenEmpty = true);
+        newTaskScheduled.notify_all();
+        if (m_service_thread.joinable()) {
+            m_service_thread.join();
+        }
+    }
 
-    // Returns true if there are threads actively running in serviceQueue()
+    /**
+     * Returns number of tasks waiting to be serviced,
+     * and first and last task times
+     */
+    size_t getQueueInfo(std::chrono::steady_clock::time_point &first,
+                        std::chrono::steady_clock::time_point &last) const;
+
+    /** Returns true if there are threads actively running in serviceQueue() */
     bool AreThreadsServicingQueue() const;
 
 private:
     mutable Mutex newTaskMutex;
     std::condition_variable newTaskScheduled;
-    std::multimap<std::chrono::system_clock::time_point, Function>
+    std::multimap<std::chrono::steady_clock::time_point, Function>
         taskQueue GUARDED_BY(newTaskMutex);
     int nThreadsServicingQueue GUARDED_BY(newTaskMutex){0};
     bool stopRequested GUARDED_BY(newTaskMutex){false};
@@ -114,7 +136,7 @@ private:
  */
 class SingleThreadedSchedulerClient {
 private:
-    CScheduler *m_pscheduler;
+    CScheduler &m_scheduler;
 
     RecursiveMutex m_cs_callbacks_pending;
     std::list<std::function<void()>>
@@ -125,8 +147,8 @@ private:
     void ProcessQueue();
 
 public:
-    explicit SingleThreadedSchedulerClient(CScheduler *pschedulerIn)
-        : m_pscheduler(pschedulerIn) {}
+    explicit SingleThreadedSchedulerClient(CScheduler &scheduler LIFETIMEBOUND)
+        : m_scheduler{scheduler} {}
 
     /**
      * Add a callback to be executed. Callbacks are executed serially
@@ -136,9 +158,11 @@ public:
      */
     void AddToProcessQueue(std::function<void()> func);
 
-    // Processes all remaining queue members on the calling thread, blocking
-    // until queue is empty. Must be called after the CScheduler has no
-    // remaining processing threads!
+    /**
+     * Processes all remaining queue members on the calling thread, blocking
+     * until queue is empty.
+     * Must be called after the CScheduler has no remaining processing threads!
+     */
     void EmptyQueue();
 
     size_t CallbacksPending();

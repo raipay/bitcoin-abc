@@ -31,6 +31,7 @@ add_custom_command(OUTPUT qrc_bitcoin_locale.cpp
 		temp_bitcoin_locale.qrc
 		-name bitcoin_locale
 		-o qrc_bitcoin_locale.cpp
+		--format-version 1
 	MAIN_DEPENDENCY temp_bitcoin_locale.qrc
 	DEPENDS locales
 	VERBATIM
@@ -135,6 +136,7 @@ endif()
 # OSX support
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	list(APPEND QT_PLUGIN_COMPONENTS QCocoaIntegrationPlugin)
+	list(APPEND QT_PLUGIN_COMPONENTS QMacStylePlugin)
 	list(APPEND QT_PLUGIN_PLATFORM_DEFINITIONS -DQT_QPA_PLATFORM_COCOA=1)
 
 	target_sources(bitcoin-qt-base PRIVATE
@@ -264,7 +266,7 @@ if(ENABLE_BIP70)
 
 	include(CheckSymbolExists)
 	set(CMAKE_REQUIRED_INCLUDES ${OPENSSL_INCLUDE_DIR})
-	set(CMAKE_REQUIRED_LIBRARIES ${OPENSSL_CRYPTO_LIBRARY})
+	set(CMAKE_REQUIRED_LIBRARIES OpenSSL::SSL)
 	check_symbol_exists(EVP_MD_CTX_new "openssl/evp.h" HAVE_DECL_EVP_MD_CTX_NEW)
 	if(HAVE_DECL_EVP_MD_CTX_NEW)
 		target_compile_definitions(bitcoin-qt-base PRIVATE HAVE_DECL_EVP_MD_CTX_NEW=1)
@@ -433,7 +435,6 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		"it" "ja" "ko" "lt" "lv" "pl" "pt" "ru" "sk" "sl" "sv" "uk" "zh_CN"
 		"zh_TW"
 	)
-	string(JOIN "," QT_LOCALES ${QT_BASE_TRANSLATIONS})
 
 	get_target_property(QMAKE_EXECUTABLE Qt5::qmake IMPORTED_LOCATION)
 	execute_process(
@@ -467,17 +468,17 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		set(QT_TRANSLATION_DIR ${_qt_translation_dir} PARENT_SCOPE)
 	endfunction()
 
-	get_qt_translation_dir(QT_TRANSLATION_DIR ${QT_BASE_TRANSLATIONS})
-	if(NOT QT_TRANSLATION_DIR)
-		message(FATAL_ERROR "Qt translation files are not found")
-	endif()
+	string(REPLACE " " "-" OSX_VOLNAME "${PACKAGE_NAME}")
+	file(WRITE "${CMAKE_BINARY_DIR}/osx_volname" "${OSX_VOLNAME}")
 
 	set(MACDEPLOY_DIR "${CMAKE_SOURCE_DIR}/contrib/macdeploy")
 	set(MACDEPLOYQTPLUS "${MACDEPLOY_DIR}/macdeployqtplus.py")
 	set(DMG_DIST "${CMAKE_BINARY_DIR}/dist")
+	set(DMG_DSSTORE "${DMG_DIST}/.DS_Store")
 	add_custom_command(
 		OUTPUT
 			"${DMG_DIST}"
+			"${DMG_DSSTORE}"
 		COMMAND
 			"INSTALLNAMETOOL=${CMAKE_INSTALL_NAME_TOOL}"
 			"OTOOL=${CMAKE_OTOOL}"
@@ -485,40 +486,16 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 			"${Python_EXECUTABLE}"
 			"${MACDEPLOYQTPLUS}"
 			"${STRIPPED_BUNDLE}"
+			"${OSX_VOLNAME}"
 			-translations-dir "${QT_TRANSLATION_DIR}"
-			-add-qt-tr "${QT_LOCALES}"
 		WORKING_DIRECTORY
 			"${CMAKE_BINARY_DIR}"
 		DEPENDS
 			"${STRIPPED_BUNDLE}"
 	)
 
-	# Building the DMG background image requires several steps:
-	#   1/ The SVG file must be edited to display the package name
-	#   2/ The SVG file should be transformed into a couple PNG files, on for
-	#      low resolution screens and one for high resolution screens.
-	#   3/ The PNG files must be transformed into a multi-resolution TIFF file.
-	#      The names are not set arbitrarily, they follow Apple's guidelines for
-	#      resolution independent bitmap images (see `man tiffutil`).
-	set(BACKGROUND_SVG "background.svg")
-	configure_file(
-		"${CMAKE_SOURCE_DIR}/contrib/macdeploy/background.svg.cmake.in"
-		"${BACKGROUND_SVG}"
-	)
-
-	include(ImageHelper)
-	set(BACKGROUND_PNG_LOWRES "${CMAKE_CURRENT_BINARY_DIR}/background_temp.png")
-	set(BACKGROUND_PNG_HIRES "${CMAKE_CURRENT_BINARY_DIR}/background_temp@2x.png")
-	set(BACKGROUND_TIFF_LOWRES "${CMAKE_CURRENT_BINARY_DIR}/background_temp.tiff")
-	set(BACKGROUND_TIFF_HIRES "${CMAKE_CURRENT_BINARY_DIR}/background_temp@2x.tiff")
 	set(BACKGROUND_TIFF_NAME "background.tiff")
-	set(BACKGROUND_TIFF_MULTIRES "${CMAKE_BINARY_DIR}/${BACKGROUND_TIFF_NAME}")
-	convert_svg_to_png("${BACKGROUND_SVG}" "${BACKGROUND_PNG_LOWRES}" 36)
-	convert_svg_to_png("${BACKGROUND_SVG}" "${BACKGROUND_PNG_HIRES}" 72)
-	convert_png_to_tiff("${BACKGROUND_PNG_LOWRES}" "${BACKGROUND_TIFF_LOWRES}")
-	convert_png_to_tiff("${BACKGROUND_PNG_HIRES}" "${BACKGROUND_TIFF_HIRES}")
-	cat_multi_resolution_tiff("${BACKGROUND_TIFF_MULTIRES}" "${BACKGROUND_TIFF_LOWRES}" "${BACKGROUND_TIFF_HIRES}")
-
+	set(BACKGROUND_TIFF_MULTIRES "${CMAKE_SOURCE_DIR}/contrib/macdeploy/${BACKGROUND_TIFF_NAME}")
 	set(BACKGROUND_DIST_DIR "${DMG_DIST}/.background")
 	set(BACKGROUND_DIST_TIFF "${BACKGROUND_DIST_DIR}/${BACKGROUND_TIFF_NAME}")
 	add_custom_command(
@@ -530,24 +507,6 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 			${CMAKE_COMMAND} -E copy "${BACKGROUND_TIFF_MULTIRES}" "${BACKGROUND_DIST_TIFF}"
 		DEPENDS
 			"${BACKGROUND_TIFF_MULTIRES}"
-			"${DMG_DIST}"
-	)
-
-	string(REPLACE " " "-" OSX_VOLNAME "${PACKAGE_NAME}")
-	file(WRITE "${CMAKE_BINARY_DIR}/osx_volname" "${OSX_VOLNAME}")
-
-	set(DMG_DSSTORE "${DMG_DIST}/.DS_Store")
-	set(GEN_DSSTORE "${MACDEPLOY_DIR}/custom_dsstore.py")
-	add_custom_command(
-		OUTPUT
-			"${DMG_DSSTORE}"
-		COMMAND
-			"${Python_EXECUTABLE}"
-			"${GEN_DSSTORE}"
-			"${DMG_DSSTORE}"
-			"${OSX_VOLNAME}"
-		DEPENDS
-			"${GEN_DSSTORE}"
 			"${DMG_DIST}"
 	)
 
@@ -570,20 +529,17 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	)
 
 	if(CMAKE_CROSSCOMPILING)
-		find_program_or_fail(GENISOIMAGE_EXECUTABLE genisoimage)
+		find_program_or_fail(XORRISOFS_EXECUTABLE xorrisofs)
 
 		add_custom_target(osx-dmg
 			COMMAND
-				"${GENISOIMAGE_EXECUTABLE}"
-				-no-cache-inodes
+				"${XORRISOFS_EXECUTABLE}"
 				-D
 				-l
-				-probe
 				-V "${OSX_VOLNAME}"
 				-no-pad
 				-r
 				-dir-mode 0755
-				-apple
 				-o "${OSX_VOLNAME}.dmg"
 				"${DMG_DIST}"
 			WORKING_DIRECTORY
@@ -596,11 +552,9 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 				"${Python_EXECUTABLE}"
 				"${MACDEPLOYQTPLUS}"
 				"${STRIPPED_BUNDLE}"
+				"${OSX_VOLNAME}"
 				-translations-dir "${QT_TRANSLATION_DIR}"
-				-add-qt-tr "${QT_LOCALES}"
 				-dmg
-				-fancy "${MACDEPLOY_DIR}/fancy.plist"
-				-volname "${OSX_VOLNAME}"
 			WORKING_DIRECTORY
 				"${CMAKE_BINARY_DIR}"
 			DEPENDS

@@ -61,13 +61,6 @@ deadalnix at gmail dot com
 629D7E5DDDA0512BD5860F2C5D7922BBD649C4A7
 ```
 
-#### Jason B. Cox
-```
-Bitcoin ABC Developer
-contact at jasonbcox dot com
-3BB16D00D9A6D281591BDC76E4486356E7A81D2C
-```
-
 ## Disclosure Relationships
 
 Neighboring projects that may be affected by bugs, potential exploits, or other security vulnerabilities that are disclosed to Bitcoin ABC will be passed along information regarding disclosures that we believe could impact them.  As per the standard referenced above, we are disclosing these relationships here:
@@ -82,7 +75,7 @@ Bitcoin ABC cannot commit to bounty payments ahead of time.  However, we will us
 
 ## Deviations from the Standard
 
-While Bitcoin ABC believes that strong cohesion among neighoring projects and ethical behavior can be standardized to reduce poorly handled disclosure incidents, we also believe that it's in the best interest of Bitcoin Cash for us to deviate from the standard in the following ways:
+While Bitcoin ABC believes that strong cohesion among neighboring projects and ethical behavior can be standardized to reduce poorly handled disclosure incidents, we also believe that it's in the best interest of eCash for us to deviate from the standard in the following ways:
 
 * The standard calls for coordinated releases. While Bitcoin ABC will make attempts to coordinate releases when possible, it's not always feasible to coordinate urgent fixes for catastrophic exploits (ie. chain splitting events).  For critical fixes, Bitcoin ABC will release them in the next release when possible.
 

@@ -26,6 +26,7 @@
 #include <QTimer>
 
 #include <cstdint>
+#include <functional>
 
 WalletModel::WalletModel(std::unique_ptr<interfaces::Wallet> wallet,
                          ClientModel &client_model,
@@ -338,12 +339,8 @@ WalletModel::EncryptionStatus WalletModel::getEncryptionStatus() const {
     }
 }
 
-bool WalletModel::setWalletEncrypted(bool encrypted,
-                                     const SecureString &passphrase) {
-    if (encrypted) {
-        return m_wallet->encryptWallet(passphrase);
-    }
-    return false;
+bool WalletModel::setWalletEncrypted(const SecureString &passphrase) {
+    return m_wallet->encryptWallet(passphrase);
 }
 
 bool WalletModel::setWalletLocked(bool locked, const SecureString &passPhrase) {
@@ -525,7 +522,7 @@ QString WalletModel::getDisplayName() const {
 }
 
 bool WalletModel::isMultiwallet() {
-    return m_node.getWallets().size() > 1;
+    return m_node.walletClient().getWallets().size() > 1;
 }
 
 const CChainParams &WalletModel::getChainParams() const {

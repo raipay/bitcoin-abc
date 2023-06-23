@@ -9,7 +9,7 @@
 #include <config.h>
 #include <consensus/merkle.h>
 #include <consensus/validation.h>
-#include <miner.h>
+#include <node/miner.h>
 #include <pow/pow.h>
 #include <random.h>
 #include <script/standard.h>
@@ -19,6 +19,8 @@
 #include <validationinterface.h>
 
 #include <thread>
+
+using node::BlockAssembler;
 
 namespace validation_block_tests {
 struct MinerTestingSetup : public RegTestingSetup {
@@ -75,8 +77,9 @@ std::shared_ptr<CBlock> MinerTestingSetup::Block(const Config &config,
     CScript pubKey;
     pubKey << i++ << OP_TRUE;
 
-    auto ptemplate =
-        BlockAssembler(config, *m_node.mempool).CreateNewBlock(pubKey);
+    auto ptemplate = BlockAssembler(config, m_node.chainman->ActiveChainstate(),
+                                    *m_node.mempool)
+                         .CreateNewBlock(pubKey);
     auto pblock = std::make_shared<CBlock>(ptemplate->block);
     pblock->hashPrevBlock = prev_hash;
     pblock->nTime = ++time;
@@ -125,9 +128,10 @@ std::shared_ptr<const CBlock>
 MinerTestingSetup::BadBlock(const Config &config, const BlockHash &prev_hash) {
     auto pblock = Block(config, prev_hash);
 
+    CScript padding(CScript() << OP_RETURN << std::vector<uint8_t>(40));
     CMutableTransaction coinbase_spend;
     coinbase_spend.vin.push_back(
-        CTxIn(COutPoint(pblock->vtx[0]->GetId(), 0), CScript(), 0));
+        CTxIn(COutPoint(pblock->vtx[0]->GetId(), 0), padding, 0));
     coinbase_spend.vout.push_back(pblock->vtx[0]->vout[0]);
 
     CTransactionRef tx = MakeTransactionRef(coinbase_spend);
@@ -199,7 +203,7 @@ BOOST_AUTO_TEST_CASE(processnewblock_signals_ordering) {
     const CBlockIndex *initial_tip = nullptr;
     {
         LOCK(cs_main);
-        initial_tip = ::ChainActive().Tip();
+        initial_tip = m_node.chainman->ActiveTip();
     }
     auto sub = std::make_shared<TestSubscriber>(initial_tip->GetBlockHash());
     RegisterSharedValidationInterface(sub);
@@ -241,7 +245,55 @@ BOOST_AUTO_TEST_CASE(processnewblock_signals_ordering) {
 
     LOCK(cs_main);
     BOOST_CHECK_EQUAL(sub->m_expected_tip,
-                      ::ChainActive().Tip()->GetBlockHash());
+                      m_node.chainman->ActiveTip()->GetBlockHash());
+}
+
+/**
+ * Make sure that any bad state in Avalanche finalization gets reverted if a
+ * finalized block is found to be invalid.
+ */
+BOOST_AUTO_TEST_CASE(avalanche_finalization_bad_state) {
+    GlobalConfig config;
+    const CChainParams &chainParams = config.GetChainParams();
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+
+    // Connect the genesis block
+    bool newBlock;
+    BOOST_CHECK(chainman.ProcessNewBlock(
+        config, std::make_shared<CBlock>(chainParams.GenesisBlock()), true,
+        &newBlock));
+
+    // Generate an invalid block with a valid header
+    const std::shared_ptr<const CBlock> pblock =
+        BadBlock(config, chainParams.GenesisBlock().GetHash());
+
+    // Process the valid header
+    const CBlockIndex *pindexBadBlock;
+    BlockValidationState state;
+    BOOST_CHECK(chainman.ProcessNewBlockHeaders(
+        config, {pblock->GetBlockHeader()}, state, &pindexBadBlock));
+
+    // In order to force the invalid block to be finalized, we set the chain
+    // tip manually. This does not happen under normal conditions. Rewind
+    // the chain tip immediately after finalizing.
+    CBlockIndex *pindex = const_cast<CBlockIndex *>(pindexBadBlock);
+    Chainstate &activeChainstate = chainman.ActiveChainstate();
+    // Set the tip to pindex because AvalancheFinalizeBlock checks it is in the
+    // active chain.
+    activeChainstate.m_chain.SetTip(pindex);
+    BOOST_CHECK(activeChainstate.AvalancheFinalizeBlock(pindex));
+    activeChainstate.m_chain.SetTip(pindex->pprev);
+
+    // Process the block. It should be found invalid and finalization reverted.
+    bool processed = chainman.ProcessNewBlock(config, pblock, true, &newBlock);
+    assert(processed);
+    BOOST_CHECK(newBlock);
+    {
+        LOCK(cs_main);
+        BOOST_CHECK(pindex->nStatus.isInvalid());
+    }
+    BOOST_CHECK(!activeChainstate.IsBlockAvalancheFinalized(pindex));
+    BOOST_CHECK(activeChainstate.IsBlockAvalancheFinalized(pindex->pprev));
 }
 
 /**
@@ -282,7 +334,7 @@ BOOST_AUTO_TEST_CASE(mempool_locks_reorg) {
     // Run the test multiple times
     for (int test_runs = 3; test_runs > 0; --test_runs) {
         BOOST_CHECK_EQUAL(last_mined->GetHash(),
-                          ::ChainActive().Tip()->GetBlockHash());
+                          m_node.chainman->ActiveTip()->GetBlockHash());
 
         // Later on split from here
         const BlockHash split_hash{last_mined->hashPrevBlock};
@@ -328,13 +380,13 @@ BOOST_AUTO_TEST_CASE(mempool_locks_reorg) {
         // Add the txs to the tx pool
         {
             LOCK(cs_main);
-            TxValidationState state;
             for (const auto &tx : txs) {
+                const MempoolAcceptResult result =
+                    m_node.chainman->ProcessTransaction(tx);
                 BOOST_REQUIRE_MESSAGE(
-                    AcceptToMemoryPool(config, *m_node.mempool, state, tx,
-                                       /* bypass_limits */ false,
-                                       /* nAbsurdFee */ Amount::zero()),
-                    state.GetRejectReason());
+                    result.m_result_type ==
+                        MempoolAcceptResult::ResultType::VALID,
+                    result.m_state.GetRejectReason());
             }
         }
 
@@ -366,7 +418,7 @@ BOOST_AUTO_TEST_CASE(mempool_locks_reorg) {
             }
             LOCK(cs_main);
             // We are done with the reorg, so the tip must have changed
-            assert(tip_init != ::ChainActive().Tip()->GetBlockHash());
+            assert(tip_init != m_node.chainman->ActiveTip()->GetBlockHash());
         }};
 
         // Make sure we disable reorg protection.
@@ -379,7 +431,7 @@ BOOST_AUTO_TEST_CASE(mempool_locks_reorg) {
         }
         // Check that the reorg was eventually successful
         BOOST_CHECK_EQUAL(last_mined->GetHash(),
-                          ::ChainActive().Tip()->GetBlockHash());
+                          m_node.chainman->ActiveTip()->GetBlockHash());
 
         // We can join the other thread, which returns when the reorg was
         // successful

@@ -6,67 +6,77 @@
 
 import unittest
 
-from .script import CScript, hash160, hash256
-from .util import hex_str_to_bytes, assert_equal
+from .script import OP_TRUE, CScript, CScriptOp, hash160, hash256
+from .util import assert_equal
 
-ADDRESS_BCHREG_UNSPENDABLE = 'ecregtest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcrl5mqkt'
-ADDRESS_BCHREG_UNSPENDABLE_DESCRIPTOR = 'addr(ecregtest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcrl5mqkt)#u6xx93xc'
+ADDRESS_ECREG_UNSPENDABLE = "ecregtest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcrl5mqkt"
+ADDRESS_ECREG_UNSPENDABLE_DESCRIPTOR = (
+    "addr(ecregtest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcrl5mqkt)#u6xx93xc"
+)
+# Coins sent to this address can be spent with a scriptSig of just OP_TRUE
+ADDRESS_ECREG_P2SH_OP_TRUE = "ecregtest:prdpw30fk4ym6zl6rftfjuw806arpn26fvkgfu97xt"
+P2SH_OP_TRUE = CScript.fromhex("a914da1745e9b549bd0bfa1a569971c77eba30cd5a4b87")
+SCRIPTSIG_OP_TRUE = CScriptOp.encode_op_pushdata(CScript([OP_TRUE]))
 
-chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
 def byte_to_base58(b, version):
-    result = ''
-    str = b.hex()
-    str = chr(version).encode('latin-1').hex() + str
-    checksum = hash256(hex_str_to_bytes(str)).hex()
-    str += checksum[:8]
-    value = int('0x' + str, 0)
+    result = ""
+    # prepend version
+    b = bytes([version]) + b
+    # append checksum
+    b += hash256(b)[:4]
+    value = int.from_bytes(b, "big")
     while value > 0:
         result = chars[value % 58] + result
         value //= 58
-    while (str[:2] == '00'):
+    while b[0] == 0:
         result = chars[0] + result
-        str = str[2:]
+        b = b[1:]
     return result
 
 
-def base58_to_byte(s, verify_checksum=True):
+def base58_to_byte(s):
+    """Converts a base58-encoded string to its data and version.
+
+    Throws if the base58 checksum is invalid."""
     if not s:
-        return b''
+        return b""
     n = 0
     for c in s:
         n *= 58
         assert c in chars
         digit = chars.index(c)
         n += digit
-    h = '{:x}'.format(n)
+    h = f"{n:x}"
     if len(h) % 2:
-        h = '0' + h
-    res = n.to_bytes((n.bit_length() + 7) // 8, 'big')
+        h = f"0{h}"
+    res = n.to_bytes((n.bit_length() + 7) // 8, "big")
     pad = 0
     for c in s:
         if c == chars[0]:
             pad += 1
         else:
             break
-    res = b'\x00' * pad + res
-    if verify_checksum:
-        assert_equal(hash256(res[:-4])[:4], res[-4:])
+    res = b"\x00" * pad + res
+
+    # Assert if the checksum is invalid
+    assert_equal(hash256(res[:-4])[:4], res[-4:])
 
     return res[1:-4], int(res[0])
 
 
-def keyhash_to_p2pkh(hash, main=False):
-    assert (len(hash) == 20)
+def keyhash_to_p2pkh(keyhash, main=False):
+    assert len(keyhash) == 20
     version = 0 if main else 111
-    return byte_to_base58(hash, version)
+    return byte_to_base58(keyhash, version)
 
 
-def scripthash_to_p2sh(hash, main=False):
-    assert (len(hash) == 20)
+def scripthash_to_p2sh(scripthash, main=False):
+    assert len(scripthash) == 20
     version = 5 if main else 196
-    return byte_to_base58(hash, version)
+    return byte_to_base58(scripthash, version)
 
 
 def key_to_p2pkh(key, main=False):
@@ -80,17 +90,17 @@ def script_to_p2sh(script, main=False):
 
 
 def check_key(key):
-    if (isinstance(key, str)):
-        key = hex_str_to_bytes(key)  # Assuming this is hex string
-    if (isinstance(key, bytes) and (len(key) == 33 or len(key) == 65)):
+    if isinstance(key, str):
+        key = bytes.fromhex(key)  # Assuming this is hex string
+    if isinstance(key, bytes) and (len(key) == 33 or len(key) == 65):
         return key
     assert False
 
 
 def check_script(script):
-    if (isinstance(script, str)):
-        script = hex_str_to_bytes(script)  # Assuming this is hex string
-    if (isinstance(script, bytes) or isinstance(script, CScript)):
+    if isinstance(script, str):
+        script = bytes.fromhex(script)  # Assuming this is hex string
+    if isinstance(script, bytes) or isinstance(script, CScript):
         return script
     assert False
 
@@ -99,35 +109,20 @@ class TestFrameworkScript(unittest.TestCase):
     def test_base58encodedecode(self):
         def check_base58(data, version):
             self.assertEqual(
-                base58_to_byte(byte_to_base58(data, version)),
-                (data, version))
+                base58_to_byte(byte_to_base58(data, version)), (data, version)
+            )
 
+        check_base58(bytes.fromhex("1f8ea1702a7bd4941bca0941b852c4bbfedb2e05"), 111)
+        check_base58(bytes.fromhex("3a0b05f4d7f66c3ba7009f453530296c845cc9cf"), 111)
+        check_base58(bytes.fromhex("41c1eaf111802559bad61b60d62b1f897c63928a"), 111)
+        check_base58(bytes.fromhex("0041c1eaf111802559bad61b60d62b1f897c63928a"), 111)
+        check_base58(bytes.fromhex("000041c1eaf111802559bad61b60d62b1f897c63928a"), 111)
         check_base58(
-            b'\x1f\x8e\xa1p*{\xd4\x94\x1b\xca\tA\xb8R\xc4\xbb\xfe\xdb.\x05',
-            111)
-        check_base58(
-            b':\x0b\x05\xf4\xd7\xf6l;\xa7\x00\x9fE50)l\x84\\\xc9\xcf', 111)
-        check_base58(
-            b'A\xc1\xea\xf1\x11\x80%Y\xba\xd6\x1b`\xd6+\x1f\x89|c\x92\x8a',
-            111)
-        check_base58(
-            b'\0A\xc1\xea\xf1\x11\x80%Y\xba\xd6\x1b`\xd6+\x1f\x89|c\x92\x8a',
-            111)
-        check_base58(
-            b'\0\0A\xc1\xea\xf1\x11\x80%Y\xba\xd6\x1b`\xd6+\x1f\x89|c\x92\x8a',
-            111)
-        check_base58(
-            b'\0\0\0A\xc1\xea\xf1\x11\x80%Y\xba\xd6\x1b`\xd6+\x1f\x89|c\x92\x8a',
-            111)
-        check_base58(
-            b'\x1f\x8e\xa1p*{\xd4\x94\x1b\xca\tA\xb8R\xc4\xbb\xfe\xdb.\x05', 0)
-        check_base58(
-            b':\x0b\x05\xf4\xd7\xf6l;\xa7\x00\x9fE50)l\x84\\\xc9\xcf', 0)
-        check_base58(
-            b'A\xc1\xea\xf1\x11\x80%Y\xba\xd6\x1b`\xd6+\x1f\x89|c\x92\x8a', 0)
-        check_base58(
-            b'\0A\xc1\xea\xf1\x11\x80%Y\xba\xd6\x1b`\xd6+\x1f\x89|c\x92\x8a', 0)
-        check_base58(
-            b'\0\0A\xc1\xea\xf1\x11\x80%Y\xba\xd6\x1b`\xd6+\x1f\x89|c\x92\x8a', 0)
-        check_base58(
-            b'\0\0\0A\xc1\xea\xf1\x11\x80%Y\xba\xd6\x1b`\xd6+\x1f\x89|c\x92\x8a', 0)
+            bytes.fromhex("00000041c1eaf111802559bad61b60d62b1f897c63928a"), 111
+        )
+        check_base58(bytes.fromhex("1f8ea1702a7bd4941bca0941b852c4bbfedb2e05"), 0)
+        check_base58(bytes.fromhex("3a0b05f4d7f66c3ba7009f453530296c845cc9cf"), 0)
+        check_base58(bytes.fromhex("41c1eaf111802559bad61b60d62b1f897c63928a"), 0)
+        check_base58(bytes.fromhex("0041c1eaf111802559bad61b60d62b1f897c63928a"), 0)
+        check_base58(bytes.fromhex("000041c1eaf111802559bad61b60d62b1f897c63928a"), 0)
+        check_base58(bytes.fromhex("00000041c1eaf111802559bad61b60d62b1f897c63928a"), 0)

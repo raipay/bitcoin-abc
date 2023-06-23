@@ -90,7 +90,7 @@ public:
      * ordering) to bit_is_set(s) == true.
      */
     inline void bit_set(uint32_t s) {
-        mem[s >> 3].fetch_or(1 << (s & 7), std::memory_order_relaxed);
+        mem[s >> 3].fetch_or(uint8_t(1 << (s & 7)), std::memory_order_relaxed);
     }
 
     /**
@@ -101,7 +101,8 @@ public:
      * ordering) to bit_is_set(s) == false.
      */
     inline void bit_unset(uint32_t s) {
-        mem[s >> 3].fetch_and(~(1 << (s & 7)), std::memory_order_relaxed);
+        mem[s >> 3].fetch_and(uint8_t(~(1 << (s & 7))),
+                              std::memory_order_relaxed);
     }
 
     /**
@@ -257,8 +258,8 @@ private:
      * high 32 bits of a 32*32->64 multiply, which means the operation is
      * reasonably fast even on a typical 32-bit processor.
      *
-     * @param e The element whose hashes will be returned
-     * @returns Deterministic hashes derived from `e` uniformly mapped onto the
+     * @param k The element whose hashes will be returned
+     * @returns Deterministic hashes derived from `k` uniformly mapped onto the
      * range [0, size)
      */
     inline std::array<uint32_t, 8> compute_hashes(const Key &k) const {
@@ -423,9 +424,9 @@ public:
      *
      * is not guaranteed to return true.
      *
-     * @param e the element to insert
-     * @param weither to replace if an existing element with the same key is
-     * found.
+     * @param e  The element to insert
+     * @param replace  Whether to replace if an existing element with the same
+     *                 key is found.
      * @post one of the following: All previously inserted elements and e are
      * now in the table, one previously inserted element is evicted from the
      * table, the entry attempted to be inserted is evicted. If replace is true
@@ -526,8 +527,8 @@ public:
      * obtains the found element (for Elements that contain key and value,
      * this has the effect of obtaining the found value).
      *
-     * @param e the element to check
-     * @param erase
+     * @param e The element to check
+     * @param erase Whether to attempt setting the garbage collect flag
      *
      * @post If the element is found, it is copied into e. If erase is true
      * and the element is found, then the garbage collect flag is set.

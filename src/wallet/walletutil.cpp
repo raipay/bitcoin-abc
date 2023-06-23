@@ -7,18 +7,21 @@
 #include <logging.h>
 #include <util/system.h>
 
+#include <exception>
+#include <fstream>
+
 fs::path GetWalletDir() {
     fs::path path;
 
     if (gArgs.IsArgSet("-walletdir")) {
-        path = gArgs.GetArg("-walletdir", "");
+        path = gArgs.GetPathArg("-walletdir");
         if (!fs::is_directory(path)) {
             // If the path specified doesn't exist, we return the deliberately
             // invalid empty string.
             path = "";
         }
     } else {
-        path = GetDataDir();
+        path = gArgs.GetDataDirNet();
         // If a wallets directory exists, use that, otherwise default to
         // GetDataDir
         if (fs::is_directory(path / "wallets")) {
@@ -29,23 +32,24 @@ fs::path GetWalletDir() {
     return path;
 }
 
-static bool IsBerkeleyBtree(const fs::path &path) {
+bool IsBerkeleyBtree(const fs::path &path) {
     if (!fs::exists(path)) {
         return false;
     }
 
     // A Berkeley DB Btree file has at least 4K.
     // This check also prevents opening lock files.
-    boost::system::error_code ec;
+    std::error_code ec;
     auto size = fs::file_size(path, ec);
     if (ec) {
-        LogPrintf("%s: %s %s\n", __func__, ec.message(), path.string());
+        LogPrintf("%s: %s %s\n", __func__, ec.message(),
+                  fs::PathToString(path));
     }
     if (size < 4096) {
         return false;
     }
 
-    fsbridge::ifstream file(path, std::ios::binary);
+    std::ifstream file{path, std::ios::binary};
     if (!file.is_open()) {
         return false;
     }
@@ -65,30 +69,31 @@ static bool IsBerkeleyBtree(const fs::path &path) {
 
 std::vector<fs::path> ListWalletDir() {
     const fs::path wallet_dir = GetWalletDir();
-    const size_t offset = wallet_dir.string().size() + 1;
+    const size_t offset = fs::PathToString(wallet_dir).size() + 1;
     std::vector<fs::path> paths;
-    boost::system::error_code ec;
+    std::error_code ec;
 
     for (auto it = fs::recursive_directory_iterator(wallet_dir, ec);
          it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec) {
             LogPrintf("%s: %s %s\n", __func__, ec.message(),
-                      it->path().string());
+                      fs::PathToString(it->path()));
             continue;
         }
 
         // Get wallet path relative to walletdir by removing walletdir from the
         // wallet path. This can be replaced by
         // boost::filesystem::lexically_relative once boost is bumped to 1.60.
-        const fs::path path = it->path().string().substr(offset);
+        const auto path_str = it->path().native().substr(offset);
+        const fs::path path{path_str.begin(), path_str.end()};
 
-        if (it->status().type() == fs::directory_file &&
+        if (it->status().type() == fs::file_type::directory &&
             IsBerkeleyBtree(it->path() / "wallet.dat")) {
             // Found a directory which contains wallet.dat btree file, add it as
             // a wallet.
             paths.emplace_back(path);
-        } else if (it.level() == 0 &&
-                   it->symlink_status().type() == fs::regular_file &&
+        } else if (it.depth() == 0 &&
+                   it->symlink_status().type() == fs::file_type::regular &&
                    IsBerkeleyBtree(it->path())) {
             if (it->path().filename() == "wallet.dat") {
                 // Found top-level wallet.dat btree file, add top level
@@ -106,16 +111,4 @@ std::vector<fs::path> ListWalletDir() {
     }
 
     return paths;
-}
-
-WalletLocation::WalletLocation(const std::string &name)
-    : m_name(name), m_path(fs::absolute(name, GetWalletDir())) {}
-
-bool WalletLocation::Exists() const {
-    fs::path path = m_path;
-    // For the default wallet, check specifically for the wallet.dat file
-    if (m_name.empty()) {
-        path = fs::absolute("wallet.dat", m_path);
-    }
-    return fs::symlink_status(path).type() != fs::file_not_found;
 }

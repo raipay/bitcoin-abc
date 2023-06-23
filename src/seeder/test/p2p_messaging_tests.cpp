@@ -14,6 +14,7 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -40,7 +41,7 @@ public:
 };
 } // namespace
 
-static const unsigned short SERVICE_PORT = 18444;
+static const uint16_t SERVICE_PORT = 18444;
 
 struct SeederTestingSetup {
     SeederTestingSetup() {
@@ -62,7 +63,7 @@ static CDataStream
 CreateVersionMessage(int64_t now, CAddress addrTo, CAddress addrFrom,
                      int32_t start_height, uint32_t nVersion,
                      uint64_t nonce = 0,
-                     std::string user_agent = "/bitcoin-cash-seeder:0.15/") {
+                     std::string user_agent = "/Bitcoin ABC:0.0.0(seeder)/") {
     CDataStream payload(SER_NETWORK, 0);
     payload.SetVersion(nVersion);
     ServiceFlags serviceflags = ServiceFlags(NODE_NETWORK);

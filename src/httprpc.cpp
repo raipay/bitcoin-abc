@@ -8,7 +8,6 @@
 #include <config.h>
 #include <crypto/hmac_sha256.h>
 #include <rpc/protocol.h>
-#include <util/ref.h>
 #include <util/strencodings.h>
 #include <util/system.h>
 #include <util/translation.h>
@@ -18,6 +17,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -305,7 +305,8 @@ bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
         return false;
     }
 
-    JSONRPCRequest jreq(context);
+    JSONRPCRequest jreq;
+    jreq.context = context;
     jreq.peerAddr = req->GetPeer().ToString();
     if (!RPCAuthorized(authHeader.second, jreq.authUser)) {
         LogPrintf("ThreadRPCServer incorrect password attempt from %s\n",

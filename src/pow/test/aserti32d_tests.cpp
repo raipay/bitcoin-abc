@@ -532,11 +532,14 @@ BOOST_AUTO_TEST_CASE(calculate_asert_test) {
     }
 }
 
-class ChainParamsWithDAAActivation : public CChainParams {
+class ChainParamsWithCustomActivation : public CChainParams {
 public:
-    ChainParamsWithDAAActivation(const CChainParams &chainParams, int daaHeight)
+    ChainParamsWithCustomActivation(const CChainParams &chainParams,
+                                    int daaHeight, int axionHeight)
         : CChainParams(chainParams) {
+        BOOST_REQUIRE_GT(axionHeight, daaHeight);
         consensus.daaHeight = daaHeight;
+        consensus.axionHeight = axionHeight;
     }
 };
 
@@ -549,11 +552,11 @@ BOOST_AUTO_TEST_CASE(asert_activation_anchor_test) {
     // at a lower height than usual, so we don't need to waste time making a
     // 504000-long chain.
     const auto mainChainParams = CreateChainParams(CBaseChainParams::MAIN);
-    const ChainParamsWithDAAActivation chainParams(*mainChainParams, 2016);
+    const int asertActivationHeight = 4000;
+    const ChainParamsWithCustomActivation chainParams(*mainChainParams, 2016,
+                                                      asertActivationHeight);
     const Consensus::Params &params = chainParams.GetConsensus();
 
-    const int64_t activationTime =
-        gArgs.GetArg("-axionactivationtime", params.axionActivationTime);
     CBlockHeader blkHeaderDummy;
 
     // an arbitrary compact target for our chain (based on BCH chain ~ Aug 10
@@ -573,32 +576,21 @@ BOOST_AUTO_TEST_CASE(asert_activation_anchor_test) {
 
     // Pile up a random number of blocks to establish some history of random
     // height. cw144 DAA requires us to have height at least 2016, dunno why
-    // that much.
-    const int initialBlockCount = 2000 + int(InsecureRandRange(1000));
-    for (int i = 1; i < initialBlockCount; i++) {
-        blocks[bidx] = GetBlockIndex(&blocks[bidx - 1], 600, initialBits);
-        bidx++;
+    // that much. Keep going up to 145 blocks prior to ASERT activation.
+    for (int i = 1; i < asertActivationHeight - 145; i++) {
         BOOST_REQUIRE(bidx < int(blocks.size()));
-    }
-
-    // Start making blocks prior to activation. First, make a block about 1 day
-    // before activation. Then put down 145 more blocks with 500 second
-    // solvetime each, such that the MTP on the final block is 1 second short of
-    // activationTime.
-    {
         blocks[bidx] = GetBlockIndex(&blocks[bidx - 1], 600, initialBits);
-        blocks[bidx].nTime = activationTime - 140 * 500 - 1;
         bidx++;
     }
+    // Then put down 145 more blocks with 500 second solvetime each, such that
+    // the final block is the one prior to activation.
     for (int i = 0; i < 145; i++) {
         BOOST_REQUIRE(bidx < int(blocks.size()));
         blocks[bidx] = GetBlockIndex(&blocks[bidx - 1], 500, initialBits);
         bidx++;
     }
     CBlockIndex *pindexPreActivation = &blocks[bidx - 1];
-    BOOST_CHECK_EQUAL(pindexPreActivation->nTime, activationTime + 5 * 500 - 1);
-    BOOST_CHECK_EQUAL(pindexPreActivation->GetMedianTimePast(),
-                      activationTime - 1);
+    BOOST_CHECK_EQUAL(pindexPreActivation->nHeight, asertActivationHeight - 1);
     BOOST_CHECK(IsDAAEnabled(params, pindexPreActivation));
 
     // If we consult DAA, then it uses cw144 which returns a significantly lower
@@ -608,9 +600,6 @@ BOOST_AUTO_TEST_CASE(asert_activation_anchor_test) {
     BOOST_CHECK_EQUAL(
         GetNextWorkRequired(pindexPreActivation, &blkHeaderDummy, chainParams),
         0x180236e1);
-
-    // ASERT has never run yet, so cache is unpopulated.
-    BOOST_CHECK_EQUAL(GetASERTAnchorBlockCache(), nullptr);
 
     /**
      * Now we'll try adding on blocks to activate ASERT. The activation block
@@ -627,8 +616,6 @@ BOOST_AUTO_TEST_CASE(asert_activation_anchor_test) {
     BOOST_CHECK_EQUAL(
         GetNextWorkRequired(&indexActivation0, &blkHeaderDummy, chainParams),
         0x180236e1);
-    // second call will have used anchor cache, shouldn't change anything
-    BOOST_CHECK_EQUAL(GetASERTAnchorBlockCache(), &indexActivation0);
     BOOST_CHECK_EQUAL(
         GetNextWorkRequired(&indexActivation0, &blkHeaderDummy, chainParams),
         0x180236e1);
@@ -646,17 +633,12 @@ BOOST_AUTO_TEST_CASE(asert_activation_anchor_test) {
     BOOST_CHECK_EQUAL(
         GetNextWorkRequired(&indexActivation1, &blkHeaderDummy, chainParams),
         0x180232fd);
-    // second call will have used anchor cache, shouldn't change anything
-    BOOST_CHECK_EQUAL(GetASERTAnchorBlockCache(), &indexActivation1);
     BOOST_CHECK_EQUAL(
         GetNextWorkRequired(&indexActivation1, &blkHeaderDummy, chainParams),
         0x180232fd);
-    // for good measure, try again with wiped cache
-    ResetASERTAnchorBlockCache();
     BOOST_CHECK_EQUAL(
         GetNextWorkRequired(&indexActivation1, &blkHeaderDummy, chainParams),
         0x180232fd);
-    BOOST_CHECK_EQUAL(GetASERTAnchorBlockCache(), &indexActivation1);
 
     // Try activation with expected solvetime, which will keep target the same.
     uint32_t anchorBits2 = 0x180210fe;
@@ -666,7 +648,6 @@ BOOST_AUTO_TEST_CASE(asert_activation_anchor_test) {
     BOOST_CHECK_EQUAL(
         GetNextWorkRequired(&indexActivation2, &blkHeaderDummy, chainParams),
         anchorBits2);
-    BOOST_CHECK_EQUAL(GetASERTAnchorBlockCache(), &indexActivation2);
 
     // Try a three-month solvetime which will cause us to hit powLimit.
     uint32_t anchorBits3 = 0x18034567;
@@ -687,19 +668,16 @@ BOOST_AUTO_TEST_CASE(asert_activation_anchor_test) {
     BOOST_CHECK_EQUAL(GetNextWorkRequired(&indexActivation3_return,
                                           &blkHeaderDummy, chainParams),
                       anchorBits3);
-    BOOST_CHECK_EQUAL(GetASERTAnchorBlockCache(), &indexActivation3);
 
     // Make an activation with MTP == activation exactly. This is a backwards
     // timestamp jump so the resulting target is 1.2% lower.
     CBlockIndex indexActivation4 =
         GetBlockIndex(pindexPreActivation, 0, 0x18011111);
-    indexActivation4.nTime = activationTime;
-    BOOST_CHECK_EQUAL(indexActivation4.GetMedianTimePast(), activationTime);
+    indexActivation4.nTime = pindexPreActivation->GetMedianTimePast();
     BOOST_CHECK(IsAxionEnabled(params, &indexActivation4));
     BOOST_CHECK_EQUAL(
         GetNextWorkRequired(&indexActivation4, &blkHeaderDummy, chainParams),
         0x18010db3);
-    BOOST_CHECK_EQUAL(GetASERTAnchorBlockCache(), &indexActivation4);
 
     // Finally create a random chain on top of our second activation, using
     // ASERT targets all the way. Erase cache so that this will do a fresh
@@ -708,10 +686,8 @@ BOOST_AUTO_TEST_CASE(asert_activation_anchor_test) {
     CBlockIndex *pindexChain2 = &indexActivation2;
     for (int i = 1; i < 1000; i++) {
         BOOST_REQUIRE(bidx < int(blocks.size()));
-        ResetASERTAnchorBlockCache();
         uint32_t nextBits =
             GetNextWorkRequired(pindexChain2, &blkHeaderDummy, chainParams);
-        BOOST_CHECK_EQUAL(GetASERTAnchorBlockCache(), &indexActivation2);
         blocks[bidx] =
             GetBlockIndex(pindexChain2, InsecureRandRange(1200), nextBits);
         pindexChain2 = &blocks[bidx++];
@@ -723,7 +699,6 @@ BOOST_AUTO_TEST_CASE(asert_activation_anchor_test) {
         uint32_t nextBits =
             GetNextWorkRequired(pindex->pprev, &blkHeaderDummy, chainParams);
         BOOST_CHECK_EQUAL(nextBits, pindex->nBits);
-        BOOST_CHECK_EQUAL(GetASERTAnchorBlockCache(), &indexActivation2);
     }
 }
 

@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <bench/bench.h>
+#include <consensus/amount.h>
 #include <policy/policy.h>
 #include <test/util/setup_common.h>
 #include <txmempool.h>
@@ -12,10 +13,10 @@ static void AddTx(const CTransactionRef &tx, const Amount &nFee,
     int64_t nTime = 0;
     unsigned int nHeight = 1;
     bool spendsCoinbase = false;
-    unsigned int nSigOpCount = 1;
+    unsigned int nSigChecks = 1;
     LockPoints lp;
     pool.addUnchecked(CTxMemPoolEntry(tx, nFee, nTime, nHeight, spendsCoinbase,
-                                      nSigOpCount, lp));
+                                      nSigChecks, lp));
 }
 
 // Right now this is only testing eviction performance in an extremely small

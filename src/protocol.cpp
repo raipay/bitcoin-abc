@@ -7,12 +7,8 @@
 
 #include <chainparams.h>
 #include <config.h>
-#include <util/strencodings.h>
 #include <util/system.h>
 
-#ifndef WIN32
-#include <arpa/inet.h>
-#endif
 #include <atomic>
 
 static std::atomic<bool> g_initial_block_download_completed(false);
@@ -55,6 +51,10 @@ const char *AVAHELLO = "avahello";
 const char *AVAPOLL = "avapoll";
 const char *AVARESPONSE = "avaresponse";
 const char *AVAPROOF = "avaproof";
+const char *GETAVAADDR = "getavaaddr";
+const char *GETAVAPROOFS = "getavaproofs";
+const char *AVAPROOFS = "avaproofs";
+const char *AVAPROOFSREQ = "avaproofsreq";
 
 bool IsBlockLike(const std::string &strCommand) {
     return strCommand == NetMsgType::BLOCK ||
@@ -81,8 +81,8 @@ static const std::string allNetMessageTypes[] = {
     NetMsgType::CFHEADERS,   NetMsgType::GETCFCHECKPT, NetMsgType::CFCHECKPT,
 };
 static const std::vector<std::string>
-    allNetMessageTypesVec(allNetMessageTypes,
-                          allNetMessageTypes + ARRAYLEN(allNetMessageTypes));
+    allNetMessageTypesVec(std::begin(allNetMessageTypes),
+                          std::end(allNetMessageTypes));
 
 CMessageHeader::CMessageHeader(const MessageMagic &pchMessageStartIn) {
     memcpy(std::begin(pchMessageStart), std::begin(pchMessageStartIn),

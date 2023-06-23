@@ -9,10 +9,13 @@
 #include <blockstatus.h>
 #include <flatfile.h>
 #include <primitives/block.h>
+#include <sync.h>
 #include <tinyformat.h>
 #include <uint256.h>
 
 struct BlockHash;
+
+extern RecursiveMutex cs_main;
 
 /**
  * The block chain is a tree shaped structure starting with the genesis block at
@@ -36,13 +39,13 @@ public:
     int nHeight{0};
 
     //! Which # file this block is stored in (blk?????.dat)
-    int nFile{0};
+    int nFile GUARDED_BY(::cs_main){0};
 
     //! Byte offset within blk?????.dat where this block's data is stored
-    unsigned int nDataPos{0};
+    unsigned int nDataPos GUARDED_BY(::cs_main){0};
 
     //! Byte offset within rev?????.dat where this block's undo data is stored
-    unsigned int nUndoPos{0};
+    unsigned int nUndoPos GUARDED_BY(::cs_main){0};
 
     //! (memory only) Total amount of work (expected number of hashes) in the
     //! chain up to and including this block
@@ -51,6 +54,10 @@ public:
     //! Number of transactions in this block.
     //! Note: in a potential headers-first mode, this number cannot be relied
     //! upon
+    //! Note: this value is faked during UTXO snapshot load to ensure that
+    //! LoadBlockIndex() will load index entries for blocks that we lack data
+    //! for.
+    //! @sa ActivateSnapshot
     unsigned int nTx{0};
 
     //! Size of this block.
@@ -58,14 +65,19 @@ public:
     //! upon
     unsigned int nSize{0};
 
-private:
     //! (memory only) Number of transactions in the chain up to and including
     //! this block.
     //! This value will be non-zero only if and only if transactions for this
     //! block and all its parents are available. Change to 64-bit type when
     //! necessary; won't happen before 2030
+    //!
+    //! Note: this value is faked during use of a UTXO snapshot because we don't
+    //! have the underlying block data available during snapshot load.
+    //! @sa AssumeutxoData
+    //! @sa ActivateSnapshot
     unsigned int nChainTx{0};
 
+private:
     //! (memory only) Size of all blocks in the chain up to and including this
     //! block. This value will be non-zero only if and only if transactions for
     //! this block and all its parents are available.
@@ -73,7 +85,7 @@ private:
 
 public:
     //! Verification status of this block. See enum BlockStatus
-    BlockStatus nStatus{};
+    BlockStatus nStatus GUARDED_BY(::cs_main){};
 
     //! block header
     int32_t nVersion{0};
@@ -99,7 +111,8 @@ public:
           nTime{block.nTime}, nBits{block.nBits}, nNonce{block.nNonce},
           nTimeReceived{0} {}
 
-    FlatFilePos GetBlockPos() const {
+    FlatFilePos GetBlockPos() const EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
+        AssertLockHeld(::cs_main);
         FlatFilePos ret;
         if (nStatus.hasData()) {
             ret.nFile = nFile;
@@ -108,7 +121,8 @@ public:
         return ret;
     }
 
-    FlatFilePos GetUndoPos() const {
+    FlatFilePos GetUndoPos() const EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
+        AssertLockHeld(::cs_main);
         FlatFilePos ret;
         if (nStatus.hasUndo()) {
             ret.nFile = nFile;
@@ -192,13 +206,24 @@ public:
 
     //! Check whether this block index entry is valid up to the passed validity
     //! level.
-    bool IsValid(enum BlockValidity nUpTo = BlockValidity::TRANSACTIONS) const {
+    bool IsValid(enum BlockValidity nUpTo = BlockValidity::TRANSACTIONS) const
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
+        AssertLockHeld(::cs_main);
         return nStatus.isValid(nUpTo);
+    }
+
+    //! @returns true if the block is assumed-valid; this means it is queued
+    //! to be validated by a background chainstate.
+    bool IsAssumedValid() const EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
+        AssertLockHeld(::cs_main);
+        return nStatus.isAssumedValid();
     }
 
     //! Raise the validity level of this block index entry.
     //! Returns true if the validity was changed.
-    bool RaiseValidity(enum BlockValidity nUpTo) {
+    bool RaiseValidity(enum BlockValidity nUpTo)
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
+        AssertLockHeld(::cs_main);
         // Only validity flags allowed.
         if (nStatus.isInvalid()) {
             return false;
@@ -206,6 +231,12 @@ public:
 
         if (nStatus.getValidity() >= nUpTo) {
             return false;
+        }
+
+        // If this block had been marked assumed-valid and we're raising
+        // its validity to a certain point, there is no longer an assumption.
+        if (IsAssumedValid() && nUpTo >= BlockValidity::SCRIPTS) {
+            nStatus = nStatus.withClearedAssumedValidFlags();
         }
 
         nStatus = nStatus.withValidity(nUpTo);

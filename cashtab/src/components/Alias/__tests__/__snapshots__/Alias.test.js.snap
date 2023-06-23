@@ -1,0 +1,1643 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP @generated
+
+exports[`Wallet with XEC balances 1`] = `
+Array [
+  <div
+    className="sc-eHgmQL jcvoLq"
+  >
+    <div
+      className="sc-jKJlTe jrzEcV"
+    >
+      <h4
+        className="sc-eNQAEJ cwroNb"
+      >
+        MigrationTestAlpha
+      </h4>
+      <a
+        href="/configure"
+        onClick={[Function]}
+      >
+        <svg
+          className="sc-jTzLTM bTdWCF"
+        >
+          edit.svg
+        </svg>
+      </a>
+      <div>
+         
+        <button
+          aria-checked={false}
+          className="ant-switch ant-switch-small"
+          onClick={[Function]}
+          onKeyDown={[Function]}
+          onMouseEnter={[Function]}
+          onMouseLeave={[Function]}
+          role="switch"
+          type="button"
+        >
+          <div
+            className="ant-switch-handle"
+          />
+          <span
+            className="ant-switch-inner"
+          >
+            <svg
+              className="sc-kAzzGY fUTkYj"
+            >
+              eye-invisible.svg
+            </svg>
+          </span>
+        </button>
+      </div>
+    </div>
+    <div
+      className="sc-brqgnP jHOLle"
+    >
+      You currently have 0 
+      XEC
+      <br />
+      Deposit some funds to use this feature
+    </div>
+  </div>,
+  <div
+    className="sc-iAyFgw eRQdeW"
+  >
+    <div
+      className="ant-row"
+      style={Object {}}
+      type="flex"
+    >
+      <div
+        className="ant-col ant-col-24"
+        style={Object {}}
+      >
+        <div
+          className="sc-TOsTZ dthBQu"
+        >
+          <h2>
+            eCash Namespace Alias
+          </h2>
+        </div>
+        <div
+          className="sc-iAyFgw eRQdeW"
+        >
+          <div
+            className="sc-bRBYWo fqvvXE"
+          >
+            <form
+              className="ant-form ant-form-horizontal"
+              onReset={[Function]}
+              onSubmit={[Function]}
+              style={
+                Object {
+                  "width": "auto",
+                }
+              }
+            >
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <div
+                          className="sc-bRBYWo fqvvXE"
+                        >
+                          <div
+                            className="ant-form-item ant-form-item-with-help ant-form-item-has-error"
+                          >
+                            <div
+                              className="ant-row ant-form-item-row"
+                              style={Object {}}
+                            >
+                              <div
+                                className="ant-col ant-form-item-control"
+                                style={Object {}}
+                              >
+                                <div
+                                  className="ant-form-item-control-input"
+                                >
+                                  <div
+                                    className="ant-form-item-control-input-content"
+                                  >
+                                    <span
+                                      className="ant-input-group-wrapper ant-input-group-wrapper-status-error"
+                                    >
+                                      <span
+                                        className="ant-input-wrapper ant-input-group"
+                                      >
+                                        <span
+                                          className="ant-input-affix-wrapper ant-input-affix-wrapper-status-error"
+                                          hidden={null}
+                                          onClick={[Function]}
+                                          style={null}
+                                        >
+                                          <span
+                                            className="ant-input-prefix"
+                                          >
+                                            <svg
+                                              className="sc-kGXeez iHLPLV"
+                                            >
+                                              user.svg
+                                            </svg>
+                                          </span>
+                                          <input
+                                            autoComplete="off"
+                                            className="ant-input"
+                                            hidden={null}
+                                            name="aliasName"
+                                            onBlur={[Function]}
+                                            onChange={[Function]}
+                                            onFocus={[Function]}
+                                            onKeyDown={[Function]}
+                                            placeholder="Enter a desired alias"
+                                            required={true}
+                                            style={null}
+                                            type="text"
+                                            value=""
+                                          />
+                                        </span>
+                                        <span
+                                          className="ant-input-group-addon"
+                                        >
+                                           . xec
+                                        </span>
+                                      </span>
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div
+                          className="sc-cHGsZl bxcQnQ"
+                        >
+                          <label
+                            className="ant-checkbox-wrapper ant-checkbox-wrapper-checked ant-checkbox-wrapper-in-form-item sc-fBuWsC bHZMFZ"
+                          >
+                            <span
+                              className="ant-checkbox ant-checkbox-checked"
+                              style={Object {}}
+                            >
+                              <input
+                                checked={true}
+                                className="ant-checkbox-input"
+                                disabled={false}
+                                onBlur={[Function]}
+                                onChange={[Function]}
+                                onFocus={[Function]}
+                                onKeyDown={[Function]}
+                                onKeyPress={[Function]}
+                                onKeyUp={[Function]}
+                                type="checkbox"
+                              />
+                              <span
+                                className="ant-checkbox-inner"
+                              />
+                            </span>
+                            <span>
+                              Register active wallet address
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <button
+                          className="sc-fAjcbJ hqeYCi"
+                          disabled={true}
+                          onClick={[Function]}
+                        >
+                          Register Alias
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div
+            className="sc-kgAjT dqIHCd"
+          />
+          <div
+            className="sc-TOsTZ dthBQu"
+          >
+            <h3>
+              <p>
+                <span
+                  aria-label="user"
+                  className="anticon anticon-user"
+                  role="img"
+                >
+                  <svg
+                    aria-hidden="true"
+                    data-icon="user"
+                    fill="currentColor"
+                    focusable="false"
+                    height="1em"
+                    viewBox="64 64 896 896"
+                    width="1em"
+                  >
+                    <path
+                      d="M858.5 763.6a374 374 0 00-80.6-119.5 375.63 375.63 0 00-119.5-80.6c-.4-.2-.8-.3-1.2-.5C719.5 518 760 444.7 760 362c0-137-111-248-248-248S264 225 264 362c0 82.7 40.5 156 102.8 201.1-.4.2-.8.3-1.2.5-44.8 18.9-85 46-119.5 80.6a375.63 375.63 0 00-80.6 119.5A371.7 371.7 0 00136 901.8a8 8 0 008 8.2h60c4.4 0 7.9-3.5 8-7.8 2-77.2 33-149.5 87.8-204.3 56.7-56.7 132-87.9 212.2-87.9s155.5 31.2 212.2 87.9C779 752.7 810 825 812 902.2c.1 4.4 3.6 7.8 8 7.8h60a8 8 0 008-8.2c-1-47.8-10.9-94.3-29.5-138.2zM512 534c-45.9 0-89.1-17.9-121.6-50.4S340 407.9 340 362c0-45.9 17.9-89.1 50.4-121.6S466.1 190 512 190s89.1 17.9 121.6 50.4S684 316.1 684 362c0 45.9-17.9 89.1-50.4 121.6S557.9 534 512 534z"
+                    />
+                  </svg>
+                </span>
+                 Registered aliases
+              </p>
+              N/A
+            </h3>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>,
+]
+`;
+
+exports[`Wallet with XEC balances and tokens 1`] = `
+Array [
+  <div
+    className="sc-eHgmQL jcvoLq"
+  >
+    <div
+      className="sc-jKJlTe jrzEcV"
+    >
+      <h4
+        className="sc-eNQAEJ cwroNb"
+      >
+        MigrationTestAlpha
+      </h4>
+      <a
+        href="/configure"
+        onClick={[Function]}
+      >
+        <svg
+          className="sc-jTzLTM bTdWCF"
+        >
+          edit.svg
+        </svg>
+      </a>
+      <div>
+         
+        <button
+          aria-checked={false}
+          className="ant-switch ant-switch-small"
+          onClick={[Function]}
+          onKeyDown={[Function]}
+          onMouseEnter={[Function]}
+          onMouseLeave={[Function]}
+          role="switch"
+          type="button"
+        >
+          <div
+            className="ant-switch-handle"
+          />
+          <span
+            className="ant-switch-inner"
+          >
+            <svg
+              className="sc-kAzzGY fUTkYj"
+            >
+              eye-invisible.svg
+            </svg>
+          </span>
+        </button>
+      </div>
+    </div>
+    <div
+      className="sc-brqgnP jHOLle"
+    >
+      You currently have 0 
+      XEC
+      <br />
+      Deposit some funds to use this feature
+    </div>
+  </div>,
+  <div
+    className="sc-iAyFgw eRQdeW"
+  >
+    <div
+      className="ant-row"
+      style={Object {}}
+      type="flex"
+    >
+      <div
+        className="ant-col ant-col-24"
+        style={Object {}}
+      >
+        <div
+          className="sc-TOsTZ dthBQu"
+        >
+          <h2>
+            eCash Namespace Alias
+          </h2>
+        </div>
+        <div
+          className="sc-iAyFgw eRQdeW"
+        >
+          <div
+            className="sc-bRBYWo fqvvXE"
+          >
+            <form
+              className="ant-form ant-form-horizontal"
+              onReset={[Function]}
+              onSubmit={[Function]}
+              style={
+                Object {
+                  "width": "auto",
+                }
+              }
+            >
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <div
+                          className="sc-bRBYWo fqvvXE"
+                        >
+                          <div
+                            className="ant-form-item ant-form-item-with-help ant-form-item-has-error"
+                          >
+                            <div
+                              className="ant-row ant-form-item-row"
+                              style={Object {}}
+                            >
+                              <div
+                                className="ant-col ant-form-item-control"
+                                style={Object {}}
+                              >
+                                <div
+                                  className="ant-form-item-control-input"
+                                >
+                                  <div
+                                    className="ant-form-item-control-input-content"
+                                  >
+                                    <span
+                                      className="ant-input-group-wrapper ant-input-group-wrapper-status-error"
+                                    >
+                                      <span
+                                        className="ant-input-wrapper ant-input-group"
+                                      >
+                                        <span
+                                          className="ant-input-affix-wrapper ant-input-affix-wrapper-status-error"
+                                          hidden={null}
+                                          onClick={[Function]}
+                                          style={null}
+                                        >
+                                          <span
+                                            className="ant-input-prefix"
+                                          >
+                                            <svg
+                                              className="sc-kGXeez iHLPLV"
+                                            >
+                                              user.svg
+                                            </svg>
+                                          </span>
+                                          <input
+                                            autoComplete="off"
+                                            className="ant-input"
+                                            hidden={null}
+                                            name="aliasName"
+                                            onBlur={[Function]}
+                                            onChange={[Function]}
+                                            onFocus={[Function]}
+                                            onKeyDown={[Function]}
+                                            placeholder="Enter a desired alias"
+                                            required={true}
+                                            style={null}
+                                            type="text"
+                                            value=""
+                                          />
+                                        </span>
+                                        <span
+                                          className="ant-input-group-addon"
+                                        >
+                                           . xec
+                                        </span>
+                                      </span>
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div
+                          className="sc-cHGsZl bxcQnQ"
+                        >
+                          <label
+                            className="ant-checkbox-wrapper ant-checkbox-wrapper-in-form-item sc-fBuWsC bHZMFZ"
+                          >
+                            <span
+                              className="ant-checkbox"
+                              style={Object {}}
+                            >
+                              <input
+                                checked={false}
+                                className="ant-checkbox-input"
+                                disabled={false}
+                                onBlur={[Function]}
+                                onChange={[Function]}
+                                onFocus={[Function]}
+                                onKeyDown={[Function]}
+                                onKeyPress={[Function]}
+                                onKeyUp={[Function]}
+                                type="checkbox"
+                              />
+                              <span
+                                className="ant-checkbox-inner"
+                              />
+                            </span>
+                            <span>
+                              Register active wallet address
+                            </span>
+                          </label>
+                        </div>
+                        <div
+                          className="sc-bRBYWo fqvvXE"
+                        >
+                          <div
+                            className="ant-form-item ant-form-item-with-help ant-form-item-has-error"
+                          >
+                            <div
+                              className="ant-row ant-form-item-row"
+                              style={Object {}}
+                            >
+                              <div
+                                className="ant-col ant-form-item-control"
+                                style={Object {}}
+                              >
+                                <div
+                                  className="ant-form-item-control-input"
+                                >
+                                  <div
+                                    className="ant-form-item-control-input-content"
+                                  >
+                                    <span
+                                      className="ant-input-affix-wrapper ant-input-affix-wrapper-status-error"
+                                      onClick={[Function]}
+                                    >
+                                      <span
+                                        className="ant-input-prefix"
+                                      >
+                                        <span
+                                          aria-label="wallet"
+                                          className="anticon anticon-wallet sc-bxivhb iBBRHU"
+                                          role="img"
+                                        >
+                                          <svg
+                                            aria-hidden="true"
+                                            data-icon="wallet"
+                                            fill="currentColor"
+                                            focusable="false"
+                                            height="1em"
+                                            viewBox="64 64 896 896"
+                                            width="1em"
+                                          >
+                                            <path
+                                              d="M880 112H144c-17.7 0-32 14.3-32 32v736c0 17.7 14.3 32 32 32h736c17.7 0 32-14.3 32-32V144c0-17.7-14.3-32-32-32zm-40 464H528V448h312v128zm0 264H184V184h656v200H496c-17.7 0-32 14.3-32 32v192c0 17.7 14.3 32 32 32h344v200zM580 512a40 40 0 1080 0 40 40 0 10-80 0z"
+                                            />
+                                          </svg>
+                                        </span>
+                                      </span>
+                                      <input
+                                        autoComplete="off"
+                                        className="ant-input"
+                                        hidden={null}
+                                        name="aliasAddress"
+                                        onBlur={[Function]}
+                                        onChange={[Function]}
+                                        onFocus={[Function]}
+                                        onKeyDown={[Function]}
+                                        placeholder="Enter address for this alias"
+                                        required={true}
+                                        style={null}
+                                        type="text"
+                                        value=""
+                                      />
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <button
+                          className="sc-fAjcbJ hqeYCi"
+                          disabled={true}
+                          onClick={[Function]}
+                        >
+                          Register Alias
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div
+            className="sc-kgAjT dqIHCd"
+          />
+          <div
+            className="sc-TOsTZ dthBQu"
+          >
+            <h3>
+              <p>
+                <span
+                  aria-label="user"
+                  className="anticon anticon-user"
+                  role="img"
+                >
+                  <svg
+                    aria-hidden="true"
+                    data-icon="user"
+                    fill="currentColor"
+                    focusable="false"
+                    height="1em"
+                    viewBox="64 64 896 896"
+                    width="1em"
+                  >
+                    <path
+                      d="M858.5 763.6a374 374 0 00-80.6-119.5 375.63 375.63 0 00-119.5-80.6c-.4-.2-.8-.3-1.2-.5C719.5 518 760 444.7 760 362c0-137-111-248-248-248S264 225 264 362c0 82.7 40.5 156 102.8 201.1-.4.2-.8.3-1.2.5-44.8 18.9-85 46-119.5 80.6a375.63 375.63 0 00-80.6 119.5A371.7 371.7 0 00136 901.8a8 8 0 008 8.2h60c4.4 0 7.9-3.5 8-7.8 2-77.2 33-149.5 87.8-204.3 56.7-56.7 132-87.9 212.2-87.9s155.5 31.2 212.2 87.9C779 752.7 810 825 812 902.2c.1 4.4 3.6 7.8 8 7.8h60a8 8 0 008-8.2c-1-47.8-10.9-94.3-29.5-138.2zM512 534c-45.9 0-89.1-17.9-121.6-50.4S340 407.9 340 362c0-45.9 17.9-89.1 50.4-121.6S466.1 190 512 190s89.1 17.9 121.6 50.4S684 316.1 684 362c0 45.9-17.9 89.1-50.4 121.6S557.9 534 512 534z"
+                    />
+                  </svg>
+                </span>
+                 Registered aliases
+              </p>
+              N/A
+            </h3>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>,
+]
+`;
+
+exports[`Wallet with XEC balances and tokens and state field 1`] = `
+Array [
+  <div
+    className="sc-eHgmQL jcvoLq"
+  >
+    <div
+      className="sc-jKJlTe jrzEcV"
+    >
+      <h4
+        className="sc-eNQAEJ cwroNb"
+      >
+        MigrationTestAlpha
+      </h4>
+      <a
+        href="/configure"
+        onClick={[Function]}
+      >
+        <svg
+          className="sc-jTzLTM bTdWCF"
+        >
+          edit.svg
+        </svg>
+      </a>
+      <div>
+         
+        <button
+          aria-checked={false}
+          className="ant-switch ant-switch-small"
+          onClick={[Function]}
+          onKeyDown={[Function]}
+          onMouseEnter={[Function]}
+          onMouseLeave={[Function]}
+          role="switch"
+          type="button"
+        >
+          <div
+            className="ant-switch-handle"
+          />
+          <span
+            className="ant-switch-inner"
+          >
+            <svg
+              className="sc-kAzzGY fUTkYj"
+            >
+              eye-invisible.svg
+            </svg>
+          </span>
+        </button>
+      </div>
+    </div>
+    <div
+      className="sc-jWBwVP gdMlXD"
+    >
+      <span
+        className="sc-caSCKo gaZMix"
+      >
+         
+        0.06
+         
+        XEC
+         
+      </span>
+    </div>
+  </div>,
+  <div
+    className="sc-iAyFgw eRQdeW"
+  >
+    <div
+      className="ant-row"
+      style={Object {}}
+      type="flex"
+    >
+      <div
+        className="ant-col ant-col-24"
+        style={Object {}}
+      >
+        <div
+          className="sc-TOsTZ dthBQu"
+        >
+          <h2>
+            eCash Namespace Alias
+          </h2>
+        </div>
+        <div
+          className="sc-iAyFgw eRQdeW"
+        >
+          <div
+            className="sc-bRBYWo fqvvXE"
+          >
+            <form
+              className="ant-form ant-form-horizontal"
+              onReset={[Function]}
+              onSubmit={[Function]}
+              style={
+                Object {
+                  "width": "auto",
+                }
+              }
+            >
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <div
+                          className="sc-bRBYWo fqvvXE"
+                        >
+                          <div
+                            className="ant-form-item ant-form-item-with-help ant-form-item-has-error"
+                          >
+                            <div
+                              className="ant-row ant-form-item-row"
+                              style={Object {}}
+                            >
+                              <div
+                                className="ant-col ant-form-item-control"
+                                style={Object {}}
+                              >
+                                <div
+                                  className="ant-form-item-control-input"
+                                >
+                                  <div
+                                    className="ant-form-item-control-input-content"
+                                  >
+                                    <span
+                                      className="ant-input-group-wrapper ant-input-group-wrapper-status-error"
+                                    >
+                                      <span
+                                        className="ant-input-wrapper ant-input-group"
+                                      >
+                                        <span
+                                          className="ant-input-affix-wrapper ant-input-affix-wrapper-status-error"
+                                          hidden={null}
+                                          onClick={[Function]}
+                                          style={null}
+                                        >
+                                          <span
+                                            className="ant-input-prefix"
+                                          >
+                                            <svg
+                                              className="sc-kGXeez iHLPLV"
+                                            >
+                                              user.svg
+                                            </svg>
+                                          </span>
+                                          <input
+                                            autoComplete="off"
+                                            className="ant-input"
+                                            hidden={null}
+                                            name="aliasName"
+                                            onBlur={[Function]}
+                                            onChange={[Function]}
+                                            onFocus={[Function]}
+                                            onKeyDown={[Function]}
+                                            placeholder="Enter a desired alias"
+                                            required={true}
+                                            style={null}
+                                            type="text"
+                                            value=""
+                                          />
+                                        </span>
+                                        <span
+                                          className="ant-input-group-addon"
+                                        >
+                                           . xec
+                                        </span>
+                                      </span>
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div
+                          className="sc-cHGsZl bxcQnQ"
+                        >
+                          <label
+                            className="ant-checkbox-wrapper ant-checkbox-wrapper-checked ant-checkbox-wrapper-in-form-item sc-fBuWsC bHZMFZ"
+                          >
+                            <span
+                              className="ant-checkbox ant-checkbox-checked"
+                              style={Object {}}
+                            >
+                              <input
+                                checked={true}
+                                className="ant-checkbox-input"
+                                disabled={false}
+                                onBlur={[Function]}
+                                onChange={[Function]}
+                                onFocus={[Function]}
+                                onKeyDown={[Function]}
+                                onKeyPress={[Function]}
+                                onKeyUp={[Function]}
+                                type="checkbox"
+                              />
+                              <span
+                                className="ant-checkbox-inner"
+                              />
+                            </span>
+                            <span>
+                              Register active wallet address
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <button
+                          className="sc-fAjcbJ hqeYCi"
+                          disabled={true}
+                          onClick={[Function]}
+                        >
+                          Register Alias
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div
+            className="sc-kgAjT dqIHCd"
+          />
+          <div
+            className="sc-TOsTZ dthBQu"
+          >
+            <h3>
+              <p>
+                <span
+                  aria-label="user"
+                  className="anticon anticon-user"
+                  role="img"
+                >
+                  <svg
+                    aria-hidden="true"
+                    data-icon="user"
+                    fill="currentColor"
+                    focusable="false"
+                    height="1em"
+                    viewBox="64 64 896 896"
+                    width="1em"
+                  >
+                    <path
+                      d="M858.5 763.6a374 374 0 00-80.6-119.5 375.63 375.63 0 00-119.5-80.6c-.4-.2-.8-.3-1.2-.5C719.5 518 760 444.7 760 362c0-137-111-248-248-248S264 225 264 362c0 82.7 40.5 156 102.8 201.1-.4.2-.8.3-1.2.5-44.8 18.9-85 46-119.5 80.6a375.63 375.63 0 00-80.6 119.5A371.7 371.7 0 00136 901.8a8 8 0 008 8.2h60c4.4 0 7.9-3.5 8-7.8 2-77.2 33-149.5 87.8-204.3 56.7-56.7 132-87.9 212.2-87.9s155.5 31.2 212.2 87.9C779 752.7 810 825 812 902.2c.1 4.4 3.6 7.8 8 7.8h60a8 8 0 008-8.2c-1-47.8-10.9-94.3-29.5-138.2zM512 534c-45.9 0-89.1-17.9-121.6-50.4S340 407.9 340 362c0-45.9 17.9-89.1 50.4-121.6S466.1 190 512 190s89.1 17.9 121.6 50.4S684 316.1 684 362c0 45.9-17.9 89.1-50.4 121.6S557.9 534 512 534z"
+                    />
+                  </svg>
+                </span>
+                 Registered aliases
+              </p>
+              N/A
+            </h3>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>,
+]
+`;
+
+exports[`Wallet without XEC balance 1`] = `
+Array [
+  <div
+    className="sc-eHgmQL jcvoLq"
+  >
+    <div
+      className="sc-jKJlTe jrzEcV"
+    >
+      <h4
+        className="sc-eNQAEJ cwroNb"
+      >
+        MigrationTestAlpha
+      </h4>
+      <a
+        href="/configure"
+        onClick={[Function]}
+      >
+        <svg
+          className="sc-jTzLTM bTdWCF"
+        >
+          edit.svg
+        </svg>
+      </a>
+      <div>
+         
+        <button
+          aria-checked={false}
+          className="ant-switch ant-switch-small"
+          onClick={[Function]}
+          onKeyDown={[Function]}
+          onMouseEnter={[Function]}
+          onMouseLeave={[Function]}
+          role="switch"
+          type="button"
+        >
+          <div
+            className="ant-switch-handle"
+          />
+          <span
+            className="ant-switch-inner"
+          >
+            <svg
+              className="sc-kAzzGY fUTkYj"
+            >
+              eye-invisible.svg
+            </svg>
+          </span>
+        </button>
+      </div>
+    </div>
+    <div
+      className="sc-brqgnP jHOLle"
+    >
+      You currently have 0 
+      XEC
+      <br />
+      Deposit some funds to use this feature
+    </div>
+  </div>,
+  <div
+    className="sc-iAyFgw eRQdeW"
+  >
+    <div
+      className="ant-row"
+      style={Object {}}
+      type="flex"
+    >
+      <div
+        className="ant-col ant-col-24"
+        style={Object {}}
+      >
+        <div
+          className="sc-TOsTZ dthBQu"
+        >
+          <h2>
+            eCash Namespace Alias
+          </h2>
+        </div>
+        <div
+          className="sc-iAyFgw eRQdeW"
+        >
+          <div
+            className="sc-bRBYWo fqvvXE"
+          >
+            <form
+              className="ant-form ant-form-horizontal"
+              onReset={[Function]}
+              onSubmit={[Function]}
+              style={
+                Object {
+                  "width": "auto",
+                }
+              }
+            >
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <div
+                          className="sc-bRBYWo fqvvXE"
+                        >
+                          <div
+                            className="ant-form-item ant-form-item-with-help ant-form-item-has-error"
+                          >
+                            <div
+                              className="ant-row ant-form-item-row"
+                              style={Object {}}
+                            >
+                              <div
+                                className="ant-col ant-form-item-control"
+                                style={Object {}}
+                              >
+                                <div
+                                  className="ant-form-item-control-input"
+                                >
+                                  <div
+                                    className="ant-form-item-control-input-content"
+                                  >
+                                    <span
+                                      className="ant-input-group-wrapper ant-input-group-wrapper-status-error"
+                                    >
+                                      <span
+                                        className="ant-input-wrapper ant-input-group"
+                                      >
+                                        <span
+                                          className="ant-input-affix-wrapper ant-input-affix-wrapper-status-error"
+                                          hidden={null}
+                                          onClick={[Function]}
+                                          style={null}
+                                        >
+                                          <span
+                                            className="ant-input-prefix"
+                                          >
+                                            <svg
+                                              className="sc-kGXeez iHLPLV"
+                                            >
+                                              user.svg
+                                            </svg>
+                                          </span>
+                                          <input
+                                            autoComplete="off"
+                                            className="ant-input"
+                                            hidden={null}
+                                            name="aliasName"
+                                            onBlur={[Function]}
+                                            onChange={[Function]}
+                                            onFocus={[Function]}
+                                            onKeyDown={[Function]}
+                                            placeholder="Enter a desired alias"
+                                            required={true}
+                                            style={null}
+                                            type="text"
+                                            value=""
+                                          />
+                                        </span>
+                                        <span
+                                          className="ant-input-group-addon"
+                                        >
+                                           . xec
+                                        </span>
+                                      </span>
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div
+                          className="sc-cHGsZl bxcQnQ"
+                        >
+                          <label
+                            className="ant-checkbox-wrapper ant-checkbox-wrapper-in-form-item sc-fBuWsC bHZMFZ"
+                          >
+                            <span
+                              className="ant-checkbox"
+                              style={Object {}}
+                            >
+                              <input
+                                checked={false}
+                                className="ant-checkbox-input"
+                                disabled={false}
+                                onBlur={[Function]}
+                                onChange={[Function]}
+                                onFocus={[Function]}
+                                onKeyDown={[Function]}
+                                onKeyPress={[Function]}
+                                onKeyUp={[Function]}
+                                type="checkbox"
+                              />
+                              <span
+                                className="ant-checkbox-inner"
+                              />
+                            </span>
+                            <span>
+                              Register active wallet address
+                            </span>
+                          </label>
+                        </div>
+                        <div
+                          className="sc-bRBYWo fqvvXE"
+                        >
+                          <div
+                            className="ant-form-item ant-form-item-with-help ant-form-item-has-error"
+                          >
+                            <div
+                              className="ant-row ant-form-item-row"
+                              style={Object {}}
+                            >
+                              <div
+                                className="ant-col ant-form-item-control"
+                                style={Object {}}
+                              >
+                                <div
+                                  className="ant-form-item-control-input"
+                                >
+                                  <div
+                                    className="ant-form-item-control-input-content"
+                                  >
+                                    <span
+                                      className="ant-input-affix-wrapper ant-input-affix-wrapper-status-error"
+                                      onClick={[Function]}
+                                    >
+                                      <span
+                                        className="ant-input-prefix"
+                                      >
+                                        <span
+                                          aria-label="wallet"
+                                          className="anticon anticon-wallet sc-bxivhb iBBRHU"
+                                          role="img"
+                                        >
+                                          <svg
+                                            aria-hidden="true"
+                                            data-icon="wallet"
+                                            fill="currentColor"
+                                            focusable="false"
+                                            height="1em"
+                                            viewBox="64 64 896 896"
+                                            width="1em"
+                                          >
+                                            <path
+                                              d="M880 112H144c-17.7 0-32 14.3-32 32v736c0 17.7 14.3 32 32 32h736c17.7 0 32-14.3 32-32V144c0-17.7-14.3-32-32-32zm-40 464H528V448h312v128zm0 264H184V184h656v200H496c-17.7 0-32 14.3-32 32v192c0 17.7 14.3 32 32 32h344v200zM580 512a40 40 0 1080 0 40 40 0 10-80 0z"
+                                            />
+                                          </svg>
+                                        </span>
+                                      </span>
+                                      <input
+                                        autoComplete="off"
+                                        className="ant-input"
+                                        hidden={null}
+                                        name="aliasAddress"
+                                        onBlur={[Function]}
+                                        onChange={[Function]}
+                                        onFocus={[Function]}
+                                        onKeyDown={[Function]}
+                                        placeholder="Enter address for this alias"
+                                        required={true}
+                                        style={null}
+                                        type="text"
+                                        value=""
+                                      />
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <button
+                          className="sc-fAjcbJ hqeYCi"
+                          disabled={true}
+                          onClick={[Function]}
+                        >
+                          Register Alias
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div
+            className="sc-kgAjT dqIHCd"
+          />
+          <div
+            className="sc-TOsTZ dthBQu"
+          >
+            <h3>
+              <p>
+                <span
+                  aria-label="user"
+                  className="anticon anticon-user"
+                  role="img"
+                >
+                  <svg
+                    aria-hidden="true"
+                    data-icon="user"
+                    fill="currentColor"
+                    focusable="false"
+                    height="1em"
+                    viewBox="64 64 896 896"
+                    width="1em"
+                  >
+                    <path
+                      d="M858.5 763.6a374 374 0 00-80.6-119.5 375.63 375.63 0 00-119.5-80.6c-.4-.2-.8-.3-1.2-.5C719.5 518 760 444.7 760 362c0-137-111-248-248-248S264 225 264 362c0 82.7 40.5 156 102.8 201.1-.4.2-.8.3-1.2.5-44.8 18.9-85 46-119.5 80.6a375.63 375.63 0 00-80.6 119.5A371.7 371.7 0 00136 901.8a8 8 0 008 8.2h60c4.4 0 7.9-3.5 8-7.8 2-77.2 33-149.5 87.8-204.3 56.7-56.7 132-87.9 212.2-87.9s155.5 31.2 212.2 87.9C779 752.7 810 825 812 902.2c.1 4.4 3.6 7.8 8 7.8h60a8 8 0 008-8.2c-1-47.8-10.9-94.3-29.5-138.2zM512 534c-45.9 0-89.1-17.9-121.6-50.4S340 407.9 340 362c0-45.9 17.9-89.1 50.4-121.6S466.1 190 512 190s89.1 17.9 121.6 50.4S684 316.1 684 362c0 45.9-17.9 89.1-50.4 121.6S557.9 534 512 534z"
+                    />
+                  </svg>
+                </span>
+                 Registered aliases
+              </p>
+              N/A
+            </h3>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>,
+]
+`;
+
+exports[`Without wallet defined 1`] = `
+Array [
+  <div
+    className="sc-eHgmQL jcvoLq"
+  >
+    <div
+      className="sc-jKJlTe jrzEcV"
+    >
+      <a
+        href="/configure"
+        onClick={[Function]}
+      >
+        <svg
+          className="sc-jTzLTM bTdWCF"
+        >
+          edit.svg
+        </svg>
+      </a>
+      <div>
+         
+        <button
+          aria-checked={false}
+          className="ant-switch ant-switch-small"
+          onClick={[Function]}
+          onKeyDown={[Function]}
+          onMouseEnter={[Function]}
+          onMouseLeave={[Function]}
+          role="switch"
+          type="button"
+        >
+          <div
+            className="ant-switch-handle"
+          />
+          <span
+            className="ant-switch-inner"
+          >
+            <svg
+              className="sc-kAzzGY fUTkYj"
+            >
+              eye-invisible.svg
+            </svg>
+          </span>
+        </button>
+      </div>
+    </div>
+    <div
+      className="sc-brqgnP jHOLle"
+    >
+      You currently have 0 
+      XEC
+      <br />
+      Deposit some funds to use this feature
+    </div>
+  </div>,
+  <div
+    className="sc-iAyFgw eRQdeW"
+  >
+    <div
+      className="ant-row"
+      style={Object {}}
+      type="flex"
+    >
+      <div
+        className="ant-col ant-col-24"
+        style={Object {}}
+      >
+        <div
+          className="sc-TOsTZ dthBQu"
+        >
+          <h2>
+            eCash Namespace Alias
+          </h2>
+        </div>
+        <div
+          className="sc-iAyFgw eRQdeW"
+        >
+          <div
+            className="sc-bRBYWo fqvvXE"
+          >
+            <form
+              className="ant-form ant-form-horizontal"
+              onReset={[Function]}
+              onSubmit={[Function]}
+              style={
+                Object {
+                  "width": "auto",
+                }
+              }
+            >
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <div
+                          className="sc-bRBYWo fqvvXE"
+                        >
+                          <div
+                            className="ant-form-item ant-form-item-with-help ant-form-item-has-error"
+                          >
+                            <div
+                              className="ant-row ant-form-item-row"
+                              style={Object {}}
+                            >
+                              <div
+                                className="ant-col ant-form-item-control"
+                                style={Object {}}
+                              >
+                                <div
+                                  className="ant-form-item-control-input"
+                                >
+                                  <div
+                                    className="ant-form-item-control-input-content"
+                                  >
+                                    <span
+                                      className="ant-input-group-wrapper ant-input-group-wrapper-status-error"
+                                    >
+                                      <span
+                                        className="ant-input-wrapper ant-input-group"
+                                      >
+                                        <span
+                                          className="ant-input-affix-wrapper ant-input-affix-wrapper-status-error"
+                                          hidden={null}
+                                          onClick={[Function]}
+                                          style={null}
+                                        >
+                                          <span
+                                            className="ant-input-prefix"
+                                          >
+                                            <svg
+                                              className="sc-kGXeez iHLPLV"
+                                            >
+                                              user.svg
+                                            </svg>
+                                          </span>
+                                          <input
+                                            autoComplete="off"
+                                            className="ant-input"
+                                            hidden={null}
+                                            name="aliasName"
+                                            onBlur={[Function]}
+                                            onChange={[Function]}
+                                            onFocus={[Function]}
+                                            onKeyDown={[Function]}
+                                            placeholder="Enter a desired alias"
+                                            required={true}
+                                            style={null}
+                                            type="text"
+                                            value=""
+                                          />
+                                        </span>
+                                        <span
+                                          className="ant-input-group-addon"
+                                        >
+                                           . xec
+                                        </span>
+                                      </span>
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div
+                          className="sc-cHGsZl bxcQnQ"
+                        >
+                          <label
+                            className="ant-checkbox-wrapper ant-checkbox-wrapper-in-form-item sc-fBuWsC bHZMFZ"
+                          >
+                            <span
+                              className="ant-checkbox"
+                              style={Object {}}
+                            >
+                              <input
+                                checked={false}
+                                className="ant-checkbox-input"
+                                disabled={false}
+                                onBlur={[Function]}
+                                onChange={[Function]}
+                                onFocus={[Function]}
+                                onKeyDown={[Function]}
+                                onKeyPress={[Function]}
+                                onKeyUp={[Function]}
+                                type="checkbox"
+                              />
+                              <span
+                                className="ant-checkbox-inner"
+                              />
+                            </span>
+                            <span>
+                              Register active wallet address
+                            </span>
+                          </label>
+                        </div>
+                        <div
+                          className="sc-bRBYWo fqvvXE"
+                        >
+                          <div
+                            className="ant-form-item ant-form-item-with-help ant-form-item-has-error"
+                          >
+                            <div
+                              className="ant-row ant-form-item-row"
+                              style={Object {}}
+                            >
+                              <div
+                                className="ant-col ant-form-item-control"
+                                style={Object {}}
+                              >
+                                <div
+                                  className="ant-form-item-control-input"
+                                >
+                                  <div
+                                    className="ant-form-item-control-input-content"
+                                  >
+                                    <span
+                                      className="ant-input-affix-wrapper ant-input-affix-wrapper-status-error"
+                                      onClick={[Function]}
+                                    >
+                                      <span
+                                        className="ant-input-prefix"
+                                      >
+                                        <span
+                                          aria-label="wallet"
+                                          className="anticon anticon-wallet sc-bxivhb iBBRHU"
+                                          role="img"
+                                        >
+                                          <svg
+                                            aria-hidden="true"
+                                            data-icon="wallet"
+                                            fill="currentColor"
+                                            focusable="false"
+                                            height="1em"
+                                            viewBox="64 64 896 896"
+                                            width="1em"
+                                          >
+                                            <path
+                                              d="M880 112H144c-17.7 0-32 14.3-32 32v736c0 17.7 14.3 32 32 32h736c17.7 0 32-14.3 32-32V144c0-17.7-14.3-32-32-32zm-40 464H528V448h312v128zm0 264H184V184h656v200H496c-17.7 0-32 14.3-32 32v192c0 17.7 14.3 32 32 32h344v200zM580 512a40 40 0 1080 0 40 40 0 10-80 0z"
+                                            />
+                                          </svg>
+                                        </span>
+                                      </span>
+                                      <input
+                                        autoComplete="off"
+                                        className="ant-input"
+                                        hidden={null}
+                                        name="aliasAddress"
+                                        onBlur={[Function]}
+                                        onChange={[Function]}
+                                        onFocus={[Function]}
+                                        onKeyDown={[Function]}
+                                        placeholder="Enter address for this alias"
+                                        required={true}
+                                        style={null}
+                                        type="text"
+                                        value=""
+                                      />
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div
+                className="ant-form-item"
+              >
+                <div
+                  className="ant-row ant-form-item-row"
+                  style={Object {}}
+                >
+                  <div
+                    className="ant-col ant-form-item-control"
+                    style={Object {}}
+                  >
+                    <div
+                      className="ant-form-item-control-input"
+                    >
+                      <div
+                        className="ant-form-item-control-input-content"
+                      >
+                        <button
+                          className="sc-fAjcbJ hqeYCi"
+                          disabled={true}
+                          onClick={[Function]}
+                        >
+                          Register Alias
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div
+            className="sc-kgAjT dqIHCd"
+          />
+          <div
+            className="sc-TOsTZ dthBQu"
+          >
+            <h3>
+              <p>
+                <span
+                  aria-label="user"
+                  className="anticon anticon-user"
+                  role="img"
+                >
+                  <svg
+                    aria-hidden="true"
+                    data-icon="user"
+                    fill="currentColor"
+                    focusable="false"
+                    height="1em"
+                    viewBox="64 64 896 896"
+                    width="1em"
+                  >
+                    <path
+                      d="M858.5 763.6a374 374 0 00-80.6-119.5 375.63 375.63 0 00-119.5-80.6c-.4-.2-.8-.3-1.2-.5C719.5 518 760 444.7 760 362c0-137-111-248-248-248S264 225 264 362c0 82.7 40.5 156 102.8 201.1-.4.2-.8.3-1.2.5-44.8 18.9-85 46-119.5 80.6a375.63 375.63 0 00-80.6 119.5A371.7 371.7 0 00136 901.8a8 8 0 008 8.2h60c4.4 0 7.9-3.5 8-7.8 2-77.2 33-149.5 87.8-204.3 56.7-56.7 132-87.9 212.2-87.9s155.5 31.2 212.2 87.9C779 752.7 810 825 812 902.2c.1 4.4 3.6 7.8 8 7.8h60a8 8 0 008-8.2c-1-47.8-10.9-94.3-29.5-138.2zM512 534c-45.9 0-89.1-17.9-121.6-50.4S340 407.9 340 362c0-45.9 17.9-89.1 50.4-121.6S466.1 190 512 190s89.1 17.9 121.6 50.4S684 316.1 684 362c0 45.9-17.9 89.1-50.4 121.6S557.9 534 512 534z"
+                    />
+                  </svg>
+                </span>
+                 Registered aliases
+              </p>
+              N/A
+            </h3>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>,
+]
+`;

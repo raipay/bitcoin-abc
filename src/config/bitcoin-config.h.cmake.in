@@ -41,12 +41,15 @@
 #cmakedefine HAVE_DECL___BUILTIN_CLZL 1
 #cmakedefine HAVE_DECL___BUILTIN_CLZLL 1
 #cmakedefine HAVE_DECL___BUILTIN_POPCOUNT 1
+#cmakedefine HAVE_DECL___BUILTIN_SADDLL_OVERFLOW 1
+#cmakedefine HAVE_DECL___BUILTIN_SSUBLL_OVERFLOW 1
 
 #cmakedefine HAVE_MALLOPT_ARENA_MAX 1
 #cmakedefine HAVE_MALLOC_INFO 1
 
+#cmakedefine HAVE_DECL_SETSID 1
 #cmakedefine HAVE_DECL_STRNLEN 1
-#cmakedefine HAVE_DECL_DAEMON 1
+#cmakedefine HAVE_DECL_FORK 1
 #cmakedefine HAVE_DECL_GETIFADDRS 1
 #cmakedefine HAVE_DECL_FREEIFADDRS 1
 #cmakedefine HAVE_GETENTROPY 1
@@ -73,6 +76,9 @@
 #cmakedefine ENABLE_WALLET 1
 #cmakedefine ENABLE_ZMQ 1
 
+/* Define if the Chronik indexer should be compiled in. */
+#cmakedefine01 ENABLE_CHRONIK
+
 /* Define if QR support should be compiled in */
 #cmakedefine USE_QRCODE 1
 
@@ -83,7 +89,18 @@
 #cmakedefine01 USE_UPNP
 #endif
 
+/* NAT-PMP support not compiled if undefined */
+#cmakedefine ENABLE_NATPMP
+#ifdef ENABLE_NATPMP
+/* Value (0 or 1) determines the NATPMP default state at startup. */
+#cmakedefine01 USE_NATPMP
+#endif
+
 /* Define if QtDBus support should be enabled */
 #cmakedefine USE_DBUS 1
+
+#cmakedefine HAVE___INT128 1
+
+#cmakedefine ENABLE_TRACING 1
 
 #endif // BITCOIN_BITCOIN_CONFIG_H

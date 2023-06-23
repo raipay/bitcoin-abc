@@ -7,7 +7,6 @@
 #ifndef BITCOIN_WALLET_WALLETDB_H
 #define BITCOIN_WALLET_WALLETDB_H
 
-#include <amount.h>
 #include <key.h>
 #include <script/sign.h>
 #include <script/standard.h> // for CTxDestination
@@ -41,9 +40,6 @@ class CWallet;
 class CWalletTx;
 class uint160;
 class uint256;
-
-/** Backend-agnostic database type. */
-using WalletDatabase = BerkeleyDatabase;
 
 /** Error statuses for the wallet database */
 enum class DBErrors {
@@ -180,31 +176,30 @@ class WalletBatch {
 private:
     template <typename K, typename T>
     bool WriteIC(const K &key, const T &value, bool fOverwrite = true) {
-        if (!m_batch.Write(key, value, fOverwrite)) {
+        if (!m_batch->Write(key, value, fOverwrite)) {
             return false;
         }
         m_database.IncrementUpdateCounter();
         if (m_database.nUpdateCounter % 1000 == 0) {
-            m_batch.Flush();
+            m_batch->Flush();
         }
         return true;
     }
 
     template <typename K> bool EraseIC(const K &key) {
-        if (!m_batch.Erase(key)) {
+        if (!m_batch->Erase(key)) {
             return false;
         }
         m_database.IncrementUpdateCounter();
         if (m_database.nUpdateCounter % 1000 == 0) {
-            m_batch.Flush();
+            m_batch->Flush();
         }
         return true;
     }
 
 public:
-    explicit WalletBatch(WalletDatabase &database, const char *pszMode = "r+",
-                         bool _fFlushOnClose = true)
-        : m_batch(database, pszMode, _fFlushOnClose), m_database(database) {}
+    explicit WalletBatch(WalletDatabase &database, bool _fFlushOnClose = true)
+        : m_batch(database.MakeBatch(_fFlushOnClose)), m_database(database) {}
     WalletBatch(const WalletBatch &) = delete;
     WalletBatch &operator=(const WalletBatch &) = delete;
 
@@ -269,7 +264,6 @@ public:
 
     DBErrors LoadWallet(CWallet *pwallet);
     DBErrors FindWalletTx(std::vector<TxId> &txIds, std::list<CWalletTx> &vWtx);
-    DBErrors ZapWalletTx(std::list<CWalletTx> &vWtx);
     DBErrors ZapSelectTx(std::vector<TxId> &txIdsIn,
                          std::vector<TxId> &txIdsOut);
     /* Function to determine if a certain KV/key-type is a key (cryptographical
@@ -288,7 +282,7 @@ public:
     bool TxnAbort();
 
 private:
-    BerkeleyBatch m_batch;
+    std::unique_ptr<DatabaseBatch> m_batch;
     WalletDatabase &m_database;
 };
 
@@ -296,22 +290,20 @@ private:
 //! changes)
 void MaybeCompactWalletDB();
 
+//! Callback for filtering key types to deserialize in ReadKeyValue
+using KeyFilterFn = std::function<bool(const std::string &)>;
+
 //! Unserialize a given Key-Value pair and load it into the wallet
 bool ReadKeyValue(CWallet *pwallet, CDataStream &ssKey, CDataStream &ssValue,
-                  std::string &strType, std::string &strErr);
-
-/** Return whether a wallet database is currently loaded. */
-bool IsWalletLoaded(const fs::path &wallet_path);
-
-/** Return object for accessing database at specified path. */
-std::unique_ptr<BerkeleyDatabase> CreateWalletDatabase(const fs::path &path);
+                  std::string &strType, std::string &strErr,
+                  const KeyFilterFn &filter_fn = nullptr);
 
 /**
  * Return object for accessing dummy database with no read/write capabilities.
  */
-std::unique_ptr<BerkeleyDatabase> CreateDummyWalletDatabase();
+std::unique_ptr<WalletDatabase> CreateDummyWalletDatabase();
 
 /** Return object for accessing temporary in-memory database. */
-std::unique_ptr<BerkeleyDatabase> CreateMockWalletDatabase();
+std::unique_ptr<WalletDatabase> CreateMockWalletDatabase();
 
 #endif // BITCOIN_WALLET_WALLETDB_H

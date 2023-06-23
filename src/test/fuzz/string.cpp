@@ -5,6 +5,7 @@
 #include <blockfilter.h>
 #include <clientversion.h>
 #include <logging.h>
+#include <netaddress.h>
 #include <netbase.h>
 #include <outputtype.h>
 #include <rpc/client.h>
@@ -74,6 +75,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     }
     OutputType output_type;
     (void)ParseOutputType(random_string_1, output_type);
+    (void)RemovePrefix(random_string_1, random_string_2);
     (void)ResolveErrMsg(random_string_1, random_string_2);
     try {
         (void)RPCConvertNamedValues(random_string_1, random_string_vector);
@@ -88,7 +90,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         random_string_1,
         fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 3));
     (void)ShellEscape(random_string_1);
-    int port_out;
+    uint16_t port_out;
     std::string host_out;
     SplitHostPort(random_string_1, port_out, host_out);
     (void)TimingResistantEqual(random_string_1, random_string_2);
@@ -136,6 +138,8 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
             fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 1024),
             &amount_out);
     }
+    (void)SplitString(random_string_1,
+                      fuzzed_data_provider.ConsumeIntegral<char>());
     {
         (void)Untranslated(random_string_1);
         const bilingual_str bs1{random_string_1, random_string_2};

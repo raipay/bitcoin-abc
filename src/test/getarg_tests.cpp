@@ -22,7 +22,7 @@ protected:
     void
     SetupArgs(const std::vector<std::pair<std::string, unsigned int>> &args);
     void ResetArgs(const std::string &strArg);
-    ArgsManager m_args;
+    ArgsManager m_local_args;
 };
 } // namespace getarg_tests
 
@@ -44,14 +44,16 @@ void LocalTestingSetup::ResetArgs(const std::string &strArg) {
     }
 
     std::string error;
-    BOOST_CHECK(m_args.ParseParameters(vecChar.size(), vecChar.data(), error));
+    BOOST_CHECK(
+        m_local_args.ParseParameters(vecChar.size(), vecChar.data(), error));
 }
 
 void LocalTestingSetup::SetupArgs(
     const std::vector<std::pair<std::string, unsigned int>> &args) {
-    m_args.ClearArgs();
+    m_local_args.ClearArgs();
     for (const auto &arg : args) {
-        m_args.AddArg(arg.first, "", arg.second, OptionsCategory::OPTIONS);
+        m_local_args.AddArg(arg.first, "", arg.second,
+                            OptionsCategory::OPTIONS);
     }
 }
 
@@ -59,55 +61,55 @@ BOOST_AUTO_TEST_CASE(boolarg) {
     const auto foo = std::make_pair("-foo", ArgsManager::ALLOW_ANY);
     SetupArgs({foo});
     ResetArgs("-foo");
-    BOOST_CHECK(m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", true));
 
-    BOOST_CHECK(!m_args.GetBoolArg("-fo", false));
-    BOOST_CHECK(m_args.GetBoolArg("-fo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-fo", false));
+    BOOST_CHECK(m_local_args.GetBoolArg("-fo", true));
 
-    BOOST_CHECK(!m_args.GetBoolArg("-fooo", false));
-    BOOST_CHECK(m_args.GetBoolArg("-fooo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-fooo", false));
+    BOOST_CHECK(m_local_args.GetBoolArg("-fooo", true));
 
     ResetArgs("-foo=0");
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", true));
 
     ResetArgs("-foo=1");
-    BOOST_CHECK(m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", true));
 
     // New 0.6 feature: auto-map -nosomething to !-something:
     ResetArgs("-nofoo");
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", true));
 
     ResetArgs("-nofoo=1");
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", true));
 
     // -nofoo should win
     ResetArgs("-foo -nofoo");
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", true));
 
     // -nofoo should win
     ResetArgs("-foo=1 -nofoo=1");
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", true));
 
     // -nofoo=0 should win
     ResetArgs("-foo=0 -nofoo=0");
-    BOOST_CHECK(m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", true));
 
     // New 0.6 feature: treat -- same as -:
     ResetArgs("--foo=1");
-    BOOST_CHECK(m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", true));
 
     ResetArgs("--nofoo=1");
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", false));
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", true));
 }
 
 BOOST_AUTO_TEST_CASE(stringarg) {
@@ -115,24 +117,24 @@ BOOST_AUTO_TEST_CASE(stringarg) {
     const auto bar = std::make_pair("-bar", ArgsManager::ALLOW_ANY);
     SetupArgs({foo, bar});
     ResetArgs("");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", ""), "");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", "eleven"), "eleven");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", ""), "");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", "eleven"), "eleven");
 
     ResetArgs("-foo -bar");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", ""), "");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", "eleven"), "");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", ""), "");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", "eleven"), "");
 
     ResetArgs("-foo=");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", ""), "");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", "eleven"), "");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", ""), "");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", "eleven"), "");
 
     ResetArgs("-foo=11");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", ""), "11");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", "eleven"), "11");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", ""), "11");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", "eleven"), "11");
 
     ResetArgs("-foo=eleven");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", ""), "eleven");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", "eleven"), "eleven");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", ""), "eleven");
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", "eleven"), "eleven");
 }
 
 BOOST_AUTO_TEST_CASE(intarg) {
@@ -140,20 +142,111 @@ BOOST_AUTO_TEST_CASE(intarg) {
     const auto bar = std::make_pair("-bar", ArgsManager::ALLOW_ANY);
     SetupArgs({foo, bar});
     ResetArgs("");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", 11), 11);
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", 0), 0);
+    BOOST_CHECK_EQUAL(m_local_args.GetIntArg("-foo", 11), 11);
+    BOOST_CHECK_EQUAL(m_local_args.GetIntArg("-foo", 0), 0);
 
     ResetArgs("-foo -bar");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", 11), 0);
-    BOOST_CHECK_EQUAL(m_args.GetArg("-bar", 11), 0);
+    BOOST_CHECK_EQUAL(m_local_args.GetIntArg("-foo", 11), 0);
+    BOOST_CHECK_EQUAL(m_local_args.GetIntArg("-bar", 11), 0);
 
     ResetArgs("-foo=11 -bar=12");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", 0), 11);
-    BOOST_CHECK_EQUAL(m_args.GetArg("-bar", 11), 12);
+    BOOST_CHECK_EQUAL(m_local_args.GetIntArg("-foo", 0), 11);
+    BOOST_CHECK_EQUAL(m_local_args.GetIntArg("-bar", 11), 12);
 
     ResetArgs("-foo=NaN -bar=NotANumber");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", 1), 0);
-    BOOST_CHECK_EQUAL(m_args.GetArg("-bar", 11), 0);
+    BOOST_CHECK_EQUAL(m_local_args.GetIntArg("-foo", 1), 0);
+    BOOST_CHECK_EQUAL(m_local_args.GetIntArg("-bar", 11), 0);
+}
+
+BOOST_AUTO_TEST_CASE(patharg) {
+    const auto dir = std::make_pair("-dir", ArgsManager::ALLOW_ANY);
+    SetupArgs({dir});
+    ResetArgs("");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), fs::path{});
+
+    const fs::path root_path{"/"};
+    ResetArgs("-dir=/");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), root_path);
+
+    ResetArgs("-dir=/.");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), root_path);
+
+    ResetArgs("-dir=/./");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), root_path);
+
+    ResetArgs("-dir=/.//");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), root_path);
+
+#ifdef WIN32
+    const fs::path win_root_path{"C:\\"};
+    ResetArgs("-dir=C:\\");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), win_root_path);
+
+    ResetArgs("-dir=C:/");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), win_root_path);
+
+    ResetArgs("-dir=C:\\\\");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), win_root_path);
+
+    ResetArgs("-dir=C:\\.");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), win_root_path);
+
+    ResetArgs("-dir=C:\\.\\");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), win_root_path);
+
+    ResetArgs("-dir=C:\\.\\\\");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), win_root_path);
+#endif
+
+    const fs::path absolute_path{"/home/user/.bitcoin"};
+    ResetArgs("-dir=/home/user/.bitcoin");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), absolute_path);
+
+    ResetArgs("-dir=/root/../home/user/.bitcoin");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), absolute_path);
+
+    ResetArgs("-dir=/home/./user/.bitcoin");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), absolute_path);
+
+    ResetArgs("-dir=/home/user/.bitcoin/");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), absolute_path);
+
+    ResetArgs("-dir=/home/user/.bitcoin//");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), absolute_path);
+
+    ResetArgs("-dir=/home/user/.bitcoin/.");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), absolute_path);
+
+    ResetArgs("-dir=/home/user/.bitcoin/./");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), absolute_path);
+
+    ResetArgs("-dir=/home/user/.bitcoin/.//");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), absolute_path);
+
+    const fs::path relative_path{"user/.bitcoin"};
+    ResetArgs("-dir=user/.bitcoin");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), relative_path);
+
+    ResetArgs("-dir=somewhere/../user/.bitcoin");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), relative_path);
+
+    ResetArgs("-dir=user/./.bitcoin");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), relative_path);
+
+    ResetArgs("-dir=user/.bitcoin/");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), relative_path);
+
+    ResetArgs("-dir=user/.bitcoin//");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), relative_path);
+
+    ResetArgs("-dir=user/.bitcoin/.");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), relative_path);
+
+    ResetArgs("-dir=user/.bitcoin/./");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), relative_path);
+
+    ResetArgs("-dir=user/.bitcoin/.//");
+    BOOST_CHECK_EQUAL(m_local_args.GetPathArg("-dir"), relative_path);
 }
 
 BOOST_AUTO_TEST_CASE(doubledash) {
@@ -161,11 +254,11 @@ BOOST_AUTO_TEST_CASE(doubledash) {
     const auto bar = std::make_pair("-bar", ArgsManager::ALLOW_ANY);
     SetupArgs({foo, bar});
     ResetArgs("--foo");
-    BOOST_CHECK_EQUAL(m_args.GetBoolArg("-foo", false), true);
+    BOOST_CHECK_EQUAL(m_local_args.GetBoolArg("-foo", false), true);
 
     ResetArgs("--foo=verbose --bar=1");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-foo", ""), "verbose");
-    BOOST_CHECK_EQUAL(m_args.GetArg("-bar", 0), 1);
+    BOOST_CHECK_EQUAL(m_local_args.GetArg("-foo", ""), "verbose");
+    BOOST_CHECK_EQUAL(m_local_args.GetIntArg("-bar", 0), 1);
 }
 
 BOOST_AUTO_TEST_CASE(boolargno) {
@@ -173,26 +266,26 @@ BOOST_AUTO_TEST_CASE(boolargno) {
     const auto bar = std::make_pair("-bar", ArgsManager::ALLOW_ANY);
     SetupArgs({foo, bar});
     ResetArgs("-nofoo");
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", true));
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", false));
 
     ResetArgs("-nofoo=1");
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", true));
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", false));
 
     ResetArgs("-nofoo=0");
-    BOOST_CHECK(m_args.GetBoolArg("-foo", true));
-    BOOST_CHECK(m_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", false));
 
     // --nofoo should win
     ResetArgs("-foo --nofoo");
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", true));
-    BOOST_CHECK(!m_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(!m_local_args.GetBoolArg("-foo", false));
 
     // foo always wins:
     ResetArgs("-nofoo -foo");
-    BOOST_CHECK(m_args.GetBoolArg("-foo", true));
-    BOOST_CHECK(m_args.GetBoolArg("-foo", false));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", true));
+    BOOST_CHECK(m_local_args.GetBoolArg("-foo", false));
 }
 
 BOOST_AUTO_TEST_CASE(logargs) {
@@ -213,7 +306,7 @@ BOOST_AUTO_TEST_CASE(logargs) {
         [&str](const std::string &s) { str += s; });
 
     // Log the arguments
-    m_args.LogArgs();
+    m_local_args.LogArgs();
 
     LogInstance().DeleteCallback(print_connection);
     // Check that what should appear does, and what shouldn't doesn't.

@@ -95,7 +95,7 @@ std::vector<uint8_t> ParseHex(const char *psz) {
         if (c == (signed char)-1) {
             break;
         }
-        uint8_t n = (c << 4);
+        auto n{uint8_t(c << 4)};
         c = HexDigit(*psz++);
         if (c == (signed char)-1) {
             break;
@@ -110,7 +110,7 @@ std::vector<uint8_t> ParseHex(const std::string &str) {
     return ParseHex(str.c_str());
 }
 
-void SplitHostPort(std::string in, int &portOut, std::string &hostOut) {
+void SplitHostPort(std::string in, uint16_t &portOut, std::string &hostOut) {
     size_t colon = in.find_last_of(':');
     // if a : is found, and it either follows a [...], or no other : is in the
     // string, treat it as port separator
@@ -121,8 +121,8 @@ void SplitHostPort(std::string in, int &portOut, std::string &hostOut) {
     bool fMultiColon =
         fHaveColon && (in.find_last_of(':', colon - 1) != in.npos);
     if (fHaveColon && (colon == 0 || fBracketed || !fMultiColon)) {
-        int32_t n;
-        if (ParseInt32(in.substr(colon + 1), &n) && n > 0 && n < 0x10000) {
+        uint16_t n;
+        if (ParseUInt16(in.substr(colon + 1), &n)) {
             in = in.substr(0, colon);
             portOut = n;
         }
@@ -153,7 +153,7 @@ std::string EncodeBase64(const std::string &str) {
 }
 
 std::vector<uint8_t> DecodeBase64(const char *p, bool *pf_invalid) {
-    static const int decode64_table[256] = {
+    static const int8_t decode64_table[256] = {
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
         -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63, 52, 53, 54, 55, 56, 57,
@@ -178,7 +178,7 @@ std::vector<uint8_t> DecodeBase64(const char *p, bool *pf_invalid) {
         if (x == -1) {
             break;
         }
-        val.push_back(x);
+        val.push_back(uint8_t(x));
         ++p;
     }
 
@@ -234,7 +234,7 @@ std::string EncodeBase32(const std::string &str, bool pad) {
 }
 
 std::vector<uint8_t> DecodeBase32(const char *p, bool *pf_invalid) {
-    static const int decode32_table[256] = {
+    static const int8_t decode32_table[256] = {
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 26, 27, 28, 29,
@@ -259,7 +259,7 @@ std::vector<uint8_t> DecodeBase32(const char *p, bool *pf_invalid) {
         if (x == -1) {
             break;
         }
-        val.push_back(x);
+        val.push_back(uint8_t(x));
         ++p;
     }
 
@@ -295,7 +295,7 @@ std::string DecodeBase32(const std::string &str, bool *pf_invalid) {
     return std::string((const char *)vchRet.data(), vchRet.size());
 }
 
-NODISCARD static bool ParsePrechecks(const std::string &str) {
+[[nodiscard]] static bool ParsePrechecks(const std::string &str) {
     // No empty string allowed
     if (str.empty()) {
         return false;
@@ -357,6 +357,17 @@ bool ParseUInt8(const std::string &str, uint8_t *out) {
     }
     if (out != nullptr) {
         *out = static_cast<uint8_t>(u32);
+    }
+    return true;
+}
+
+bool ParseUInt16(const std::string &str, uint16_t *out) {
+    uint32_t u32;
+    if (!ParseUInt32(str, &u32) || u32 > std::numeric_limits<uint16_t>::max()) {
+        return false;
+    }
+    if (out != nullptr) {
+        *out = static_cast<uint16_t>(u32);
     }
     return true;
 }

@@ -4,9 +4,11 @@
 
 #include <bench/bench.h>
 #include <config.h>
+#include <consensus/amount.h>
 #include <interfaces/chain.h>
 #include <node/context.h>
 #include <validationinterface.h>
+#include <wallet/receive.h>
 #include <wallet/wallet.h>
 
 #include <test/util/mining.h>
@@ -26,14 +28,12 @@ static void WalletBalance(benchmark::Bench &bench, const bool set_dirty,
         },
     };
 
-    const auto &ADDRESS_WATCHONLY = ADDRESS_BCHREG_UNSPENDABLE;
+    const auto &ADDRESS_WATCHONLY = ADDRESS_ECREG_UNSPENDABLE;
 
     const Config &config = GetConfig();
 
-    NodeContext node;
-    std::unique_ptr<interfaces::Chain> chain =
-        interfaces::MakeChain(node, config.GetChainParams());
-    CWallet wallet{chain.get(), WalletLocation(), CreateMockWalletDatabase()};
+    CWallet wallet{test_setup.m_node.chain.get(), "",
+                   CreateMockWalletDatabase()};
     {
         wallet.SetupLegacyScriptPubKeyMan();
         bool first_run;
@@ -42,7 +42,8 @@ static void WalletBalance(benchmark::Bench &bench, const bool set_dirty,
         }
     }
 
-    auto handler = chain->handleNotifications({&wallet, [](CWallet *) {}});
+    auto handler = test_setup.m_node.chain->handleNotifications(
+        {&wallet, [](CWallet *) {}});
 
     const std::optional<std::string> address_mine{
         add_mine ? std::optional<std::string>{getnewaddress(config, wallet)}
@@ -59,13 +60,13 @@ static void WalletBalance(benchmark::Bench &bench, const bool set_dirty,
     SyncWithValidationInterfaceQueue();
 
     // Cache
-    auto bal = wallet.GetBalance();
+    auto bal = GetBalance(wallet);
 
     bench.run([&] {
         if (set_dirty) {
             wallet.MarkDirty();
         }
-        bal = wallet.GetBalance();
+        bal = GetBalance(wallet);
         if (add_mine) {
             assert(bal.m_mine_trusted > Amount::zero());
         }

@@ -1,4 +1,4 @@
-// Copyright (c) 2017 - The Bitcoin Developers
+// Copyright (c) 2017 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,6 +7,12 @@
 
 #include <array>
 #include <cstdint>
+
+#include <sync.h>
+
+// Actually declared in validation.cpp; can't include because of circular
+// dependency.
+extern RecursiveMutex cs_main;
 
 class CTransaction;
 
@@ -26,6 +32,8 @@ public:
     ScriptCacheKey() = default;
     ScriptCacheKey(const ScriptCacheKey &rhs) = default;
     ScriptCacheKey(const CTransaction &tx, uint32_t flags);
+
+    ScriptCacheKey &operator=(const ScriptCacheKey &rhs) = default;
 
     bool operator==(const ScriptCacheKey &rhs) const {
         return rhs.data == data;
@@ -48,11 +56,13 @@ void InitScriptExecutionCache();
  * Check if a given key is in the cache, and if so, return its values.
  * (if not found, nSigChecks may or may not be set to an arbitrary value)
  */
-bool IsKeyInScriptCache(ScriptCacheKey key, bool erase, int &nSigChecksOut);
+bool IsKeyInScriptCache(ScriptCacheKey key, bool erase, int &nSigChecksOut)
+    EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
 /**
  * Add an entry in the cache.
  */
-void AddKeyInScriptCache(ScriptCacheKey key, int nSigChecks);
+void AddKeyInScriptCache(ScriptCacheKey key, int nSigChecks)
+    EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
 #endif // BITCOIN_SCRIPT_SCRIPTCACHE_H

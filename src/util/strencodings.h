@@ -9,15 +9,12 @@
 #ifndef BITCOIN_UTIL_STRENCODINGS_H
 #define BITCOIN_UTIL_STRENCODINGS_H
 
-#include <attributes.h>
 #include <span.h>
 
 #include <cstdint>
 #include <iterator>
 #include <string>
 #include <vector>
-
-#define ARRAYLEN(array) (sizeof(array) / sizeof((array)[0]))
 
 /** Used by SanitizeString() */
 enum SafeChars {
@@ -74,7 +71,7 @@ std::string EncodeBase32(Span<const uint8_t> input, bool pad = true);
  */
 std::string EncodeBase32(const std::string &str, bool pad = true);
 
-void SplitHostPort(std::string in, int &portOut, std::string &hostOut);
+void SplitHostPort(std::string in, uint16_t &portOut, std::string &hostOut);
 int64_t atoi64(const std::string &str);
 int atoi(const std::string &str);
 
@@ -109,14 +106,14 @@ constexpr inline bool IsSpace(char c) noexcept {
  * @returns true if the entire string could be parsed as valid integer, false if
  * not the entire string could be parsed or when overflow or underflow occurred.
  */
-NODISCARD bool ParseInt32(const std::string &str, int32_t *out);
+[[nodiscard]] bool ParseInt32(const std::string &str, int32_t *out);
 
 /**
  * Convert string to signed 64-bit integer with strict parse error feedback.
  * @returns true if the entire string could be parsed as valid integer, false if
  * not the entire string could be parsed or when overflow or underflow occurred.
  */
-NODISCARD bool ParseInt64(const std::string &str, int64_t *out);
+[[nodiscard]] bool ParseInt64(const std::string &str, int64_t *out);
 
 /**
  * Convert decimal string to unsigned 8-bit integer with strict parse error
@@ -125,7 +122,16 @@ NODISCARD bool ParseInt64(const std::string &str, int64_t *out);
  *   false if not the entire string could be parsed or when overflow or
  * underflow occurred.
  */
-NODISCARD bool ParseUInt8(const std::string &str, uint8_t *out);
+[[nodiscard]] bool ParseUInt8(const std::string &str, uint8_t *out);
+
+/**
+ * Convert decimal string to unsigned 16-bit integer with strict parse error
+ * feedback.
+ * @returns true if the entire string could be parsed as valid integer,
+ *   false if the entire string could not be parsed or if overflow or underflow
+ *   occurred.
+ */
+[[nodiscard]] bool ParseUInt16(const std::string &str, uint16_t *out);
 
 /**
  * Convert decimal string to unsigned 32-bit integer with strict parse error
@@ -133,7 +139,7 @@ NODISCARD bool ParseUInt8(const std::string &str, uint8_t *out);
  * @returns true if the entire string could be parsed as valid integer, false if
  * not the entire string could be parsed or when overflow or underflow occurred.
  */
-NODISCARD bool ParseUInt32(const std::string &str, uint32_t *out);
+[[nodiscard]] bool ParseUInt32(const std::string &str, uint32_t *out);
 
 /**
  * Convert decimal string to unsigned 64-bit integer with strict parse error
@@ -141,14 +147,14 @@ NODISCARD bool ParseUInt32(const std::string &str, uint32_t *out);
  * @returns true if the entire string could be parsed as valid integer, false if
  * not the entire string could be parsed or when overflow or underflow occurred.
  */
-NODISCARD bool ParseUInt64(const std::string &str, uint64_t *out);
+[[nodiscard]] bool ParseUInt64(const std::string &str, uint64_t *out);
 
 /**
  * Convert string to double with strict parse error feedback.
  * @returns true if the entire string could be parsed as valid double, false if
  * not the entire string could be parsed or when overflow or underflow occurred.
  */
-NODISCARD bool ParseDouble(const std::string &str, double *out);
+[[nodiscard]] bool ParseDouble(const std::string &str, double *out);
 
 /**
  * Convert a span of bytes to a lower-case hexadecimal string.
@@ -170,10 +176,13 @@ std::string FormatParagraph(const std::string &in, size_t width = 79,
  * Takes time proportional to length of first argument.
  */
 template <typename T> bool TimingResistantEqual(const T &a, const T &b) {
-    if (b.size() == 0) return a.size() == 0;
+    if (b.size() == 0) {
+        return a.size() == 0;
+    }
     size_t accumulator = a.size() ^ b.size();
-    for (size_t i = 0; i < a.size(); i++)
-        accumulator |= a[i] ^ b[i % b.size()];
+    for (size_t i = 0; i < a.size(); i++) {
+        accumulator |= size_t(a[i] ^ b[i % b.size()]);
+    }
     return accumulator == 0;
 }
 
@@ -184,8 +193,8 @@ template <typename T> bool TimingResistantEqual(const T &a, const T &b) {
  * @note The result must be in the range (-10^18,10^18), otherwise an overflow
  * error will trigger.
  */
-NODISCARD bool ParseFixedPoint(const std::string &val, int decimals,
-                               int64_t *amount_out);
+[[nodiscard]] bool ParseFixedPoint(const std::string &val, int decimals,
+                                   int64_t *amount_out);
 
 /**
  * Convert from one power-of-2 number base to another.

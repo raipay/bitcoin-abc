@@ -12,10 +12,14 @@ namespace avalanche {
 enum class ProofValidationResult {
     NONE = 0,
     NO_STAKE,
-    DUST_THRESOLD,
+    DUST_THRESHOLD,
     DUPLICATE_STAKE,
-    INVALID_SIGNATURE,
+    WRONG_STAKE_ORDERING,
+    INVALID_STAKE_SIGNATURE,
     TOO_MANY_UTXOS,
+    INVALID_PAYOUT_SCRIPT,
+    INVALID_PROOF_SIGNATURE,
+    EXPIRED,
 
     // UTXO based errors.
     MISSING_UTXO,
@@ -25,6 +29,7 @@ enum class ProofValidationResult {
     NON_STANDARD_DESTINATION,
     DESTINATION_NOT_SUPPORTED,
     DESTINATION_MISMATCH,
+    IMMATURE_UTXO,
 };
 
 class ProofValidationState : public ValidationState<ProofValidationResult> {};
@@ -32,6 +37,7 @@ class ProofValidationState : public ValidationState<ProofValidationResult> {};
 enum class DelegationResult {
     NONE = 0,
     INVALID_SIGNATURE,
+    TOO_MANY_LEVELS,
 };
 
 class DelegationState : public ValidationState<DelegationResult> {};

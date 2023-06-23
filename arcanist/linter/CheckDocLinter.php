@@ -3,7 +3,7 @@
 /**
  * Uses the check-doc.py script to enfore command line arguments documentation
  */
-final class CheckDocLinter extends GlobalExternalLinter {
+final class CheckDocLinter extends AbstractGlobalExternalLinter {
 
   public function getInfoName() {
     return 'check-doc';
@@ -75,6 +75,7 @@ final class CheckDocLinter extends GlobalExternalLinter {
     $match = preg_match_all('/-[\w|-]+/', $undocumented, $args);
     foreach ($args[0] as $arg) {
       $messages[] = id(new ArcanistLintMessage())
+        ->setPath("")
         ->setGranularity(ArcanistLinter::GRANULARITY_GLOBAL)
         ->setCode('ARGDOC')
         ->setSeverity(ArcanistLintSeverity::SEVERITY_ERROR)
@@ -86,6 +87,7 @@ final class CheckDocLinter extends GlobalExternalLinter {
     $match = preg_match_all('/-[\w|-]+/', $unknown, $args);
     foreach ($args[0] as $arg) {
       $messages[] = id(new ArcanistLintMessage())
+        ->setPath("")
         ->setGranularity(ArcanistLinter::GRANULARITY_GLOBAL)
         ->setCode('ARGDOC')
         ->setSeverity(ArcanistLintSeverity::SEVERITY_ERROR)

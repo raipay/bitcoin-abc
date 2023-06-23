@@ -1,0 +1,45 @@
+# Copyright (c) 2022 The Bitcoin developers
+
+[package]
+name = "chronik-http"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.67.1"
+license = "MIT"
+
+[dependencies]
+abc-rust-error = { path = "../abc-rust-error" }
+abc-rust-lint = { path = "../abc-rust-lint" }
+
+bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+
+chronik-db = { path = "../chronik-db" }
+chronik-indexer = { path = "../chronik-indexer" }
+chronik-proto = { path = "../chronik-proto" }
+chronik-util = { path = "../chronik-util" }
+
+# Allow traits to use async functions
+async-trait = "0.1"
+
+# HTTP webapps
+axum = { version = "0.6", features = ["ws"] }
+
+# Async toolkit
+futures = "0.3"
+
+# En-/decode hex
+hex = "0.4"
+
+# HTTP implementation
+hyper = "0.14"
+
+# Protobuf en-/decoding
+prost = "0.11"
+
+# Derive error enums
+thiserror = "1.0"
+
+# Async runtime
+[dependencies.tokio]
+version = "1.25"
+features = ["sync", "rt", "rt-multi-thread", "macros"]

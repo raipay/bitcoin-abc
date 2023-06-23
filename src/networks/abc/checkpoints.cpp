@@ -64,6 +64,18 @@ static CCheckpointData mainNetCheckpointData = {
         // Tachyon activation
         {686621, BlockHash::fromHex("00000000000000003c8fe6f7570a9f6d5480dcfc9"
                                     "5f8228ae9d60b98bee5b745")},
+        // Selectron activation.
+        {713661, BlockHash::fromHex("00000000000000000676f84307c7ccb53a0f19083f"
+                                    "eace753cb73a38eaaaef8d")},
+        // Gluon activation.
+        {739536, BlockHash::fromHex("000000000000000006db04cd4609560905fe5a7be6"
+                                    "2f2429b159ce6b59fc7b61")},
+        // Jefferson activation.
+        {766195, BlockHash::fromHex("0000000000000000102bc94853715b9ade9610eb31"
+                                    "b4ed7d955529b76d24e094")},
+        // Wellington activation.
+        {792118, BlockHash::fromHex("00000000000000000b360176b8456de45b662fce6d"
+                                    "557c6238dec17362d197f3")},
     }};
 
 static CCheckpointData testNetCheckpointData = {
@@ -96,6 +108,18 @@ static CCheckpointData testNetCheckpointData = {
         // Tachyon activation.
         {1450540, BlockHash::fromHex("00000000001085419e7328a2bacaf6216dd913c40"
                                      "0f0b7da4bde43a8ebf6ed4e")},
+        // Selectron activation.
+        {1477500, BlockHash::fromHex("000000000004057554e6f83253e3080774c37ae8a"
+                                     "940ffbc38d77525274709ae")},
+        // Gluon activation.
+        {1503557, BlockHash::fromHex("00000000000dbd764814fb67b5ff5aab606faa1f5"
+                                     "881dc86f57639a1396e11ba")},
+        // Jefferson activation.
+        {1530063, BlockHash::fromHex("00000000013102d35674688b5fd478c3a048660d6"
+                                     "fea862401734a4b914132bf")},
+        // Wellington activation.
+        {1556121, BlockHash::fromHex("000000000eb806d6dbc9a200a9d533c7a11fc7d45"
+                                     "ab67a3c8440cc1b5c4e741f")},
     }};
 
 static CCheckpointData regTestCheckpointData = {

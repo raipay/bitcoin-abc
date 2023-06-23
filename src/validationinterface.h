@@ -17,10 +17,9 @@ class BlockValidationState;
 class CBlock;
 class CBlockIndex;
 struct CBlockLocator;
-class CConnman;
 class CValidationInterface;
-class uint256;
 class CScheduler;
+enum class MemPoolRemovalReason;
 
 /** Register subscriber */
 void RegisterValidationInterface(CValidationInterface *callbacks);
@@ -104,7 +103,9 @@ protected:
      *
      * Called on a background thread.
      */
-    virtual void TransactionAddedToMempool(const CTransactionRef &ptxn) {}
+    virtual void TransactionAddedToMempool(const CTransactionRef &tx,
+                                           uint64_t mempool_sequence) {}
+
     /**
      * Notifies listeners of a transaction leaving mempool.
      *
@@ -137,7 +138,9 @@ protected:
      *
      * Called on a background thread.
      */
-    virtual void TransactionRemovedFromMempool(const CTransactionRef &ptx) {}
+    virtual void TransactionRemovedFromMempool(const CTransactionRef &tx,
+                                               MemPoolRemovalReason reason,
+                                               uint64_t mempool_sequence) {}
     /**
      * Notifies listeners of a block being connected.
      * Provides a vector of transactions evicted from the mempool as a result.
@@ -184,13 +187,17 @@ protected:
      */
     virtual void NewPoWValidBlock(const CBlockIndex *pindex,
                                   const std::shared_ptr<const CBlock> &block){};
+
+    virtual void BlockFinalized(const CBlockIndex *pindex){};
+
     friend class CMainSignals;
+    friend class ValidationInterfaceTest;
 };
 
-struct MainSignalsInstance;
+class MainSignalsImpl;
 class CMainSignals {
 private:
-    std::unique_ptr<MainSignalsInstance> m_internals;
+    std::unique_ptr<MainSignalsImpl> m_internals;
 
     friend void ::RegisterSharedValidationInterface(
         std::shared_ptr<CValidationInterface>);
@@ -217,8 +224,11 @@ public:
 
     void UpdatedBlockTip(const CBlockIndex *, const CBlockIndex *,
                          bool fInitialDownload);
-    void TransactionAddedToMempool(const CTransactionRef &);
-    void TransactionRemovedFromMempool(const CTransactionRef &);
+    void TransactionAddedToMempool(const CTransactionRef &,
+                                   uint64_t mempool_sequence);
+    void TransactionRemovedFromMempool(const CTransactionRef &,
+                                       MemPoolRemovalReason,
+                                       uint64_t mempool_sequence);
     void BlockConnected(const std::shared_ptr<const CBlock> &,
                         const CBlockIndex *pindex);
     void BlockDisconnected(const std::shared_ptr<const CBlock> &,
@@ -227,6 +237,7 @@ public:
     void BlockChecked(const CBlock &, const BlockValidationState &);
     void NewPoWValidBlock(const CBlockIndex *,
                           const std::shared_ptr<const CBlock> &);
+    void BlockFinalized(const CBlockIndex *);
 };
 
 CMainSignals &GetMainSignals();

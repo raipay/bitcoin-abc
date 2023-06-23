@@ -5,24 +5,27 @@
 #ifndef BITCOIN_RPC_BLOCKCHAIN_H
 #define BITCOIN_RPC_BLOCKCHAIN_H
 
+#include <streams.h>
 #include <sync.h>
+#include <validation.h>
 
 #include <univalue.h>
 
+#include <any>
+
 class CBlock;
 class CBlockIndex;
+class Chainstate;
 class ChainstateManager;
-class Config;
 class CTxMemPool;
-class JSONRPCRequest;
+class RPCHelpMan;
+namespace node {
 struct NodeContext;
-namespace util {
-class Ref;
-} // namespace util
+} // namespace node
 
 extern RecursiveMutex cs_main;
 
-UniValue getblockchaininfo(const Config &config, const JSONRPCRequest &request);
+RPCHelpMan getblockchaininfo();
 
 /**
  * Get the required difficulty of the next block w/r/t the given block index.
@@ -36,23 +39,27 @@ double GetDifficulty(const CBlockIndex *blockindex);
 void RPCNotifyBlockChange(const CBlockIndex *pindex);
 
 /** Block description to JSON */
-UniValue blockToJSON(const CBlock &block, const CBlockIndex *tip,
-                     const CBlockIndex *blockindex, bool txDetails = false)
-    LOCKS_EXCLUDED(cs_main);
+UniValue blockToJSON(node::BlockManager &blockman, const CBlock &block,
+                     const CBlockIndex *tip, const CBlockIndex *blockindex,
+                     bool txDetails = false) LOCKS_EXCLUDED(cs_main);
 
 /** Mempool information to JSON */
 UniValue MempoolInfoToJSON(const CTxMemPool &pool);
 
 /** Mempool to JSON */
-UniValue MempoolToJSON(const CTxMemPool &pool, bool verbose = false);
+UniValue MempoolToJSON(const CTxMemPool &pool, bool verbose = false,
+                       bool include_mempool_sequence = false);
 
 /** Block header to JSON */
 UniValue blockheaderToJSON(const CBlockIndex *tip,
                            const CBlockIndex *blockindex)
     LOCKS_EXCLUDED(cs_main);
 
-NodeContext &EnsureNodeContext(const util::Ref &context);
-CTxMemPool &EnsureMemPool(const util::Ref &context);
-ChainstateManager &EnsureChainman(const util::Ref &context);
+/**
+ * Helper to create UTXO snapshots given a chainstate and a file handle.
+ * @return a UniValue map containing metadata about the snapshot.
+ */
+UniValue CreateUTXOSnapshot(node::NodeContext &node, Chainstate &chainstate,
+                            CAutoFile &afile);
 
 #endif // BITCOIN_RPC_BLOCKCHAIN_H
