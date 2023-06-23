@@ -21,10 +21,10 @@ jobs:
       - name: Build Container Image
         run: |-
           docker build \
-            -t bitcoin-abc:latest \
+            -t ${{ secrets.DOCKER_IO_USERNAME }}/bitcoin-abc:latest \
             -f images/Dockerfile .
 
       - name: Publish to Docker Hub
         id: publish
         run: |-
-          docker push bitcoin-abc:latest
+          docker push ${{ secrets.DOCKER_IO_USERNAME }}/bitcoin-abc:latest
