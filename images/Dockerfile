@@ -29,7 +29,6 @@ RUN wget https://api.github.com/repos/corrosion-rs/corrosion/tarball/v0.3.0 -O c
     && cmake --install ${CORROSION_BUILD_FOLDER} --config Release
 
 ## Build bitcoin-abc (eCash node)
-## Copy bitcoin-abc executables into bitcoinsuite (normally downloaded by bitcoinsuite)
 RUN mkdir /bitcoin-abc
 COPY . /bitcoin-abc
 RUN git clone https://github.com/givelotus/bitcoinsuite.git /bitcoinsuite \
