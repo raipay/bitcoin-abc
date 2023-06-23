@@ -18,7 +18,7 @@ RUN apt-get update \
         wget \
     && rustup component add rustfmt
 
-## Build Corrosion (for bitcoin-abc)
+## Build Corrosion
 RUN wget https://api.github.com/repos/corrosion-rs/corrosion/tarball/v0.3.0 -O corrosion.tar.gz \
     && echo "3b9a48737264add649983df26c83f3285ce17e20d86194c7756689a0d8470267 corrosion.tar.gz" | sha256sum -c \
     && tar xzf corrosion.tar.gz \
@@ -29,7 +29,6 @@ RUN wget https://api.github.com/repos/corrosion-rs/corrosion/tarball/v0.3.0 -O c
     && cmake --install ${CORROSION_BUILD_FOLDER} --config Release
 
 ## Build bitcoin-abc (eCash node)
-## Checkout bitcoinsuite (source dependency of P2S)
 ## Copy bitcoin-abc executables into bitcoinsuite (normally downloaded by bitcoinsuite)
 RUN mkdir /bitcoin-abc
 COPY . /bitcoin-abc
