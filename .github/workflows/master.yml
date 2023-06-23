@@ -2,7 +2,7 @@ name: Build and push to Docker Hub
 
 on:
   push:
-    branches: ["master", "chronik-slp"] # To be changed before merge
+    branches: ["master", "chronik-slp"]
 
 jobs:
   production_build:
