@@ -35,14 +35,20 @@ pub struct StatsData {
 
 /// Config for in-memory data for Chronik.
 #[derive(Clone, Debug)]
-pub struct MemDataConf {}
+pub struct MemDataConf {
+    /// Size of the script cache for tx history, in number of entries. Each
+    /// entry is about 30B in size.
+    pub script_num_txs_cache_size: usize,
+}
 
 impl MemData {
     /// Create a new [`MemData`] from the given configuration.
-    pub fn new(_: MemDataConf) -> Self {
+    pub fn new(conf: MemDataConf) -> Self {
         MemData {
             txs: TxsMemData::default(),
-            script_history: GroupHistoryMemData::default(),
+            script_history: GroupHistoryMemData::cached(
+                conf.script_num_txs_cache_size,
+            ),
             script_utxos: GroupUtxoMemData::default(),
             spent_by: SpentByMemData::default(),
         }

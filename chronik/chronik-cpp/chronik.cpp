@@ -40,6 +40,9 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
             .wipe_db = fWipe,
             .is_pause_allowed = is_pause_allowed,
             .enable_perf_stats = gArgs.GetBoolArg("-chronikperfstats", false),
+            .script_num_txs_cache_size = (size_t)gArgs.GetIntArg(
+                "-chronikscriptnumtxscachesize",
+                chronik::DEFAULT_SCRIPT_NUM_TXS_CACHE_SIZE),
         },
         config, node);
 }

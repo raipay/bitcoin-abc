@@ -36,7 +36,7 @@ use crate::{
     subs_group::TxMsgType,
 };
 
-const CURRENT_INDEXER_VERSION: SchemaVersion = 7;
+const CURRENT_INDEXER_VERSION: SchemaVersion = 8;
 
 /// Params for setting up a [`ChronikIndexer`] instance.
 #[derive(Clone)]
@@ -49,6 +49,8 @@ pub struct ChronikIndexerParams {
     pub fn_compress_script: FnCompressScript,
     /// Whether to output Chronik performance statistics into a perf/ folder
     pub enable_perf_stats: bool,
+    /// Size of the script cache for tx history, in number of entries.
+    pub script_num_txs_cache_size: usize,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
@@ -169,7 +171,9 @@ impl ChronikIndexer {
         Ok(ChronikIndexer {
             db,
             mempool,
-            mem_data: MemData::new(MemDataConf {}),
+            mem_data: MemData::new(MemDataConf {
+                script_num_txs_cache_size: params.script_num_txs_cache_size,
+            }),
             script_group: script_group.clone(),
             avalanche: Avalanche::default(),
             subs: RwLock::new(Subs::new(script_group)),
@@ -602,6 +606,7 @@ mod tests {
             wipe_db: false,
             fn_compress_script: prefix_mock_compress,
             enable_perf_stats: false,
+            script_num_txs_cache_size: 0,
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
@@ -670,6 +675,7 @@ mod tests {
             wipe_db: false,
             fn_compress_script: prefix_mock_compress,
             enable_perf_stats: false,
+            script_num_txs_cache_size: 0,
         };
 
         // Setting up DB first time sets the schema version

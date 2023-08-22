@@ -75,6 +75,7 @@ fn try_setup_chronik(
         wipe_db: params.wipe_db,
         fn_compress_script: compress_script,
         enable_perf_stats: params.enable_perf_stats,
+        script_num_txs_cache_size: params.script_num_txs_cache_size,
     })?;
     indexer.resync_indexer(bridge_ref)?;
     if chronik_bridge::ffi::shutdown_requested() {

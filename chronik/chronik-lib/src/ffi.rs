@@ -27,6 +27,9 @@ mod ffi_inner {
         /// Whether to output Chronik performance statistics into a perf/
         /// folder
         pub enable_perf_stats: bool,
+        /// Size of the script cache for tx history, in number of entries. Each
+        /// entry is about 30B in size.
+        pub script_num_txs_cache_size: usize,
     }
 
     extern "Rust" {
