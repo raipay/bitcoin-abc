@@ -15,7 +15,7 @@ use bitcoinsuite_core::{
     tx::{Tx, TxId},
 };
 use chronik_bridge::{ffi::init_error, util::expect_unique_ptr};
-use chronik_db::mem::MempoolTx;
+use chronik_db::{io::GroupHistorySettings, mem::MempoolTx};
 use chronik_http::server::{ChronikServer, ChronikServerParams};
 use chronik_indexer::{
     indexer::{ChronikIndexer, ChronikIndexerParams, Node},
@@ -75,6 +75,11 @@ fn try_setup_chronik(
         wipe_db: params.wipe_db,
         fn_compress_script: compress_script,
         enable_perf_stats: params.enable_perf_stats,
+        script_history: GroupHistorySettings {
+            filter_variant: params.script_filter_variant,
+            false_positive_rate: params.script_false_positive_rate,
+            expected_num_items: params.script_expected_num_items,
+        },
     })?;
     indexer.resync_indexer(bridge_ref)?;
     if chronik_bridge::ffi::shutdown_requested() {

@@ -21,7 +21,7 @@ use chronik_db::{
     io::{
         BlockHeight, BlockReader, BlockStatsWriter, BlockTxs, BlockWriter,
         DbBlock, MetadataReader, MetadataWriter, SchemaVersion, SpentByWriter,
-        TxEntry, TxWriter,
+        TxEntry, TxWriter, GroupHistorySettings,
     },
     mem::{MemData, MemDataConf, Mempool, MempoolTx},
 };
@@ -49,6 +49,7 @@ pub struct ChronikIndexerParams {
     pub fn_compress_script: FnCompressScript,
     /// Whether to output Chronik performance statistics into a perf/ folder
     pub enable_perf_stats: bool,
+    pub script_history: GroupHistorySettings,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
@@ -169,7 +170,9 @@ impl ChronikIndexer {
         Ok(ChronikIndexer {
             db,
             mempool,
-            mem_data: MemData::new(MemDataConf {}),
+            mem_data: MemData::new(MemDataConf {
+                script_history: params.script_history,
+            }),
             script_group: script_group.clone(),
             avalanche: Avalanche::default(),
             subs: RwLock::new(Subs::new(script_group)),
@@ -602,6 +605,7 @@ mod tests {
             wipe_db: false,
             fn_compress_script: prefix_mock_compress,
             enable_perf_stats: false,
+            script_history: Default::default(),
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
@@ -670,6 +674,7 @@ mod tests {
             wipe_db: false,
             fn_compress_script: prefix_mock_compress,
             enable_perf_stats: false,
+            script_history: Default::default(),
         };
 
         // Setting up DB first time sets the schema version

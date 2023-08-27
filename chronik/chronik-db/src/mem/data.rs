@@ -4,7 +4,7 @@
 
 use crate::io::{
     GroupHistoryMemData, GroupHistoryStats, GroupUtxoMemData, GroupUtxoStats,
-    SpentByMemData, SpentByStats, TxsMemData, TxsStats,
+    SpentByMemData, SpentByStats, TxsMemData, TxsStats, GroupHistorySettings,
 };
 
 /// In-memory data for Chronik, e.g. caches, perf statistics.
@@ -35,14 +35,16 @@ pub struct StatsData {
 
 /// Config for in-memory data for Chronik.
 #[derive(Clone, Debug)]
-pub struct MemDataConf {}
+pub struct MemDataConf {
+    pub script_history: GroupHistorySettings,
+}
 
 impl MemData {
     /// Create a new [`MemData`] from the given configuration.
-    pub fn new(_: MemDataConf) -> Self {
+    pub fn new(conf: MemDataConf) -> Self {
         MemData {
             txs: TxsMemData::default(),
-            script_history: GroupHistoryMemData::default(),
+            script_history: GroupHistoryMemData::new_bloom(conf.script_history),
             script_utxos: GroupUtxoMemData::default(),
             spent_by: SpentByMemData::default(),
         }

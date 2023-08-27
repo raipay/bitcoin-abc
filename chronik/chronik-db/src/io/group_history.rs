@@ -5,6 +5,7 @@
 use std::{collections::BTreeMap, marker::PhantomData, time::Instant};
 
 use abc_rust_error::Result;
+use bloom::ASMS;
 use rocksdb::WriteBatch;
 use thiserror::Error;
 
@@ -74,11 +75,25 @@ pub struct GroupHistoryReader<'a, G: Group> {
     phantom: PhantomData<G>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct GroupHistorySettings {
+    pub filter_variant: String,
+    pub false_positive_rate: f32,
+    pub expected_num_items: u32,
+}
+
 /// In-memory data for the tx history.
 #[derive(Debug, Default)]
 pub struct GroupHistoryMemData {
     /// Stats about cache hits, num requests etc.
     pub stats: GroupHistoryStats,
+    pub cache: GroupHistoryCache,
+}
+
+#[derive(Default)]
+pub struct GroupHistoryCache {
+    pub bloom: Option<bloom::BloomFilter>,
+    pub bloomfilter: Option<bloomfilter::Bloom<[u8]>>,
 }
 
 /// Stats about cache hits, num requests etc.
@@ -86,12 +101,16 @@ pub struct GroupHistoryMemData {
 pub struct GroupHistoryStats {
     /// Total number of members updated.
     pub n_total: usize,
+    pub n_bloom_hits: usize,
+    pub n_bloom_false_positives: usize,
+    pub n_fetched: usize,
     /// Time [s] for insert/delete.
     pub t_total: f64,
     /// Time [s] for grouping txs.
     pub t_group: f64,
     /// Time [s] for serializing members.
     pub t_ser_members: f64,
+    pub t_bloom: f64,
     /// Time [s] for fetching existing tx data.
     pub t_fetch: f64,
 }
@@ -104,8 +123,13 @@ pub enum GroupHistoryError {
     BadNumTxsSize(Vec<u8>),
 }
 
+enum BloomResult {
+    Hit,
+    NoHit,
+}
+
 struct FetchedNumTxs<'tx, G: Group> {
-    members_num_txs: Vec<NumTxs>,
+    members_num_txs: Vec<(NumTxs, BloomResult)>,
     grouped_txs: BTreeMap<G::Member<'tx>, Vec<TxNum>>,
     ser_members: Vec<G::MemberSer<'tx>>,
 }
@@ -198,11 +222,12 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
     ) -> Result<()> {
         let t_start = Instant::now();
         let fetched = self.fetch_members_num_txs(txs, mem_data)?;
-        for ((mut new_tx_nums, member_ser), mut num_txs) in fetched
-            .grouped_txs
-            .into_values()
-            .zip(fetched.ser_members)
-            .zip(fetched.members_num_txs)
+        for ((mut new_tx_nums, member_ser), (mut num_txs, bloom_result)) in
+            fetched
+                .grouped_txs
+                .into_values()
+                .zip(fetched.ser_members)
+                .zip(fetched.members_num_txs)
         {
             let mut page_num = num_txs / self.conf.page_size;
             let mut last_page_num_txs = num_txs % self.conf.page_size;
@@ -224,6 +249,9 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                         member_ser.as_ref(),
                         num_txs.to_be_bytes(),
                     );
+                    if matches!(bloom_result, BloomResult::NoHit) {
+                        mem_data.cache.set_has_member(member_ser.as_ref());
+                    }
                     break;
                 }
                 last_page_num_txs = 0;
@@ -242,12 +270,15 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         mem_data: &mut GroupHistoryMemData,
     ) -> Result<()> {
         let t_start = Instant::now();
+        // On reorg, disable bloom filter
+        mem_data.cache = Default::default();
         let fetched = self.fetch_members_num_txs(txs, mem_data)?;
-        for ((mut removed_tx_nums, member_ser), mut num_txs) in fetched
-            .grouped_txs
-            .into_values()
-            .zip(fetched.ser_members)
-            .zip(fetched.members_num_txs)
+        for ((mut removed_tx_nums, member_ser), (mut num_txs, _)) in
+            fetched
+                .grouped_txs
+                .into_values()
+                .zip(fetched.ser_members)
+                .zip(fetched.members_num_txs)
         {
             let mut num_remaining_removes = removed_tx_nums.len();
             let mut page_num = num_txs / self.conf.page_size;
@@ -303,7 +334,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         txs: &'tx [IndexTx<'tx>],
         mem_data: &mut GroupHistoryMemData,
     ) -> Result<FetchedNumTxs<'tx, G>> {
-        let GroupHistoryMemData { stats } = mem_data;
+        let GroupHistoryMemData { stats, cache } = mem_data;
         let t_group = Instant::now();
         let grouped_txs = self.group_txs(txs);
         stats.t_group += t_group.elapsed().as_secs_f64();
@@ -317,19 +348,45 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
 
         stats.n_total += grouped_txs.len();
 
+        let t_bloom = Instant::now();
+        let mut members_num_txs = Vec::with_capacity(ser_members.len());
+        for member_ser in &ser_members {
+            if cache.may_have_member(member_ser.as_ref()) {
+                stats.n_bloom_hits += 1;
+                members_num_txs.push((0, BloomResult::Hit));
+            } else {
+                members_num_txs.push((0, BloomResult::NoHit));
+            }
+        }
+        stats.t_bloom += t_bloom.elapsed().as_secs_f64();
+
         let t_fetch = Instant::now();
-        let num_txs_keys =
-            ser_members.iter().map(|member_ser| member_ser.as_ref());
+        let num_txs_keys = ser_members.iter().zip(&members_num_txs).filter_map(
+            |(member_ser, (_, bloom_result))| match bloom_result {
+                BloomResult::Hit => Some(member_ser.as_ref()),
+                BloomResult::NoHit => None,
+            },
+        );
         let fetched_num_txs =
             self.col
                 .db
                 .multi_get(self.col.cf_num_txs, num_txs_keys, true)?;
-        let mut members_num_txs = Vec::with_capacity(fetched_num_txs.len());
-        for db_num_txs in fetched_num_txs {
-            members_num_txs.push(match db_num_txs {
-                Some(db_num_txs) => bytes_to_num_txs(&db_num_txs)?,
-                None => 0,
-            });
+        stats.n_fetched += fetched_num_txs.len();
+        for ((member_num_txs, _), db_num_txs) in members_num_txs
+            .iter_mut()
+            .filter(|(_, bloom_result)| {
+                matches!(bloom_result, BloomResult::Hit)
+            })
+            .zip(fetched_num_txs)
+        {
+            match db_num_txs {
+                Some(db_num_txs) => {
+                    *member_num_txs = bytes_to_num_txs(&db_num_txs)?;
+                },
+                None => {
+                    stats.n_bloom_false_positives += 1;
+                },
+            }
         }
         stats.t_fetch += t_fetch.elapsed().as_secs_f64();
 
@@ -383,9 +440,68 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
     }
 }
 
+impl GroupHistoryMemData {
+    pub fn new_bloom(settings: GroupHistorySettings) -> Self {
+        let cache = match settings.filter_variant.as_str() {
+            "none" => GroupHistoryCache {
+                bloom: None,
+                bloomfilter: None,
+            },
+            "bloom" => GroupHistoryCache {
+                bloom: Some(bloom::BloomFilter::with_rate(
+                    settings.false_positive_rate,
+                    settings.expected_num_items,
+                )),
+                bloomfilter: None,
+            },
+            "bloomfilter" => GroupHistoryCache {
+                bloom: None,
+                bloomfilter: Some(bloomfilter::Bloom::new_for_fp_rate(
+                    settings.expected_num_items as usize,
+                    settings.false_positive_rate as f64,
+                )),
+            },
+            _ => panic!(
+                "Unknown bloom filter variant: {}",
+                settings.filter_variant,
+            ),
+        };
+        GroupHistoryMemData {
+            cache,
+            ..Default::default()
+        }
+    }
+}
+
+impl GroupHistoryCache {
+    fn may_have_member(&self, member_ser: &[u8]) -> bool {
+        if let Some(bloom) = &self.bloom {
+            bloom.contains(&member_ser)
+        } else if let Some(bloom) = &self.bloomfilter {
+            bloom.check(member_ser)
+        } else {
+            true
+        }
+    }
+
+    fn set_has_member(&mut self, member_ser: &[u8]) {
+        if let Some(bloom) = &mut self.bloom {
+            bloom.insert(&member_ser);
+        } else if let Some(bloom) = &mut self.bloomfilter {
+            bloom.set(member_ser);
+        }
+    }
+}
+
 impl std::fmt::Debug for GroupHistoryColumn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "GroupHistoryColumn {{ .. }}")
+    }
+}
+
+impl std::fmt::Debug for GroupHistoryCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GroupHistoryCache {{ .. }}")
     }
 }
 

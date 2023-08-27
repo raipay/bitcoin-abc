@@ -40,6 +40,14 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
             .wipe_db = fWipe,
             .is_pause_allowed = is_pause_allowed,
             .enable_perf_stats = gArgs.GetBoolArg("-chronikperfstats", false),
+            .script_filter_variant =
+                gArgs.GetArg("-chronikscripthistorybloomfilter", "none"),
+            .script_false_positive_rate =
+                (float)gArgs.GetIntArg("-chronikscripthistoryfalsepositiverate",
+                                       50) /
+                100.0f,
+            .script_expected_num_items = (uint32_t)gArgs.GetIntArg(
+                "-chronikscripthistoryexpectednumitems", 0),
         },
         config, node);
 }

@@ -27,6 +27,9 @@ mod ffi_inner {
         /// Whether to output Chronik performance statistics into a perf/
         /// folder
         pub enable_perf_stats: bool,
+        pub script_filter_variant: String,
+        pub script_false_positive_rate: f32,
+        pub script_expected_num_items: u32,
     }
 
     extern "Rust" {

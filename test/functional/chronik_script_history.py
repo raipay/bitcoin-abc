@@ -28,7 +28,7 @@ class ChronikScriptHistoryTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 1
-        self.extra_args = [["-chronik"]]
+        self.extra_args = [["-chronik", "-chronikscripthistorybloomfilter=bloomfilter", "-chronikscripthistoryexpectednumitems=1000"]]
         self.rpc_timeout = 240
 
     def skip_test_if_missing_module(self):

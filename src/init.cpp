@@ -643,6 +643,15 @@ void SetupServerArgs(NodeContext &node) {
                    "Output some performance statistics (e.g. num cache hits, "
                    "seconds spent) into a <datadir>/perf folder. (default: 0)",
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikscripthistorybloomfilter",
+                   "Which bloom filter to use for script history (bloom or bloomfilter, default: none)",
+                   ArgsManager::ALLOW_STRING, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikscripthistoryfalsepositiverate",
+                   "False positive rate (in percent) for script history bloom filter (default: 50)",
+                   ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikscripthistoryexpectednumitems",
+                   "Expected num items for script history bloom filter (default: 0)",
+                   ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
 #endif
     argsman.AddArg(
         "-blockfilterindex=<type>",
