@@ -79,6 +79,7 @@ fn try_setup_chronik(
             filter_variant: params.script_filter_variant,
             false_positive_rate: params.script_false_positive_rate,
             expected_num_items: params.script_expected_num_items,
+            num_txs_cache_size: params.script_num_txs_cache_size,
         },
     })?;
     indexer.resync_indexer(bridge_ref)?;

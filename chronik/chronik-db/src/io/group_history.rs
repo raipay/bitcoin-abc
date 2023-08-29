@@ -6,6 +6,7 @@ use std::{collections::BTreeMap, marker::PhantomData, time::Instant};
 
 use abc_rust_error::Result;
 use bloom::ASMS;
+use lru::LruCache;
 use rocksdb::WriteBatch;
 use thiserror::Error;
 
@@ -80,6 +81,7 @@ pub struct GroupHistorySettings {
     pub filter_variant: String,
     pub false_positive_rate: f32,
     pub expected_num_items: u32,
+    pub num_txs_cache_size: usize,
 }
 
 /// In-memory data for the tx history.
@@ -92,8 +94,9 @@ pub struct GroupHistoryMemData {
 
 #[derive(Default)]
 pub struct GroupHistoryCache {
-    pub bloom: Option<bloom::BloomFilter>,
-    pub bloomfilter: Option<bloomfilter::Bloom<[u8]>>,
+    bloom: Option<bloom::BloomFilter>,
+    bloomfilter: Option<bloomfilter::Bloom<[u8]>>,
+    num_txs_cache: Option<LruCache<Vec<u8>, NumTxs>>,
 }
 
 /// Stats about cache hits, num requests etc.
@@ -103,6 +106,8 @@ pub struct GroupHistoryStats {
     pub n_total: usize,
     pub n_bloom_hits: usize,
     pub n_bloom_false_positives: usize,
+    /// Number of cache hits for the member's number of txs.
+    pub n_num_txs_cache_hit: usize,
     pub n_fetched: usize,
     /// Time [s] for insert/delete.
     pub t_total: f64,
@@ -125,6 +130,7 @@ pub enum GroupHistoryError {
 
 enum BloomResult {
     Hit,
+    HitCached,
     NoHit,
 }
 
@@ -252,6 +258,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                     if matches!(bloom_result, BloomResult::NoHit) {
                         mem_data.cache.set_has_member(member_ser.as_ref());
                     }
+                    mem_data.cache.put_num_txs_cache(&member_ser, num_txs);
                     break;
                 }
                 last_page_num_txs = 0;
@@ -273,12 +280,11 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         // On reorg, disable bloom filter
         mem_data.cache = Default::default();
         let fetched = self.fetch_members_num_txs(txs, mem_data)?;
-        for ((mut removed_tx_nums, member_ser), (mut num_txs, _)) in
-            fetched
-                .grouped_txs
-                .into_values()
-                .zip(fetched.ser_members)
-                .zip(fetched.members_num_txs)
+        for ((mut removed_tx_nums, member_ser), (mut num_txs, _)) in fetched
+            .grouped_txs
+            .into_values()
+            .zip(fetched.ser_members)
+            .zip(fetched.members_num_txs)
         {
             let mut num_remaining_removes = removed_tx_nums.len();
             let mut page_num = num_txs / self.conf.page_size;
@@ -317,6 +323,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                             member_ser.as_ref(),
                         );
                     }
+                    mem_data.cache.put_num_txs_cache(member_ser, num_txs);
                     break;
                 }
                 if page_num > 0 {
@@ -353,7 +360,11 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         for member_ser in &ser_members {
             if cache.may_have_member(member_ser.as_ref()) {
                 stats.n_bloom_hits += 1;
-                members_num_txs.push((0, BloomResult::Hit));
+                if let Some(entry) = cache.get_num_txs_cache(member_ser) {
+                    members_num_txs.push((entry, BloomResult::HitCached));
+                } else {
+                    members_num_txs.push((0, BloomResult::Hit));
+                }
             } else {
                 members_num_txs.push((0, BloomResult::NoHit));
             }
@@ -364,6 +375,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         let num_txs_keys = ser_members.iter().zip(&members_num_txs).filter_map(
             |(member_ser, (_, bloom_result))| match bloom_result {
                 BloomResult::Hit => Some(member_ser.as_ref()),
+                BloomResult::HitCached => None,
                 BloomResult::NoHit => None,
             },
         );
@@ -382,10 +394,10 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             match db_num_txs {
                 Some(db_num_txs) => {
                     *member_num_txs = bytes_to_num_txs(&db_num_txs)?;
-                },
+                }
                 None => {
                     stats.n_bloom_false_positives += 1;
-                },
+                }
             }
         }
         stats.t_fetch += t_fetch.elapsed().as_secs_f64();
@@ -442,10 +454,16 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
 
 impl GroupHistoryMemData {
     pub fn new_bloom(settings: GroupHistorySettings) -> Self {
+        let num_txs_cache = settings
+            .num_txs_cache_size
+            .try_into()
+            .ok()
+            .map(LruCache::new);
         let cache = match settings.filter_variant.as_str() {
             "none" => GroupHistoryCache {
                 bloom: None,
                 bloomfilter: None,
+                num_txs_cache,
             },
             "bloom" => GroupHistoryCache {
                 bloom: Some(bloom::BloomFilter::with_rate(
@@ -453,6 +471,7 @@ impl GroupHistoryMemData {
                     settings.expected_num_items,
                 )),
                 bloomfilter: None,
+                num_txs_cache,
             },
             "bloomfilter" => GroupHistoryCache {
                 bloom: None,
@@ -460,6 +479,7 @@ impl GroupHistoryMemData {
                     settings.expected_num_items as usize,
                     settings.false_positive_rate as f64,
                 )),
+                num_txs_cache,
             },
             _ => panic!(
                 "Unknown bloom filter variant: {}",
@@ -489,6 +509,26 @@ impl GroupHistoryCache {
             bloom.insert(&member_ser);
         } else if let Some(bloom) = &mut self.bloomfilter {
             bloom.set(member_ser);
+        }
+    }
+
+    fn get_num_txs_cache(
+        &mut self,
+        member_ser: impl AsRef<[u8]>,
+    ) -> Option<NumTxs> {
+        self.num_txs_cache
+            .as_mut()?
+            .get(member_ser.as_ref())
+            .copied()
+    }
+
+    fn put_num_txs_cache(
+        &mut self,
+        member_ser: impl AsRef<[u8]>,
+        num_txs: NumTxs,
+    ) {
+        if let Some(cache) = &mut self.num_txs_cache {
+            cache.put(member_ser.as_ref().to_vec(), num_txs);
         }
     }
 }

@@ -48,6 +48,9 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
                 100.0f,
             .script_expected_num_items = (uint32_t)gArgs.GetIntArg(
                 "-chronikscripthistoryexpectednumitems", 0),
+            .script_num_txs_cache_size = (size_t)gArgs.GetIntArg(
+                "-chronikscriptnumtxscachesize",
+                chronik::DEFAULT_SCRIPT_NUM_TXS_CACHE_SIZE),
         },
         config, node);
 }
