@@ -44,6 +44,8 @@ mod ffi_inner {
         pub false_positive_rate: f64,
         /// Expected number of items in the group
         pub expected_num_items: usize,
+        /// Number of items in the LRU cache for num txs per member
+        pub cache_num_txs_size: usize,
     }
 
     extern "Rust" {

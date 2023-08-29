@@ -30,6 +30,9 @@ hex = "0.4"
 # Extends iterators with handy helpers
 itertools = "0.10"
 
+# Least-recently-used cache
+lru = "0.11"
+
 # Compact and fast serialization
 postcard = { version = "1.0", features = ["alloc"] }
 

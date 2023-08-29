@@ -22,6 +22,10 @@ static const double DEFAULT_SCRIPT_HISTORY_BLOOM_FALSE_POSITIVE_RATE = 0.90;
 static const size_t DEFAULT_SCRIPT_HISTORY_BLOOM_EXPECTED_NUM_ITEMS =
     100'000'000;
 
+// Size of the script cache for tx history, in number of entries. Each entry is
+// about 30B in size, so the default cache fits ~3MB.
+static const size_t DEFAULT_SCRIPT_NUM_TXS_CACHE_SIZE = 100'000;
+
 // Registers Chronik indexer as ValidationInterface, listens to HTTP queries
 bool Start(const Config &config, const node::NodeContext &node, bool fWipe);
 

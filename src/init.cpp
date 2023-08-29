@@ -660,6 +660,13 @@ void SetupServerArgs(NodeContext &node) {
                              "script history (default: %u)",
                              chronik::DEFAULT_SCRIPT_HISTORY_BLOOM_IS_ENABLED),
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg(
+        "-chronikscriptnumtxscachesize",
+        strprintf("Size of the script num txs cache for tx history, in number "
+                  "of entries. Each entry is about 30B in size. Set to 0 to "
+                  "disable caching (default: %d entries)",
+                  chronik::DEFAULT_SCRIPT_NUM_TXS_CACHE_SIZE),
+        ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
 #endif
     argsman.AddArg(
         "-blockfilterindex=<type>",

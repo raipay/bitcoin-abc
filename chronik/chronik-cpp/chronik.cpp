@@ -67,6 +67,9 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
                     .expected_num_items = (size_t)gArgs.GetIntArg(
                         "-chronikscripthistoryexpectednumitems",
                         DEFAULT_SCRIPT_HISTORY_BLOOM_EXPECTED_NUM_ITEMS),
+                    .cache_num_txs_size = (size_t)gArgs.GetIntArg(
+                        "-chronikscriptnumtxscachesize",
+                        chronik::DEFAULT_SCRIPT_NUM_TXS_CACHE_SIZE),
                 },
         },
         config, node);

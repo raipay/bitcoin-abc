@@ -2,10 +2,14 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-use std::{collections::BTreeMap, marker::PhantomData, time::Instant};
+use std::{
+    collections::BTreeMap, marker::PhantomData, num::NonZeroUsize,
+    time::Instant,
+};
 
 use abc_rust_error::Result;
 use chronik_util::{log, log_chronik};
+use lru::LruCache;
 use rocksdb::WriteBatch;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -107,6 +111,8 @@ pub struct GroupHistorySettings {
     pub false_positive_rate: f64,
     /// Expected number of total distinct members of the group
     pub expected_num_items: usize,
+    /// Number of items in the LRU cache for num txs per member
+    pub cache_num_txs_size: usize,
 }
 
 /// In-memory data for the tx history.
@@ -122,6 +128,7 @@ pub struct GroupHistoryMemData {
 #[derive(Default)]
 pub struct GroupHistoryCache {
     bloom: Option<GroupHistoryBloomFilter>,
+    cache_num_txs: Option<LruCache<Vec<u8>, NumTxs>>,
 }
 
 struct GroupHistoryBloomFilter {
@@ -139,7 +146,9 @@ pub struct GroupHistoryStats {
     pub n_bloom_hits: usize,
     /// Num of hits that turned out to be false positives
     pub n_bloom_false_positives: usize,
-    /// Size of the bloom filter data in bytes
+    /// Number of cache hits for the member's number of txs.
+    pub n_num_txs_cache_hit: usize,
+    /// Size of the bloom filter in bytes.
     pub n_bloom_num_bytes: usize,
     /// Number of entries fetched from the DB
     pub n_fetched: usize,
@@ -204,6 +213,7 @@ pub enum GroupHistoryError {
 
 enum BloomResult {
     Hit,
+    HitCached,
     NoHit,
 }
 
@@ -451,6 +461,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                     if matches!(bloom_result, BloomResult::NoHit) {
                         mem_data.cache.add_to_bloom_filter(member_ser.as_ref());
                     }
+                    mem_data.cache.put_num_txs_cache(&member_ser, num_txs);
                     break;
                 }
                 last_page_num_txs = 0;
@@ -524,6 +535,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                             member_ser.as_ref(),
                         );
                     }
+                    mem_data.cache.put_num_txs_cache(member_ser, num_txs);
                     break;
                 }
                 if page_num > 0 {
@@ -561,7 +573,12 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         for member_ser in &ser_members {
             if cache.check_bloom_filter(member_ser.as_ref()) {
                 stats.n_bloom_hits += 1;
-                members_num_txs.push((0, BloomResult::Hit));
+                if let Some(entry) = cache.get_num_txs_cache(member_ser) {
+                    stats.n_num_txs_cache_hit += 1;
+                    members_num_txs.push((entry, BloomResult::HitCached));
+                } else {
+                    members_num_txs.push((0, BloomResult::Hit));
+                }
             } else {
                 members_num_txs.push((0, BloomResult::NoHit));
             }
@@ -572,6 +589,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         let num_txs_keys = ser_members.iter().zip(&members_num_txs).filter_map(
             |(member_ser, (_, bloom_result))| match bloom_result {
                 BloomResult::Hit => Some(member_ser.as_ref()),
+                BloomResult::HitCached => None,
                 BloomResult::NoHit => None,
             },
         );
@@ -662,8 +680,13 @@ impl GroupHistoryMemData {
     /// [`GroupHistorySettings`].
     pub fn new(settings: GroupHistorySettings) -> Self {
         let mut stats = GroupHistoryStats::default();
+        let cache_num_txs =
+            NonZeroUsize::new(settings.cache_num_txs_size).map(LruCache::new);
         let cache = match settings.is_bloom_filter_enabled {
-            false => GroupHistoryCache { bloom: None },
+            false => GroupHistoryCache {
+                bloom: None,
+                cache_num_txs,
+            },
             true => GroupHistoryCache {
                 bloom: Some({
                     let bloom_filter = bloomfilter::Bloom::new_for_fp_rate(
@@ -678,6 +701,7 @@ impl GroupHistoryMemData {
                         expected_num_items: settings.expected_num_items,
                     }
                 }),
+                cache_num_txs,
             },
         };
         GroupHistoryMemData { cache, stats }
@@ -696,6 +720,28 @@ impl GroupHistoryCache {
     fn add_to_bloom_filter(&mut self, member_ser: &[u8]) {
         if let Some(bloom) = &mut self.bloom {
             bloom.bloom_filter.set(member_ser);
+        }
+    }
+
+    fn get_num_txs_cache(
+        &self,
+        member_ser: impl AsRef<[u8]>,
+    ) -> Option<NumTxs> {
+        // we can use peek here because put_num_txs_cache will be called later
+        // anyway, updating the LRU position
+        self.cache_num_txs
+            .as_ref()?
+            .peek(member_ser.as_ref())
+            .copied()
+    }
+
+    fn put_num_txs_cache(
+        &mut self,
+        member_ser: impl AsRef<[u8]>,
+        num_txs: NumTxs,
+    ) {
+        if let Some(cache) = &mut self.cache_num_txs {
+            cache.put(member_ser.as_ref().to_vec(), num_txs);
         }
     }
 }

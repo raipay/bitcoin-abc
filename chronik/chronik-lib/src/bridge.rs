@@ -85,6 +85,7 @@ fn try_setup_chronik(
             is_bloom_filter_enabled: params.script_history.is_bloom_enabled,
             false_positive_rate: params.script_history.false_positive_rate,
             expected_num_items: params.script_history.expected_num_items,
+            cache_num_txs_size: params.script_history.cache_num_txs_size,
         },
     })?;
     indexer.resync_indexer(bridge_ref)?;
