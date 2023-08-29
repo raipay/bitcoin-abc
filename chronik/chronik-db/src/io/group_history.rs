@@ -361,6 +361,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             if cache.may_have_member(member_ser.as_ref()) {
                 stats.n_bloom_hits += 1;
                 if let Some(entry) = cache.get_num_txs_cache(member_ser) {
+                    stats.n_num_txs_cache_hit += 1;
                     members_num_txs.push((entry, BloomResult::HitCached));
                 } else {
                     members_num_txs.push((0, BloomResult::Hit));
