@@ -45,18 +45,19 @@ SET_FALSE_POSITIVE_UNKNOWNS = {
 SET_FALSE_POSITIVE_UNDOCUMENTED = {
     "-help",
     "-h",
+    "-automaticunparking",
     "-avalanchepreconsensus",
+    "-chronikallowpause",
     "-dbcrashratio",
     "-enableminerfund",
     "-forcecompactdb",
     "-maxaddrtosend",
     "-parkdeepreorg",
-    "-automaticunparking",
     # Removed arguments that now just print a helpful error message
     "-zapwallettxes",
     "-replayprotectionactivationtime",
-    # Remove after May 2023 upgrade
-    "-wellingtonactivationtime",
+    # Remove after Nov. 2023 upgrade
+    "-cowperthwaiteactivationtime",
 }
 
 

@@ -22,7 +22,8 @@ BOOST_FIXTURE_TEST_SUITE(validation_chainstate_tests, TestingSetup)
 //! Test resizing coins-related Chainstate caches during runtime.
 //!
 BOOST_AUTO_TEST_CASE(validation_chainstate_resize_caches) {
-    ChainstateManager manager;
+    const Config &config = GetConfig();
+    ChainstateManager manager(config);
     WITH_LOCK(::cs_main, manager.m_blockman.m_block_tree_db =
                              std::make_unique<CBlockTreeDB>(1 << 20, true));
     CTxMemPool mempool;
@@ -42,7 +43,7 @@ BOOST_AUTO_TEST_CASE(validation_chainstate_resize_caches) {
     };
 
     Chainstate &c1 =
-        *WITH_LOCK(cs_main, return &manager.InitializeChainstate(&mempool));
+        WITH_LOCK(cs_main, return manager.InitializeChainstate(&mempool));
     c1.InitCoinsDB(
         /* cache_size_bytes */ 1 << 23, /* in_memory */ true,
         /* should_wipe */ false);
@@ -92,7 +93,8 @@ BOOST_FIXTURE_TEST_CASE(chainstate_update_tip, TestChain100Setup) {
     // After adding some blocks to the tip, best block should have changed.
     BOOST_CHECK(::g_best_block != curr_tip);
 
-    BOOST_REQUIRE(CreateAndActivateUTXOSnapshot(m_node, m_path_root));
+    BOOST_REQUIRE(CreateAndActivateUTXOSnapshot(this, NoMalleation,
+                                                /*reset_chainstate=*/true));
 
     // Ensure our active chain is the snapshot chainstate.
     BOOST_CHECK(WITH_LOCK(::cs_main, return chainman.IsSnapshotActive()));

@@ -13,10 +13,11 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
 from test_framework.util import assert_equal, assert_greater_than_or_equal
 
-WELLINGTON_ACTIVATION_TIME = 2100000600
-MINER_FUND_RATIO = 8
+LEGACY_MINER_FUND_RATIO = 8
+MINER_FUND_RATIO = 32
 MINER_FUND_ADDR = "ecregtest:prfhcnyqnl5cgrnmlfmms675w93ld7mvvq9jcw0zsn"
-MINER_FUND_ADDR_AXION = "ecregtest:pqnqv9lt7e5vjyp0w88zf2af0l92l8rxdgz0wv9ltl"
+
+THE_FUTURE = 2100000000
 
 
 class MinerFundTest(BitcoinTestFramework):
@@ -26,14 +27,14 @@ class MinerFundTest(BitcoinTestFramework):
         self.extra_args = [
             [
                 "-enableminerfund",
-                f"-wellingtonactivationtime={WELLINGTON_ACTIVATION_TIME}",
+                f"-cowperthwaiteactivationtime={THE_FUTURE}",
             ],
             [
-                f"-wellingtonactivationtime={WELLINGTON_ACTIVATION_TIME}",
+                f"-cowperthwaiteactivationtime={THE_FUTURE}",
             ],
         ]
 
-    def run_test(self):
+    def run_for_ratio(self, ratio):
         node = self.nodes[0]
 
         self.log.info("Create some history")
@@ -46,11 +47,11 @@ class MinerFundTest(BitcoinTestFramework):
         assert_greater_than_or_equal(len(coinbase["vout"]), 2)
         block_reward = sum([vout["value"] for vout in coinbase["vout"]])
 
-        def check_miner_fund_output(expected_address):
+        def check_miner_fund_output():
             coinbase = get_best_coinbase(node)
             assert_equal(len(coinbase["vout"]), 2)
             assert_equal(
-                coinbase["vout"][1]["scriptPubKey"]["addresses"][0], expected_address
+                coinbase["vout"][1]["scriptPubKey"]["addresses"][0], MINER_FUND_ADDR
             )
 
             total = Decimal()
@@ -59,31 +60,17 @@ class MinerFundTest(BitcoinTestFramework):
 
             assert_equal(total, block_reward)
             assert_greater_than_or_equal(
-                coinbase["vout"][1]["value"], (MINER_FUND_RATIO * total) / 100
+                coinbase["vout"][1]["value"], (ratio * total) / 100
             )
 
         # The coinbase has an output to the miner fund address.
         # Now we send part of the coinbase to the fund.
-        check_miner_fund_output(MINER_FUND_ADDR)
+        check_miner_fund_output()
 
-        def check_bad_miner_fund(prev_hash, coinbase=None):
-            if coinbase is None:
-                coinbase = create_coinbase(node.getblockcount() + 1)
+        def create_cb_pay_to_address():
+            _, _, script_hash = decode(MINER_FUND_ADDR)
 
-            block_time = node.getblock(prev_hash)["time"] + 1
-            block = create_block(int(prev_hash, 16), coinbase, block_time, version=4)
-            block.solve()
-
-            assert_equal(node.submitblock(ToHex(block)), "bad-cb-minerfund")
-
-        # A block with no miner fund coinbase should be rejected.
-        tip = node.getbestblockhash()
-        check_bad_miner_fund(tip)
-
-        def create_cb_pay_to_address(address):
-            _, _, script_hash = decode(address)
-
-            miner_fund_amount = int(block_reward * XEC * MINER_FUND_RATIO / 100)
+            miner_fund_amount = int(block_reward * XEC * ratio / 100)
 
             # Build a coinbase with no miner fund
             cb = create_coinbase(node.getblockcount() + 1)
@@ -104,15 +91,12 @@ class MinerFundTest(BitcoinTestFramework):
 
             return cb
 
-        # Build a custom coinbase that spend to the legacy miner fund address
-        # and check it is rejected.
-        check_bad_miner_fund(tip, create_cb_pay_to_address(MINER_FUND_ADDR_AXION))
-
+        tip = node.getbestblockhash()
         # Build a custom coinbase that spend to the new miner fund address
         # and check it is accepted.
         good_block = create_block(
             int(tip, 16),
-            create_cb_pay_to_address(MINER_FUND_ADDR),
+            create_cb_pay_to_address(),
             node.getblock(tip)["time"] + 1,
             version=4,
         )
@@ -121,20 +105,12 @@ class MinerFundTest(BitcoinTestFramework):
         node.submitblock(ToHex(good_block))
         assert_equal(node.getbestblockhash(), good_block.hash)
 
-        # Move MTP forward to wellington activation. Next block will enforce
-        # new rules.
+        # node0 mines a block with a coinbase output to the miner fund.
         address = node.get_deterministic_priv_key().address
-        for n in self.nodes:
-            n.setmocktime(WELLINGTON_ACTIVATION_TIME)
-        self.generatetoaddress(node, nblocks=6, address=address)
-        assert_equal(node.getblockchaininfo()["mediantime"], WELLINGTON_ACTIVATION_TIME)
-
-        # First block that does not have miner fund as a consensus requirement.
-        # node0 still mines a block with a coinbase output to the miner fund.
         first_block_has_miner_fund = self.generatetoaddress(
             node, nblocks=1, address=address
         )[0]
-        check_miner_fund_output(MINER_FUND_ADDR)
+        check_miner_fund_output()
 
         # Invalidate it
         for n in self.nodes:
@@ -171,6 +147,17 @@ class MinerFundTest(BitcoinTestFramework):
         for n in self.nodes:
             n.reconsiderblock(first_block_no_miner_fund)
             assert_equal(n.getbestblockhash(), first_block_no_miner_fund)
+
+    def run_test(self):
+        self.run_for_ratio(LEGACY_MINER_FUND_RATIO)
+
+        self.stop_nodes()
+        self.start_nodes()
+        self.nodes[0].setmocktime(THE_FUTURE)
+        self.nodes[1].setmocktime(THE_FUTURE)
+        self.connect_nodes(0, 1)
+
+        self.run_for_ratio(MINER_FUND_RATIO)
 
 
 if __name__ == "__main__":

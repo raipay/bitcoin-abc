@@ -21,7 +21,7 @@ CheckWhitelist(const Consensus::Params &consensusParams,
                const CBlockIndex *pindexPrev,
                const std::unordered_set<CTxDestination, TxDestinationHasher>
                    &expectedWhitelist) {
-    auto whitelist = GetMinerFundWhitelist(consensusParams, pindexPrev);
+    auto whitelist = GetMinerFundWhitelist(consensusParams);
     BOOST_CHECK_EQUAL(whitelist.size(), expectedWhitelist.size());
     for (const auto &expectedDest : expectedWhitelist) {
         BOOST_CHECK_EQUAL(whitelist.count(expectedDest), 1);
@@ -32,46 +32,62 @@ BOOST_AUTO_TEST_CASE(minerfund_whitelist) {
     const CChainParams &chainparams = Params();
     const Consensus::Params &consensusParams = chainparams.GetConsensus();
 
+    std::array<CBlockIndex, 3> blocks;
+
+    blocks[0].nHeight = 1;
+    blocks[1].nHeight = consensusParams.wellingtonHeight;
+    blocks[2].nHeight = consensusParams.wellingtonHeight + 1;
+
+    for (size_t i = 1; i < blocks.size(); ++i) {
+        blocks[i].pprev = &blocks[i - 1];
+    }
+
+    const std::unordered_set<CTxDestination, TxDestinationHasher>
+        expectedMinerFund = {DecodeDestination(
+            "ecash:prfhcnyqnl5cgrnmlfmms675w93ld7mvvqd0y8lz07", chainparams)};
+    CheckWhitelist(consensusParams, &blocks[0], expectedMinerFund);
+
+    // Test address does not change around Wellington activation
+    BOOST_CHECK(!IsWellingtonEnabled(consensusParams, blocks[1].pprev));
+    CheckWhitelist(consensusParams, &blocks[1], expectedMinerFund);
+
+    BOOST_CHECK(IsWellingtonEnabled(consensusParams, blocks[2].pprev));
+    CheckWhitelist(consensusParams, &blocks[2], expectedMinerFund);
+}
+
+BOOST_AUTO_TEST_CASE(minerfund_amount) {
+    const CChainParams &chainparams = Params();
+    const Consensus::Params &consensusParams = chainparams.GetConsensus();
+
+    const auto activation =
+        gArgs.GetIntArg("-cowperthwaiteactivationtime",
+                        consensusParams.cowperthwaiteActivationTime);
+
     std::array<CBlockIndex, 12> blocks;
     for (size_t i = 1; i < blocks.size(); ++i) {
         blocks[i].pprev = &blocks[i - 1];
     }
     CBlockIndex &block = blocks.back();
 
-    const auto activation = gArgs.GetIntArg(
-        "-wellingtonactivationtime", consensusParams.wellingtonActivationTime);
-    SetMTP(blocks, activation - 100000);
+    auto checkMinerFundRatio = [&](int64_t expectedPercent) {
+        BOOST_CHECK_EQUAL(
+            GetMinerFundAmount(consensusParams, 100 * COIN, &block),
+            expectedPercent * COIN);
+    };
 
-    // Consensus whitelist has not activated yet
-    block.nHeight = consensusParams.axionHeight - 1;
-    CheckWhitelist(consensusParams, &block, {});
-
-    // Axion whitelist is active
-    const std::unordered_set<CTxDestination, TxDestinationHasher>
-        expectedAxion = {DecodeDestination(
-            "ecash:pqnqv9lt7e5vjyp0w88zf2af0l92l8rxdg2jj94l5j", chainparams)};
-    block.nHeight = consensusParams.axionHeight;
-    CheckWhitelist(consensusParams, &block, expectedAxion);
-
-    // Does not change up to Gluon activation
-    block.nHeight = consensusParams.gluonHeight - 1;
-    CheckWhitelist(consensusParams, &block, expectedAxion);
-
-    // Miner fund address changed with Gluon
-    const std::unordered_set<CTxDestination, TxDestinationHasher>
-        expectedMinerFund = {DecodeDestination(
-            "ecash:prfhcnyqnl5cgrnmlfmms675w93ld7mvvqd0y8lz07", chainparams)};
-    block.nHeight = consensusParams.gluonHeight;
-    CheckWhitelist(consensusParams, &block, expectedMinerFund);
-
-    // Test address does not change around Wellington activation
+    // Before Cowperthwaite activation, the miner fund ratio is 8%
+    SetMTP(blocks, activation - 1000);
+    checkMinerFundRatio(8);
     SetMTP(blocks, activation - 1);
-    BOOST_CHECK(!IsWellingtonEnabled(consensusParams, &blocks.back()));
-    CheckWhitelist(consensusParams, &block, expectedMinerFund);
+    checkMinerFundRatio(8);
 
+    // After Cowperthwaite activation, the miner fund ratio is 32%
     SetMTP(blocks, activation);
-    BOOST_CHECK(IsWellingtonEnabled(consensusParams, &blocks.back()));
-    CheckWhitelist(consensusParams, &block, expectedMinerFund);
+    checkMinerFundRatio(32);
+    SetMTP(blocks, activation + 1);
+    checkMinerFundRatio(32);
+    SetMTP(blocks, activation + 1000);
+    checkMinerFundRatio(32);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

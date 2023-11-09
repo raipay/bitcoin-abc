@@ -8,8 +8,12 @@
 #include <avalanche/proofcomparator.h>
 #include <avalanche/statistics.h>
 #include <avalanche/test/util.h>
+#include <cashaddrenc.h>
 #include <config.h>
+#include <core_io.h>
+#include <key_io.h>
 #include <script/standard.h>
+#include <uint256.h>
 #include <util/time.h>
 #include <util/translation.h>
 #include <validation.h>
@@ -17,6 +21,10 @@
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
+
+#include <limits>
+#include <optional>
+#include <unordered_map>
 
 using namespace avalanche;
 
@@ -59,10 +67,40 @@ namespace {
             return scores;
         }
 
-        static void
-        cleanupDanglingProofs(PeerManager &pm,
-                              const ProofRef &localProof = ProofRef()) {
-            pm.cleanupDanglingProofs(localProof);
+        static void cleanupDanglingProofs(
+            PeerManager &pm,
+            std::unordered_set<ProofRef, SaltedProofHasher> &registeredProofs) {
+            pm.cleanupDanglingProofs(registeredProofs);
+        }
+
+        static void cleanupDanglingProofs(PeerManager &pm) {
+            std::unordered_set<ProofRef, SaltedProofHasher> dummy;
+            pm.cleanupDanglingProofs(dummy);
+        }
+
+        static std::optional<RemoteProof> getRemoteProof(const PeerManager &pm,
+                                                         const ProofId &proofid,
+                                                         NodeId nodeid) {
+            auto it = pm.remoteProofs.find(boost::make_tuple(proofid, nodeid));
+            if (it == pm.remoteProofs.end()) {
+                return std::nullopt;
+            }
+            return std::make_optional(*it);
+        }
+
+        static size_t getPeerCount(const PeerManager &pm) {
+            return pm.peers.size();
+        }
+
+        static uint32_t getPeerScoreFromNodeId(const PeerManager &pm,
+                                               const NodeId nodeid,
+                                               uint32_t &score) {
+            return pm.getPeerScoreFromNodeId(nodeid, score);
+        }
+
+        static std::optional<bool>
+        getRemotePresenceStatus(const PeerManager &pm, const ProofId &proofid) {
+            return pm.getRemotePresenceStatus(proofid);
         }
     };
 
@@ -92,9 +130,9 @@ namespace {
                const std::vector<std::tuple<COutPoint, Amount>> &outpoints,
                const CKey &master = CKey::MakeCompressedKey(),
                int64_t sequence = 1, uint32_t height = 100,
-               bool is_coinbase = false, int64_t expirationTime = 0) {
-        ProofBuilder pb(sequence, expirationTime, master,
-                        UNSPENDABLE_ECREG_PAYOUT_SCRIPT);
+               bool is_coinbase = false, int64_t expirationTime = 0,
+               const CScript &payoutScript = UNSPENDABLE_ECREG_PAYOUT_SCRIPT) {
+        ProofBuilder pb(sequence, expirationTime, master, payoutScript);
         for (const auto &[outpoint, amount] : outpoints) {
             BOOST_CHECK(pb.addUTXO(outpoint, amount, height, is_coinbase, key));
         }
@@ -462,8 +500,7 @@ BOOST_AUTO_TEST_CASE(node_crud) {
     for (int i = 0; i < 100; i++) {
         NodeId n = pm.selectNode();
         BOOST_CHECK(n >= 0 && n < 4);
-        BOOST_CHECK(
-            pm.updateNextRequestTime(n, std::chrono::steady_clock::now()));
+        BOOST_CHECK(pm.updateNextRequestTime(n, Now<SteadyMilliseconds>()));
     }
 
     // Remove a node, check that it doesn't show up.
@@ -472,19 +509,17 @@ BOOST_AUTO_TEST_CASE(node_crud) {
     for (int i = 0; i < 100; i++) {
         NodeId n = pm.selectNode();
         BOOST_CHECK(n == 0 || n == 1 || n == 3);
-        BOOST_CHECK(
-            pm.updateNextRequestTime(n, std::chrono::steady_clock::now()));
+        BOOST_CHECK(pm.updateNextRequestTime(n, Now<SteadyMilliseconds>()));
     }
 
     // Push a node's timeout in the future, so that it doesn't show up.
-    BOOST_CHECK(pm.updateNextRequestTime(1, std::chrono::steady_clock::now() +
+    BOOST_CHECK(pm.updateNextRequestTime(1, Now<SteadyMilliseconds>() +
                                                 std::chrono::hours(24)));
 
     for (int i = 0; i < 100; i++) {
         NodeId n = pm.selectNode();
         BOOST_CHECK(n == 0 || n == 3);
-        BOOST_CHECK(
-            pm.updateNextRequestTime(n, std::chrono::steady_clock::now()));
+        BOOST_CHECK(pm.updateNextRequestTime(n, Now<SteadyMilliseconds>()));
     }
 
     // Move a node from a peer to another. This peer has a very low score such
@@ -500,8 +535,7 @@ BOOST_AUTO_TEST_CASE(node_crud) {
         } else {
             BOOST_CHECK_EQUAL(n, 0);
         }
-        BOOST_CHECK(
-            pm.updateNextRequestTime(n, std::chrono::steady_clock::now()));
+        BOOST_CHECK(pm.updateNextRequestTime(n, Now<SteadyMilliseconds>()));
     }
 }
 
@@ -632,9 +666,11 @@ BOOST_AUTO_TEST_CASE(node_binding_reorg) {
     // Make the proof immature by reorging to a shorter chain
     {
         BlockValidationState state;
-        chainman.ActiveChainstate().InvalidateBlock(GetConfig(), state,
-                                                    chainman.ActiveTip());
-        BOOST_CHECK_EQUAL(chainman.ActiveHeight(), 99);
+        chainman.ActiveChainstate().InvalidateBlock(
+            GetConfig(), state,
+            WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()));
+        BOOST_CHECK_EQUAL(
+            WITH_LOCK(chainman.GetMutex(), return chainman.ActiveHeight()), 99);
     }
 
     pm.updatedBlockTip();
@@ -655,6 +691,7 @@ BOOST_AUTO_TEST_CASE(node_binding_reorg) {
         BlockValidationState state;
         BOOST_CHECK(
             chainman.ActiveChainstate().ActivateBestChain(GetConfig(), state));
+        LOCK(chainman.GetMutex());
         BOOST_CHECK_EQUAL(chainman.ActiveHeight(), 100);
     }
 
@@ -833,8 +870,8 @@ BOOST_AUTO_TEST_CASE(dangling_node) {
     PeerId peerid = TestPeerManager::registerAndGetPeerId(pm, proof);
     BOOST_CHECK_NE(peerid, NO_PEER);
 
-    const TimePoint theFuture(std::chrono::steady_clock::now() +
-                              std::chrono::hours(24));
+    const SteadyMilliseconds theFuture(Now<SteadyMilliseconds>() +
+                                       std::chrono::hours(24));
 
     // Add nodes to this peer and update their request time far in the future
     for (int i = 0; i < 10; i++) {
@@ -1084,9 +1121,11 @@ BOOST_AUTO_TEST_CASE(conflicting_immature_proofs) {
     // Reorg to a shorter chain to make proof30 immature
     {
         BlockValidationState state;
-        active_chainstate.InvalidateBlock(GetConfig(), state,
-                                          chainman.ActiveTip());
-        BOOST_CHECK_EQUAL(chainman.ActiveHeight(), 99);
+        active_chainstate.InvalidateBlock(
+            GetConfig(), state,
+            WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()));
+        BOOST_CHECK_EQUAL(
+            WITH_LOCK(chainman.GetMutex(), return chainman.ActiveHeight()), 99);
     }
 
     // Check that a rescan will also select the preferred immature proof, in
@@ -1430,6 +1469,9 @@ BOOST_AUTO_TEST_CASE(should_request_more_nodes) {
     auto proof =
         buildRandomProof(chainman.ActiveChainstate(), MIN_VALID_PROOF_SCORE);
     BOOST_CHECK(pm.registerProof(proof));
+    // Not dangling yet, the proof will remain active for some time before it
+    // turns dangling if no node is connecting in the meantime.
+    BOOST_CHECK(!pm.isDangling(proof->getId()));
 
     // We have no nodes, so select node will fail and flag that we need more
     // nodes
@@ -1447,7 +1489,9 @@ BOOST_AUTO_TEST_CASE(should_request_more_nodes) {
         BOOST_CHECK(pm.addNode(i, proofid));
     }
 
-    auto cooldownTimepoint = std::chrono::steady_clock::now() + 10s;
+    BOOST_CHECK(!pm.isDangling(proof->getId()));
+
+    auto cooldownTimepoint = Now<SteadyMilliseconds>() + 10s;
 
     // All the nodes can be selected once
     for (size_t i = 0; i < 10; i++) {
@@ -1468,7 +1512,7 @@ BOOST_AUTO_TEST_CASE(should_request_more_nodes) {
     }
 
     // Make it possible to request a node again
-    BOOST_CHECK(pm.updateNextRequestTime(0, std::chrono::steady_clock::now()));
+    BOOST_CHECK(pm.updateNextRequestTime(0, Now<SteadyMilliseconds>()));
     BOOST_CHECK_NE(pm.selectNode(), NO_NODE);
     BOOST_CHECK(!pm.shouldRequestMoreNodes());
 
@@ -1476,16 +1520,20 @@ BOOST_AUTO_TEST_CASE(should_request_more_nodes) {
     auto proof2 =
         buildRandomProof(chainman.ActiveChainstate(), MIN_VALID_PROOF_SCORE);
     BOOST_CHECK(pm.registerProof(proof2));
-    pm.cleanupDanglingProofs(ProofRef());
+    BOOST_CHECK(!pm.isDangling(proof2->getId()));
+    TestPeerManager::cleanupDanglingProofs(pm);
+    BOOST_CHECK(!pm.isDangling(proof2->getId()));
     BOOST_CHECK(!pm.shouldRequestMoreNodes());
 
     // After some time the proof will be considered dangling and more nodes will
     // be requested.
     SetMockTime(GetTime() + 15 * 60);
-    pm.cleanupDanglingProofs(ProofRef());
+    TestPeerManager::cleanupDanglingProofs(pm);
+    BOOST_CHECK(pm.isDangling(proof2->getId()));
     BOOST_CHECK(pm.shouldRequestMoreNodes());
 
     for (size_t i = 0; i < 10; i++) {
+        BOOST_CHECK(pm.isDangling(proof2->getId()));
         // The flag will not trigger again until the condition is met again
         BOOST_CHECK(!pm.shouldRequestMoreNodes());
     }
@@ -1495,9 +1543,11 @@ BOOST_AUTO_TEST_CASE(should_request_more_nodes) {
     ProofRegistrationState state;
     BOOST_CHECK(!pm.registerProof(proof2, state));
     BOOST_CHECK(state.GetResult() == ProofRegistrationResult::DANGLING);
+    BOOST_CHECK(pm.isDangling(proof2->getId()));
     BOOST_CHECK(pm.shouldRequestMoreNodes());
 
     for (size_t i = 0; i < 10; i++) {
+        BOOST_CHECK(pm.isDangling(proof2->getId()));
         // The flag will not trigger again until the condition is met again
         BOOST_CHECK(!pm.shouldRequestMoreNodes());
     }
@@ -1506,13 +1556,24 @@ BOOST_AUTO_TEST_CASE(should_request_more_nodes) {
     BOOST_CHECK(!pm.addNode(11, proof2->getId()));
     BOOST_CHECK(pm.registerProof(proof2));
     SetMockTime(GetTime() + 15 * 60);
-    pm.cleanupDanglingProofs(ProofRef());
+    TestPeerManager::cleanupDanglingProofs(pm);
+    BOOST_CHECK(!pm.isDangling(proof2->getId()));
     BOOST_CHECK(!pm.shouldRequestMoreNodes());
 
     // Disconnect the node, the proof is dangling again
     BOOST_CHECK(pm.removeNode(11));
-    pm.cleanupDanglingProofs(ProofRef());
+    TestPeerManager::cleanupDanglingProofs(pm);
+    BOOST_CHECK(pm.isDangling(proof2->getId()));
     BOOST_CHECK(pm.shouldRequestMoreNodes());
+
+    // Invalidating the proof, removes the proof from the dangling pool but not
+    // a simple rejection.
+    BOOST_CHECK(!pm.rejectProof(
+        proof2->getId(), avalanche::PeerManager::RejectionMode::DEFAULT));
+    BOOST_CHECK(pm.isDangling(proof2->getId()));
+    BOOST_CHECK(pm.rejectProof(
+        proof2->getId(), avalanche::PeerManager::RejectionMode::INVALIDATE));
+    BOOST_CHECK(!pm.isDangling(proof2->getId()));
 }
 
 BOOST_AUTO_TEST_CASE(score_ordering) {
@@ -2015,16 +2076,7 @@ BOOST_FIXTURE_TEST_CASE(cleanup_dangling_proof, NoCoolDownFixture) {
     // Elapse the timeout for the newly promoted conflicting proofs
     elapseTime(avalanche::Peer::DANGLING_TIMEOUT);
 
-    // Use the first conflicting proof as our local proof
-    TestPeerManager::cleanupDanglingProofs(pm, conflictingProofs[1]);
-
-    for (size_t i = 0; i < numProofs; i++) {
-        // All other proofs have now been discarded
-        BOOST_CHECK(!pm.exists(proofs[i]->getId()));
-        BOOST_CHECK_EQUAL(!pm.exists(conflictingProofs[i]->getId()), i != 1);
-    }
-
-    // Cleanup one more time with no local proof
+    // All other proofs have now been discarded
     TestPeerManager::cleanupDanglingProofs(pm);
 
     for (size_t i = 0; i < numProofs; i++) {
@@ -2053,7 +2105,9 @@ BOOST_AUTO_TEST_CASE(proof_expiry) {
     ChainstateManager &chainman = *Assert(m_node.chainman);
     avalanche::PeerManager pm(PROOF_DUST_THRESHOLD, chainman);
 
-    const int64_t tipTime = chainman.ActiveTip()->GetBlockTime();
+    const int64_t tipTime =
+        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip())
+            ->GetBlockTime();
 
     CKey key = CKey::MakeCompressedKey();
 
@@ -2077,8 +2131,10 @@ BOOST_AUTO_TEST_CASE(proof_expiry) {
         SetMockTime(proofToExpire->getExpirationTime() + i);
         CreateAndProcessBlock({}, CScript());
     }
-    BOOST_CHECK_EQUAL(chainman.ActiveTip()->GetMedianTimePast(),
-                      proofToExpire->getExpirationTime());
+    BOOST_CHECK_EQUAL(
+        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip())
+            ->GetMedianTimePast(),
+        proofToExpire->getExpirationTime());
 
     pm.updatedBlockTip();
 
@@ -2229,6 +2285,491 @@ BOOST_AUTO_TEST_CASE(peer_availability_score) {
             previousScore = currentScore;
         }
     }
+}
+
+BOOST_AUTO_TEST_CASE(select_staking_reward_winner) {
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+    avalanche::PeerManager pm(PROOF_DUST_THRESHOLD, chainman);
+    Chainstate &active_chainstate = chainman.ActiveChainstate();
+
+    auto buildProofWithAmountAndPayout = [&](Amount amount,
+                                             const CScript &payoutScript) {
+        const CKey key = CKey::MakeCompressedKey();
+        COutPoint utxo = createUtxo(active_chainstate, key, amount);
+        return buildProof(key, {{std::move(utxo), amount}},
+                          /*master=*/CKey::MakeCompressedKey(), /*sequence=*/1,
+                          /*height=*/100, /*is_coinbase=*/false,
+                          /*expirationTime=*/0, payoutScript);
+    };
+
+    CScript winner;
+    // Null pprev
+    BOOST_CHECK(!pm.selectStakingRewardWinner(nullptr, winner));
+
+    CBlockIndex prevBlock;
+
+    auto now = GetTime<std::chrono::seconds>();
+    SetMockTime(now);
+    prevBlock.nTime = now.count();
+
+    BlockHash prevHash{uint256::ONE};
+    prevBlock.phashBlock = &prevHash;
+    // No peer
+    BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+
+    // Let's build a list of payout addresses, and register a proofs for each
+    // address
+    size_t numProofs = 10;
+    std::vector<ProofRef> proofs;
+    proofs.reserve(numProofs);
+    for (size_t i = 0; i < numProofs; i++) {
+        const CKey key = CKey::MakeCompressedKey();
+        CScript payoutScript = GetScriptForRawPubKey(key.GetPubKey());
+
+        auto proof =
+            buildProofWithAmountAndPayout(PROOF_DUST_THRESHOLD, payoutScript);
+        PeerId peerid = TestPeerManager::registerAndGetPeerId(pm, proof);
+        BOOST_CHECK_NE(peerid, NO_PEER);
+
+        // Finalize the proof
+        BOOST_CHECK(pm.setFinalized(peerid));
+
+        proofs.emplace_back(std::move(proof));
+    }
+
+    // Make sure the proofs have been registered before the prev block was found
+    // and before 2x the peer replacement cooldown.
+    now += 30min + 1s;
+    SetMockTime(now);
+    prevBlock.nTime = now.count();
+
+    // All proofs have the same amount, so the same probability to get picked.
+    // Let's compute how many loop iterations we need to have a low false
+    // negative rate when checking for this. Target false positive rate is
+    // 10ppm (aka 1/100000).
+    const size_t loop_iters =
+        size_t(-1.0 * std::log(100000.0) /
+               std::log((double(numProofs) - 1) / numProofs)) +
+        1;
+    BOOST_CHECK_GT(loop_iters, numProofs);
+    std::unordered_map<std::string, size_t> winningCounts;
+    for (size_t i = 0; i < loop_iters; i++) {
+        BlockHash randomHash = BlockHash(GetRandHash());
+        prevBlock.phashBlock = &randomHash;
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winner));
+        winningCounts[FormatScript(winner)]++;
+    }
+    BOOST_CHECK_EQUAL(winningCounts.size(), numProofs);
+
+    // Remove all proofs
+    for (auto &proof : proofs) {
+        BOOST_CHECK(pm.rejectProof(
+            proof->getId(), avalanche::PeerManager::RejectionMode::INVALIDATE));
+    }
+    // No more winner
+    prevBlock.phashBlock = &prevHash;
+    BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+
+    {
+        // Add back a single proof
+        const CKey key = CKey::MakeCompressedKey();
+        CScript payoutScript = GetScriptForRawPubKey(key.GetPubKey());
+
+        auto proof =
+            buildProofWithAmountAndPayout(PROOF_DUST_THRESHOLD, payoutScript);
+        PeerId peerid = TestPeerManager::registerAndGetPeerId(pm, proof);
+        BOOST_CHECK_NE(peerid, NO_PEER);
+
+        // The single proof should always be selected, but:
+        // 1. The proof is not finalized, and has been registered after the last
+        // block was mined.
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+
+        // 2. The proof has has been registered after the last block was mined.
+        BOOST_CHECK(pm.setFinalized(peerid));
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+
+        // 3. The proof has been registered 30min from the previous block time,
+        // but the previous block time is in the future.
+        now += 20min + 1s;
+        SetMockTime(now);
+        prevBlock.nTime = (now + 10min).count();
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+
+        // 4. The proof has been registered 30min from now, but only 20min from
+        // the previous block time.
+        now += 10min;
+        SetMockTime(now);
+        prevBlock.nTime = (now - 10min).count();
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+
+        // 5. Now the proof has it all
+        prevBlock.nTime = now.count();
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winner));
+        // With a single proof, it's easy to determine the winner
+        BOOST_CHECK_EQUAL(FormatScript(winner), FormatScript(payoutScript));
+    }
+}
+
+BOOST_AUTO_TEST_CASE(remote_proof) {
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+    avalanche::PeerManager pm(PROOF_DUST_THRESHOLD, chainman);
+
+    auto mockTime = GetTime<std::chrono::seconds>();
+    SetMockTime(mockTime);
+
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, true));
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ONE), 0, false));
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 1, true));
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ONE), 1, false));
+
+    auto checkRemoteProof =
+        [&](const ProofId &proofid, const NodeId nodeid,
+            const bool expectedPresent,
+            const std::chrono::seconds &expectedlastUpdate) {
+            auto remoteProof =
+                TestPeerManager::getRemoteProof(pm, proofid, nodeid);
+            BOOST_CHECK(remoteProof.has_value());
+            BOOST_CHECK_EQUAL(remoteProof->proofid, proofid);
+            BOOST_CHECK_EQUAL(remoteProof->nodeid, nodeid);
+            BOOST_CHECK_EQUAL(remoteProof->present, expectedPresent);
+            BOOST_CHECK_EQUAL(remoteProof->lastUpdate.count(),
+                              expectedlastUpdate.count());
+        };
+
+    checkRemoteProof(ProofId(uint256::ZERO), 0, true, mockTime);
+    checkRemoteProof(ProofId(uint256::ONE), 0, false, mockTime);
+    checkRemoteProof(ProofId(uint256::ZERO), 1, true, mockTime);
+    checkRemoteProof(ProofId(uint256::ONE), 1, false, mockTime);
+
+    mockTime += 1s;
+    SetMockTime(mockTime);
+
+    // Reverse the state
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, false));
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ONE), 0, true));
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 1, false));
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ONE), 1, true));
+
+    checkRemoteProof(ProofId(uint256::ZERO), 0, false, mockTime);
+    checkRemoteProof(ProofId(uint256::ONE), 0, true, mockTime);
+    checkRemoteProof(ProofId(uint256::ZERO), 1, false, mockTime);
+    checkRemoteProof(ProofId(uint256::ONE), 1, true, mockTime);
+
+    Chainstate &active_chainstate = chainman.ActiveChainstate();
+
+    // Actually register the nodes
+    auto proof0 = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+    BOOST_CHECK(pm.registerProof(proof0));
+    BOOST_CHECK(pm.addNode(0, proof0->getId()));
+    auto proof1 = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+    BOOST_CHECK(pm.registerProof(proof1));
+    BOOST_CHECK(pm.addNode(1, proof1->getId()));
+
+    // Removing the node removes all the associated remote proofs
+    BOOST_CHECK(pm.removeNode(0));
+    BOOST_CHECK(
+        !TestPeerManager::getRemoteProof(pm, ProofId(uint256::ZERO), 0));
+    BOOST_CHECK(!TestPeerManager::getRemoteProof(pm, ProofId(uint256::ONE), 0));
+    // Other nodes are left untouched
+    checkRemoteProof(ProofId(uint256::ZERO), 1, false, mockTime);
+    checkRemoteProof(ProofId(uint256::ONE), 1, true, mockTime);
+
+    BOOST_CHECK(pm.removeNode(1));
+    BOOST_CHECK(
+        !TestPeerManager::getRemoteProof(pm, ProofId(uint256::ZERO), 0));
+    BOOST_CHECK(!TestPeerManager::getRemoteProof(pm, ProofId(uint256::ONE), 0));
+    BOOST_CHECK(
+        !TestPeerManager::getRemoteProof(pm, ProofId(uint256::ZERO), 1));
+    BOOST_CHECK(!TestPeerManager::getRemoteProof(pm, ProofId(uint256::ONE), 1));
+
+    for (size_t i = 0; i < avalanche::PeerManager::MAX_REMOTE_PROOFS; i++) {
+        mockTime += 1s;
+        SetMockTime(mockTime);
+
+        const ProofId proofid{uint256(i)};
+
+        BOOST_CHECK(pm.saveRemoteProof(proofid, 0, true));
+        checkRemoteProof(proofid, 0, true, mockTime);
+    }
+
+    // The last updated proof is still there
+    checkRemoteProof(ProofId(uint256::ZERO), 0, true,
+                     mockTime -
+                         (avalanche::PeerManager::MAX_REMOTE_PROOFS - 1) * 1s);
+
+    // If we add one more it gets evicted
+    mockTime += 1s;
+    SetMockTime(mockTime);
+
+    ProofId proofid{
+        uint256(uint8_t(avalanche::PeerManager::MAX_REMOTE_PROOFS))};
+
+    BOOST_CHECK(pm.saveRemoteProof(proofid, 0, true));
+    checkRemoteProof(proofid, 0, true, mockTime);
+    // Proof id 0 has been evicted
+    BOOST_CHECK(
+        !TestPeerManager::getRemoteProof(pm, ProofId(uint256::ZERO), 0));
+
+    // Proof id 1 is still there
+    BOOST_CHECK(TestPeerManager::getRemoteProof(pm, ProofId(uint256::ONE), 0));
+
+    // Add MAX_REMOTE_PROOFS / 2 + 1 proofs to our node to bump the limit
+    // Note that we already have proofs from the beginning of the test.
+    std::vector<ProofRef> proofs;
+    for (size_t i = 0; i < avalanche::PeerManager::MAX_REMOTE_PROOFS / 2 - 1;
+         i++) {
+        auto proof = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+        BOOST_CHECK(pm.registerProof(proof));
+        proofs.push_back(proof);
+    }
+    BOOST_CHECK_EQUAL(TestPeerManager::getPeerCount(pm),
+                      avalanche::PeerManager::MAX_REMOTE_PROOFS / 2 + 1);
+
+    // We can now add one more without eviction
+    mockTime += 1s;
+    SetMockTime(mockTime);
+
+    proofid = ProofId{
+        uint256(uint8_t(avalanche::PeerManager::MAX_REMOTE_PROOFS + 1))};
+
+    BOOST_CHECK(pm.saveRemoteProof(proofid, 0, true));
+    checkRemoteProof(proofid, 0, true, mockTime);
+    // Proof id 1 is still there
+    BOOST_CHECK(TestPeerManager::getRemoteProof(pm, ProofId(uint256::ONE), 0));
+
+    // Shrink our proofs to MAX_REMOTE_PROOFS / 2 - 1
+    BOOST_CHECK(pm.rejectProof(
+        proofs[0]->getId(), avalanche::PeerManager::RejectionMode::INVALIDATE));
+    BOOST_CHECK(pm.rejectProof(
+        proofs[1]->getId(), avalanche::PeerManager::RejectionMode::INVALIDATE));
+
+    BOOST_CHECK_EQUAL(TestPeerManager::getPeerCount(pm),
+                      avalanche::PeerManager::MAX_REMOTE_PROOFS / 2 - 1);
+
+    // Upon update the first proof got evicted
+    proofid = ProofId{
+        uint256(uint8_t(avalanche::PeerManager::MAX_REMOTE_PROOFS + 2))};
+    BOOST_CHECK(pm.saveRemoteProof(proofid, 0, true));
+    // Proof id 1 is evicted
+    BOOST_CHECK(!TestPeerManager::getRemoteProof(pm, ProofId(uint256::ONE), 0));
+    // So is proof id 2
+    BOOST_CHECK(!TestPeerManager::getRemoteProof(pm, ProofId(uint256(2)), 0));
+    // But proof id 3 is still here
+    BOOST_CHECK(TestPeerManager::getRemoteProof(pm, ProofId(uint256(3)), 0));
+}
+
+BOOST_AUTO_TEST_CASE(get_score_from_nodeid) {
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+    avalanche::PeerManager pm(PROOF_DUST_THRESHOLD, chainman);
+    Chainstate &active_chainstate = chainman.ActiveChainstate();
+
+    for (int i = 0; i < 10; i++) {
+        auto proof = buildRandomProof(active_chainstate,
+                                      MIN_VALID_PROOF_SCORE * (i + 1));
+        BOOST_CHECK(pm.registerProof(proof));
+        BOOST_CHECK(pm.addNode(NodeId(i), proof->getId()));
+    }
+
+    for (int i = 0; i < 10; i++) {
+        uint32_t score;
+        BOOST_CHECK(
+            TestPeerManager::getPeerScoreFromNodeId(pm, NodeId(i), score));
+        BOOST_CHECK_EQUAL(score, MIN_VALID_PROOF_SCORE * (i + 1));
+    }
+
+    uint32_t dummy;
+    // Node doesn't exist
+    BOOST_CHECK(!TestPeerManager::getPeerScoreFromNodeId(pm, 10, dummy));
+
+    // Add a pending node
+    auto proof =
+        buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE * 11);
+    BOOST_CHECK(!pm.addNode(10, proof->getId()));
+
+    // Peer doesn't exist
+    BOOST_CHECK(!TestPeerManager::getPeerScoreFromNodeId(pm, 10, dummy));
+}
+
+BOOST_AUTO_TEST_CASE(get_remote_status) {
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+    avalanche::PeerManager pm(PROOF_DUST_THRESHOLD, chainman);
+    Chainstate &active_chainstate = chainman.ActiveChainstate();
+
+    auto mockTime = GetTime<std::chrono::seconds>();
+    SetMockTime(mockTime);
+
+    // No remote proof yet
+    BOOST_CHECK(
+        !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
+             .has_value());
+
+    // 50/50 on the remotes
+    for (NodeId nodeid = 0; nodeid < 10; nodeid++) {
+        auto proof = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+        BOOST_CHECK(pm.registerProof(proof));
+        BOOST_CHECK(pm.addNode(nodeid, proof->getId()));
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid,
+                                       nodeid % 2 == 0));
+    }
+
+    BOOST_CHECK(
+        !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
+             .has_value());
+
+    // 90% on the remotes
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, false));
+    for (NodeId nodeid = 1; nodeid < 10; nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, true));
+    }
+    BOOST_CHECK(
+        TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
+            .value());
+
+    // 10% on the remotes
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, true));
+    for (NodeId nodeid = 1; nodeid < 10; nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, false));
+    }
+    BOOST_CHECK(
+        !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
+             .value());
+
+    // Most nodes agree but not enough of the stakes
+    auto bigProof =
+        buildRandomProof(active_chainstate, 100 * MIN_VALID_PROOF_SCORE);
+    BOOST_CHECK(pm.registerProof(bigProof));
+    // Update the node's proof
+    BOOST_CHECK(pm.addNode(0, bigProof->getId()));
+
+    // 90% on the remotes, but not enough stakes => inconclusive
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, false));
+    for (NodeId nodeid = 1; nodeid < 10; nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, true));
+    }
+    BOOST_CHECK(
+        !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
+             .has_value());
+
+    // 10% on the remotes, but not enough stakes => inconclusive
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, true));
+    for (NodeId nodeid = 1; nodeid < 10; nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, false));
+    }
+    BOOST_CHECK(
+        !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
+             .has_value());
+}
+
+BOOST_AUTO_TEST_CASE(dangling_with_remotes) {
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+    avalanche::PeerManager pm(PROOF_DUST_THRESHOLD, chainman);
+    Chainstate &active_chainstate = chainman.ActiveChainstate();
+
+    auto mockTime = GetTime<std::chrono::seconds>();
+    SetMockTime(mockTime);
+
+    // Add a few proofs with no node attached
+    std::vector<ProofRef> proofs;
+    for (size_t i = 0; i < 10; i++) {
+        auto proof = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+        BOOST_CHECK(pm.registerProof(proof));
+        proofs.push_back(proof);
+    }
+
+    // The proofs are recent enough, the cleanup won't make them dangling
+    TestPeerManager::cleanupDanglingProofs(pm);
+    for (const auto &proof : proofs) {
+        BOOST_CHECK(pm.isBoundToPeer(proof->getId()));
+        BOOST_CHECK(!pm.isDangling(proof->getId()));
+    }
+
+    // Elapse enough time so we get the proofs dangling
+    mockTime += avalanche::Peer::DANGLING_TIMEOUT + 1s;
+    SetMockTime(mockTime);
+
+    // The proofs are now dangling
+    TestPeerManager::cleanupDanglingProofs(pm);
+    for (const auto &proof : proofs) {
+        BOOST_CHECK(!pm.isBoundToPeer(proof->getId()));
+        BOOST_CHECK(pm.isDangling(proof->getId()));
+    }
+
+    // Add some remotes having this proof
+    for (NodeId nodeid = 0; nodeid < 10; nodeid++) {
+        auto localProof =
+            buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+        BOOST_CHECK(pm.registerProof(localProof));
+        BOOST_CHECK(pm.addNode(nodeid, localProof->getId()));
+
+        for (const auto &proof : proofs) {
+            BOOST_CHECK(pm.saveRemoteProof(proof->getId(), nodeid, true));
+        }
+    }
+
+    // The proofs are all present according to the remote status
+    for (const auto &proof : proofs) {
+        BOOST_CHECK(TestPeerManager::getRemotePresenceStatus(pm, proof->getId())
+                        .value());
+    }
+
+    // The proofs should be added back as a peer
+    std::unordered_set<ProofRef, SaltedProofHasher> registeredProofs;
+    TestPeerManager::cleanupDanglingProofs(pm, registeredProofs);
+    for (const auto &proof : proofs) {
+        BOOST_CHECK(pm.isBoundToPeer(proof->getId()));
+        BOOST_CHECK(!pm.isDangling(proof->getId()));
+        BOOST_CHECK_EQUAL(registeredProofs.count(proof), 1);
+    }
+    BOOST_CHECK_EQUAL(proofs.size(), registeredProofs.size());
+
+    // Remove the proofs from the remotes
+    for (NodeId nodeid = 0; nodeid < 10; nodeid++) {
+        for (const auto &proof : proofs) {
+            BOOST_CHECK(pm.saveRemoteProof(proof->getId(), nodeid, false));
+        }
+    }
+
+    // The proofs are now all absent according to the remotes
+    for (const auto &proof : proofs) {
+        BOOST_CHECK(
+            !TestPeerManager::getRemotePresenceStatus(pm, proof->getId())
+                 .value());
+    }
+
+    // The proofs are not dangling yet as they have been registered recently
+    TestPeerManager::cleanupDanglingProofs(pm, registeredProofs);
+    BOOST_CHECK(registeredProofs.empty());
+    for (const auto &proof : proofs) {
+        BOOST_CHECK(pm.isBoundToPeer(proof->getId()));
+        BOOST_CHECK(!pm.isDangling(proof->getId()));
+    }
+
+    // Wait some time then run the cleanup again, the proofs will be dangling
+    mockTime += avalanche::Peer::DANGLING_TIMEOUT + 1s;
+    SetMockTime(mockTime);
+
+    TestPeerManager::cleanupDanglingProofs(pm, registeredProofs);
+    BOOST_CHECK(registeredProofs.empty());
+    for (const auto &proof : proofs) {
+        BOOST_CHECK(!pm.isBoundToPeer(proof->getId()));
+        BOOST_CHECK(pm.isDangling(proof->getId()));
+    }
+
+    // Pull them back one more time
+    for (NodeId nodeid = 0; nodeid < 10; nodeid++) {
+        for (const auto &proof : proofs) {
+            BOOST_CHECK(pm.saveRemoteProof(proof->getId(), nodeid, true));
+        }
+    }
+
+    TestPeerManager::cleanupDanglingProofs(pm, registeredProofs);
+    for (const auto &proof : proofs) {
+        BOOST_CHECK(pm.isBoundToPeer(proof->getId()));
+        BOOST_CHECK(!pm.isDangling(proof->getId()));
+        BOOST_CHECK_EQUAL(registeredProofs.count(proof), 1);
+    }
+    BOOST_CHECK_EQUAL(proofs.size(), registeredProofs.size());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

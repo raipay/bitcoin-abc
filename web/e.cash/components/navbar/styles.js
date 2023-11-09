@@ -1,3 +1,6 @@
+// Copyright (c) 2023 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 import styled from 'styled-components';
 
 export const NavbarOuter = styled.div`
@@ -5,32 +8,14 @@ export const NavbarOuter = styled.div`
     top: 0;
     width: 100%;
     z-index: 9999;
-
-    .announcementbar_ctn {
-        width: 100%;
-        background-color: ${props => props.theme.colors.black};
-        padding: 0px 24px;
-        text-align: center;
-        color: ${props => props.theme.colors.contrast};
-        font-weight: 600;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-        font-size: 14px;
-        height: 34px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: all 200ms ease-in-out;
-        &:hover {
-            background-color: ${props => props.theme.colors.accent};
-            color: ${props => props.theme.colors.contrast};
-        }
-    }
 `;
 
 export const NavbarCtn = styled.div`
     width: 100%;
-    background-color: rgba(0, 0, 0, 0);
+    background-color: ${props =>
+        props.navBackground
+            ? props.theme.colors.navbarBackground
+            : 'transparent'};
     position: relative;
     padding: 0 24px;
 
@@ -77,16 +62,17 @@ export const NavbarCtn = styled.div`
             font-weight: 500;
             letter-spacing: 1px;
             position: relative;
-            padding: 36px 20px;
             transition: all 200ms ease-in-out;
             cursor: pointer;
+            padding: ${props =>
+                props.navBackground ? '28px 20px' : '36px 20px'};
         }
     }
 
     .nav_dropdown_ctn {
         position: absolute;
         flex-direction: column;
-        top: 90px;
+        top: ${props => (props.navBackground ? '80px' : '90px')};
         left: 0;
         width: 300px;
         z-index: 99;
@@ -225,12 +211,6 @@ export const NavbarCtn = styled.div`
     ${props => props.theme.breakpoint.medium} {
         padding: 15px 20px;
 
-        .announcementbar_ctn {
-            padding: 0px 10px;
-            font-size: 12px;
-            height: 30px;
-        }
-
         .navbar {
             position: unset;
         }
@@ -357,5 +337,16 @@ export const NavbarCtn = styled.div`
             top: 8px;
             width: 60%;
         }
+    }
+`;
+
+export const EnvVarMessage = styled.div`
+    font-size: 10px;
+    position: absolute;
+    top: 0;
+    left: 5px;
+    top: 4px;
+    :nth-child(2) {
+        top: 14px;
     }
 `;

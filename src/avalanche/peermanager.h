@@ -135,6 +135,13 @@ struct by_proofid;
 struct by_nodeid;
 struct by_score;
 
+struct RemoteProof {
+    ProofId proofid;
+    NodeId nodeid;
+    std::chrono::seconds lastUpdate;
+    bool present;
+};
+
 enum class ProofRegistrationResult {
     NONE = 0,
     ALREADY_REGISTERED,
@@ -178,21 +185,22 @@ class PeerManager {
     ProofPool validProofPool;
     ProofPool conflictingProofPool;
     ProofPool immatureProofPool;
+    ProofPool danglingProofPool;
 
     using ProofRadixTree = RadixTree<const Proof, ProofRadixTreeAdapter>;
     ProofRadixTree shareableProofs;
 
     using NodeSet = boost::multi_index_container<
-        Node,
-        bmi::indexed_by<
-            // index by nodeid
-            bmi::hashed_unique<bmi::member<Node, NodeId, &Node::nodeid>>,
-            // sorted by peerid/nextRequestTime
-            bmi::ordered_non_unique<
-                bmi::tag<next_request_time>,
-                bmi::composite_key<
-                    Node, bmi::member<Node, PeerId, &Node::peerid>,
-                    bmi::member<Node, TimePoint, &Node::nextRequestTime>>>>>;
+        Node, bmi::indexed_by<
+                  // index by nodeid
+                  bmi::hashed_unique<bmi::member<Node, NodeId, &Node::nodeid>>,
+                  // sorted by peerid/nextRequestTime
+                  bmi::ordered_non_unique<
+                      bmi::tag<next_request_time>,
+                      bmi::composite_key<
+                          Node, bmi::member<Node, PeerId, &Node::peerid>,
+                          bmi::member<Node, SteadyMilliseconds,
+                                      &Node::nextRequestTime>>>>>;
 
     NodeSet nodes;
 
@@ -225,15 +233,6 @@ class PeerManager {
     ProofIdSet m_unbroadcast_proofids;
 
     /**
-     * Remember the last proofs that have been evicted because they had no node
-     * attached.
-     * A false positive would cause the proof to fail to register if there is
-     * no previously known node that is claiming it, which is acceptable
-     * intended the low expected false positive rate.
-     */
-    CRollingBloomFilter danglingProofIds{10000, 0.00001};
-
-    /**
      * Quorum management.
      */
     uint32_t totalPeersScore = 0;
@@ -243,11 +242,66 @@ class PeerManager {
 
     ChainstateManager &chainman;
 
+    ProofRef localProof;
+
+    struct by_lastUpdate;
+
+    using RemoteProofSet = boost::multi_index_container<
+        RemoteProof,
+        bmi::indexed_by<
+            // index by proofid/nodeid pair
+            bmi::hashed_unique<
+                bmi::composite_key<
+                    RemoteProof,
+                    bmi::member<RemoteProof, ProofId, &RemoteProof::proofid>,
+                    bmi::member<RemoteProof, NodeId, &RemoteProof::nodeid>>,
+                bmi::composite_key_hash<SaltedProofIdHasher,
+                                        boost::hash<NodeId>>>,
+            // index by proofid
+            bmi::hashed_non_unique<
+                bmi::tag<by_proofid>,
+                bmi::member<RemoteProof, ProofId, &RemoteProof::proofid>,
+                SaltedProofIdHasher>,
+            // index by nodeid
+            bmi::hashed_non_unique<
+                bmi::tag<by_nodeid>,
+                bmi::member<RemoteProof, NodeId, &RemoteProof::nodeid>>,
+            bmi::ordered_non_unique<
+                bmi::tag<by_lastUpdate>,
+                bmi::composite_key<
+                    RemoteProof,
+                    bmi::member<RemoteProof, NodeId, &RemoteProof::nodeid>,
+                    bmi::member<RemoteProof, std::chrono::seconds,
+                                &RemoteProof::lastUpdate>>>>>;
+
+    /**
+     * Remember which node sent which proof so we have an image of the proof set
+     * of our peers.
+     */
+    RemoteProofSet remoteProofs;
+
+    /**
+     * Filter for proofs that are consensus-invalid or were recently invalidated
+     * by avalanche (finalized rejection). These are not rerequested until they
+     * are rolled out of the filter.
+     *
+     * Without this filter we'd be re-requesting proofs from each of our peers,
+     * increasing bandwidth consumption considerably.
+     *
+     * Decreasing the false positive rate is fairly cheap, so we pick one in a
+     * million to make it highly unlikely for users to have issues with this
+     * filter.
+     */
+    CRollingBloomFilter invalidProofs{100000, 0.000001};
+
 public:
+    static constexpr size_t MAX_REMOTE_PROOFS{100};
+
     PeerManager(const Amount &stakeUtxoDustThresholdIn,
-                ChainstateManager &chainmanIn)
+                ChainstateManager &chainmanIn,
+                const ProofRef &localProofIn = ProofRef())
         : stakeUtxoDustThreshold(stakeUtxoDustThresholdIn),
-          chainman(chainmanIn){};
+          chainman(chainmanIn), localProof(localProofIn){};
 
     /**
      * Node API.
@@ -258,7 +312,7 @@ public:
     size_t getPendingNodeCount() const { return pendingNodes.size(); }
 
     // Update when a node is to be polled next.
-    bool updateNextRequestTime(NodeId nodeid, TimePoint timeout);
+    bool updateNextRequestTime(NodeId nodeid, SteadyMilliseconds timeout);
     /**
      * Flag that a node did send its compact proofs.
      * @return True if the flag changed state, i;e. if this is the first time
@@ -347,7 +401,8 @@ public:
         return getProof(proofid) != nullptr;
     }
 
-    void cleanupDanglingProofs(const ProofRef &localProof);
+    void cleanupDanglingProofs(
+        std::unordered_set<ProofRef, SaltedProofHasher> &registeredProofs);
 
     template <typename Callable>
     bool forPeer(const ProofId &proofid, Callable &&func) const {
@@ -379,6 +434,10 @@ public:
      */
     uint32_t getTotalPeersScore() const { return totalPeersScore; }
     uint32_t getConnectedPeersScore() const { return connectedPeersScore; }
+
+    bool saveRemoteProof(const ProofId &proofid, const NodeId nodeid,
+                         const bool present);
+    std::vector<RemoteProof> getRemoteProofs(const NodeId nodeid) const;
 
     template <typename Callable>
     void updateAvailabilityScores(const double decayFactor,
@@ -438,6 +497,11 @@ public:
     bool isBoundToPeer(const ProofId &proofid) const;
     bool isImmature(const ProofId &proofid) const;
     bool isInConflictingPool(const ProofId &proofid) const;
+    bool isDangling(const ProofId &proofid) const;
+
+    void setInvalid(const ProofId &proofid);
+    bool isInvalid(const ProofId &proofid) const;
+    void clearAllInvalid();
 
     const ProofRadixTree &getShareableProofsSnapshot() const {
         return shareableProofs;
@@ -447,6 +511,12 @@ public:
         return stakeUtxoDustThreshold;
     }
 
+    /**
+     * Deterministically select a unique payout script based on the proof set
+     * and the previous block hash.
+     */
+    bool selectStakingRewardWinner(const CBlockIndex *pprev, CScript &winner);
+
 private:
     template <typename ProofContainer>
     void moveToConflictingPool(const ProofContainer &proofs);
@@ -454,6 +524,16 @@ private:
     bool addOrUpdateNode(const PeerSet::iterator &it, NodeId nodeid);
     bool addNodeToPeer(const PeerSet::iterator &it);
     bool removeNodeFromPeer(const PeerSet::iterator &it, uint32_t count = 1);
+
+    bool getPeerScoreFromNodeId(const NodeId nodeid, uint32_t &score) const;
+    /**
+     * @brief Get the presence remote status of a proof
+     *
+     * @param proofid The target proof id
+     * @return true if it's likely present, false if likely missing, nullopt if
+     *         uncertain.
+     */
+    std::optional<bool> getRemotePresenceStatus(const ProofId &proofid) const;
 
     friend struct ::avalanche::TestPeerManager;
 };

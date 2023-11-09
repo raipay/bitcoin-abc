@@ -18,6 +18,7 @@ class BlockValidationState;
 class CBlock;
 class CBlockIndex;
 struct CBlockLocator;
+class Coin;
 class CValidationInterface;
 class CScheduler;
 enum class MemPoolRemovalReason;
@@ -104,10 +105,10 @@ protected:
      *
      * Called on a background thread.
      */
-    virtual void
-    TransactionAddedToMempool(const CTransactionRef &tx,
-                              const std::vector<Coin> &spent_coins,
-                              uint64_t mempool_sequence) {}
+    virtual void TransactionAddedToMempool(
+        const CTransactionRef &tx,
+        std::shared_ptr<const std::vector<Coin>> spent_coins,
+        uint64_t mempool_sequence) {}
 
     /**
      * Notifies listeners of a transaction leaving mempool.
@@ -194,6 +195,7 @@ protected:
     virtual void BlockFinalized(const CBlockIndex *pindex){};
 
     friend class CMainSignals;
+    friend class ValidationInterfaceTest;
 };
 
 class MainSignalsImpl;
@@ -227,7 +229,7 @@ public:
     void UpdatedBlockTip(const CBlockIndex *, const CBlockIndex *,
                          bool fInitialDownload);
     void TransactionAddedToMempool(const CTransactionRef &,
-                                   const std::vector<Coin> &,
+                                   std::shared_ptr<const std::vector<Coin>>,
                                    uint64_t mempool_sequence);
     void TransactionRemovedFromMempool(const CTransactionRef &,
                                        MemPoolRemovalReason,

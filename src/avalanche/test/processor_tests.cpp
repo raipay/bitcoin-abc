@@ -12,6 +12,7 @@
 #include <avalanche/voterecord.h>
 #include <chain.h>
 #include <config.h>
+#include <core_io.h>
 #include <key_io.h>
 #include <net_processing.h> // For ::PeerManager
 #include <reverse_iterator.h>
@@ -29,6 +30,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <functional>
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -72,6 +74,18 @@ namespace {
                                        const CBlockIndex *pindex) {
             LOCK(p.cs_finalizationTip);
             p.finalizationTip = pindex;
+        }
+
+        static void setLocalProofShareable(Processor &p, bool shareable) {
+            p.m_canShareLocalProof = shareable;
+        }
+
+        static void updatedBlockTip(Processor &p) { p.updatedBlockTip(); }
+
+        static void addProofToRecentfinalized(Processor &p,
+                                              const ProofId &proofid) {
+            WITH_LOCK(p.cs_finalizedItems,
+                      return p.finalizedItems.insert(proofid));
         }
     };
 } // namespace
@@ -125,8 +139,8 @@ struct AvalancheTestingSetup : public TestChain100Setup {
         m_connman = connman.get();
         m_node.connman = std::move(connman);
         m_node.peerman = ::PeerManager::make(
-            config.GetChainParams(), *m_connman, *m_node.addrman,
-            m_node.banman.get(), *m_node.chainman, *m_node.mempool, false);
+            *m_connman, *m_node.addrman, m_node.banman.get(), *m_node.chainman,
+            *m_node.mempool, false);
         m_node.chain = interfaces::MakeChain(m_node, config.GetChainParams());
 
         // Get the processor ready.
@@ -158,15 +172,16 @@ struct AvalancheTestingSetup : public TestChain100Setup {
 
         CAddress addr(ip(GetRandInt(0xffffffff)), NODE_NONE);
         auto node =
-            new CNode(id++, ServiceFlags(NODE_NETWORK), INVALID_SOCKET, addr,
+            new CNode(id++, INVALID_SOCKET, addr,
                       /* nKeyedNetGroupIn */ 0,
                       /* nLocalHostNonceIn */ 0,
                       /* nLocalExtraEntropyIn */ 0, CAddress(),
                       /* pszDest */ "", ConnectionType::OUTBOUND_FULL_RELAY,
                       /* inbound_onion */ false);
         node->SetCommonVersion(PROTOCOL_VERSION);
-        node->nServices = nServices;
-        m_node.peerman->InitializeNode(config, node);
+        node->m_has_all_wanted_services =
+            HasAllDesirableServiceFlags(nServices);
+        m_node.peerman->InitializeNode(config, *node, NODE_NETWORK);
         node->nVersion = 1;
         node->fSuccessfullyConnected = true;
 
@@ -174,7 +189,7 @@ struct AvalancheTestingSetup : public TestChain100Setup {
         return node;
     }
 
-    ProofRef GetProof() {
+    ProofRef GetProof(CScript payoutScript = UNSPENDABLE_ECREG_PAYOUT_SCRIPT) {
         const CKey key = CKey::MakeCompressedKey();
         const COutPoint outpoint{TxId(GetRandHash()), 0};
         CScript script = GetScriptForDestination(PKHash(key.GetPubKey()));
@@ -187,7 +202,7 @@ struct AvalancheTestingSetup : public TestChain100Setup {
         coins.AddCoin(outpoint, Coin(CTxOut(amount, script), height, false),
                       false);
 
-        ProofBuilder pb(0, 0, masterpriv, UNSPENDABLE_ECREG_PAYOUT_SCRIPT);
+        ProofBuilder pb(0, 0, masterpriv, payoutScript);
         BOOST_CHECK(pb.addUTXO(outpoint, amount, height, false, key));
         return pb.build();
     }
@@ -478,7 +493,9 @@ Response next(Response &r) {
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(item_reconcile_twice, P, VoteItemProviders) {
     P provider(this);
-    const CBlockIndex *chaintip = Assert(m_node.chainman)->ActiveTip();
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+    const CBlockIndex *chaintip =
+        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip());
 
     auto item = provider.buildVoteItem();
     auto itemid = provider.getVoteItemId(item);
@@ -1036,7 +1053,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(poll_inflight_timeout, P, VoteItemProviders) {
         Response resp = {getRound(), 0, {Vote(0, itemid)}};
         avanodeid = getSuitableNodeToQuery();
 
-        auto start = std::chrono::steady_clock::now();
+        auto start = Now<SteadyMilliseconds>();
         runEventLoop();
         // We cannot guarantee that we'll wait for just 1ms, so we have to bail
         // if we aren't within the proper time range.
@@ -1045,7 +1062,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(poll_inflight_timeout, P, VoteItemProviders) {
 
         std::vector<avalanche::VoteItemUpdate> updates;
         bool ret = registerVotes(avanodeid, next(resp), updates);
-        if (std::chrono::steady_clock::now() > start + queryTimeDuration) {
+        if (Now<SteadyMilliseconds>() > start + queryTimeDuration) {
             // We waited for too long, bail. Because we can't know for sure when
             // previous steps ran, ret is not deterministic and we do not check
             // it.
@@ -1235,8 +1252,7 @@ BOOST_AUTO_TEST_CASE(event_loop) {
 
     // Respond and check the cooldown time is respected.
     uint64_t responseRound = getRound();
-    auto queryTime =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+    auto queryTime = Now<SteadyMilliseconds>() + std::chrono::milliseconds(100);
 
     std::vector<VoteItemUpdate> updates;
     // Only the first node answers, so it's the only one that gets polled again
@@ -1247,7 +1263,7 @@ BOOST_AUTO_TEST_CASE(event_loop) {
         // We make sure that we do not get a request before queryTime.
         UninterruptibleSleep(std::chrono::milliseconds(1));
         if (getRound() != responseRound) {
-            BOOST_CHECK(std::chrono::steady_clock::now() > queryTime);
+            BOOST_CHECK(Now<SteadyMilliseconds>() >= queryTime);
             break;
         }
     }
@@ -1501,7 +1517,9 @@ BOOST_AUTO_TEST_CASE(quorum_detection) {
     BOOST_CHECK(!m_processor->isQuorumEstablished());
 
     // Add the rest of the stake, but we are still lacking connected stake
-    const int64_t tipTime = chainman.ActiveTip()->GetBlockTime();
+    const int64_t tipTime =
+        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip())
+            ->GetBlockTime();
     const COutPoint utxo{TxId(GetRandHash()), 0};
     const Amount amount = (int64_t(minScore / 4) * COIN) / 100;
     const int height = 100;
@@ -1575,8 +1593,10 @@ BOOST_AUTO_TEST_CASE(quorum_detection) {
         SetMockTime(proof2->getExpirationTime() + i);
         CreateAndProcessBlock({}, CScript());
     }
-    BOOST_CHECK_EQUAL(chainman.ActiveTip()->GetMedianTimePast(),
-                      proof2->getExpirationTime());
+    BOOST_CHECK_EQUAL(
+        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip())
+            ->GetMedianTimePast(),
+        proof2->getExpirationTime());
     m_processor->withPeerManager([&](avalanche::PeerManager &pm) {
         pm.updatedBlockTip();
         BOOST_CHECK(!pm.exists(proof2->getId()));
@@ -2062,7 +2082,7 @@ BOOST_AUTO_TEST_CASE(vote_map_comparator) {
 
         // The next batch of items is the block indexes ordered by work
         // (descending)
-        arith_uint256 lastWork = -1;
+        arith_uint256 lastWork = ~arith_uint256(0);
         for (size_t i = 0; i < numberElementsEachType; i++) {
             BOOST_CHECK(std::holds_alternative<const CBlockIndex *>(it->first));
 
@@ -2223,6 +2243,296 @@ BOOST_AUTO_TEST_CASE(block_reconcile_initial_vote) {
     SyncWithValidationInterfaceQueue();
 
     g_avalanche.reset(nullptr);
+}
+
+BOOST_AUTO_TEST_CASE(compute_staking_rewards) {
+    auto now = GetTime<std::chrono::seconds>();
+    SetMockTime(now);
+
+    // Pick in the middle
+    BlockHash prevBlockHash{uint256::ZERO};
+
+    CScript winner;
+
+    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+
+    // Null index
+    BOOST_CHECK(!m_processor->computeStakingReward(nullptr));
+    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+
+    CBlockIndex prevBlock;
+    prevBlock.phashBlock = &prevBlockHash;
+    prevBlock.nHeight = 100;
+    prevBlock.nTime = now.count();
+
+    // No quorum
+    BOOST_CHECK(!m_processor->computeStakingReward(&prevBlock));
+    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+
+    setArg("-avaminquorumstake", "0");
+    setArg("-avaminquorumconnectedstakeratio", "0");
+    setArg("-avaminavaproofsnodecount", "0");
+
+    // Setup a bunch of proofs
+    size_t numProofs = 10;
+    std::vector<ProofRef> proofs;
+    proofs.reserve(numProofs);
+    for (size_t i = 0; i < numProofs; i++) {
+        const CKey key = CKey::MakeCompressedKey();
+        CScript payoutScript = GetScriptForRawPubKey(key.GetPubKey());
+
+        auto proof = GetProof(payoutScript);
+        m_processor->withPeerManager([&](avalanche::PeerManager &pm) {
+            BOOST_CHECK(pm.registerProof(proof));
+            BOOST_CHECK(pm.addNode(i, proof->getId()));
+            // Finalize the proof
+            BOOST_CHECK(pm.forPeer(proof->getId(), [&](const Peer peer) {
+                return pm.setFinalized(peer.peerid);
+            }));
+        });
+
+        proofs.emplace_back(std::move(proof));
+    }
+
+    BOOST_CHECK(m_processor->isQuorumEstablished());
+
+    // Proofs are too recent so we still have no winner
+    BOOST_CHECK(!m_processor->computeStakingReward(&prevBlock));
+    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+
+    // Make sure we picked a payout script from one of our proofs
+    auto winnerExists = [&](const CScript &expectedWinner) {
+        const std::string winnerString = FormatScript(expectedWinner);
+
+        for (const ProofRef &proof : proofs) {
+            if (winnerString == FormatScript(proof->getPayoutScript())) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Elapse some time
+    now += 1h;
+    SetMockTime(now);
+    prevBlock.nTime = now.count();
+
+    // Now we successfully inserted a winner in our map
+    BOOST_CHECK(m_processor->computeStakingReward(&prevBlock));
+    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(winnerExists(winner));
+
+    // Subsequent calls are a no-op
+    BOOST_CHECK(m_processor->computeStakingReward(&prevBlock));
+    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(winnerExists(winner));
+
+    CBlockIndex prevBlockHigh = prevBlock;
+    BlockHash prevBlockHashHigh =
+        BlockHash(ArithToUint256({std::numeric_limits<uint64_t>::max()}));
+    prevBlockHigh.phashBlock = &prevBlockHashHigh;
+    prevBlockHigh.nHeight = 101;
+    BOOST_CHECK(m_processor->computeStakingReward(&prevBlockHigh));
+    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHashHigh, winner));
+    BOOST_CHECK(winnerExists(winner));
+
+    // No impact on previous winner so far
+    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(winnerExists(winner));
+
+    // Cleanup to height 101
+    m_processor->cleanupStakingRewards(101);
+
+    // Now the previous winner has been cleared
+    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+
+    // But the last one remain
+    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHashHigh, winner));
+    BOOST_CHECK(winnerExists(winner));
+
+    // We can add it again
+    BOOST_CHECK(m_processor->computeStakingReward(&prevBlock));
+    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(winnerExists(winner));
+
+    // Cleanup to higher height
+    m_processor->cleanupStakingRewards(200);
+
+    // No winner anymore
+    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(
+        !m_processor->getStakingRewardWinner(prevBlockHashHigh, winner));
+}
+
+BOOST_AUTO_TEST_CASE(local_proof_status) {
+    const CKey key = CKey::MakeCompressedKey();
+
+    const COutPoint outpoint{TxId(GetRandHash()), 0};
+    {
+        CScript script = GetScriptForDestination(PKHash(key.GetPubKey()));
+
+        LOCK(cs_main);
+        CCoinsViewCache &coins =
+            Assert(m_node.chainman)->ActiveChainstate().CoinsTip();
+        coins.AddCoin(outpoint,
+                      Coin(CTxOut(PROOF_DUST_THRESHOLD, script), 100, false),
+                      false);
+    }
+
+    auto buildProof = [&](const COutPoint &outpoint, uint64_t sequence,
+                          uint32_t height) {
+        ProofBuilder pb(sequence, 0, key, UNSPENDABLE_ECREG_PAYOUT_SCRIPT);
+        BOOST_CHECK(
+            pb.addUTXO(outpoint, PROOF_DUST_THRESHOLD, height, false, key));
+        return pb.build();
+    };
+
+    auto localProof = buildProof(outpoint, 1, 100);
+
+    setArg("-avamasterkey", EncodeSecret(key));
+    setArg("-avaproof", localProof->ToHex());
+    setArg("-avalancheconflictingproofcooldown", "0");
+    setArg("-avalanchepeerreplacementcooldown", "0");
+    setArg("-avaproofstakeutxoconfirmations", "3");
+
+    bilingual_str error;
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+    m_processor = Processor::MakeProcessor(
+        *m_node.args, *m_node.chain, m_node.connman.get(), chainman,
+        m_node.mempool.get(), *m_node.scheduler, error);
+
+    BOOST_CHECK_EQUAL(m_processor->getLocalProof()->getId(),
+                      localProof->getId());
+
+    auto checkLocalProofState =
+        [&](const bool boundToPeer,
+            const ProofRegistrationResult expectedResult) {
+            BOOST_CHECK_EQUAL(
+                m_processor->withPeerManager([&](avalanche::PeerManager &pm) {
+                    return pm.isBoundToPeer(localProof->getId());
+                }),
+                boundToPeer);
+            BOOST_CHECK_MESSAGE(
+                m_processor->getLocalProofRegistrationState().GetResult() ==
+                    expectedResult,
+                m_processor->getLocalProofRegistrationState().ToString());
+        };
+
+    checkLocalProofState(false, ProofRegistrationResult::NONE);
+
+    // Not ready to share, the local proof isn't registered
+    BOOST_CHECK(!m_processor->canShareLocalProof());
+    AvalancheTest::updatedBlockTip(*m_processor);
+    checkLocalProofState(false, ProofRegistrationResult::NONE);
+
+    // Ready to share, but the proof is immature
+    AvalancheTest::setLocalProofShareable(*m_processor, true);
+    BOOST_CHECK(m_processor->canShareLocalProof());
+    AvalancheTest::updatedBlockTip(*m_processor);
+    checkLocalProofState(false, ProofRegistrationResult::IMMATURE);
+
+    // Mine a block to re-evaluate the proof, it remains immature
+    mineBlocks(1);
+    AvalancheTest::updatedBlockTip(*m_processor);
+    checkLocalProofState(false, ProofRegistrationResult::IMMATURE);
+
+    // One more block and the proof turns mature
+    mineBlocks(1);
+    AvalancheTest::updatedBlockTip(*m_processor);
+    checkLocalProofState(true, ProofRegistrationResult::NONE);
+
+    // Build a conflicting proof and check the status is updated accordingly
+    auto conflictingProof = buildProof(outpoint, 2, 100);
+    m_processor->withPeerManager([&](avalanche::PeerManager &pm) {
+        BOOST_CHECK(pm.registerProof(conflictingProof));
+        BOOST_CHECK(pm.isBoundToPeer(conflictingProof->getId()));
+        BOOST_CHECK(pm.isInConflictingPool(localProof->getId()));
+    });
+    AvalancheTest::updatedBlockTip(*m_processor);
+    checkLocalProofState(false, ProofRegistrationResult::CONFLICTING);
+}
+
+BOOST_AUTO_TEST_CASE(reconcileOrFinalize) {
+    setArg("-avalancheconflictingproofcooldown", "0");
+    setArg("-avalanchepeerreplacementcooldown", "0");
+
+    // Proof is null
+    BOOST_CHECK(!m_processor->reconcileOrFinalize(ProofRef()));
+
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+    Chainstate &activeChainState = chainman.ActiveChainstate();
+
+    const CKey key = CKey::MakeCompressedKey();
+    const COutPoint outpoint{TxId(GetRandHash()), 0};
+    {
+        CScript script = GetScriptForDestination(PKHash(key.GetPubKey()));
+
+        LOCK(cs_main);
+        CCoinsViewCache &coins = activeChainState.CoinsTip();
+        coins.AddCoin(outpoint,
+                      Coin(CTxOut(PROOF_DUST_THRESHOLD, script), 100, false),
+                      false);
+    }
+
+    auto buildProof = [&](const COutPoint &outpoint, uint64_t sequence) {
+        ProofBuilder pb(sequence, 0, key, UNSPENDABLE_ECREG_PAYOUT_SCRIPT);
+        BOOST_CHECK(
+            pb.addUTXO(outpoint, PROOF_DUST_THRESHOLD, 100, false, key));
+        return pb.build();
+    };
+
+    auto proof = buildProof(outpoint, 1);
+    BOOST_CHECK(proof);
+
+    // Not a peer nor conflicting
+    BOOST_CHECK(!m_processor->reconcileOrFinalize(proof));
+
+    // Register the proof
+    m_processor->withPeerManager([&](avalanche::PeerManager &pm) {
+        BOOST_CHECK(pm.registerProof(proof));
+        BOOST_CHECK(pm.isBoundToPeer(proof->getId()));
+        BOOST_CHECK(!pm.isInConflictingPool(proof->getId()));
+    });
+
+    // Reconcile works
+    BOOST_CHECK(m_processor->reconcileOrFinalize(proof));
+    // Repeated calls fail and do nothing
+    BOOST_CHECK(!m_processor->reconcileOrFinalize(proof));
+
+    // Finalize
+    AvalancheTest::addProofToRecentfinalized(*m_processor, proof->getId());
+    BOOST_CHECK(m_processor->isRecentlyFinalized(proof->getId()));
+    BOOST_CHECK(m_processor->reconcileOrFinalize(proof));
+
+    m_processor->withPeerManager([&](avalanche::PeerManager &pm) {
+        // The peer is marked as final
+        BOOST_CHECK(pm.forPeer(proof->getId(), [&](const Peer &peer) {
+            return peer.hasFinalized;
+        }));
+        BOOST_CHECK(pm.isBoundToPeer(proof->getId()));
+        BOOST_CHECK(!pm.isInConflictingPool(proof->getId()));
+    });
+
+    // Same proof with a higher sequence number
+    auto betterProof = buildProof(outpoint, 2);
+    BOOST_CHECK(betterProof);
+
+    // Not registered nor conflicting yet
+    BOOST_CHECK(!m_processor->reconcileOrFinalize(betterProof));
+
+    m_processor->withPeerManager([&](avalanche::PeerManager &pm) {
+        BOOST_CHECK(pm.registerProof(betterProof));
+        BOOST_CHECK(pm.isBoundToPeer(betterProof->getId()));
+        BOOST_CHECK(!pm.isInConflictingPool(betterProof->getId()));
+
+        BOOST_CHECK(!pm.isBoundToPeer(proof->getId()));
+        BOOST_CHECK(pm.isInConflictingPool(proof->getId()));
+    });
+
+    // Recently finalized, not worth polling
+    BOOST_CHECK(!m_processor->reconcileOrFinalize(proof));
+    // But the better proof can be polled
+    BOOST_CHECK(m_processor->reconcileOrFinalize(betterProof));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

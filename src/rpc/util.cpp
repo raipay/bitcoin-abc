@@ -15,10 +15,7 @@
 #include <util/translation.h>
 
 #include <tuple>
-
-#include <boost/algorithm/string/classification.hpp>
-#include <boost/algorithm/string/split.hpp>
-#include <boost/variant/static_visitor.hpp>
+#include <variant>
 
 const std::string UNIX_EPOCH_TIME = "UNIX epoch time";
 const std::string EXAMPLE_ADDRESS =
@@ -305,7 +302,7 @@ CTxDestination AddAndGetMultisigDestination(const int required,
     return dest;
 }
 
-class DescribeAddressVisitor : public boost::static_visitor<UniValue> {
+class DescribeAddressVisitor {
 public:
     explicit DescribeAddressVisitor() {}
 
@@ -327,7 +324,7 @@ public:
 };
 
 UniValue DescribeAddress(const CTxDestination &dest) {
-    return boost::apply_visitor(DescribeAddressVisitor(), dest);
+    return std::visit(DescribeAddressVisitor(), dest);
 }
 
 std::string GetAllOutputTypes() {
@@ -524,11 +521,41 @@ RPCHelpMan::RPCHelpMan(std::string name_, std::string description,
       m_results{std::move(results)}, m_examples{std::move(examples)} {
     std::set<std::string> named_args;
     for (const auto &arg : m_args) {
-        std::vector<std::string> names;
-        boost::split(names, arg.m_names, boost::is_any_of("|"));
+        std::vector<std::string> names = SplitString(arg.m_names, '|');
         // Should have unique named arguments
         for (const std::string &name : names) {
             CHECK_NONFATAL(named_args.insert(name).second);
+        }
+        // Default value type should match argument type only when defined
+        if (arg.m_fallback.index() == 2) {
+            const RPCArg::Type type = arg.m_type;
+            switch (std::get<RPCArg::Default>(arg.m_fallback).getType()) {
+                case UniValue::VOBJ:
+                    CHECK_NONFATAL(type == RPCArg::Type::OBJ);
+                    break;
+                case UniValue::VARR:
+                    CHECK_NONFATAL(type == RPCArg::Type::ARR);
+                    break;
+                case UniValue::VSTR:
+                    CHECK_NONFATAL(type == RPCArg::Type::STR ||
+                                   type == RPCArg::Type::STR_HEX ||
+                                   type == RPCArg::Type::AMOUNT);
+                    break;
+                case UniValue::VNUM:
+                    CHECK_NONFATAL(type == RPCArg::Type::NUM ||
+                                   type == RPCArg::Type::AMOUNT ||
+                                   type == RPCArg::Type::RANGE);
+                    break;
+                case UniValue::VBOOL:
+                    CHECK_NONFATAL(type == RPCArg::Type::BOOL);
+                    break;
+                case UniValue::VNULL:
+                    // Null values are accepted in all arguments
+                    break;
+                default:
+                    CHECK_NONFATAL(false);
+                    break;
+            }
         }
     }
 }
@@ -668,8 +695,7 @@ UniValue RPCHelpMan::GetArgMap() const {
     UniValue arr{UniValue::VARR};
     for (int i{0}; i < int(m_args.size()); ++i) {
         const auto &arg = m_args.at(i);
-        std::vector<std::string> arg_names;
-        boost::split(arg_names, arg.m_names, boost::is_any_of("|"));
+        std::vector<std::string> arg_names = SplitString(arg.m_names, '|');
         for (const auto &arg_name : arg_names) {
             UniValue map{UniValue::VARR};
             map.push_back(m_name);
@@ -693,7 +719,7 @@ std::string RPCArg::GetName() const {
 }
 
 bool RPCArg::IsOptional() const {
-    if (m_fallback.index() == 1) {
+    if (m_fallback.index() != 0) {
         return true;
     } else {
         return RPCArg::Optional::NO != std::get<RPCArg::Optional>(m_fallback);
@@ -740,7 +766,11 @@ std::string RPCArg::ToDescriptionString() const {
         }
     }
     if (m_fallback.index() == 1) {
-        ret += ", optional, default=" + std::get<std::string>(m_fallback);
+        ret +=
+            ", optional, default=" + std::get<RPCArg::DefaultHint>(m_fallback);
+    } else if (m_fallback.index() == 2) {
+        ret += ", optional, default=" +
+               std::get<RPCArg::Default>(m_fallback).write();
     } else {
         switch (std::get<RPCArg::Optional>(m_fallback)) {
             case RPCArg::Optional::OMITTED: {

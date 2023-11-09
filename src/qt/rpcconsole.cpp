@@ -1269,9 +1269,6 @@ void RPCConsole::updateDetailWidget() {
                                           stats->nodeStats.addrLocal));
     }
     ui->peerHeading->setText(peerAddrDetails);
-    ui->peerServices->setText(
-        GUIUtil::formatServicesStr(stats->nodeStats.nServices));
-    ui->peerRelayTxes->setText(stats->nodeStats.fRelayTxes ? "Yes" : "No");
     QString bip152_hb_settings;
     if (stats->nodeStats.m_bip152_highbandwidth_to) {
         bip152_hb_settings += "To";
@@ -1329,6 +1326,8 @@ void RPCConsole::updateDetailWidget() {
     // This check fails for example if the lock was busy and
     // nodeStateStats couldn't be fetched.
     if (stats->fNodeStateStatsAvailable) {
+        ui->peerServices->setText(
+            GUIUtil::formatServicesStr(stats->nodeStateStats.their_services));
         // Sync height is init to -1
         if (stats->nodeStateStats.nSyncHeight > -1) {
             ui->peerSyncHeight->setText(
@@ -1349,6 +1348,8 @@ void RPCConsole::updateDetailWidget() {
             QString::number(stats->nodeStateStats.m_starting_height));
         ui->peerPingWait->setText(
             GUIUtil::formatPingTime(stats->nodeStateStats.m_ping_wait));
+        ui->peerRelayTxes->setText(stats->nodeStateStats.m_relay_txs ? "Yes"
+                                                                     : "No");
     }
 
     ui->detailWidget->show();

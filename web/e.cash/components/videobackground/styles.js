@@ -1,9 +1,11 @@
+// Copyright (c) 2023 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 import styled from 'styled-components';
 
 export const VideoCtn = styled.div`
     width: 100%;
-    height: 100vh;
-    min-height: 600px;
+    height: 100%;
     position: absolute;
     z-index: 0;
     video {

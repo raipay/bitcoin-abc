@@ -2,7 +2,6 @@ import React, { useState, useCallback } from 'react';
 import styled from 'styled-components';
 import PropTypes from 'prop-types';
 import { AntdFormWrapper } from 'components/Common/EnhancedInputs';
-import { currency } from 'components/Common/Ticker.js';
 import {
     CropControlModal,
     CropperContainer,
@@ -15,8 +14,7 @@ import {
     isValidTokenDecimals,
     isValidTokenInitialQty,
     isValidTokenDocumentUrl,
-    isProbablyNotAScamTokenName,
-    isProbablyNotAScamTokenTicker,
+    isProbablyNotAScam,
 } from 'utils/validation';
 import {
     PlusSquareOutlined,
@@ -45,7 +43,8 @@ import Cropper from 'react-easy-crop';
 import getCroppedImg from 'utils/icons/cropImage';
 import getRoundImg from 'utils/icons/roundImage';
 import getResizedImage from 'utils/icons/resizeImage';
-
+import { token as tokenConfig } from 'config/token';
+import appConfig from 'config/app';
 const { Dragger } = Upload;
 
 export const CreateTokenCtn = styled.div`
@@ -260,17 +259,19 @@ const CreateTokenForm = ({ createToken, disabled, passLoadingStatus }) => {
     const handleNewTokenNameInput = e => {
         const { value } = e.target;
         // validation
+        const validTokenName = isValidTokenName(value);
+        const probablyNotScam = isProbablyNotAScam(value);
 
-        setNewTokenNameIsValid(isValidTokenName(value));
-        setNewTokenNameIsProbablyNotAScam(isProbablyNotAScamTokenName(value));
+        setNewTokenNameIsValid(validTokenName);
+        setNewTokenNameIsProbablyNotAScam(probablyNotScam);
 
-        if (!isValidTokenName(value)) {
+        if (!validTokenName) {
             setTokenNameError('Validation Error');
         }
-        if (!isProbablyNotAScamTokenName(value)) {
+        if (!probablyNotScam) {
             setTokenNameError('Blacklisted Error');
         }
-        if (isValidTokenName(value) && isProbablyNotAScamTokenName(value)) {
+        if (validTokenName && probablyNotScam) {
             setTokenNameError('');
         }
 
@@ -288,18 +289,18 @@ const CreateTokenForm = ({ createToken, disabled, passLoadingStatus }) => {
     const handleNewTokenTickerInput = e => {
         const { value } = e.target;
         // validation
-        setNewTokenTickerIsValid(isValidTokenTicker(value));
-        setNewTokenTickerIsProbablyNotAScam(
-            isProbablyNotAScamTokenTicker(value),
-        );
+        const validTokenTicker = isValidTokenTicker(value);
+        const probablyNotScamTicker = isProbablyNotAScam(value);
+        setNewTokenTickerIsValid(validTokenTicker);
+        setNewTokenTickerIsProbablyNotAScam(probablyNotScamTicker);
 
-        if (!isValidTokenTicker(value)) {
+        if (!validTokenTicker) {
             setTokenTickerError('Validation Error');
         }
-        if (!isProbablyNotAScamTokenTicker(value)) {
+        if (!probablyNotScamTicker) {
             setTokenTickerError('Blacklisted Error');
         }
-        if (isValidTokenTicker(value) && isProbablyNotAScamTokenTicker(value)) {
+        if (validTokenTicker && probablyNotScamTicker) {
             setTokenTickerError('');
         }
 
@@ -394,7 +395,7 @@ const CreateTokenForm = ({ createToken, disabled, passLoadingStatus }) => {
 
         try {
             const tokenIconApprovalResponse = await fetch(
-                currency.tokenIconSubmitApi,
+                tokenConfig.tokenIconSubmitApi,
                 {
                     method: 'POST',
                     //Note: fetch automatically assigns correct header for multipart form based on formData obj
@@ -441,7 +442,7 @@ const CreateTokenForm = ({ createToken, disabled, passLoadingStatus }) => {
             ticker: newTokenTicker,
             documentUrl:
                 newTokenDocumentUrl === ''
-                    ? currency.newTokenDefaultUrl
+                    ? tokenConfig.newTokenDefaultUrl
                     : newTokenDocumentUrl,
             decimals: newTokenDecimals,
             initialQty: newTokenInitialQty,
@@ -454,7 +455,7 @@ const CreateTokenForm = ({ createToken, disabled, passLoadingStatus }) => {
             const link = await createToken(
                 chronik,
                 wallet,
-                currency.defaultFee,
+                appConfig.defaultFee,
                 configObj,
             );
             createTokenNotification(link);
@@ -491,7 +492,7 @@ const CreateTokenForm = ({ createToken, disabled, passLoadingStatus }) => {
                 <br />
                 <TokenParamLabel>Document URL:</TokenParamLabel>{' '}
                 {newTokenDocumentUrl === ''
-                    ? currency.newTokenDefaultUrl
+                    ? tokenConfig.newTokenDefaultUrl
                     : newTokenDocumentUrl}
                 <br />
             </Modal>

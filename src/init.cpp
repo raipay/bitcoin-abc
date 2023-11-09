@@ -45,7 +45,6 @@
 #include <node/context.h>
 #include <node/miner.h>
 #include <node/ui_interface.h>
-#include <policy/mempool.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
 #include <rpc/blockchain.h>
@@ -108,8 +107,6 @@
 
 using node::CacheSizes;
 using node::CalculateCacheSizes;
-using node::ChainstateLoadingError;
-using node::ChainstateLoadVerifyError;
 using node::CleanupBlockRevFiles;
 using node::DEFAULT_STOPAFTERBLOCKIMPORT;
 using node::fPruneMode;
@@ -437,25 +434,15 @@ void SetupServerArgs(NodeContext &node) {
 
     // Hidden Options
     std::vector<std::string> hidden_args = {
-        "-dbcrashratio",
-        "-forcecompactdb",
-        "-maxaddrtosend",
-        "-parkdeepreorg",
-        "-automaticunparking",
-        "-replayprotectionactivationtime",
-        "-enableminerfund",
+        "-dbcrashratio", "-forcecompactdb", "-maxaddrtosend", "-parkdeepreorg",
+        "-automaticunparking", "-replayprotectionactivationtime",
+        "-enableminerfund", "-chronikallowpause",
         // GUI args. These will be overwritten by SetupUIArgs for the GUI
-        "-allowselfsignedrootcertificates",
-        "-choosedatadir",
-        "-lang=<lang>",
-        "-min",
-        "-resetguisettings",
-        "-rootcertificates=<file>",
-        "-splash",
+        "-allowselfsignedrootcertificates", "-choosedatadir", "-lang=<lang>",
+        "-min", "-resetguisettings", "-rootcertificates=<file>", "-splash",
         "-uiplatform",
-        // TODO remove after the May 2023 upgrade
-        "-wellingtonactivationtime",
-    };
+        // TODO remove after the Nov. 2023 upgrade
+        "-cowperthwaiteactivationtime"};
 
     // Set all of the args and their help
     // When adding new options to the categories, please keep and ensure
@@ -657,6 +644,10 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg("-chronikreindex",
                    "Reindex the Chronik indexer from genesis, but leave the "
                    "other indexes untouched",
+                   ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikperfstats",
+                   "Output some performance statistics (e.g. num cache hits, "
+                   "seconds spent) into a <datadir>/perf folder. (default: 0)",
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
 #endif
     argsman.AddArg(
@@ -1041,43 +1032,6 @@ void SetupServerArgs(NodeContext &node) {
                              DEFAULT_STOPATHEIGHT),
                    ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
                    OptionsCategory::DEBUG_TEST);
-    // TODO Remove after wellington activation
-    argsman.AddArg(
-        "-limitancestorcount=<n>",
-        strprintf("DEPRECATED: Do not accept transactions if number of "
-                  "in-mempool ancestors is <n> or more (default: %u). This is "
-                  "no longer evaluated after the May 15th 2023 eCash network "
-                  "upgrade.",
-                  DEFAULT_ANCESTOR_LIMIT),
-        ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
-        OptionsCategory::DEBUG_TEST);
-    argsman.AddArg(
-        "-limitancestorsize=<n>",
-        strprintf("DEPRECATED: Do not accept transactions whose size with all "
-                  "in-mempool ancestors exceeds <n> kilobytes (default: %u). "
-                  "This is no longer evaluated after the May 15th 2023 eCash "
-                  "network upgrade.",
-                  DEFAULT_ANCESTOR_SIZE_LIMIT),
-        ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
-        OptionsCategory::DEBUG_TEST);
-    argsman.AddArg(
-        "-limitdescendantcount=<n>",
-        strprintf("DEPRECATED: Do not accept transactions if any ancestor "
-                  "would have <n> or more in-mempool descendants (default: %u)"
-                  ". This is no longer evaluated after the May 15th 2023 eCash "
-                  "network upgrade.",
-                  DEFAULT_DESCENDANT_LIMIT),
-        ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
-        OptionsCategory::DEBUG_TEST);
-    argsman.AddArg(
-        "-limitdescendantsize=<n>",
-        strprintf("DEPRECATED: Do not accept transactions if any ancestor "
-                  "would have more than <n> kilobytes of in-mempool "
-                  "descendants (default: %u). This is no longer evaluated "
-                  "after the May 15th 2023 eCash network upgrade.",
-                  DEFAULT_DESCENDANT_SIZE_LIMIT),
-        ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
-        OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-addrmantest", "Allows to test address relay on localhost",
                    ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
                    OptionsCategory::DEBUG_TEST);
@@ -1347,6 +1301,14 @@ void SetupServerArgs(NodeContext &node) {
                    strprintf("Enable the avalanche feature (default: %u)",
                              AVALANCHE_DEFAULT_ENABLED),
                    ArgsManager::ALLOW_ANY, OptionsCategory::AVALANCHE);
+    argsman.AddArg(
+        "-avalanchestakingrewards",
+        strprintf("Enable the avalanche staking rewards feature (default: %u, "
+                  "testnet: %u, regtest: %u)",
+                  defaultChainParams->GetConsensus().enableStakingRewards,
+                  testnetChainParams->GetConsensus().enableStakingRewards,
+                  regtestChainParams->GetConsensus().enableStakingRewards),
+        ArgsManager::ALLOW_BOOL, OptionsCategory::AVALANCHE);
     argsman.AddArg("-avalancheconflictingproofcooldown",
                    strprintf("Mandatory cooldown before a proof conflicting "
                              "with an already registered one can be considered "
@@ -1880,12 +1842,6 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
     hashAssumeValid = BlockHash::fromHex(
         args.GetArg("-assumevalid",
                     chainparams.GetConsensus().defaultAssumeValid.GetHex()));
-    if (!hashAssumeValid.IsNull()) {
-        LogPrintf("Assuming ancestors of block %s have valid signatures.\n",
-                  hashAssumeValid.GetHex());
-    } else {
-        LogPrintf("Validating signatures for all blocks.\n");
-    }
 
     if (args.IsArgSet("-minimumchainwork")) {
         const std::string minChainWorkStr =
@@ -1901,20 +1857,17 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
         nMinimumChainWork =
             UintToArith256(chainparams.GetConsensus().nMinimumChainWork);
     }
-    LogPrintf("Setting nMinimumChainWork=%s\n", nMinimumChainWork.GetHex());
-    if (nMinimumChainWork <
-        UintToArith256(chainparams.GetConsensus().nMinimumChainWork)) {
-        LogPrintf("Warning: nMinimumChainWork set below default value of %s\n",
-                  chainparams.GetConsensus().nMinimumChainWork.GetHex());
-    }
 
     // mempool limits
     int64_t nMempoolSizeMax =
         args.GetIntArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000;
-    int64_t nMempoolSizeMin =
-        args.GetIntArg("-limitdescendantsize", DEFAULT_DESCENDANT_SIZE_LIMIT) *
-        1000 * 40;
-    if (nMempoolSizeMax < 0 || nMempoolSizeMax < nMempoolSizeMin) {
+    // FIXME: this legacy limit comes from the DEFAULT_DESCENDANT_SIZE_LIMIT
+    // (101) that was enforced before the wellington activation. While it's
+    // still a good idea to have some minimum mempool size, using this value as
+    // a threshold is no longer relevant.
+    int64_t nMempoolSizeMin = 101 * 1000 * 40;
+    if (nMempoolSizeMax < 0 ||
+        (!chainparams.IsTestChain() && nMempoolSizeMax < nMempoolSizeMin)) {
         return InitError(strprintf(_("-maxmempool must be at least %d MB"),
                                    std::ceil(nMempoolSizeMin / 1000000.0)));
     }
@@ -1950,9 +1903,6 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
     nPruneTarget = (uint64_t)nPruneArg * 1024 * 1024;
     if (nPruneArg == 1) {
         // manual pruning: -prune=1
-        LogPrintf("Block pruning enabled.  Use RPC call "
-                  "pruneblockchain(height) to manually prune block and undo "
-                  "files.\n");
         nPruneTarget = std::numeric_limits<uint64_t>::max();
         fPruneMode = true;
     } else if (nPruneTarget) {
@@ -1962,9 +1912,6 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
                             "Please use a higher number."),
                           MIN_DISK_SPACE_FOR_BLOCK_FILES / 1024 / 1024));
         }
-        LogPrintf("Prune configured to target %u MiB on disk for block and "
-                  "undo files.\n",
-                  nPruneTarget / 1024 / 1024);
         fPruneMode = true;
     }
 
@@ -2489,129 +2436,68 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     for (bool fLoaded = false; !fLoaded && !ShutdownRequested();) {
         node.mempool = std::make_unique<CTxMemPool>(mempool_check_ratio);
 
-        node.chainman = std::make_unique<ChainstateManager>();
+        node.chainman = std::make_unique<ChainstateManager>(config);
         ChainstateManager &chainman = *node.chainman;
 
-        const bool fReset = fReindex;
-        bilingual_str strLoadError;
+        node::ChainstateLoadOptions options;
+        options.mempool = Assert(node.mempool.get());
+        options.reindex = node::fReindex;
+        options.reindex_chainstate = fReindexChainState;
+        options.prune = node::fPruneMode;
+        options.check_blocks =
+            args.GetIntArg("-checkblocks", DEFAULT_CHECKBLOCKS);
+        options.check_level = args.GetIntArg("-checklevel", DEFAULT_CHECKLEVEL);
+        options.check_interrupt = ShutdownRequested;
+        options.coins_error_cb = [] {
+            uiInterface.ThreadSafeMessageBox(
+                _("Error reading from database, shutting down."), "",
+                CClientUIInterface::MSG_ERROR);
+        };
 
         uiInterface.InitMessage(_("Loading block index...").translated);
 
         const int64_t load_block_index_start_time = GetTimeMillis();
-        std::optional<ChainstateLoadingError> rv;
-
-        try {
-            rv = LoadChainstate(
-                fReset, chainman, Assert(node.mempool.get()), fPruneMode,
-                chainparams.GetConsensus(), fReindexChainState,
-                cache_sizes.block_tree_db, cache_sizes.coins_db,
-                cache_sizes.coins, false, false, ShutdownRequested, []() {
-                    uiInterface.ThreadSafeMessageBox(
-                        _("Error reading from database, shutting down."), "",
-                        CClientUIInterface::MSG_ERROR);
-                });
-        } catch (const std::exception &e) {
-            LogPrintf("%s\n", e.what());
-            rv = ChainstateLoadingError::ERROR_GENERIC_BLOCKDB_OPEN_FAILED;
-        }
-
-        if (rv.has_value()) {
-            switch (rv.value()) {
-                case ChainstateLoadingError::ERROR_UPGRADING_BLOCK_DB:
-                    strLoadError = _("Error upgrading block index database");
-                    break;
-                case ChainstateLoadingError::ERROR_LOADING_BLOCK_DB:
-                    strLoadError = _("Error loading block database");
-                    break;
-                case ChainstateLoadingError::ERROR_BAD_GENESIS_BLOCK:
-                    // If the loaded chain has a wrong genesis, bail out
-                    // immediately (we're likely using a testnet datadir, or
-                    // the other way around).
-                    return InitError(_("Incorrect or no genesis block found. "
-                                       "Wrong datadir for network?"));
-                case ChainstateLoadingError::ERROR_PRUNED_NEEDS_REINDEX:
-                    strLoadError =
-                        _("You need to rebuild the database using -reindex to "
-                          "go back to unpruned mode.  This will redownload the "
-                          "entire blockchain");
-                    break;
-                case ChainstateLoadingError::ERROR_LOAD_GENESIS_BLOCK_FAILED:
-                    strLoadError = _("Error initializing block database");
-                    break;
-                case ChainstateLoadingError::ERROR_CHAINSTATE_UPGRADE_FAILED:
-                    strLoadError = _("Error upgrading chainstate database");
-                    break;
-                case ChainstateLoadingError::ERROR_REPLAYBLOCKS_FAILED:
-                    strLoadError =
-                        _("Unable to replay blocks. You will need to rebuild "
-                          "the database using -reindex-chainstate.");
-                    break;
-                case ChainstateLoadingError::ERROR_LOADCHAINTIP_FAILED:
-                    strLoadError = _("Error initializing block database");
-                    break;
-                case ChainstateLoadingError::ERROR_GENERIC_BLOCKDB_OPEN_FAILED:
-                    strLoadError = _("Error opening block database");
-                    break;
-                case ChainstateLoadingError::SHUTDOWN_PROBED:
-                    break;
-            }
-        } else {
-            std::optional<ChainstateLoadVerifyError> rv2;
+        auto catch_exceptions = [](auto &&f) {
             try {
-                uiInterface.InitMessage(_("Verifying blocks…").translated);
-
-                auto check_blocks =
-                    args.GetIntArg("-checkblocks", DEFAULT_CHECKBLOCKS);
-                if (chainman.m_blockman.m_have_pruned &&
-                    check_blocks > MIN_BLOCKS_TO_KEEP) {
-                    LogPrintf("Prune: pruned datadir may not have more than %d "
-                              "blocks; only checking available blocks\n",
-                              MIN_BLOCKS_TO_KEEP);
-                }
-
-                rv2 = VerifyLoadedChainstate(
-                    chainman, fReset, fReindexChainState, config, check_blocks,
-                    args.GetIntArg("-checklevel", DEFAULT_CHECKLEVEL),
-                    static_cast<int64_t (*)()>(GetTime));
+                return f();
             } catch (const std::exception &e) {
                 LogPrintf("%s\n", e.what());
-                rv2 = ChainstateLoadVerifyError::ERROR_GENERIC_FAILURE;
+                return std::make_tuple(node::ChainstateLoadStatus::FAILURE,
+                                       _("Error opening block database"));
             }
-
-            if (rv2.has_value()) {
-                switch (rv2.value()) {
-                    case ChainstateLoadVerifyError::ERROR_BLOCK_FROM_FUTURE:
-                        strLoadError = _(
-                            "The block database contains a block which appears "
-                            "to be from the future. "
-                            "This may be due to your computer's date and time "
-                            "being set incorrectly. "
-                            "Only rebuild the block database if you are sure "
-                            "that your computer's date and time are correct");
-                        break;
-                    case ChainstateLoadVerifyError::ERROR_CORRUPTED_BLOCK_DB:
-                        strLoadError = _("Corrupted block database detected");
-                        break;
-                    case ChainstateLoadVerifyError::ERROR_GENERIC_FAILURE:
-                        strLoadError = _("Error opening block database");
-                        break;
-                }
-            } else {
+        };
+        auto [status, error] = catch_exceptions(
+            [&] { return LoadChainstate(chainman, cache_sizes, options); });
+        if (status == node::ChainstateLoadStatus::SUCCESS) {
+            uiInterface.InitMessage(_("Verifying blocks...").translated);
+            if (chainman.m_blockman.m_have_pruned &&
+                options.check_blocks > MIN_BLOCKS_TO_KEEP) {
+                LogPrintf("Prune: pruned datadir may not have more than %d "
+                          "blocks; only checking available blocks\n",
+                          MIN_BLOCKS_TO_KEEP);
+            }
+            std::tie(status, error) = catch_exceptions([&] {
+                return VerifyLoadedChainstate(chainman, options, config);
+            });
+            if (status == node::ChainstateLoadStatus::SUCCESS) {
                 fLoaded = true;
                 LogPrintf(" block index %15dms\n",
                           GetTimeMillis() - load_block_index_start_time);
             }
         }
 
+        if (status == node::ChainstateLoadStatus::FAILURE_INCOMPATIBLE_DB) {
+            return InitError(error);
+        }
+
         if (!fLoaded && !ShutdownRequested()) {
             // first suggest a reindex
-            if (!fReset) {
+            if (!options.reindex) {
                 bool fRet = uiInterface.ThreadSafeQuestion(
-                    strLoadError + Untranslated(".\n\n") +
+                    error + Untranslated(".\n\n") +
                         _("Do you want to rebuild the block database now?"),
-                    strLoadError.original +
-                        ".\nPlease restart with -reindex or "
-                        "-reindex-chainstate to recover.",
+                    error.original + ".\nPlease restart with -reindex or "
+                                     "-reindex-chainstate to recover.",
                     "",
                     CClientUIInterface::MSG_ERROR |
                         CClientUIInterface::BTN_ABORT);
@@ -2623,7 +2509,7 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
                     return false;
                 }
             } else {
-                return InitError(strLoadError);
+                return InitError(error);
             }
         }
     }
@@ -2641,7 +2527,7 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
 
     assert(!node.peerman);
     node.peerman = PeerManager::make(
-        chainparams, *node.connman, *node.addrman, node.banman.get(), chainman,
+        *node.connman, *node.addrman, node.banman.get(), chainman,
         *node.mempool, args.GetBoolArg("-blocksonly", DEFAULT_BLOCKSONLY));
     RegisterValidationInterface(node.peerman.get());
 
@@ -2666,26 +2552,34 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
 
     // Step 8: load indexers
     if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
-        if (const auto error{CheckLegacyTxindex(
-                *Assert(chainman.m_blockman.m_block_tree_db))}) {
+        if (const auto error{WITH_LOCK(
+                cs_main, return CheckLegacyTxindex(
+                             *Assert(chainman.m_blockman.m_block_tree_db)))}) {
             return InitError(*error);
         }
 
         g_txindex =
             std::make_unique<TxIndex>(cache_sizes.tx_index, false, fReindex);
-        g_txindex->Start(chainman.ActiveChainstate());
+        if (!g_txindex->Start(chainman.ActiveChainstate())) {
+            return false;
+        }
     }
 
     for (const auto &filter_type : g_enabled_filter_types) {
         InitBlockFilterIndex(filter_type, cache_sizes.filter_index, false,
                              fReindex);
-        GetBlockFilterIndex(filter_type)->Start(chainman.ActiveChainstate());
+        if (!GetBlockFilterIndex(filter_type)
+                 ->Start(chainman.ActiveChainstate())) {
+            return false;
+        }
     }
 
     if (args.GetBoolArg("-coinstatsindex", DEFAULT_COINSTATSINDEX)) {
         g_coin_stats_index = std::make_unique<CoinStatsIndex>(
             /* cache size */ 0, false, fReindex);
-        g_coin_stats_index->Start(chainman.ActiveChainstate());
+        if (!g_coin_stats_index->Start(chainman.ActiveChainstate())) {
+            return false;
+        }
     }
 
 #if ENABLE_CHRONIK
@@ -2745,7 +2639,8 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     // fHaveGenesis directly.
     // No locking, as this happens before any background thread is started.
     boost::signals2::connection block_notify_genesis_wait_connection;
-    if (chainman.ActiveTip() == nullptr) {
+    if (WITH_LOCK(chainman.GetMutex(),
+                  return chainman.ActiveChain().Tip() == nullptr)) {
         block_notify_genesis_wait_connection =
             uiInterface.NotifyBlockTip_connect(
                 std::bind(BlockNotifyGenesisWait, std::placeholders::_2));
@@ -2811,9 +2706,9 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
             tip_info->block_time =
                 chainman.ActiveChain().Tip()
                     ? chainman.ActiveChain().Tip()->GetBlockTime()
-                    : Params().GenesisBlock().GetBlockTime();
+                    : chainman.GetParams().GenesisBlock().GetBlockTime();
             tip_info->verification_progress = GuessVerificationProgress(
-                Params().TxData(), chainman.ActiveChain().Tip());
+                chainman.GetParams().TxData(), chainman.ActiveChain().Tip());
         }
         if (tip_info && chainman.m_best_header) {
             tip_info->header_height = chainman.m_best_header->nHeight;
@@ -2824,8 +2719,6 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     if (node.peerman) {
         node.peerman->SetBestHeight(chain_active_height);
     }
-
-    Discover();
 
     // Map ports with UPnP or NAT-PMP.
     StartMapPort(args.GetBoolArg("-upnp", DEFAULT_UPNP),
@@ -2866,6 +2759,10 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         args.GetIntArg("-maxuploadtarget", DEFAULT_MAX_UPLOAD_TARGET);
     connOptions.m_peer_connect_timeout = peer_connect_timeout;
 
+    // Port to bind to if `-bind=addr` is provided without a `:port` suffix.
+    const uint16_t default_bind_port = static_cast<uint16_t>(
+        args.GetIntArg("-port", config.GetChainParams().GetDefaultPort()));
+
     const auto BadPortWarning = [](const char *prefix, uint16_t port) {
         return strprintf(_("%s request to listen on port %u. This port is "
                            "considered \"bad\" and "
@@ -2879,7 +2776,8 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         CService bind_addr;
         const size_t index = bind_arg.rfind('=');
         if (index == std::string::npos) {
-            if (Lookup(bind_arg, bind_addr, GetListenPort(), false)) {
+            if (Lookup(bind_arg, bind_addr, default_bind_port,
+                       /*fAllowLookup=*/false)) {
                 connOptions.vBinds.push_back(bind_addr);
                 if (IsBadPort(bind_addr.GetPort())) {
                     InitWarning(BadPortWarning("-bind", bind_addr.GetPort()));
@@ -2942,6 +2840,12 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         StartTorControl(onion_service_target);
     }
 
+    if (connOptions.bind_on_any) {
+        // Only add all IP addresses of the machine if we would be listening on
+        // any address - 0.0.0.0 (IPv4) and :: (IPv6).
+        Discover();
+    }
+
     for (const auto &net : args.GetArgs("-whitelist")) {
         NetWhitelistPermissions subnet;
         bilingual_str error;
@@ -2987,12 +2891,13 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     // At this point, the RPC is "started", but still in warmup, which means it
     // cannot yet be called. Before we make it callable, we need to make sure
     // that the RPC's view of the best block is valid and consistent with
-    // ChainstateManager's ActiveTip.
+    // ChainstateManager's active tip.
     //
     // If we do not do this, RPC's view of the best block will be height=0 and
     // hash=0x0. This will lead to erroroneous responses for things like
     // waitforblockheight.
-    RPCNotifyBlockChange(chainman.ActiveTip());
+    RPCNotifyBlockChange(
+        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()));
     SetRPCWarmupFinished();
 
     uiInterface.InitMessage(_("Done loading").translated);

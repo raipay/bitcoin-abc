@@ -15,9 +15,10 @@ from functools import wraps
 from shlex import quote
 
 import yaml
-from build import BuildStatus, BuildTarget
 from deepmerge import always_merger
 from flask import Flask, abort, request
+
+from build import BuildStatus, BuildTarget
 from phabricator_wrapper import BITCOIN_ABC_PROJECT_PHID
 from shieldio import RasterBadge
 from teamcity_wrapper import TeamcityRequestException
@@ -239,6 +240,8 @@ def create_server(tc, phab, slackbot, cirrus, db_file_no_ext=None, jsonProvider=
                     "core-gui": githubUrl.format("bitcoin-core/gui"),
                     "secp256k1": githubUrl.format("bitcoin-core/secp256k1"),
                     "bchn": gitlabUrl.format("bitcoin-cash-node/bitcoin-cash-node"),
+                    "electroncash": githubUrl.format("Electron-Cash/Electron-Cash"),
+                    "electrum": githubUrl.format("spesmilo/electrum"),
                 }
 
                 for prefix, url in supportedRepos.items():
@@ -968,11 +971,9 @@ def create_server(tc, phab, slackbot, cirrus, db_file_no_ext=None, jsonProvider=
                     if not isMaster:
                         phab.commentOnRevision(
                             revisionPHID,
-                            (
-                                "(IMPORTANT) The build failed due to an unexpected"
-                                " infrastructure outage. The administrators have been"
-                                " notified to investigate. Sorry for the inconvenience."
-                            ),
+                            "(IMPORTANT) The build failed due to an unexpected"
+                            " infrastructure outage. The administrators have been"
+                            " notified to investigate. Sorry for the inconvenience.",
                             buildName,
                         )
                     return SUCCESS, 200
@@ -1005,8 +1006,9 @@ def create_server(tc, phab, slackbot, cirrus, db_file_no_ext=None, jsonProvider=
                         "{}: Please set your slack username in your Phabricator profile"
                         " so the landbot can send you direct messages: {}\n{}".format(
                             authorSlackUsername,
-                            "https://reviews.bitcoinabc.org/people/editprofile/{}"
-                            .format(author["id"]),
+                            "https://reviews.bitcoinabc.org/people/editprofile/{}".format(
+                                author["id"]
+                            ),
                             landBotMessage,
                         )
                     )
@@ -1034,9 +1036,10 @@ def create_server(tc, phab, slackbot, cirrus, db_file_no_ext=None, jsonProvider=
                     )
                     if updatedTask:
                         # Only message once all of master is green
-                        (buildFailures, testFailures) = (
-                            tc.getLatestBuildAndTestFailures("BitcoinABC")
-                        )
+                        (
+                            buildFailures,
+                            testFailures,
+                        ) = tc.getLatestBuildAndTestFailures("BitcoinABC")
                         if len(buildFailures) == 0 and len(testFailures) == 0:
                             if not create_server.db["master_is_green"]:
                                 create_server.db["master_is_green"] = True
@@ -1163,9 +1166,8 @@ def create_server(tc, phab, slackbot, cirrus, db_file_no_ext=None, jsonProvider=
                     for line in buildLog.splitlines(keepends=True):
                         logLines.append(line)
 
-                    msg += (
-                        "Tail of the build log:\n```lines=16,COUNTEREXAMPLE\n{}```"
-                        .format("".join(logLines[-60:]))
+                    msg += "Tail of the build log:\n```lines=16,COUNTEREXAMPLE\n{}```".format(
+                        "".join(logLines[-60:])
                     )
                 else:
                     # Print the failure log for each test

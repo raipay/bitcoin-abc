@@ -7,9 +7,11 @@
 
 #include <memory>
 #include <rust/cxx.h>
+#include <vector>
 
 class CBlock;
 class CBlockIndex;
+class Coin;
 class Config;
 class CTransaction;
 
@@ -60,13 +62,16 @@ public:
 
     std::unique_ptr<CBlock> load_block(const CBlockIndex &bindex) const;
 
-    Tx bridge_tx(const CTransaction &tx) const;
-
     const CBlockIndex &find_fork(const CBlockIndex &index) const;
+
+    std::array<uint8_t, 32> broadcast_tx(rust::Slice<const uint8_t> raw_tx,
+                                         int64_t max_fee) const;
 };
 
 std::unique_ptr<ChronikBridge> make_bridge(const Config &config,
                                            const node::NodeContext &node);
+
+Tx bridge_tx(const CTransaction &tx, const std::vector<Coin> &spent_coins);
 
 Block bridge_block(const CBlock &block, const CBlockIndex &bindex);
 
@@ -84,6 +89,8 @@ rust::Vec<uint8_t> decompress_script(rust::Slice<const uint8_t> compressed);
 bool init_error(const rust::Str msg);
 
 void abort_node(const rust::Str msg, const rust::Str user_msg);
+
+bool shutdown_requested();
 
 } // namespace chronik_bridge
 

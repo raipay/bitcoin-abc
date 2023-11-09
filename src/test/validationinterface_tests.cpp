@@ -13,7 +13,7 @@
 
 #include <boost/test/unit_test.hpp>
 
-BOOST_FIXTURE_TEST_SUITE(validationinterface_tests, TestChain100Setup)
+BOOST_FIXTURE_TEST_SUITE(validationinterface_tests, ChainTestingSetup)
 
 struct TestSubscriberNoop final : public CValidationInterface {
     void BlockChecked(const CBlock &, const BlockValidationState &) override {}
@@ -108,7 +108,7 @@ BOOST_AUTO_TEST_CASE(unregister_all_during_call) {
     BOOST_CHECK(destroyed);
 }
 
-BOOST_AUTO_TEST_CASE(block_finalized) {
+BOOST_FIXTURE_TEST_CASE(block_finalized, TestChain100Setup) {
     uint32_t callCount = 0;
     uint32_t expectedCallCount = 0;
     CBlockIndex *expectedIndex;
@@ -131,7 +131,8 @@ BOOST_AUTO_TEST_CASE(block_finalized) {
         checkBlockFinalizedCall(nullptr);
     }
 
-    CBlockIndex *pindex = m_node.chainman->ActiveTip();
+    CBlockIndex *pindex = WITH_LOCK(m_node.chainman->GetMutex(),
+                                    return m_node.chainman->ActiveTip());
     // If pindex is null the following test is pointless
     BOOST_CHECK_NE(pindex, nullptr);
 
@@ -145,7 +146,8 @@ BOOST_AUTO_TEST_CASE(block_finalized) {
 
     // Check calling from AvalancheFinalizedBlock
     Chainstate &activeChainState = m_node.chainman->ActiveChainstate();
-    CBlockIndex *tip = m_node.chainman->ActiveTip();
+    CBlockIndex *tip = WITH_LOCK(m_node.chainman->GetMutex(),
+                                 return m_node.chainman->ActiveTip());
 
     expectedIndex = nullptr;
     BOOST_CHECK(!activeChainState.AvalancheFinalizeBlock(expectedIndex));

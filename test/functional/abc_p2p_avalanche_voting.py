@@ -4,12 +4,13 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the resolution of forks via avalanche."""
 import random
+import time
 
 from test_framework.avatools import can_find_inv_in_poll, get_ava_p2p_interface
 from test_framework.key import ECPubKey
 from test_framework.messages import AvalancheVote, AvalancheVoteError
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal
+from test_framework.util import assert_equal, uint256_hex
 
 QUORUM_NODE_COUNT = 16
 
@@ -63,6 +64,13 @@ class AvalancheTest(BitcoinTestFramework):
         poll_node = quorum[0]
 
         assert node.getavalancheinfo()["ready_to_poll"] is True
+
+        def has_finalized_proof(proofid):
+            can_find_inv_in_poll(quorum, proofid)
+            return node.getrawavalancheproof(uint256_hex(proofid))["finalized"]
+
+        for peer in quorum:
+            self.wait_until(lambda: has_finalized_proof(peer.proof.proofid))
 
         # Generate many block and poll for them.
         self.generate(node, 100 - node.getblockcount())
@@ -319,10 +327,70 @@ class AvalancheTest(BitcoinTestFramework):
             poll_node.send_poll([hash_to_find])
             assert_response([AvalancheVote(AvalancheVoteError.PARKED, hash_to_find)])
 
+            with node.wait_for_debug_log(
+                [f"Avalanche invalidated block {fork_tip}".encode()],
+                chatty_callable=lambda: can_find_inv_in_poll(
+                    quorum, hash_to_find, AvalancheVoteError.PARKED
+                ),
+            ):
+                pass
+
         self.log.info("Check the node is discouraging unexpected avaresponses.")
-        with node.assert_debug_log(
-            ["Misbehaving", "peer=1", "unexpected-ava-response"]
-        ):
+
+        self.restart_node(0)
+
+        poll_node = get_ava_p2p_interface(self, node)
+
+        now = int(time.time())
+        node.setmocktime(now)
+
+        # First we get some tolerance
+        for _ in range(12):
+            with node.assert_debug_log(
+                ["received: avaresponse"],
+                ["Misbehaving", "unexpected-ava-response"],
+            ):
+                # unknown voting round
+                poll_node.send_avaresponse(
+                    avaround=2**32 - 1, votes=[], privkey=poll_node.delegated_privkey
+                )
+
+        # Then we start discouraging
+        with node.assert_debug_log(["Misbehaving", "unexpected-ava-response"]):
+            # unknown voting round
+            poll_node.send_avaresponse(
+                avaround=2**32 - 1, votes=[], privkey=poll_node.delegated_privkey
+            )
+
+        # If we stop misbehaving for some time our tolerance counter resets
+        # after we sent a good (expected) response message.
+        now += 60 * 60 + 1  # 1h + 1s
+        node.setmocktime(now)
+
+        quorum = [poll_node] + get_quorum()
+        assert node.getavalancheinfo()["ready_to_poll"] is True
+
+        for peer in quorum:
+            self.wait_until(lambda: has_finalized_proof(peer.proof.proofid))
+
+        # Make sure our poll node got a poll so the counter has reset
+        while len(poll_node.avapolls) == 0:
+            tip = self.generate(node, 1, sync_fun=self.no_op)[-1]
+            self.wait_until(lambda: has_finalized_tip(tip))
+
+        # Counter has reset
+        for _ in range(12):
+            with node.assert_debug_log(
+                ["received: avaresponse"],
+                ["Misbehaving", "unexpected-ava-response"],
+            ):
+                # unknown voting round
+                poll_node.send_avaresponse(
+                    avaround=2**32 - 1, votes=[], privkey=poll_node.delegated_privkey
+                )
+
+        # Then we start discouraging again
+        with node.assert_debug_log(["Misbehaving", "unexpected-ava-response"]):
             # unknown voting round
             poll_node.send_avaresponse(
                 avaround=2**32 - 1, votes=[], privkey=poll_node.delegated_privkey

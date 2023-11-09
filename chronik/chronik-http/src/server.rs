@@ -14,7 +14,10 @@ use axum::{
     routing, Extension, Router,
 };
 use bitcoinsuite_core::tx::TxId;
-use chronik_indexer::indexer::ChronikIndexer;
+use chronik_indexer::{
+    indexer::{ChronikIndexer, Node},
+    pause::PauseNotify,
+};
 use chronik_proto::proto;
 use hyper::server::conn::AddrIncoming;
 use thiserror::Error;
@@ -27,6 +30,10 @@ use crate::{
 
 /// Ref-counted indexer with read or write access
 pub type ChronikIndexerRef = Arc<RwLock<ChronikIndexer>>;
+/// Ref-counted access to the bitcoind node
+pub type NodeRef = Arc<Node>;
+/// Ref-counted pause notifier for Chronik indexing
+pub type PauseNotifyRef = Arc<PauseNotify>;
 
 /// Params defining what and where to serve for [`ChronikServer`].
 #[derive(Clone, Debug)]
@@ -35,6 +42,10 @@ pub struct ChronikServerParams {
     pub hosts: Vec<SocketAddr>,
     /// Indexer to read data from
     pub indexer: ChronikIndexerRef,
+    /// Access to the bitcoind node
+    pub node: NodeRef,
+    /// Handle for pausing/resuming indexing any updates from the node
+    pub pause_notify: PauseNotifyRef,
 }
 
 /// Chronik HTTP server, holding all the data/handles required to serve an
@@ -43,6 +54,8 @@ pub struct ChronikServerParams {
 pub struct ChronikServer {
     server_builders: Vec<hyper::server::Builder<AddrIncoming>>,
     indexer: ChronikIndexerRef,
+    node: NodeRef,
+    pause_notify: PauseNotifyRef,
 }
 
 /// Errors for [`ChronikServer`].
@@ -86,12 +99,14 @@ impl ChronikServer {
         Ok(ChronikServer {
             server_builders,
             indexer: params.indexer,
+            node: params.node,
+            pause_notify: params.pause_notify,
         })
     }
 
     /// Serve a Chronik HTTP endpoint with the given parameters.
     pub async fn serve(self) -> Result<()> {
-        let app = Self::make_router(self.indexer);
+        let app = Self::make_router(self.indexer, self.node, self.pause_notify);
         let servers = self
             .server_builders
             .into_iter()
@@ -109,12 +124,17 @@ impl ChronikServer {
         Ok(())
     }
 
-    fn make_router(indexer: ChronikIndexerRef) -> Router {
+    fn make_router(
+        indexer: ChronikIndexerRef,
+        node: NodeRef,
+        pause_notify: PauseNotifyRef,
+    ) -> Router {
         Router::new()
             .route("/blockchain-info", routing::get(handle_blockchain_info))
             .route("/block/:hash_or_height", routing::get(handle_block))
             .route("/block-txs/:hash_or_height", routing::get(handle_block_txs))
             .route("/blocks/:start/:end", routing::get(handle_block_range))
+            .route("/chronik-info", routing::get(handle_chronik_info))
             .route("/tx/:txid", routing::get(handle_tx))
             .route("/raw-tx/:txid", routing::get(handle_raw_tx))
             .route(
@@ -134,8 +154,12 @@ impl ChronikServer {
                 routing::get(handle_script_utxos),
             )
             .route("/ws", routing::get(handle_ws))
+            .route("/pause", routing::get(handle_pause))
+            .route("/resume", routing::get(handle_resume))
             .fallback(handlers::handle_not_found)
             .layer(Extension(indexer))
+            .layer(Extension(node))
+            .layer(Extension(pause_notify))
     }
 }
 
@@ -145,6 +169,15 @@ async fn handle_blockchain_info(
     let indexer = indexer.read().await;
     let blocks = indexer.blocks();
     Ok(Protobuf(blocks.blockchain_info()?))
+}
+
+async fn handle_chronik_info(
+) -> Result<Protobuf<proto::ChronikInfo>, ReportError> {
+    let this_chronik_version: String = env!("CARGO_PKG_VERSION").to_string();
+    let chronik_info = proto::ChronikInfo {
+        version: this_chronik_version,
+    };
+    Ok(Protobuf(chronik_info))
 }
 
 async fn handle_block_range(
@@ -252,6 +285,20 @@ async fn handle_script_utxos(
     Ok(Protobuf(
         handlers::handle_script_utxos(&script_type, &payload, &indexer).await?,
     ))
+}
+
+async fn handle_pause(
+    Extension(pause_notify): Extension<PauseNotifyRef>,
+) -> Result<Protobuf<proto::Empty>, ReportError> {
+    pause_notify.pause()?;
+    Ok(Protobuf(proto::Empty {}))
+}
+
+async fn handle_resume(
+    Extension(pause_notify): Extension<PauseNotifyRef>,
+) -> Result<Protobuf<proto::Empty>, ReportError> {
+    pause_notify.resume()?;
+    Ok(Protobuf(proto::Empty {}))
 }
 
 async fn handle_ws(

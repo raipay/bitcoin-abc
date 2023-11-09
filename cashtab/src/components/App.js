@@ -11,6 +11,7 @@ import {
     AirdropIcon,
     ThemedSignAndVerifyMsg,
     ThemedUserProfileIcon,
+    SwapIcon,
 } from 'components/Common/CustomIcons';
 import '../index.css';
 import styled, { ThemeProvider, createGlobalStyle } from 'styled-components';
@@ -24,6 +25,7 @@ import Airdrop from 'components/Airdrop/Airdrop';
 import Alias from 'components/Alias/Alias';
 import Configure from 'components/Configure/Configure';
 import SignVerifyMsg from 'components/SignVerifyMsg/SignVerifyMsg';
+import Swap from 'components/Swap/Swap';
 import NotFound from 'components/NotFound';
 import CashTab from 'assets/cashtab_xec.png';
 import './App.css';
@@ -40,7 +42,8 @@ import {
 import TabCash from 'assets/tabcash.png';
 import { checkForTokenById } from 'utils/tokenMethods.js';
 import ServiceWorkerWrapper from './Common/ServiceWorkerWrapper';
-import { currency } from 'components/Common/Ticker.js';
+import aliasSettings from 'config/alias';
+import appConfig from 'config/app';
 
 const GlobalStyle = createGlobalStyle`
     *::placeholder {
@@ -488,6 +491,16 @@ const App = () => {
         }
     };
 
+    const getExtensionInstallationStatus = async () => {
+        // Wait 2s to check
+        // window.bitcoinAbc is set by the extension, and is undefined on page load
+        // We will also want to wait for some configurable interval anyway, so that the page
+        // does not load with a popup
+        const popupWaitInterval = 2000;
+        await new Promise(resolve => setTimeout(resolve, popupWaitInterval));
+        return window && window.bitcoinAbc && window.bitcoinAbc === 'cashtab';
+    };
+
     // Easter egg boolean not used in extension/src/components/App.js
     const hasTab = validWallet
         ? checkForTokenById(
@@ -496,8 +509,17 @@ const App = () => {
           )
         : false;
 
-    useEffect(() => {
+    useEffect(async () => {
         checkForPersistentStorage();
+        if (appConfig.monitorExtension) {
+            const extensionInstalled = await getExtensionInstallationStatus();
+            // TODO if false and other conditions are met, show popup advertising browser extension
+            console.log(
+                `Cashtab browser extension: ${
+                    extensionInstalled ? 'Installed' : 'Not installed'
+                }`,
+            );
+        }
     }, []);
 
     return (
@@ -535,6 +557,13 @@ const App = () => {
                                         {' '}
                                         Sign & Verify Msg
                                         <ThemedSignAndVerifyMsg />
+                                    </NavHeader>
+                                )}
+                                {selectedKey === 'swap' && (
+                                    <NavHeader>
+                                        {' '}
+                                        Swap
+                                        <SwapIcon />
                                     </NavHeader>
                                 )}
                                 {/*Begin component not included in extension as desktop only*/}
@@ -589,7 +618,7 @@ const App = () => {
                                 <Route path="/signverifymsg">
                                     <SignVerifyMsg />
                                 </Route>
-                                {currency.aliasSettings.aliasEnabled && (
+                                {aliasSettings.aliasEnabled && (
                                     <Route path="/alias">
                                         <Alias
                                             passLoadingStatus={
@@ -604,6 +633,9 @@ const App = () => {
                                             setUpdatingWalletInfo
                                         }
                                     />
+                                </Route>
+                                <Route path="/swap">
+                                    <Swap />
                                 </Route>
                                 <Redirect exact from="/" to="/wallet" />
                                 <Route component={NotFound} />
@@ -648,6 +680,16 @@ const App = () => {
                                             <AirdropIcon />
                                         </NavItem>
                                         <NavItem
+                                            active={selectedKey === 'swap'}
+                                            onClick={() =>
+                                                history.push('/swap')
+                                            }
+                                        >
+                                            {' '}
+                                            <p>Swap</p>
+                                            <SwapIcon />
+                                        </NavItem>
+                                        <NavItem
                                             active={
                                                 selectedKey === 'signverifymsg'
                                             }
@@ -658,8 +700,7 @@ const App = () => {
                                             <p>Sign & Verify</p>
                                             <ThemedSignAndVerifyMsg />
                                         </NavItem>
-                                        {currency.aliasSettings
-                                            .aliasEnabled && (
+                                        {aliasSettings.aliasEnabled && (
                                             <NavItem
                                                 active={selectedKey === 'alias'}
                                                 onClick={() =>

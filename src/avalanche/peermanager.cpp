@@ -4,15 +4,24 @@
 
 #include <avalanche/peermanager.h>
 
+#include <arith_uint256.h>
 #include <avalanche/avalanche.h>
 #include <avalanche/delegation.h>
 #include <avalanche/validation.h>
+#include <cashaddrenc.h>
+#include <logging.h>
 #include <random.h>
 #include <scheduler.h>
+#include <uint256.h>
+#include <util/fastrange.h>
+#include <util/system.h>
+#include <util/time.h>
 #include <validation.h> // For ChainstateManager
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
+#include <limits>
 
 namespace avalanche {
 bool PeerManager::addNode(NodeId nodeid, const ProofId &proofid) {
@@ -51,11 +60,22 @@ bool PeerManager::addOrUpdateNode(const PeerSet::iterator &it, NodeId nodeid) {
         assert(success);
     }
 
+    // Then increase the node counter, and create the slot if needed
     bool success = addNodeToPeer(it);
     assert(success);
 
     // If the added node was in the pending set, remove it
     pendingNodes.get<by_nodeid>().erase(nodeid);
+
+    // If the proof was in the dangling pool, remove it
+    const ProofId &proofid = it->getProofId();
+    if (danglingProofPool.getProof(proofid)) {
+        danglingProofPool.removeProof(proofid);
+    }
+
+    // We know for sure there is at least 1 node. Note that this can fail if
+    // there is more than 1, in this case it's a no-op.
+    shareableProofs.insert(it->proof);
 
     return true;
 }
@@ -81,6 +101,11 @@ bool PeerManager::addNodeToPeer(const PeerSet::iterator &it) {
 }
 
 bool PeerManager::removeNode(NodeId nodeid) {
+    // Remove all the remote proofs from this node
+    auto &remoteProofsView = remoteProofs.get<by_nodeid>();
+    auto [begin, end] = remoteProofsView.equal_range(nodeid);
+    remoteProofsView.erase(begin, end);
+
     if (pendingNodes.get<by_nodeid>().erase(nodeid) > 0) {
         // If this was a pending node, there is nothing else to do.
         return true;
@@ -126,8 +151,14 @@ bool PeerManager::removeNodeFromPeer(const PeerSet::iterator &it,
         return true;
     }
 
-    // There are no more nodes left, we need to clean up. Subtract allocated
-    // score and remove from slots.
+    // There are no more nodes left, we need to clean up. Remove from the radix
+    // tree (unless it's our local proof), subtract allocated score and remove
+    // from slots.
+    if (!localProof || it->getProofId() != localProof->getId()) {
+        const auto removed = shareableProofs.remove(it->getProofId());
+        assert(removed);
+    }
+
     const size_t i = it->index;
     assert(i < slots.size());
     assert(connectedPeersScore >= slots[i].getScore());
@@ -144,7 +175,8 @@ bool PeerManager::removeNodeFromPeer(const PeerSet::iterator &it,
     return true;
 }
 
-bool PeerManager::updateNextRequestTime(NodeId nodeid, TimePoint timeout) {
+bool PeerManager::updateNextRequestTime(NodeId nodeid,
+                                        SteadyMilliseconds timeout) {
     auto it = nodes.find(nodeid);
     if (it == nodes.end()) {
         return false;
@@ -232,7 +264,7 @@ bool PeerManager::registerProof(const ProofRef &proof,
                           "proof-already-registered");
     }
 
-    if (danglingProofIds.contains(proofid) &&
+    if (danglingProofPool.getProof(proofid) &&
         pendingNodes.count(proofid) == 0) {
         // Don't attempt to register a proof that we already evicted because it
         // was dangling, but rather attempt to retrieve an associated node.
@@ -351,8 +383,12 @@ bool PeerManager::registerProof(const ProofRef &proof,
     auto inserted = peers.emplace(peerid, proof, nextCooldownTimePoint);
     assert(inserted.second);
 
-    auto insertedRadixTree = shareableProofs.insert(proof);
-    assert(insertedRadixTree);
+    if (localProof && proof->getId() == localProof->getId()) {
+        // Add it to the shareable proofs even if there is no node, we are the
+        // node. Otherwise it will be inserted after a node is attached to the
+        // proof.
+        shareableProofs.insert(proof);
+    }
 
     // Add to our registered score when adding to the peer list
     totalPeersScore += proof->getScore();
@@ -377,6 +413,11 @@ bool PeerManager::registerProof(const ProofRef &proof,
 }
 
 bool PeerManager::rejectProof(const ProofId &proofid, RejectionMode mode) {
+    if (isDangling(proofid) && mode == RejectionMode::INVALIDATE) {
+        danglingProofPool.removeProof(proofid);
+        return true;
+    }
+
     if (!exists(proofid)) {
         return false;
     }
@@ -426,32 +467,58 @@ bool PeerManager::rejectProof(const ProofId &proofid, RejectionMode mode) {
     return true;
 }
 
-void PeerManager::cleanupDanglingProofs(const ProofRef &localProof) {
+void PeerManager::cleanupDanglingProofs(
+    std::unordered_set<ProofRef, SaltedProofHasher> &registeredProofs) {
+    registeredProofs.clear();
     const auto now = GetTime<std::chrono::seconds>();
 
-    std::vector<ProofId> newlyDanglingProofIds;
+    std::vector<ProofRef> newlyDanglingProofs;
     for (const Peer &peer : peers) {
         // If the peer is not our local proof, has been registered for some
         // time and has no node attached, discard it.
         if ((!localProof || peer.getProofId() != localProof->getId()) &&
             peer.node_count == 0 &&
             (peer.registration_time + Peer::DANGLING_TIMEOUT) <= now) {
-            newlyDanglingProofIds.push_back(peer.getProofId());
+            // Check the remotes status to determine if we should set the proof
+            // as dangling. This prevents from dropping a proof on our own due
+            // to a network issue. If the remote presence status is inconclusive
+            // we assume our own position (missing = false).
+            if (!getRemotePresenceStatus(peer.getProofId()).value_or(false)) {
+                newlyDanglingProofs.push_back(peer.proof);
+            }
         }
     }
 
-    for (const ProofId &proofid : newlyDanglingProofIds) {
-        rejectProof(proofid, RejectionMode::INVALIDATE);
-        danglingProofIds.insert(proofid);
-        LogPrint(
-            BCLog::AVALANCHE,
-            "Proof dropped for dangling too long (no connected node): %s\n",
-            proofid.GetHex());
+    // Similarly, check if we have dangling proofs that could be pulled back
+    // because the network says so.
+    std::vector<ProofRef> previouslyDanglingProofs;
+    danglingProofPool.forEachProof([&](const ProofRef &proof) {
+        if (getRemotePresenceStatus(proof->getId()).value_or(false)) {
+            previouslyDanglingProofs.push_back(proof);
+        }
+    });
+    for (const ProofRef &proof : previouslyDanglingProofs) {
+        danglingProofPool.removeProof(proof->getId());
+        if (registerProof(proof)) {
+            registeredProofs.insert(proof);
+        }
+    }
+
+    for (const ProofRef &proof : newlyDanglingProofs) {
+        rejectProof(proof->getId(), RejectionMode::INVALIDATE);
+        if (danglingProofPool.addProofIfPreferred(proof)) {
+            // If the proof is added, it means there is no better conflicting
+            // dangling proof and this is not a duplicated, so it's worth
+            // printing a message to the log.
+            LogPrint(BCLog::AVALANCHE,
+                     "Proof dangling for too long (no connected node): %s\n",
+                     proof->getId().GetHex());
+        }
     }
 
     // If we have dangling proof, this is a good indicator that we need to
     // request more nodes from our peers.
-    needMoreNodes = !newlyDanglingProofIds.empty();
+    needMoreNodes = !newlyDanglingProofs.empty();
 }
 
 NodeId PeerManager::selectNode() {
@@ -467,9 +534,9 @@ NodeId PeerManager::selectNode() {
 
         // See if that peer has an available node.
         auto &nview = nodes.get<next_request_time>();
-        auto it = nview.lower_bound(boost::make_tuple(p, TimePoint()));
+        auto it = nview.lower_bound(boost::make_tuple(p, SteadyMilliseconds()));
         if (it != nview.end() && it->peerid == p &&
-            it->nextRequestTime <= std::chrono::steady_clock::now()) {
+            it->nextRequestTime <= Now<SteadyMilliseconds>()) {
             return it->nodeid;
         }
     }
@@ -550,6 +617,64 @@ bool PeerManager::isInConflictingPool(const ProofId &proofid) const {
     return conflictingProofPool.getProof(proofid) != nullptr;
 }
 
+bool PeerManager::isDangling(const ProofId &proofid) const {
+    return danglingProofPool.getProof(proofid) != nullptr;
+}
+
+void PeerManager::setInvalid(const ProofId &proofid) {
+    invalidProofs.insert(proofid);
+}
+
+bool PeerManager::isInvalid(const ProofId &proofid) const {
+    return invalidProofs.contains(proofid);
+}
+
+void PeerManager::clearAllInvalid() {
+    invalidProofs.reset();
+}
+
+bool PeerManager::saveRemoteProof(const ProofId &proofid, const NodeId nodeid,
+                                  const bool present) {
+    // Get how many proofs this node has announced
+    auto &remoteProofsByLastUpdate = remoteProofs.get<by_lastUpdate>();
+    auto [begin, end] = remoteProofsByLastUpdate.equal_range(nodeid);
+
+    // Limit the number of proofs a single node can save:
+    //  - At least MAX_REMOTE_PROOFS
+    //  - Up to 2x as much as we have
+    // The MAX_REMOTE_PROOFS minimum is there to ensure we don't overlimit at
+    // startup when we don't have proofs yet.
+    while (size_t(std::distance(begin, end)) >=
+           std::max(MAX_REMOTE_PROOFS, 2 * peers.size())) {
+        // Remove the proof with the oldest update time
+        begin = remoteProofsByLastUpdate.erase(begin);
+    }
+
+    auto it = remoteProofs.find(boost::make_tuple(proofid, nodeid));
+    if (it != remoteProofs.end()) {
+        remoteProofs.erase(it);
+    }
+
+    return remoteProofs
+        .emplace(RemoteProof{proofid, nodeid, GetTime<std::chrono::seconds>(),
+                             present})
+        .second;
+}
+
+std::vector<RemoteProof>
+PeerManager::getRemoteProofs(const NodeId nodeid) const {
+    std::vector<RemoteProof> nodeRemoteProofs;
+
+    auto &remoteProofsByLastUpdate = remoteProofs.get<by_lastUpdate>();
+    auto [begin, end] = remoteProofsByLastUpdate.equal_range(nodeid);
+
+    for (auto &it = begin; it != end; it++) {
+        nodeRemoteProofs.emplace_back(*it);
+    }
+
+    return nodeRemoteProofs;
+}
+
 bool PeerManager::removePeer(const PeerId peerid) {
     auto it = peers.find(peerid);
     if (it == peers.end()) {
@@ -570,15 +695,16 @@ bool PeerManager::removePeer(const PeerId peerid) {
     // Remove nodes associated with this peer, unless their timeout is still
     // active. This ensure that we don't overquery them in case they are
     // subsequently added to another peer.
-    nview.erase(nview.lower_bound(boost::make_tuple(peerid, TimePoint())),
-                nview.upper_bound(boost::make_tuple(
-                    peerid, std::chrono::steady_clock::now())));
+    nview.erase(
+        nview.lower_bound(boost::make_tuple(peerid, SteadyMilliseconds())),
+        nview.upper_bound(
+            boost::make_tuple(peerid, Now<SteadyMilliseconds>())));
 
     // Release UTXOs attached to this proof.
     validProofPool.removeProof(it->getProofId());
 
+    // If there were nodes attached, remove from the radix tree as well
     auto removed = shareableProofs.remove(Uint256RadixKey(it->getProofId()));
-    assert(removed != nullptr);
 
     m_unbroadcast_proofids.erase(it->getProofId());
 
@@ -708,10 +834,10 @@ bool PeerManager::verify() const {
         const auto count_nodes = [&]() {
             size_t count = 0;
             auto &nview = nodes.get<next_request_time>();
-            auto begin =
-                nview.lower_bound(boost::make_tuple(p.peerid, TimePoint()));
-            auto end =
-                nview.upper_bound(boost::make_tuple(p.peerid + 1, TimePoint()));
+            auto begin = nview.lower_bound(
+                boost::make_tuple(p.peerid, SteadyMilliseconds()));
+            auto end = nview.upper_bound(
+                boost::make_tuple(p.peerid + 1, SteadyMilliseconds()));
 
             for (auto it = begin; it != end; ++it) {
                 count++;
@@ -740,8 +866,14 @@ bool PeerManager::verify() const {
             return false;
         }
 
-        // Check the proof is in the radix tree
-        if (shareableProofs.get(p.getProofId()) == nullptr) {
+        // Check the proof is in the radix tree only if there are nodes attached
+        if (((localProof && p.getProofId() == localProof->getId()) ||
+             p.node_count > 0) &&
+            shareableProofs.get(p.getProofId()) == nullptr) {
+            return false;
+        }
+        if (p.node_count == 0 &&
+            shareableProofs.get(p.getProofId()) != nullptr) {
             return false;
         }
     }
@@ -834,4 +966,158 @@ void PeerManager::removeUnbroadcastProof(const ProofId &proofid) {
     m_unbroadcast_proofids.erase(proofid);
 }
 
+bool PeerManager::selectStakingRewardWinner(const CBlockIndex *pprev,
+                                            CScript &winner) {
+    if (!pprev) {
+        return false;
+    }
+
+    // Don't select proofs that have not been known for long enough, i.e. at
+    // least since twice the dangling proof cleanup timeout before the last
+    // block time, so we're sure to not account for proofs more recent than the
+    // previous block or lacking node connected.
+    // The previous block time is capped to now for the unlikely event the
+    // previous block time is in the future.
+    const int64_t maxRegistrationTime =
+        std::min(pprev->GetBlockTime(), GetTime()) -
+        std::chrono::duration_cast<std::chrono::seconds>(2 *
+                                                         Peer::DANGLING_TIMEOUT)
+            .count();
+
+    const BlockHash prevblockhash = pprev->GetBlockHash();
+
+    double bestRewardRank = std::numeric_limits<double>::max();
+    ProofRef selectedProof = ProofRef();
+    uint256 bestRewardHash;
+
+    for (const Peer &peer : peers) {
+        if (!peer.proof) {
+            // Should never happen, continue
+            continue;
+        }
+
+        if (!peer.hasFinalized ||
+            peer.registration_time.count() >= maxRegistrationTime) {
+            continue;
+        }
+
+        uint256 proofRewardHash;
+        CHash256()
+            .Write(prevblockhash)
+            .Write(peer.getProofId())
+            .Finalize(proofRewardHash);
+
+        if (proofRewardHash == uint256::ZERO) {
+            // This either the result of an incredibly unlikely lucky hash, or
+            // a the hash is getting abused. In this case, skip the proof.
+            LogPrintf("Staking reward hash has a suspicious value of zero for "
+                      "proof %s and blockhash %s, skipping\n",
+                      peer.getProofId().ToString(), prevblockhash.ToString());
+            continue;
+        }
+
+        // To make sure the selection is properly weighted according to the
+        // proof score, we normalize the proofRewardHash to a number between 0
+        // and 1, then take the logarithm and divide by the weight.
+        // Since it is scale-independent, we can simplify by removing constants
+        // and use base 2 logarithm.
+        // Inspired by: https://stackoverflow.com/a/30226926.
+        double proofRewardRank =
+            (256.0 - std::log2(UintToArith256(proofRewardHash).getdouble())) /
+            peer.getScore();
+
+        // The best ranking is the lowest ranking value
+        if (proofRewardRank < bestRewardRank) {
+            bestRewardRank = proofRewardRank;
+            selectedProof = peer.proof;
+            bestRewardHash = proofRewardHash;
+        }
+
+        // Select the lowest reward hash then proofid in the unlikely case of a
+        // collision.
+        if (proofRewardRank == bestRewardRank &&
+            (proofRewardHash < bestRewardHash ||
+             (proofRewardHash == bestRewardHash &&
+              peer.getProofId() < selectedProof->getId()))) {
+            selectedProof = peer.proof;
+            bestRewardHash = proofRewardHash;
+        }
+    };
+
+    if (!selectedProof) {
+        // No winner
+        return false;
+    }
+
+    winner = selectedProof->getPayoutScript();
+
+    return true;
+}
+
+bool PeerManager::getPeerScoreFromNodeId(const NodeId nodeid,
+                                         uint32_t &score) const {
+    auto nit = nodes.find(nodeid);
+    if (nit == nodes.end()) {
+        // No such node
+        return false;
+    }
+
+    const PeerId peerid = nit->peerid;
+
+    auto pit = peers.find(peerid);
+    if (pit == peers.end()) {
+        // Peer not found
+        return false;
+    }
+
+    score = pit->getScore();
+    return true;
+}
+
+std::optional<bool>
+PeerManager::getRemotePresenceStatus(const ProofId &proofid) const {
+    auto &remoteProofsView = remoteProofs.get<by_proofid>();
+    auto [begin, end] = remoteProofsView.equal_range(proofid);
+
+    if (begin == end) {
+        // No remote registered anything yet, we are on our own
+        return std::nullopt;
+    }
+
+    size_t total_remotes{0};
+    uint32_t total_score{0};
+    size_t present_remotes{0};
+    uint32_t present_score{0};
+    size_t missing_remotes{0};
+    uint32_t missing_score{0};
+    for (auto it = begin; it != end; it++) {
+        uint32_t score;
+        if (!getPeerScoreFromNodeId(it->nodeid, score)) {
+            // Should never happen
+            continue;
+        }
+
+        ++total_remotes;
+        total_score += score;
+        if (it->present) {
+            ++present_remotes;
+            present_score += score;
+        } else {
+            ++missing_remotes;
+            missing_score += score;
+        }
+    }
+
+    if ((double(present_remotes) / total_remotes > 0.8) &&
+        (double(present_score) / total_score > 0.8)) {
+        return std::make_optional(true);
+    }
+
+    if ((double(missing_remotes) / total_remotes > 0.8) &&
+        (double(missing_score) / total_score > 0.8)) {
+        return std::make_optional(false);
+    }
+
+    return std::nullopt;
+}
 } // namespace avalanche

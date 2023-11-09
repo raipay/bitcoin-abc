@@ -23,6 +23,7 @@
 #include <util/time.h>
 #include <validation.h>
 
+#include <test/util/mining.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -32,7 +33,6 @@
 using node::BlockAssembler;
 using node::CBlockTemplate;
 using node::CBlockTemplateEntry;
-using node::IncrementExtraNonce;
 
 namespace miner_tests {
 struct MinerTestingSetup : public TestingSetup {
@@ -67,8 +67,8 @@ static CFeeRate blockMinFeeRate = CFeeRate(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB);
 BlockAssembler MinerTestingSetup::AssemblerForTest(const CChainParams &params) {
     BlockAssembler::Options options;
     options.blockMinFeeRate = blockMinFeeRate;
-    return BlockAssembler(m_node.chainman->ActiveChainstate(), params,
-                          *m_node.mempool, options);
+    return BlockAssembler{m_node.chainman->ActiveChainstate(), *m_node.mempool,
+                          options};
 }
 
 constexpr static struct {
@@ -203,20 +203,20 @@ static void TestCoinbaseMessageEB(uint64_t eb, std::string cbmsg,
                   << OP_CHECKSIG;
 
     std::unique_ptr<CBlockTemplate> pblocktemplate =
-        BlockAssembler(config, chainman.ActiveChainstate(), mempool)
+        BlockAssembler{config, chainman.ActiveChainstate(), mempool}
             .CreateNewBlock(scriptPubKey);
 
     CBlock *pblock = &pblocktemplate->block;
 
-    // IncrementExtraNonce creates a valid coinbase and merkleRoot
-    unsigned int extraNonce = 0;
-    CBlockIndex *active_chain_tip = chainman.ActiveTip();
-    IncrementExtraNonce(pblock, active_chain_tip, config.GetMaxBlockSize(),
-                        extraNonce);
+    CBlockIndex *active_chain_tip =
+        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip());
+    createCoinbaseAndMerkleRoot(pblock, active_chain_tip,
+                                config.GetMaxBlockSize());
+
     unsigned int nHeight = active_chain_tip->nHeight + 1;
     std::vector<uint8_t> vec(cbmsg.begin(), cbmsg.end());
     BOOST_CHECK(pblock->vtx[0]->vin[0].scriptSig ==
-                (CScript() << nHeight << CScriptNum(extraNonce) << vec));
+                (CScript() << nHeight << vec));
 }
 
 // Coinbase scriptSig has to contains the correct EB value
@@ -700,6 +700,9 @@ void MinerTestingSetup::TestPrioritisedMining(
 
 // NOTE: These tests rely on CreateNewBlock doing its own self-validation!
 BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
+    // FIXME Update the below blocks to create a valid miner fund coinbase.
+    // This requires to update the blockinfo nonces.
+    gArgs.ForceSetArg("-enableminerfund", "0");
     // Note that by default, these tests run with size accounting enabled.
     GlobalConfig config;
     const CChainParams &chainparams = config.GetChainParams();
@@ -774,6 +777,8 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     TestPrioritisedMining(chainparams, scriptPubKey, txFirst);
 
     fCheckpointsEnabled = true;
+
+    gArgs.ClearForcedArg("-enableminerfund");
 }
 
 static void CheckBlockMaxSize(const Config &config, const CTxMemPool &mempool,
@@ -781,7 +786,7 @@ static void CheckBlockMaxSize(const Config &config, const CTxMemPool &mempool,
                               uint64_t expected) {
     gArgs.ForceSetArg("-blockmaxsize", ToString(size));
 
-    BlockAssembler ba(config, active_chainstate, mempool);
+    BlockAssembler ba{config, active_chainstate, mempool};
     BOOST_CHECK_EQUAL(ba.GetMaxGeneratedBlockSize(), expected);
 }
 
@@ -830,8 +835,8 @@ BOOST_AUTO_TEST_CASE(BlockAssembler_construction) {
     // DEFAULT_MAX_GENERATED_BLOCK_SIZE
     {
         gArgs.ClearForcedArg("-blockmaxsize");
-        BlockAssembler ba(config, m_node.chainman->ActiveChainstate(),
-                          *m_node.mempool);
+        BlockAssembler ba{config, m_node.chainman->ActiveChainstate(),
+                          *m_node.mempool};
         BOOST_CHECK_EQUAL(ba.GetMaxGeneratedBlockSize(),
                           DEFAULT_MAX_GENERATED_BLOCK_SIZE);
     }

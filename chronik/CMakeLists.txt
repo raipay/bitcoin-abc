@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Corrosion 0.3.0 REQUIRED)
 
-set(REQUIRED_RUST_VERSION "1.61.0")
+set(REQUIRED_RUST_VERSION "1.72.0")
 if(Rust_VERSION VERSION_LESS REQUIRED_RUST_VERSION)
     message(FATAL_ERROR "Minimum required Rust version is "
             "${REQUIRED_RUST_VERSION}, but found ${Rust_VERSION}")
@@ -154,4 +154,27 @@ target_link_libraries(server
     # TODO: We need to add the library again, otherwise gcc linking fails.
     # It's not clear yet why this is the case.
     chronik-bridge
+)
+
+# Install the directory containing the proto files. The trailing slash ensures
+# the directory is not duplicated (see
+# https://cmake.org/cmake/help/v3.16/command/install.html#installing-directories)
+set(CHRONIK_PROTO_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/chronik-proto/proto/")
+set(CHRONIK_PROTO_COMPONENT "chronik-proto")
+install(
+    DIRECTORY "${CHRONIK_PROTO_DIRECTORY}"
+    DESTINATION "proto"
+    COMPONENT "${CHRONIK_PROTO_COMPONENT}"
+)
+
+add_custom_target("install-${CHRONIK_PROTO_COMPONENT}"
+    COMMENT "Installing component ${CHRONIK_PROTO_COMPONENT}"
+    COMMAND
+        "${CMAKE_COMMAND}"
+        -E env CMAKE_INSTALL_ALWAYS=ON
+        "${CMAKE_COMMAND}"
+        -DCOMPONENT="${CHRONIK_PROTO_COMPONENT}"
+        -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+        -P cmake_install.cmake
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
 )

@@ -17,6 +17,8 @@
 #include <blockindexcomparators.h>
 #include <bloom.h>
 #include <chain.h>
+#include <chainparams.h>
+#include <config.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <disconnectresult.h>
@@ -26,6 +28,7 @@
 #include <policy/packages.h>
 #include <script/script_error.h>
 #include <script/script_metrics.h>
+#include <shutdown.h>
 #include <sync.h>
 #include <txdb.h>
 #include <txmempool.h> // For CTxMemPool::cs
@@ -48,7 +51,6 @@ class BlockPolicyValidationState;
 class CChainParams;
 class Chainstate;
 class ChainstateManager;
-class Config;
 class CScriptCheck;
 class CTxMemPool;
 class CTxUndo;
@@ -62,6 +64,9 @@ struct AssumeutxoData;
 namespace node {
 class SnapshotMetadata;
 } // namespace node
+namespace Consensus {
+struct Params;
+} // namespace Consensus
 
 namespace Consensus {
 struct Params;
@@ -645,7 +650,7 @@ enum class CoinsCacheSizeState {
  * kept in `BlockManager`.
  */
 class Chainstate {
-private:
+protected:
     /**
      * The ChainState Mutex.
      * A lock that must be held when modifying this ChainState.
@@ -678,6 +683,20 @@ private:
     //! Manages the UTXO set, which is a reflection of the contents of
     //! `m_chain`.
     std::unique_ptr<CoinsViews> m_coins_views;
+
+    //! This toggle exists for use when doing background validation for UTXO
+    //! snapshots.
+    //!
+    //! In the expected case, it is set once the background validation chain
+    //! reaches the same height as the base of the snapshot and its UTXO set is
+    //! found to hash to the expected assumeutxo value. It signals that we
+    //! should no longer connect blocks to the background chainstate. When set
+    //! on the background validation chainstate, it signifies that we have fully
+    //! validated the snapshot chainstate.
+    //!
+    //! In the unlikely case that the snapshot chainstate is found to be
+    //! invalid, this is set to true on the snapshot chainstate.
+    bool m_disabled GUARDED_BY(::cs_main){false};
 
     mutable Mutex cs_avalancheFinalizedBlockIndex;
 
@@ -770,14 +789,14 @@ public:
     //! @returns A reference to the in-memory cache of the UTXO set.
     CCoinsViewCache &CoinsTip() EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
         AssertLockHeld(::cs_main);
-        assert(m_coins_views->m_cacheview);
-        return *m_coins_views->m_cacheview.get();
+        Assert(m_coins_views);
+        return *Assert(m_coins_views->m_cacheview);
     }
 
     //! @returns A reference to the on-disk UTXO set database.
     CCoinsViewDB &CoinsDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
         AssertLockHeld(::cs_main);
-        return m_coins_views->m_dbview;
+        return Assert(m_coins_views)->m_dbview;
     }
 
     //! @returns A pointer to the mempool.
@@ -788,11 +807,14 @@ public:
     CCoinsViewErrorCatcher &CoinsErrorCatcher()
         EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
         AssertLockHeld(::cs_main);
-        return m_coins_views->m_catcherview;
+        return Assert(m_coins_views)->m_catcherview;
     }
 
     //! Destructs all objects related to accessing the UTXO set.
     void ResetCoinsViews() { m_coins_views.reset(); }
+
+    //! Does this chainstate have a UTXO set attached?
+    bool HasCoinsViews() const { return (bool)m_coins_views; }
 
     //! The cache size of the on-disk coins view.
     size_t m_coinsdb_cache_size_bytes{0};
@@ -843,6 +865,12 @@ public:
      *
      * May not be called with cs_main held. May not be called in a
      * validationinterface callback.
+     *
+     * Note that if this is called while a snapshot chainstate is active, and if
+     * it is called on a background chainstate whose tip has reached the base
+     * block of the snapshot, its execution will take *MINUTES* while it hashes
+     * the background UTXO set to verify the assumeutxo value the snapshot was
+     * activated with. `cs_main` will be held during this time.
      *
      * @returns true unless a system error occurred
      */
@@ -974,6 +1002,12 @@ public:
 
     std::string ToString() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
+    //! Indirection necessary to make lock annotations work with an optional
+    //! mempool.
+    RecursiveMutex *MempoolMutex() const LOCK_RETURNED(m_mempool->cs) {
+        return m_mempool ? &m_mempool->cs : nullptr;
+    }
+
 private:
     bool ActivateBestChainStep(const Config &config,
                                BlockValidationState &state,
@@ -1017,19 +1051,40 @@ private:
     const CBlockIndex *FindBlockToFinalize(CBlockIndex *pindexNew)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
-    //! Indirection necessary to make lock annotations work with an optional
-    //! mempool.
-    RecursiveMutex *MempoolMutex() const LOCK_RETURNED(m_mempool->cs) {
-        return m_mempool ? &m_mempool->cs : nullptr;
-    }
-
     /**
      * Check warning conditions and do some notifications on new chain tip set.
      */
     void UpdateTip(const CBlockIndex *pindexNew)
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
+    /**
+     * In case of an invalid snapshot, rename the coins leveldb directory so
+     * that it can be examined for issue diagnosis.
+     */
+    void InvalidateCoinsDBOnDisk() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
     friend ChainstateManager;
+};
+
+enum class SnapshotCompletionResult {
+    SUCCESS,
+    SKIPPED,
+
+    // Expected assumeutxo configuration data is not found for the height of the
+    // base block.
+    MISSING_CHAINPARAMS,
+
+    // Failed to generate UTXO statistics (to check UTXO set hash) for the
+    // background chainstate.
+    STATS_FAILED,
+
+    // The UTXO set hash of the background validation chainstate does not match
+    // the one expected by assumeutxo chainparams.
+    HASH_MISMATCH,
+
+    // The blockhash of the current tip of the background validation chainstate
+    // does not match the one expected by the snapshot chainstate.
+    BASE_BLOCKHASH_MISMATCH,
 };
 
 /**
@@ -1100,17 +1155,15 @@ private:
     //! that call.
     Chainstate *m_active_chainstate GUARDED_BY(::cs_main){nullptr};
 
-    //! If true, the assumed-valid chainstate has been fully validated
-    //! by the background validation chainstate.
-    bool m_snapshot_validated GUARDED_BY(::cs_main){false};
-
     CBlockIndex *m_best_invalid GUARDED_BY(::cs_main){nullptr};
     CBlockIndex *m_best_parked GUARDED_BY(::cs_main){nullptr};
+
+    const Config &m_config;
 
     //! Internal helper for ActivateSnapshot().
     [[nodiscard]] bool
     PopulateAndValidateSnapshot(Chainstate &snapshot_chainstate,
-                                CAutoFile &coins_file,
+                                AutoFile &coins_file,
                                 const node::SnapshotMetadata &metadata);
     /**
      * If a block header hasn't already been seen, call CheckBlockHeader on it,
@@ -1122,7 +1175,48 @@ private:
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     friend Chainstate;
 
+    //! Returns nullptr if no snapshot has been loaded.
+    const CBlockIndex *GetSnapshotBaseBlock() const
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    //! Return the height of the base block of the snapshot in use, if one
+    //! exists, else nullopt.
+    std::optional<int> GetSnapshotBaseHeight() const
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    //! Return true if a chainstate is considered usable.
+    //!
+    //! This is false when a background validation chainstate has completed its
+    //! validation of an assumed-valid chainstate, or when a snapshot
+    //! chainstate has been found to be invalid.
+    bool IsUsable(const Chainstate *const pchainstate) const
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
+        return pchainstate && !pchainstate->m_disabled;
+    }
+
 public:
+    explicit ChainstateManager(const Config &config) : m_config{config} {}
+
+    const CChainParams &GetParams() const { return m_config.GetChainParams(); }
+    const Consensus::Params &GetConsensus() const {
+        return m_config.GetChainParams().GetConsensus();
+    }
+
+    /**
+     * Alias for ::cs_main.
+     * Should be used in new code to make it easier to make ::cs_main a member
+     * of this class.
+     * Generally, methods of this class should be annotated to require this
+     * mutex. This will make calling code more verbose, but also help to:
+     * - Clarify that the method will acquire a mutex that heavily affects
+     *   overall performance.
+     * - Force call sites to think how long they need to acquire the mutex to
+     *   get consistent results.
+     */
+    RecursiveMutex &GetMutex() const LOCK_RETURNED(::cs_main) {
+        return ::cs_main;
+    }
+
     std::thread m_load_block;
     //! A single BlockManager instance is shared across each constructed
     //! chainstate to avoid duplicating block metadata.
@@ -1163,17 +1257,11 @@ public:
     //! coins databases. This will be split somehow across chainstates.
     int64_t m_total_coinsdb_cache{0};
 
-    //! Instantiate a new chainstate and assign it based upon whether it is
-    //! from a snapshot.
+    //! Instantiate a new chainstate.
     //!
     //! @param[in] mempool              The mempool to pass to the chainstate
     //                                  constructor
-    //! @param[in] snapshot_blockhash   If given, signify that this chainstate
-    //!                                 is based on a snapshot.
-    Chainstate &
-    InitializeChainstate(CTxMemPool *mempool,
-                         const std::optional<BlockHash> &snapshot_blockhash =
-                             std::nullopt) LIFETIMEBOUND
+    Chainstate &InitializeChainstate(CTxMemPool *mempool)
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
     //! Get all chainstates currently being used.
@@ -1192,15 +1280,33 @@ public:
     //!   snapshot, faking nTx* block index data along the way.
     //! - Move the new chainstate to `m_snapshot_chainstate` and make it our
     //!   ActiveChainstate().
-    [[nodiscard]] bool ActivateSnapshot(CAutoFile &coins_file,
+    [[nodiscard]] bool ActivateSnapshot(AutoFile &coins_file,
                                         const node::SnapshotMetadata &metadata,
                                         bool in_memory);
 
+    //! Once the background validation chainstate has reached the height which
+    //! is the base of the UTXO snapshot in use, compare its coins to ensure
+    //! they match those expected by the snapshot.
+    //!
+    //! If the coins match (expected), then mark the validation chainstate for
+    //! deletion and continue using the snapshot chainstate as active.
+    //! Otherwise, revert to using the ibd chainstate and shutdown.
+    SnapshotCompletionResult MaybeCompleteSnapshotValidation(
+        std::function<void(bilingual_str)> shutdown_fnc =
+            [](bilingual_str msg) { AbortNode(msg.original, msg); })
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
     //! The most-work chain.
     Chainstate &ActiveChainstate() const;
-    CChain &ActiveChain() const { return ActiveChainstate().m_chain; }
-    int ActiveHeight() const { return ActiveChain().Height(); }
-    CBlockIndex *ActiveTip() const { return ActiveChain().Tip(); }
+    CChain &ActiveChain() const EXCLUSIVE_LOCKS_REQUIRED(GetMutex()) {
+        return ActiveChainstate().m_chain;
+    }
+    int ActiveHeight() const EXCLUSIVE_LOCKS_REQUIRED(GetMutex()) {
+        return ActiveChain().Height();
+    }
+    CBlockIndex *ActiveTip() const EXCLUSIVE_LOCKS_REQUIRED(GetMutex()) {
+        return ActiveChain().Tip();
+    }
 
     node::BlockMap &BlockIndex() EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
         AssertLockHeld(::cs_main);
@@ -1215,7 +1321,8 @@ public:
 
     //! Is there a snapshot in use and has it been fully validated?
     bool IsSnapshotValidated() const EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
-        return m_snapshot_validated;
+        return m_snapshot_chainstate && m_ibd_chainstate &&
+               m_ibd_chainstate->m_disabled;
     }
 
     /**
@@ -1285,6 +1392,30 @@ public:
     //! Check to see if caches are out of balance and if so, call
     //! ResizeCoinsCaches() as needed.
     void MaybeRebalanceCaches() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    //! When starting up, search the datadir for a chainstate based on a UTXO
+    //! snapshot that is in the process of being validated.
+    bool DetectSnapshotChainstate(CTxMemPool *mempool)
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    void ResetChainstates() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    //! Switch the active chainstate to one based on a UTXO snapshot that was
+    //! loaded previously.
+    Chainstate &ActivateExistingSnapshot(CTxMemPool *mempool,
+                                         BlockHash base_blockhash)
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    //! If we have validated a snapshot chain during this runtime, copy its
+    //! chainstate directory over to the main `chainstate` location, completing
+    //! validation of the snapshot.
+    //!
+    //! If the cleanup succeeds, the caller will need to ensure chainstates are
+    //! reinitialized, since ResetChainstates() will be called before leveldb
+    //! directories are moved or deleted.
+    //!
+    //! @sa node/chainstate:LoadChainstate()
+    bool ValidatedSnapshotCleanup() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 };
 
 /** Dump the mempool to disk. */

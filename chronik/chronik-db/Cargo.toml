@@ -4,7 +4,7 @@
 name = "chronik-db"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.67.1"
+rust-version.workspace = true
 license = "MIT"
 
 [dependencies]
@@ -12,6 +12,11 @@ abc-rust-error = { path = "../abc-rust-error" }
 abc-rust-lint = { path = "../abc-rust-lint" }
 
 bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+
+chronik-util = { path = "../chronik-util" }
+
+# Efficient byte strings, with ref counted substrings
+bytes = "1.4"
 
 # En-/decode byte strings from/to hex
 hex = "0.4"
@@ -29,13 +34,7 @@ serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 
 # Key-value database
-# This is currently a git dependency, as this commit to fix the linux-arm build
-# hasn't been published yet. TODO: Change it back to version once published.
-# See this GitHub issue: https://github.com/rust-rocksdb/rust-rocksdb/pull/754
-[dependencies.rocksdb]
-git = "https://github.com/rust-rocksdb/rust-rocksdb.git"
-rev = "a6103ef"
-default-features = false
+rocksdb = { version = "0.21", default-features = false }
 
 [dev-dependencies]
 # Colorful diffs for assertions
@@ -45,4 +44,4 @@ pretty_assertions = "1.0"
 tempdir = "0.3"
 
 # Simple RNG
-fastrand = "1.9"
+fastrand = "2.0"

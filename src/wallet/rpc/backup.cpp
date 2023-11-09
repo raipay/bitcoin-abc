@@ -26,8 +26,6 @@
 #include <wallet/spend.h>
 #include <wallet/wallet.h>
 
-#include <boost/algorithm/string.hpp>
-
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
@@ -122,10 +120,11 @@ RPCHelpMan importprivkey() {
         {
             {"privkey", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The private key (see dumpprivkey)"},
-            {"label", RPCArg::Type::STR, /* default */
-             "current label if address exists, otherwise \"\"",
+            {"label", RPCArg::Type::STR,
+             RPCArg::DefaultHint{
+                 "current label if address exists, otherwise \"\""},
              "An optional label"},
-            {"rescan", RPCArg::Type::BOOL, /* default */ "true",
+            {"rescan", RPCArg::Type::BOOL, RPCArg::Default{true},
              "Rescan the wallet for transactions"},
         },
         RPCResult{RPCResult::Type::NONE, "", ""},
@@ -284,11 +283,11 @@ RPCHelpMan importaddress() {
         {
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The Bitcoin address (or hex-encoded script)"},
-            {"label", RPCArg::Type::STR, /* default */ "\"\"",
+            {"label", RPCArg::Type::STR, RPCArg::Default{""},
              "An optional label"},
-            {"rescan", RPCArg::Type::BOOL, /* default */ "true",
+            {"rescan", RPCArg::Type::BOOL, RPCArg::Default{true},
              "Rescan the wallet for transactions"},
-            {"p2sh", RPCArg::Type::BOOL, /* default */ "false",
+            {"p2sh", RPCArg::Type::BOOL, RPCArg::Default{false},
              "Add the P2SH version of the script as well"},
         },
         RPCResult{RPCResult::Type::NONE, "", ""},
@@ -545,9 +544,9 @@ RPCHelpMan importpubkey() {
         {
             {"pubkey", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The hex-encoded public key"},
-            {"label", RPCArg::Type::STR, /* default */ "\"\"",
+            {"label", RPCArg::Type::STR, RPCArg::Default{""},
              "An optional label"},
-            {"rescan", RPCArg::Type::BOOL, /* default */ "true",
+            {"rescan", RPCArg::Type::BOOL, RPCArg::Default{true},
              "Rescan the wallet for transactions"},
         },
         RPCResult{RPCResult::Type::NONE, "", ""},
@@ -729,8 +728,7 @@ RPCHelpMan importwallet() {
                         continue;
                     }
 
-                    std::vector<std::string> vstr;
-                    boost::split(vstr, line, boost::is_any_of(" "));
+                    std::vector<std::string> vstr = SplitString(line, ' ');
                     if (vstr.size() < 2) {
                         continue;
                     }
@@ -1752,7 +1750,7 @@ RPCHelpMan importmulti() {
                           "address/scriptPubKey"},
                          {"pubkeys",
                           RPCArg::Type::ARR,
-                          /* default */ "empty array",
+                          RPCArg::Default{UniValue::VARR},
                           "Array of strings giving pubkeys to import. They "
                           "must occur in P2PKH scripts. They are not required "
                           "when the private key is also provided (see the "
@@ -1763,7 +1761,7 @@ RPCHelpMan importmulti() {
                           }},
                          {"keys",
                           RPCArg::Type::ARR,
-                          /* default */ "empty array",
+                          RPCArg::Default{UniValue::VARR},
                           "Array of strings giving private keys to import. The "
                           "corresponding public keys must occur in the output "
                           "or redeemscript.",
@@ -1777,17 +1775,17 @@ RPCHelpMan importmulti() {
                           "end or the range (in the form [begin,end]) to "
                           "import"},
                          {"internal", RPCArg::Type::BOOL,
-                          /* default */ "false",
+                          RPCArg::Default{false},
                           "Stating whether matching outputs should be treated "
                           "as not incoming payments (also known as change)"},
                          {"watchonly", RPCArg::Type::BOOL,
-                          /* default */ "false",
+                          RPCArg::Default{false},
                           "Stating whether matching outputs should be "
                           "considered watchonly."},
-                         {"label", RPCArg::Type::STR, /* default */ "''",
+                         {"label", RPCArg::Type::STR, RPCArg::Default{""},
                           "Label to assign to the address, only allowed with "
                           "internal=false"},
-                         {"keypool", RPCArg::Type::BOOL, /* default */ "false",
+                         {"keypool", RPCArg::Type::BOOL, RPCArg::Default{false},
                           "Stating whether imported public keys should be "
                           "added to the keypool for when users request new "
                           "addresses. Only allowed when wallet private keys "
@@ -1801,7 +1799,7 @@ RPCHelpMan importmulti() {
              RPCArg::Optional::OMITTED_NAMED_ARG,
              "",
              {
-                 {"rescan", RPCArg::Type::BOOL, /* default */ "true",
+                 {"rescan", RPCArg::Type::BOOL, RPCArg::Default{true},
                   "Stating if should rescan the blockchain after all imports"},
              },
              "\"options\""},
@@ -2102,18 +2100,9 @@ static UniValue ProcessDescriptorImport(CWallet *const pwallet,
         // Check if the wallet already contains the descriptor
         auto existing_spk_manager =
             pwallet->GetDescriptorScriptPubKeyMan(w_desc);
-        if (existing_spk_manager) {
-            LOCK(existing_spk_manager->cs_desc_man);
-            if (range_start >
-                existing_spk_manager->GetWalletDescriptor().range_start) {
-                throw JSONRPCError(
-                    RPC_INVALID_PARAMS,
-                    strprintf(
-                        "range_start can only decrease; current range = "
-                        "[%d,%d]",
-                        existing_spk_manager->GetWalletDescriptor().range_start,
-                        existing_spk_manager->GetWalletDescriptor().range_end));
-            }
+        if (existing_spk_manager &&
+            !existing_spk_manager->CanUpdateToWalletDescriptor(w_desc, error)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, error);
         }
 
         // Add descriptor to the wallet
@@ -2135,17 +2124,18 @@ static UniValue ProcessDescriptorImport(CWallet *const pwallet,
                     spk_manager->GetID(), *w_desc.descriptor->GetOutputType(),
                     internal);
             }
+        } else {
+            if (w_desc.descriptor->GetOutputType()) {
+                pwallet->DeactivateScriptPubKeyMan(
+                    spk_manager->GetID(), *w_desc.descriptor->GetOutputType(),
+                    internal);
+            }
         }
 
         result.pushKV("success", UniValue(true));
     } catch (const UniValue &e) {
         result.pushKV("success", UniValue(false));
         result.pushKV("error", e);
-    } catch (...) {
-        result.pushKV("success", UniValue(false));
-
-        result.pushKV("error",
-                      JSONRPCError(RPC_MISC_ERROR, "Missing required fields"));
     }
     if (warnings.size()) {
         result.pushKV("warnings", warnings);
@@ -2177,7 +2167,7 @@ RPCHelpMan importdescriptors() {
                      {
                          {"desc", RPCArg::Type::STR, RPCArg::Optional::NO,
                           "Descriptor to import."},
-                         {"active", RPCArg::Type::BOOL, /* default */ "false",
+                         {"active", RPCArg::Type::BOOL, RPCArg::Default{false},
                           "Set this descriptor to be the active descriptor for "
                           "the corresponding output type/externality"},
                          {"range", RPCArg::Type::RANGE,
@@ -2213,10 +2203,11 @@ RPCHelpMan importdescriptors() {
                               "will be scanned.",
                           /* oneline_description */ "",
                           {"timestamp | \"now\"", "integer / string"}},
-                         {"internal", RPCArg::Type::BOOL, /* default */ "false",
+                         {"internal", RPCArg::Type::BOOL,
+                          RPCArg::Default{false},
                           "Whether matching outputs should be treated as not "
                           "incoming payments (e.g. change)"},
-                         {"label", RPCArg::Type::STR, /* default */ "''",
+                         {"label", RPCArg::Type::STR, RPCArg::Default{""},
                           "Label to assign to the address, only allowed with "
                           "internal=false"},
                      },

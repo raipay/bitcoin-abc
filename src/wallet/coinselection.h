@@ -9,8 +9,6 @@
 #include <primitives/transaction.h>
 #include <random.h>
 
-class CFeeRate;
-
 //! target minimum change amount
 static constexpr Amount MIN_CHANGE{COIN / 100};
 //! final minimum change amount after paying for fees
@@ -63,18 +61,21 @@ public:
 
 struct CoinEligibilityFilter {
     const int conf_mine;
+    /**
+     * Minimum number of confirmations for outputs received from a different
+     * wallet.
+     */
     const int conf_theirs;
-    const uint64_t max_ancestors;
-    const uint64_t max_descendants;
+    /// Include partial destination groups when avoid_reuse and there are full
+    /// groups
+    const bool m_include_partial_groups{false};
 
+    CoinEligibilityFilter(int conf_mine_, int conf_theirs_)
+        : conf_mine(conf_mine_), conf_theirs(conf_theirs_) {}
     CoinEligibilityFilter(int conf_mine_, int conf_theirs_,
-                          uint64_t max_ancestors_)
+                          bool include_partial_groups)
         : conf_mine(conf_mine_), conf_theirs(conf_theirs_),
-          max_ancestors(max_ancestors_), max_descendants(max_ancestors_) {}
-    CoinEligibilityFilter(int conf_mine_, int conf_theirs_,
-                          uint64_t max_ancestors_, uint64_t max_descendants_)
-        : conf_mine(conf_mine_), conf_theirs(conf_theirs_),
-          max_ancestors(max_ancestors_), max_descendants(max_descendants_) {}
+          m_include_partial_groups(include_partial_groups) {}
 };
 
 struct OutputGroup {
@@ -82,33 +83,22 @@ struct OutputGroup {
     bool m_from_me{true};
     Amount m_value = Amount::zero();
     int m_depth{999};
-    size_t m_ancestors{0};   ///< deprecated after wellington activation
-    size_t m_descendants{0}; ///< deprecated after wellington activation
     Amount effective_value = Amount::zero();
     Amount fee = Amount::zero();
+    CFeeRate m_effective_feerate{Amount::zero()};
     Amount long_term_fee = Amount::zero();
+    CFeeRate m_long_term_feerate{Amount::zero()};
 
     OutputGroup() {}
-    OutputGroup(std::vector<CInputCoin> &&outputs, bool from_me, Amount value,
-                int depth, size_t ancestors, size_t descendants)
-        : m_outputs(std::move(outputs)), m_from_me(from_me), m_value(value),
-          m_depth(depth), m_ancestors(ancestors), m_descendants(descendants) {}
-    OutputGroup(const CInputCoin &output, int depth, bool from_me,
-                size_t ancestors, size_t descendants)
-        : OutputGroup() {
-        Insert(output, depth, from_me, ancestors, descendants);
-    }
+    OutputGroup(const CFeeRate &effective_feerate,
+                const CFeeRate &long_term_feerate)
+        : m_effective_feerate(effective_feerate),
+          m_long_term_feerate(long_term_feerate) {}
+
     void Insert(const CInputCoin &output, int depth, bool from_me,
-                size_t ancestors, size_t descendants);
-    std::vector<CInputCoin>::iterator Discard(const CInputCoin &output);
+                bool positive_only);
     bool
     EligibleForSpending(const CoinEligibilityFilter &eligibility_filter) const;
-
-    //! Update the OutputGroup's fee, long_term_fee, and effective_value based
-    //! on the given feerates
-    void SetFees(const CFeeRate effective_feerate,
-                 const CFeeRate long_term_feerate);
-    OutputGroup GetPositiveOnlyGroup();
 };
 
 bool SelectCoinsBnB(std::vector<OutputGroup> &utxo_pool,

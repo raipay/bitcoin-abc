@@ -579,7 +579,7 @@ private:
     }
 
     void TransactionAddedToMempool(const CTransactionRef &ptx,
-                                   const std::vector<Coin> &spent_coins,
+                                   std::shared_ptr<const std::vector<Coin>> spent_coins,
                                    uint64_t mempool_sequence) override {
         if (!IsMessageEnabled(MSG_MEMPOOLTXADD)) {
             return;
@@ -587,7 +587,7 @@ private:
         flatbuffers::FlatBufferBuilder fbb;
         fbb.Finish(NngInterface::CreateTransactionAddedToMempool(
             fbb, NngInterface::CreateMempoolTx(
-                     fbb, CreateFbsTxMempool(fbb, ptx, spent_coins),
+                     fbb, CreateFbsTxMempool(fbb, ptx, *spent_coins),
                      GetAdjustedTime())));
         BroadcastMessage(MSG_MEMPOOLTXADD, fbb);
     }

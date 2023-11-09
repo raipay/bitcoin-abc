@@ -7,7 +7,6 @@ import {
 } from '../__mocks__/registerNewAliasMocks';
 import createTokenMock from '../__mocks__/createToken';
 import { burnTokenWallet } from '../__mocks__/burnToken';
-import { currency } from '../../components/Common/Ticker';
 import BigNumber from 'bignumber.js';
 import { fromSatoshisToXec } from 'utils/cashMethods';
 import { ChronikClient } from 'chronik-client'; // for mocking purposes
@@ -18,6 +17,9 @@ import {
     getRecipientPublicKey,
     registerNewAlias,
 } from 'utils/transactions';
+import { explorer } from 'config/explorer';
+import { MockChronikClient } from '../../../../apps/mock-chronik-client';
+import appConfig from 'config/app';
 
 describe('Cashtab transaction broadcasting functions', () => {
     it('sends XEC correctly', async () => {
@@ -35,14 +37,14 @@ describe('Cashtab transaction broadcasting functions', () => {
                 chronik,
                 wallet,
                 utxos,
-                currency.defaultFee,
+                appConfig.defaultFee,
                 '',
                 false,
                 null,
                 destinationAddress,
                 sendAmount,
             ),
-        ).toBe(`${currency.blockExplorerUrl}/tx/${expectedTxId}`);
+        ).toBe(`${explorer.blockExplorerUrl}/tx/${expectedTxId}`);
     });
 
     it('sends XEC correctly with an encrypted OP_RETURN message', async () => {
@@ -62,7 +64,7 @@ describe('Cashtab transaction broadcasting functions', () => {
                 chronik,
                 wallet,
                 utxos,
-                currency.defaultFee,
+                appConfig.defaultFee,
                 'This is an encrypted opreturn message',
                 false,
                 null,
@@ -73,7 +75,7 @@ describe('Cashtab transaction broadcasting functions', () => {
                 '', // airdrop token id
                 expectedPubKey, //optionalMockPubKeyResponse
             ),
-        ).toBe(`${currency.blockExplorerUrl}/tx/${expectedTxId}`);
+        ).toBe(`${explorer.blockExplorerUrl}/tx/${expectedTxId}`);
     });
 
     it('sends one to many XEC correctly', async () => {
@@ -97,36 +99,36 @@ describe('Cashtab transaction broadcasting functions', () => {
                 chronik,
                 wallet,
                 utxos,
-                currency.defaultFee,
+                appConfig.defaultFee,
                 '',
                 true,
                 addressAndValueArray,
             ),
-        ).toBe(`${currency.blockExplorerUrl}/tx/${expectedTxId}`);
+        ).toBe(`${explorer.blockExplorerUrl}/tx/${expectedTxId}`);
     });
 
     it('Broadcasts a v0 alias registration tx for an 8-byte alias to a p2pkh address', async () => {
-        const chronik = new ChronikClient(
-            'https://FakeChronikUrlToEnsureMocksOnly.com',
-        );
+        const mockedChronik = new MockChronikClient();
 
         const mockTxid =
             '1272c4a9bf5829c9dba1efb252e753ed20e3cdd49b6e75a778befc7a87eaf7d0';
 
-        chronik.broadcastTx = jest.fn().mockResolvedValue({ txid: mockTxid });
+        mockedChronik.broadcastTx = jest
+            .fn()
+            .mockResolvedValue({ txid: mockTxid });
 
         const expectedResult = {
             explorerLink:
                 'https://explorer.e.cash/tx/1272c4a9bf5829c9dba1efb252e753ed20e3cdd49b6e75a778befc7a87eaf7d0',
             rawTxHex:
-                '0200000001049c2df49978e91fbd28e7827c2cee71c1d56c7743706b7f959dc090ba649e87000000006b483045022100dd79c2a3e8773e7d4963ad3f6f03b54aca569e8e383c5cdc285afa601ee50829022058dfcdc905ec8f45d7418644ccfdf45cd8db41aade2d57d455c50e1a181cf7bb4121036ea648569566fa0843b914f67e54ebcfa6921208acd6408d2881488809403ac6ffffffff030000000000000000266a042e78656300086e65777465737431150020edc8389101aed204b9c17b7d64a00ead0e8cfc27020000000000001976a914638568e36d0b5d7d49a6e99854caa27d9772b09388ac92929800000000001976a91420edc8389101aed204b9c17b7d64a00ead0e8cfc88ac00000000',
+                '0200000001049c2df49978e91fbd28e7827c2cee71c1d56c7743706b7f959dc090ba649e87000000006a4730440220764515ecd983bb0aa614d7c808dd02e95c28e2e4b6cac16664656ba553dbd7e802202bbf46a67c39f8e8e6555eceee084d247456a128ebbc02e7570722ccb04db3384121036ea648569566fa0843b914f67e54ebcfa6921208acd6408d2881488809403ac6ffffffff030000000000000000266a042e78656300086e65777465737431150020edc8389101aed204b9c17b7d64a00ead0e8cfc270200000000000017a914d37c4c809fe9840e7bfa77b86bd47163f6fb6c608792929800000000001976a91420edc8389101aed204b9c17b7d64a00ead0e8cfc88ac00000000',
             txid: '1272c4a9bf5829c9dba1efb252e753ed20e3cdd49b6e75a778befc7a87eaf7d0',
         };
         expect(
             await registerNewAlias(
-                chronik,
+                mockedChronik,
                 aliasRegisteringWallet,
-                currency.defaultFee,
+                appConfig.defaultFee,
                 'newtest1',
                 'ecash:qqswmjpcjyq6a5syh8qhklty5q826r5vlsh7a7uqtq',
                 551,
@@ -134,26 +136,26 @@ describe('Cashtab transaction broadcasting functions', () => {
         ).toStrictEqual(expectedResult);
     });
     it('Broadcasts a v0 alias registration tx for a 21-byte alias to a p2pkh address', async () => {
-        const chronik = new ChronikClient(
-            'https://FakeChronikUrlToEnsureMocksOnly.com',
-        );
+        const mockedChronik = new MockChronikClient();
 
         const mockTxid =
             '912582a1dc11b568f14f8ebae15cbb0ce53bdb973e137e7dc7c9b261327e6cab';
 
-        chronik.broadcastTx = jest.fn().mockResolvedValue({ txid: mockTxid });
+        mockedChronik.broadcastTx = jest
+            .fn()
+            .mockResolvedValue({ txid: mockTxid });
 
         const expectedResult = {
-            explorerLink: `${currency.blockExplorerUrl}/tx/${mockTxid}`,
+            explorerLink: `${explorer.blockExplorerUrl}/tx/${mockTxid}`,
             txid: mockTxid,
             rawTxHex:
-                '0200000001d0f7ea877afcbe78a7756e9bd4cde320ed53e752b2efa1dbc92958bfa9c47212020000006a47304402205cf1941bd0ed8c49319189973feebd14e8d7faf6c5a3cdc6c16f676bd62c63ac022068c10726326e37f960433a92894609f7f0b65946d8104038110e2104d973c8e24121036ea648569566fa0843b914f67e54ebcfa6921208acd6408d2881488809403ac6ffffffff030000000000000000336a042e78656300157477656e74796f6e6562797465616c696173726567150020edc8389101aed204b9c17b7d64a00ead0e8cfc27020000000000001976a914638568e36d0b5d7d49a6e99854caa27d9772b09388aca48e9800000000001976a91420edc8389101aed204b9c17b7d64a00ead0e8cfc88ac00000000',
+                '0200000001d0f7ea877afcbe78a7756e9bd4cde320ed53e752b2efa1dbc92958bfa9c47212020000006a47304402200f6e3308c73fb1b3e6d891e07fb35dd83a01cef2cd3af3d427c0e35ae2214f80022074bcdfe52edea9300aff0ceff4898dda57a13581f2998a43a8b5ae9a62cba3654121036ea648569566fa0843b914f67e54ebcfa6921208acd6408d2881488809403ac6ffffffff030000000000000000336a042e78656300157477656e74796f6e6562797465616c696173726567150020edc8389101aed204b9c17b7d64a00ead0e8cfc270200000000000017a914d37c4c809fe9840e7bfa77b86bd47163f6fb6c6087a48e9800000000001976a91420edc8389101aed204b9c17b7d64a00ead0e8cfc88ac00000000',
         };
         expect(
             await registerNewAlias(
-                chronik,
+                mockedChronik,
                 aliasRegisteringWalletAfterTx,
-                currency.defaultFee,
+                appConfig.defaultFee,
                 'twentyonebytealiasreg',
                 'ecash:qqswmjpcjyq6a5syh8qhklty5q826r5vlsh7a7uqtq',
                 551,
@@ -161,26 +163,26 @@ describe('Cashtab transaction broadcasting functions', () => {
         ).toStrictEqual(expectedResult);
     });
     it('Broadcasts a v0 alias registration tx for a 16-byte alias to a p2pkh address', async () => {
-        const chronik = new ChronikClient(
-            'https://FakeChronikUrlToEnsureMocksOnly.com',
-        );
+        const mockedChronik = new MockChronikClient();
 
         const mockTxid =
             '8783d7064ce22e8390c9fa94ef9a4d5bb0184e401ef5a9fbf60b68294e275c80';
 
-        chronik.broadcastTx = jest.fn().mockResolvedValue({ txid: mockTxid });
+        mockedChronik.broadcastTx = jest
+            .fn()
+            .mockResolvedValue({ txid: mockTxid });
 
         const expectedResult = {
-            explorerLink: `${currency.blockExplorerUrl}/tx/${mockTxid}`,
+            explorerLink: `${explorer.blockExplorerUrl}/tx/${mockTxid}`,
             txid: mockTxid,
             rawTxHex:
-                '0200000001ab6c7e3261b2c9c77d7e133e97db3be50cbb5ce1ba8e4ff168b511dca1822591020000006b483045022100d0bd27e798ac38de8b4c654c6670386c68d8bfac4bf5fe26a185d8250bd7ae7e02206acfe247b95ee9879080e6e413d7f28734aa498046e7363a638a537fc657c50e4121036ea648569566fa0843b914f67e54ebcfa6921208acd6408d2881488809403ac6ffffffff0300000000000000002e6a042e78656300107768796e6f7474687265657465737473150020edc8389101aed204b9c17b7d64a00ead0e8cfc27020000000000001976a914638568e36d0b5d7d49a6e99854caa27d9772b09388acb68a9800000000001976a91420edc8389101aed204b9c17b7d64a00ead0e8cfc88ac00000000',
+                '0200000001ab6c7e3261b2c9c77d7e133e97db3be50cbb5ce1ba8e4ff168b511dca1822591020000006b48304502210082cc73ce715e58291bb463b0533f0a3579e60fe307eea2198019ac5e59af639a02207cb4f5a4ddb79c019e3f6f9b4af78dbfadf9363a1912ec4fd6d83a254f51b4b74121036ea648569566fa0843b914f67e54ebcfa6921208acd6408d2881488809403ac6ffffffff0300000000000000002e6a042e78656300107768796e6f7474687265657465737473150020edc8389101aed204b9c17b7d64a00ead0e8cfc270200000000000017a914d37c4c809fe9840e7bfa77b86bd47163f6fb6c6087b68a9800000000001976a91420edc8389101aed204b9c17b7d64a00ead0e8cfc88ac00000000',
         };
         expect(
             await registerNewAlias(
-                chronik,
+                mockedChronik,
                 aliasRegisteringWalletAfterTwoTxs,
-                currency.defaultFee,
+                appConfig.defaultFee,
                 'whynotthreetests',
                 'ecash:qqswmjpcjyq6a5syh8qhklty5q826r5vlsh7a7uqtq',
                 551,
@@ -188,7 +190,7 @@ describe('Cashtab transaction broadcasting functions', () => {
         ).toStrictEqual(expectedResult);
     });
 
-    it(`Throws error if called trying to send one base unit ${currency.ticker} more than available in utxo set`, async () => {
+    it(`Throws error if called trying to send one base unit ${appConfig.ticker} more than available in utxo set`, async () => {
         const chronik = new ChronikClient(
             'https://FakeChronikUrlToEnsureMocksOnly.com',
         );
@@ -207,7 +209,7 @@ describe('Cashtab transaction broadcasting functions', () => {
         const oneBaseUnitMoreThanBalance = totalInputUtxoValue
             .minus(expectedTxFeeInSats)
             .plus(1)
-            .div(10 ** currency.cashDecimals)
+            .div(10 ** appConfig.cashDecimals)
             .toString();
 
         let errorThrown;
@@ -216,7 +218,7 @@ describe('Cashtab transaction broadcasting functions', () => {
                 chronik,
                 wallet,
                 utxos,
-                currency.defaultFee,
+                appConfig.defaultFee,
                 '',
                 false,
                 null,
@@ -232,7 +234,7 @@ describe('Cashtab transaction broadcasting functions', () => {
             chronik,
             wallet,
             utxos,
-            currency.defaultFee,
+            appConfig.defaultFee,
             '',
             false,
             null,
@@ -254,12 +256,12 @@ describe('Cashtab transaction broadcasting functions', () => {
             chronik,
             wallet,
             utxos,
-            currency.defaultFee,
+            appConfig.defaultFee,
             '',
             false,
             null,
             destinationAddress,
-            new BigNumber(fromSatoshisToXec(currency.dustSats).toString())
+            new BigNumber(fromSatoshisToXec(appConfig.dustSats).toString())
                 .minus(new BigNumber('0.00000001'))
                 .toString(),
         );
@@ -300,7 +302,7 @@ describe('Cashtab transaction broadcasting functions', () => {
             chronik,
             wallet,
             utxos,
-            currency.defaultFee,
+            appConfig.defaultFee,
             '',
             false,
             null,
@@ -318,7 +320,7 @@ describe('Cashtab transaction broadcasting functions', () => {
             chronik,
             wallet,
             utxos,
-            currency.defaultFee,
+            appConfig.defaultFee,
             '',
             false,
             null,
@@ -336,7 +338,7 @@ describe('Cashtab transaction broadcasting functions', () => {
             chronik,
             wallet,
             utxos,
-            currency.defaultFee,
+            appConfig.defaultFee,
             '',
             false,
             null,
@@ -356,7 +358,7 @@ describe('Cashtab transaction broadcasting functions', () => {
             chronik,
             wallet,
             utxos,
-            currency.defaultFee,
+            appConfig.defaultFee,
             '',
             false,
             null,
@@ -379,7 +381,7 @@ describe('Cashtab transaction broadcasting functions', () => {
             .fn()
             .mockResolvedValue({ txid: expectedTxId });
         expect(await createToken(chronik, wallet, 5.01, configObj)).toBe(
-            `${currency.blockExplorerUrl}/tx/${expectedTxId}`,
+            `${explorer.blockExplorerUrl}/tx/${expectedTxId}`,
         );
     });
 
@@ -391,7 +393,7 @@ describe('Cashtab transaction broadcasting functions', () => {
         const invalidWalletTokenCreation = createToken(
             chronik,
             invalidWallet,
-            currency.defaultFee,
+            appConfig.defaultFee,
             configObj,
         );
         await expect(invalidWalletTokenCreation).rejects.toThrow(

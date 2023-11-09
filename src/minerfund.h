@@ -18,18 +18,18 @@ struct Amount;
 struct Params;
 } // namespace Consensus
 
-Amount GetMinerFundAmount(const Amount &coinbaseValue);
+Amount GetMinerFundAmount(const Consensus::Params &params,
+                          const Amount &coinbaseValue,
+                          const CBlockIndex *pprev);
 
 std::unordered_set<CTxDestination, TxDestinationHasher>
-GetMinerFundWhitelist(const Consensus::Params &params,
-                      const CBlockIndex *pindexPrev);
+GetMinerFundWhitelist(const Consensus::Params &params);
 
 /**
  * Returns false if there is an invalid miner fund. True otherwise.
  */
 bool CheckMinerFund(const Consensus::Params &params,
-                    const CBlockIndex *pindexPrev,
                     const std::vector<CTxOut> &coinbaseTxOut,
-                    const Amount &blockReward);
+                    const Amount &blockReward, const CBlockIndex *pprev);
 
 #endif // BITCOIN_MINERFUND_H

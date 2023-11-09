@@ -236,9 +236,10 @@ static RPCHelpMan getpeerinfo() {
                 if (stats.m_mapped_as != 0) {
                     obj.pushKV("mapped_as", uint64_t(stats.m_mapped_as));
                 }
-                obj.pushKV("services", strprintf("%016x", stats.nServices));
-                obj.pushKV("servicesnames", GetServicesNames(stats.nServices));
-                obj.pushKV("relaytxes", stats.fRelayTxes);
+                ServiceFlags services{fStateStats ? statestats.their_services
+                                                  : ServiceFlags::NODE_NONE};
+                obj.pushKV("services", strprintf("%016x", services));
+                obj.pushKV("servicesnames", GetServicesNames(services));
                 obj.pushKV("lastsend", count_seconds(stats.m_last_send));
                 obj.pushKV("lastrecv", count_seconds(stats.m_last_recv));
                 obj.pushKV("last_transaction",
@@ -282,6 +283,9 @@ static RPCHelpMan getpeerinfo() {
                         heights.push_back(height);
                     }
                     obj.pushKV("inflight", heights);
+                    obj.pushKV("relaytxes", statestats.m_relay_txs);
+                    obj.pushKV("minfeefilter",
+                               statestats.m_fee_filter_received);
                     obj.pushKV("addr_relay_enabled",
                                statestats.m_addr_relay_enabled);
                     obj.pushKV("addr_processed", statestats.m_addr_processed);
@@ -294,7 +298,6 @@ static RPCHelpMan getpeerinfo() {
                     permissions.push_back(permission);
                 }
                 obj.pushKV("permissions", permissions);
-                obj.pushKV("minfeefilter", stats.minFeeFilter);
 
                 UniValue sendPerMsgCmd(UniValue::VOBJ);
                 for (const auto &i : stats.mapSendBytesPerMsgCmd) {
@@ -477,10 +480,10 @@ static RPCHelpMan disconnectnode() {
         "or call using the named 'nodeid' argument only.\n",
         {
             {"address", RPCArg::Type::STR,
-             /* default */ "fallback to nodeid",
+             RPCArg::DefaultHint{"fallback to nodeid"},
              "The IP address/port of the node"},
             {"nodeid", RPCArg::Type::NUM,
-             /* default */ "fallback to address",
+             RPCArg::DefaultHint{"fallback to address"},
              "The node ID (see getpeerinfo for node IDs)"},
         },
         RPCResult{RPCResult::Type::NONE, "", ""},
@@ -528,7 +531,7 @@ static RPCHelpMan getaddednodeinfo() {
         "Returns information about the given added node, or all added nodes\n"
         "(note that onetry addnodes are not listed here)\n",
         {
-            {"node", RPCArg::Type::STR, /* default */ "all nodes",
+            {"node", RPCArg::Type::STR, RPCArg::DefaultHint{"all nodes"},
              "If provided, return information about this specific node, "
              "otherwise all nodes are returned."},
         },
@@ -833,11 +836,11 @@ static RPCHelpMan setban() {
             {"command", RPCArg::Type::STR, RPCArg::Optional::NO,
              "'add' to add an IP/Subnet to the list, 'remove' to remove an "
              "IP/Subnet from the list"},
-            {"bantime", RPCArg::Type::NUM, /* default */ "0",
+            {"bantime", RPCArg::Type::NUM, RPCArg::Default{0},
              "time in seconds how long (or until when if [absolute] is set) "
              "the IP is banned (0 or empty means using the default time of 24h "
              "which can also be overwritten by the -bantime startup argument)"},
-            {"absolute", RPCArg::Type::BOOL, /* default */ "false",
+            {"absolute", RPCArg::Type::BOOL, RPCArg::Default{false},
              "If set, the bantime must be an absolute timestamp expressed in " +
                  UNIX_EPOCH_TIME},
         },
@@ -1027,10 +1030,10 @@ static RPCHelpMan getnodeaddresses() {
         "Return known addresses, which can potentially be used to find new "
         "nodes in the network.\n",
         {
-            {"count", RPCArg::Type::NUM, /* default */ "1",
+            {"count", RPCArg::Type::NUM, RPCArg::Default{1},
              "The maximum number of addresses to return. Specify 0 to return "
              "all known addresses."},
-            {"network", RPCArg::Type::STR, "all networks",
+            {"network", RPCArg::Type::STR, RPCArg::DefaultHint{"all networks"},
              "Return only addresses of the specified network. Can be one of: " +
                  Join(GetNetworkNames(), ", ") + "."},
         },
@@ -1113,7 +1116,7 @@ static RPCHelpMan addpeeraddress() {
              "The IP address of the peer"},
             {"port", RPCArg::Type::NUM, RPCArg::Optional::NO,
              "The port of the peer"},
-            {"tried", RPCArg::Type::BOOL, "false",
+            {"tried", RPCArg::Type::BOOL, RPCArg::Default{false},
              "If true, attempt to add the peer to the tried addresses table"},
         },
         RPCResult{

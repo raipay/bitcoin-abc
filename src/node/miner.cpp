@@ -6,6 +6,8 @@
 
 #include <node/miner.h>
 
+#include <avalanche/avalanche.h>
+#include <avalanche/processor.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <coins.h>
@@ -16,7 +18,7 @@
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <minerfund.h>
-#include <net.h>
+#include <policy/block/stakingrewards.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
 #include <pow/pow.h>
@@ -57,12 +59,11 @@ BlockAssembler::Options::Options()
       blockMinFeeRate(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB) {}
 
 BlockAssembler::BlockAssembler(Chainstate &chainstate,
-                               const CChainParams &params,
                                const CTxMemPool &mempool,
                                const Options &options)
-    : chainParams(params), m_mempool(mempool), m_chainstate(chainstate),
-      fPrintPriority(
-          gArgs.GetBoolArg("-printpriority", DEFAULT_PRINTPRIORITY)) {
+    : chainParams(chainstate.m_chainman.GetParams()), m_mempool(mempool),
+      m_chainstate(chainstate), fPrintPriority(gArgs.GetBoolArg(
+                                    "-printpriority", DEFAULT_PRINTPRIORITY)) {
     blockMinFeeRate = options.blockMinFeeRate;
     // Limit size to between 1K and options.nExcessiveBlockSize -1K for sanity:
     nMaxGeneratedBlockSize = std::max<uint64_t>(
@@ -102,8 +103,7 @@ static BlockAssembler::Options DefaultOptions(const Config &config) {
 
 BlockAssembler::BlockAssembler(const Config &config, Chainstate &chainstate,
                                const CTxMemPool &mempool)
-    : BlockAssembler(chainstate, config.GetChainParams(), mempool,
-                     DefaultOptions(config)) {}
+    : BlockAssembler(chainstate, mempool, DefaultOptions(config)) {}
 
 void BlockAssembler::resetBlock() {
     // Reserve space for coinbase tx.
@@ -188,12 +188,25 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
         nFees + GetBlockSubsidy(nHeight, consensusParams);
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
 
-    const auto whitelisted = GetMinerFundWhitelist(consensusParams, pindexPrev);
+    const Amount blockReward = coinbaseTx.vout[0].nValue;
+
+    const auto whitelisted = GetMinerFundWhitelist(consensusParams);
     if (!whitelisted.empty()) {
-        const Amount fund = GetMinerFundAmount(coinbaseTx.vout[0].nValue);
+        const Amount fund =
+            GetMinerFundAmount(consensusParams, blockReward, pindexPrev);
         coinbaseTx.vout[0].nValue -= fund;
         coinbaseTx.vout.emplace_back(
             fund, GetScriptForDestination(*whitelisted.begin()));
+    }
+
+    CScript stakingRewardsPayoutScript;
+    if (IsStakingRewardsActivated(consensusParams, pindexPrev) &&
+        g_avalanche->getStakingRewardWinner(pindexPrev->GetBlockHash(),
+                                            stakingRewardsPayoutScript)) {
+        const Amount stakingRewards = GetStakingRewardsAmount(blockReward);
+        coinbaseTx.vout[0].nValue -= stakingRewards;
+        coinbaseTx.vout.emplace_back(stakingRewards,
+                                     stakingRewardsPayoutScript);
     }
 
     // Make sure the coinbase is big enough.
@@ -398,44 +411,5 @@ void BlockAssembler::addTxs() {
             }
         }
     }
-}
-
-static const std::vector<uint8_t>
-getExcessiveBlockSizeSig(uint64_t nExcessiveBlockSize) {
-    std::string cbmsg = "/EB" + getSubVersionEB(nExcessiveBlockSize) + "/";
-    std::vector<uint8_t> vec(cbmsg.begin(), cbmsg.end());
-    return vec;
-}
-
-void IncrementExtraNonce(CBlock *pblock, const CBlockIndex *pindexPrev,
-                         uint64_t nExcessiveBlockSize,
-                         unsigned int &nExtraNonce) {
-    // Update nExtraNonce
-    static uint256 hashPrevBlock;
-    if (hashPrevBlock != pblock->hashPrevBlock) {
-        nExtraNonce = 0;
-        hashPrevBlock = pblock->hashPrevBlock;
-    }
-
-    ++nExtraNonce;
-    // Height first in coinbase required for block.version=2
-    unsigned int nHeight = pindexPrev->nHeight + 1;
-    CMutableTransaction txCoinbase(*pblock->vtx[0]);
-    txCoinbase.vin[0].scriptSig =
-        (CScript() << nHeight << CScriptNum(nExtraNonce)
-                   << getExcessiveBlockSizeSig(nExcessiveBlockSize));
-
-    // Make sure the coinbase is big enough.
-    uint64_t coinbaseSize = ::GetSerializeSize(txCoinbase, PROTOCOL_VERSION);
-    if (coinbaseSize < MIN_TX_SIZE) {
-        txCoinbase.vin[0].scriptSig
-            << std::vector<uint8_t>(MIN_TX_SIZE - coinbaseSize - 1);
-    }
-
-    assert(txCoinbase.vin[0].scriptSig.size() <= MAX_COINBASE_SCRIPTSIG_SIZE);
-    assert(::GetSerializeSize(txCoinbase, PROTOCOL_VERSION) >= MIN_TX_SIZE);
-
-    pblock->vtx[0] = MakeTransactionRef(std::move(txCoinbase));
-    pblock->hashMerkleRoot = BlockMerkleRoot(*pblock);
 }
 } // namespace node

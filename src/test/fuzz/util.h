@@ -48,8 +48,9 @@ ConsumeRandomLengthByteVector(FuzzedDataProvider &fuzzed_data_provider,
 [[nodiscard]] inline CDataStream
 ConsumeDataStream(FuzzedDataProvider &fuzzed_data_provider,
                   const size_t max_length = 4096) noexcept {
-    return {ConsumeRandomLengthByteVector(fuzzed_data_provider, max_length),
-            SER_NETWORK, INIT_PROTO_VERSION};
+    return CDataStream{
+        ConsumeRandomLengthByteVector(fuzzed_data_provider, max_length),
+        SER_NETWORK, INIT_PROTO_VERSION};
 }
 
 [[nodiscard]] inline std::vector<std::string>
@@ -270,8 +271,6 @@ CAddress ConsumeAddress(FuzzedDataProvider &fuzzed_data_provider) noexcept {
 
 CNode ConsumeNode(FuzzedDataProvider &fuzzed_data_provider) noexcept {
     const NodeId node_id = fuzzed_data_provider.ConsumeIntegral<NodeId>();
-    const ServiceFlags local_services = static_cast<ServiceFlags>(
-        fuzzed_data_provider.ConsumeIntegral<uint64_t>());
     const SOCKET socket = INVALID_SOCKET;
     const CAddress address = ConsumeAddress(fuzzed_data_provider);
     const uint64_t keyed_net_group =
@@ -289,7 +288,6 @@ CNode ConsumeNode(FuzzedDataProvider &fuzzed_data_provider) noexcept {
          ConnectionType::BLOCK_RELAY, ConnectionType::ADDR_FETCH});
     const bool inbound_onion = fuzzed_data_provider.ConsumeBool();
     return {node_id,
-            local_services,
             socket,
             address,
             keyed_net_group,
@@ -435,19 +433,13 @@ ConsumeFile(FuzzedDataProvider &fuzzed_data_provider) noexcept {
 }
 
 class FuzzedAutoFileProvider {
-    FuzzedDataProvider &m_fuzzed_data_provider;
     FuzzedFileProvider m_fuzzed_file_provider;
 
 public:
     FuzzedAutoFileProvider(FuzzedDataProvider &fuzzed_data_provider)
-        : m_fuzzed_data_provider{fuzzed_data_provider},
-          m_fuzzed_file_provider{fuzzed_data_provider} {}
+        : m_fuzzed_file_provider{fuzzed_data_provider} {}
 
-    CAutoFile open() {
-        return {m_fuzzed_file_provider.open(),
-                m_fuzzed_data_provider.ConsumeIntegral<int>(),
-                m_fuzzed_data_provider.ConsumeIntegral<int>()};
-    }
+    AutoFile open() { return AutoFile{m_fuzzed_file_provider.open()}; }
 };
 
 [[nodiscard]] inline FuzzedAutoFileProvider

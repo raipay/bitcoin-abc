@@ -101,8 +101,6 @@ constexpr Amount HIGH_APS_FEE{COIN / 10000};
 static const Amount WALLET_INCREMENTAL_RELAY_FEE(5000 * SATOSHI);
 //! Default for -spendzeroconfchange
 static const bool DEFAULT_SPEND_ZEROCONF_CHANGE = true;
-//! Default for -walletrejectlongchains
-static const bool DEFAULT_WALLET_REJECT_LONG_CHAINS = false;
 static const bool DEFAULT_WALLETBROADCAST = true;
 static const bool DEFAULT_DISABLE_WALLET = false;
 //! -maxtxfee default
@@ -232,13 +230,15 @@ struct CoinSelectionParams {
     size_t tx_noinputs_size = 0;
     //! Indicate that we are subtracting the fee from outputs
     bool m_subtract_fee_outputs = false;
+    bool m_avoid_partial_spends = false;
 
     CoinSelectionParams(bool use_bnb_, size_t change_output_size_,
                         size_t change_spend_size_, CFeeRate effective_fee_,
-                        size_t tx_noinputs_size_)
+                        size_t tx_noinputs_size_, bool avoid_partial)
         : use_bnb(use_bnb_), change_output_size(change_output_size_),
           change_spend_size(change_spend_size_), effective_fee(effective_fee_),
-          tx_noinputs_size(tx_noinputs_size_) {}
+          tx_noinputs_size(tx_noinputs_size_),
+          m_avoid_partial_spends(avoid_partial) {}
     CoinSelectionParams() {}
 };
 
@@ -669,18 +669,20 @@ public:
              bool sign = true, bool bip32derivs = true) const;
 
     /**
-     * Submit the transaction to the node's mempool and then relay to peers.
-     * Should be called after CreateTransaction unless you want to abort
-     * broadcasting the transaction.
+     * Add the transaction to the wallet and maybe attempt to broadcast it.
+     * Should be called after CreateTransaction. The broadcast flag can be set
+     * to false if you want to abort broadcasting the transaction.
      *
      * @param[in] tx The transaction to be broadcast.
      * @param[in] mapValue key-values to be set on the transaction.
      * @param[in] orderForm BIP 70 / BIP 21 order form details to be set on the
      * transaction.
+     * @param[in] broadcast Whether to broadcast this transaction.
      */
     void CommitTransaction(
         CTransactionRef tx, mapValue_t mapValue,
-        std::vector<std::pair<std::string, std::string>> orderForm);
+        std::vector<std::pair<std::string, std::string>> orderForm,
+        bool broadcast = true);
 
     /**
      * Pass this transaction to node for mempool insertion and relay to peers
@@ -752,7 +754,8 @@ public:
 
     int64_t GetOldestKeyPoolTime() const;
 
-    std::set<CTxDestination> GetLabelAddresses(const std::string &label) const;
+    std::set<CTxDestination> GetLabelAddresses(const std::string &label) const
+        EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     /**
      * Marks all outputs in each one of the destinations dirty, so their cache
@@ -1057,6 +1060,16 @@ public:
     //!                     addresses
     void LoadActiveScriptPubKeyMan(uint256 id, OutputType type, bool internal);
 
+    //! Remove specified ScriptPubKeyMan from set of active SPK managers.
+    //! Writes the change to the wallet file.
+    //! @param[in] id The unique id for the ScriptPubKeyMan
+    //! @param[in] type The OutputType this ScriptPubKeyMan provides addresses
+    //!                 for
+    //! @param[in] internal Whether this ScriptPubKeyMan provides change
+    //!                     addresses
+    void DeactivateScriptPubKeyMan(const uint256 &id, OutputType type,
+                                   bool internal);
+
     //! Create new DescriptorScriptPubKeyMans and add them to the wallet
     void SetupDescriptorScriptPubKeyMans() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
@@ -1070,7 +1083,8 @@ public:
     ScriptPubKeyMan *
     AddWalletDescriptor(WalletDescriptor &desc,
                         const FlatSigningProvider &signing_provider,
-                        const std::string &label, bool internal);
+                        const std::string &label, bool internal)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 };
 
 /**

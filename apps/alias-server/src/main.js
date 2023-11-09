@@ -2,17 +2,25 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 'use strict';
-const config = require('../config');
 const { initializeWebsocket } = require('./chronikWsHandler');
 const { handleAppStartup } = require('./events');
-const { initializeDb } = require('./db');
-const express = require('express');
-var cors = require('cors');
-const requestIp = require('request-ip');
 
 module.exports = {
+    /**
+     * Entrypoint of the app. Initializes server, updates indexer, and listens for new txs.
+     * @param {object} db an initialized mongodb instance
+     * @param {object} cache an initialized node-cache instance
+     * @param {object} chronik initialized chronik object
+     * @param {string} address address that registeres new aliases
+     * @param {object} telegramBot initialized node-telegram-bot-api instance
+     * @param {string} channelId channel where telegramBot is admin
+     * @param {object} avalancheRpc avalanche auth
+     * @param {bool} returnMocks
+     * @returns {object} if returnMocks
+     */
     main: async function (
-        mongoClient,
+        db,
+        cache,
         chronik,
         address,
         telegramBot,
@@ -20,14 +28,12 @@ module.exports = {
         avalancheRpc,
         returnMocks = false,
     ) {
-        // Initialize db connection
-        const db = await initializeDb(mongoClient);
-
         // Initialize websocket connection
         const aliasWebsocket = await initializeWebsocket(
             chronik,
             address,
             db,
+            cache,
             telegramBot,
             channelId,
             avalancheRpc,
@@ -44,6 +50,7 @@ module.exports = {
         const appStartup = await handleAppStartup(
             chronik,
             db,
+            cache,
             telegramBot,
             channelId,
             avalancheRpc,
@@ -51,32 +58,29 @@ module.exports = {
 
         // Return mocks for unit testing
         if (returnMocks) {
-            return { db, aliasWebsocket, appStartup };
+            return { aliasWebsocket, appStartup };
         }
+    },
+    /**
+     * Make sure the the database and API server shut down gracefully
+     * @param {object} server the express server returned by the startServer function in app.js
+     * @param {object} mongoClient the mongo client connection
+     * @param {object} cache an initialized node-cache instance
+     */
+    cleanup: async function (server, mongoClient, cache) {
+        await server.close();
+        console.log('API server closed.');
 
-        // Set up your API endpoints
-        const app = express();
-        app.use(express.json());
-        app.use(requestIp.mw());
-        app.use(cors());
+        // We do not want to risk restarting the server with a stale tipHeight
+        cache.flushAll();
+        cache.close();
+        console.log('Cache cleared.');
 
-        app.get('/aliases', async function (req, res) {
-            // Get IP address from before cloudflare proxy
-            const ip = req.clientIp;
-            console.log(`/aliases from IP: ${ip}, host ${req.headers.host}`);
-            let aliases;
-            try {
-                aliases = await db
-                    .collection(config.database.collections.validAliases)
-                    .find()
-                    .project({ _id: 0, txid: 0, blockheight: 0 })
-                    .toArray();
-                return res.status(200).json(aliases);
-            } catch (error) {
-                return res.status(500).json({ error });
-            }
-        });
+        await mongoClient.close();
+        console.log('MongoDB connection closed.');
 
-        app.listen(config.express.port);
+        // Shut down alias-server
+        console.log('alias-server shut down successfully');
+        process.exit(0);
     },
 };

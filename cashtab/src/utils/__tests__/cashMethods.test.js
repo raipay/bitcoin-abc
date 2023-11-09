@@ -14,7 +14,6 @@ import {
     convertEcashtoEtokenAddr,
     getHashArrayFromWallet,
     isActiveWebsocket,
-    parseXecSendValue,
     getChangeAddressFromInputUtxos,
     generateAliasOpReturnScript,
     generateOpReturnScript,
@@ -33,12 +32,11 @@ import {
     generateSendOpReturn,
     generateBurnOpReturn,
     hash160ToAddress,
-    getAliasRegistrationFee,
     outputScriptToAddress,
-    getAliasByteSize,
     getMessageByteSize,
+    parseAddressForParams,
+    sumOneToManyXec,
 } from 'utils/cashMethods';
-import { currency } from 'components/Common/Ticker';
 import { validAddressArrayInput } from '../__mocks__/mockAddressArray';
 import {
     mockGenesisOpReturnScript,
@@ -56,6 +54,7 @@ import {
     invalidStoredWallet,
     invalidpreChronikStoredWallet,
     validStoredWalletAfter20221123Streamline,
+    invalidStoredWalletMissingPath1899AndMnemonic,
 } from '../__mocks__/mockStoredWallets';
 
 import {
@@ -114,6 +113,55 @@ import {
     mockMultipleOutputs,
 } from '../__mocks__/mockTxBuilderData';
 import createTokenMock from '../__mocks__/createToken';
+import { opReturn as opreturnConfig } from 'config/opreturn';
+import appConfig from 'config/app';
+const assert = require('assert');
+
+test('parseAddressForParams() returns valid info for query string based input', () => {
+    const inputString =
+        'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?amount=500000';
+    const expectedObject = {
+        address: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+        amount: 500000,
+        queryString: 'amount=500000',
+    };
+    const addressInfo = parseAddressForParams(inputString);
+    assert.deepEqual(addressInfo, expectedObject);
+});
+
+test('parseAddressForParams() returns no amount for a malformed query string input', () => {
+    const inputString =
+        'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?*&@^&%@amount=-500000';
+    const expectedObject = {
+        address: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+        amount: null,
+        queryString: '*&@^&%@amount=-500000',
+    };
+    const addressInfo = parseAddressForParams(inputString);
+    assert.deepEqual(addressInfo, expectedObject);
+});
+
+test('parseAddressForParams() returns valid address info for a non-query string based input', () => {
+    const inputString = 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx';
+    const expectedObject = {
+        address: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+        amount: null,
+        queryString: null,
+    };
+    const addressInfo = parseAddressForParams(inputString);
+    assert.deepEqual(addressInfo, expectedObject);
+});
+
+test('parseAddressForParams() returns valid address info for a valid prefix-less eCash address', () => {
+    const inputString = 'qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx';
+    const expectedObject = {
+        address: 'qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+        amount: null,
+        queryString: null,
+    };
+    const addressInfo = parseAddressForParams(inputString);
+    assert.deepEqual(addressInfo, expectedObject);
+});
 
 it(`OP_RETURN msg byte length matches for an encrypted msg input with a single emoji`, () => {
     const msgInput = '🙈';
@@ -229,64 +277,6 @@ it(`OP_RETURN msg byte length matches for a msg input with a mixture of symbols,
     expect(opReturnMsgByteLength).toStrictEqual(15);
 });
 
-it(`Alias byte length matches for an alias input with a single emoji`, () => {
-    const aliasInput = '🙈';
-    const opReturnAliasByteLength = getAliasByteSize(aliasInput);
-    expect(opReturnAliasByteLength).toStrictEqual(4);
-});
-
-it(`Alias byte length matches for an alias input with characters and emojis`, () => {
-    const aliasInput = 'monkey🙈';
-    const opReturnAliasByteLength = getAliasByteSize(aliasInput);
-    expect(opReturnAliasByteLength).toStrictEqual(10);
-});
-
-it(`Alias byte length matches for an alias input with special characters`, () => {
-    const aliasInput = 'monkey©®ʕ•́ᴥ•̀ʔっ♡';
-    const opReturnAliasByteLength = getAliasByteSize(aliasInput);
-    expect(opReturnAliasByteLength).toStrictEqual(33);
-});
-
-it(`Alias byte length matches for an alias input with Korean characters`, () => {
-    const aliasInput = '소주';
-    const opReturnAliasByteLength = getAliasByteSize(aliasInput);
-    expect(opReturnAliasByteLength).toStrictEqual(6);
-});
-
-it(`Alias byte length matches for an alias input with Arabic characters`, () => {
-    const aliasInput = 'محيط';
-    const opReturnAliasByteLength = getAliasByteSize(aliasInput);
-    expect(opReturnAliasByteLength).toStrictEqual(8);
-});
-
-it(`Alias byte length matches for an alias input with Chinese characters`, () => {
-    const aliasInput = '冰淇淋';
-    const opReturnAliasByteLength = getAliasByteSize(aliasInput);
-    expect(opReturnAliasByteLength).toStrictEqual(9);
-});
-
-it(`Alias byte length matches for an alias input with a mixture of symbols, multilingual characters and emojis`, () => {
-    const aliasInput = '🙈©冰소주';
-    const opReturnAliasByteLength = getAliasByteSize(aliasInput);
-    expect(opReturnAliasByteLength).toStrictEqual(15);
-});
-
-it(`getAliasRegistrationFee() returns correct fee in sats for an alias input with 5 bytes`, () => {
-    const aliasInput = 'panda'; // 5 bytes
-    const regFeeResult = getAliasRegistrationFee(aliasInput);
-    expect(regFeeResult).toStrictEqual(
-        currency.aliasSettings.aliasRegistrationFeeInSats.fiveByte,
-    );
-});
-
-it(`getAliasRegistrationFee() returns correct fee in sats for an alias input above 8 bytes`, () => {
-    const aliasInput = 'pandapanda'; // 10 bytes
-    const regFeeResult = getAliasRegistrationFee(aliasInput);
-    expect(regFeeResult).toStrictEqual(
-        currency.aliasSettings.aliasRegistrationFeeInSats.eightByte,
-    );
-});
-
 it(`generateSendOpReturn() returns correct script object for valid tokenUtxo and send quantity`, () => {
     const tokensToSend = 50;
     const sendOpReturnScriptObj = generateSendOpReturn(
@@ -372,7 +362,7 @@ it(`signUtxosByAddress() successfully returns a txBuilder object for a one to on
         utxolib.networks.ecash,
     );
     const satoshisToSendInput = new BigNumber(2184);
-    const feeInSatsPerByte = currency.defaultFee;
+    const feeInSatsPerByte = appConfig.defaultFee;
 
     // mock tx input
     const inputObj = generateTxInput(
@@ -433,7 +423,7 @@ it(`signUtxosByAddress() successfully returns a txBuilder object for a one to ma
         'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed,3000',
     ];
     const satoshisToSendInput = new BigNumber(900000);
-    const feeInSatsPerByte = currency.defaultFee;
+    const feeInSatsPerByte = appConfig.defaultFee;
 
     // mock tx input
     const inputObj = generateTxInput(
@@ -593,68 +583,30 @@ it(`getChangeAddressFromInputUtxos() throws an error upon a null inputUtxos para
     );
 });
 
-it(`parseXecSendValue() correctly parses the value for a valid one to one send XEC transaction`, () => {
-    expect(parseXecSendValue(false, '550', null)).toStrictEqual(
-        new BigNumber(550),
-    );
-});
-
-it(`parseXecSendValue() correctly parses the value for a valid one to many send XEC transaction`, () => {
+it(`sumOneToManyXec() correctly parses the value for a valid one to many send XEC transaction`, () => {
     const destinationAddressAndValueArray = [
-        'ecash:qrmz0egsqxj35x5jmzf8szrszdeu72fx0uxgwk3r48,6',
-        'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx,6',
-        'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed,6',
-    ];
-    expect(
-        parseXecSendValue(true, null, destinationAddressAndValueArray),
-    ).toStrictEqual(new BigNumber(18));
-});
-
-it(`parseXecSendValue() correctly throws error when singleSendValue is invalid for a one to one send XEC transaction`, () => {
-    let errorThrown;
-    try {
-        parseXecSendValue(false, null, 550);
-    } catch (err) {
-        errorThrown = err;
-    }
-    expect(errorThrown.message).toStrictEqual('Invalid singleSendValue');
-});
-
-it(`parseXecSendValue() correctly throws error when destinationAddressAndValueArray is invalid for a one to many send XEC transaction`, () => {
-    let errorThrown;
-    try {
-        parseXecSendValue(true, null, null);
-    } catch (err) {
-        errorThrown = err;
-    }
-    expect(errorThrown.message).toStrictEqual(
-        'Invalid destinationAddressAndValueArray',
-    );
-});
-
-it(`parseXecSendValue() correctly throws error when the total value for a one to one send XEC transaction is below dust`, () => {
-    let errorThrown;
-    try {
-        parseXecSendValue(false, '4.5', null);
-    } catch (err) {
-        errorThrown = err;
-    }
-    expect(errorThrown.message).toStrictEqual('dust');
-});
-
-it(`parseXecSendValue() correctly throws error when the total value for a one to many send XEC transaction is below dust`, () => {
-    const destinationAddressAndValueArray = [
-        'ecash:qrmz0egsqxj35x5jmzf8szrszdeu72fx0uxgwk3r48,2',
+        'ecash:qrmz0egsqxj35x5jmzf8szrszdeu72fx0uxgwk3r48,1',
         'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx,2',
-        'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed,1',
+        'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed,3',
     ];
-    let errorThrown;
-    try {
-        parseXecSendValue(true, null, destinationAddressAndValueArray);
-    } catch (err) {
-        errorThrown = err;
-    }
-    expect(errorThrown.message).toStrictEqual('dust');
+    expect(sumOneToManyXec(destinationAddressAndValueArray)).toStrictEqual(6);
+});
+it(`sumOneToManyXec() correctly parses the value for a valid one to many send XEC transaction with decimals`, () => {
+    const destinationAddressAndValueArray = [
+        'ecash:qrmz0egsqxj35x5jmzf8szrszdeu72fx0uxgwk3r48,1.23',
+        'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx,2.45',
+        'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed,3.67',
+    ];
+    expect(sumOneToManyXec(destinationAddressAndValueArray)).toStrictEqual(
+        7.35,
+    );
+});
+it(`sumOneToManyXec() returns NaN for an address and value array that is partially typed or has invalid format`, () => {
+    const destinationAddressAndValueArray = [
+        'ecash:qrmz0egsqxj35x5jmzf8szrszdeu72fx0uxgwk3r48,1',
+        'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx,',
+    ];
+    expect(sumOneToManyXec(destinationAddressAndValueArray)).toStrictEqual(NaN);
 });
 it('generateAliasOpReturnScript() correctly generates OP_RETURN script for a valid alias registration for a p2pkh address', () => {
     const alias = 'test';
@@ -878,7 +830,7 @@ it(`generateTokenTxInput() returns a valid object for a valid create token tx`, 
         null, // no slpUtxos used for genesis tx
         tokenId,
         null, // no token send/burn amount for genesis tx
-        currency.defaultFee,
+        appConfig.defaultFee,
         txBuilder,
     );
 
@@ -887,7 +839,7 @@ it(`generateTokenTxInput() returns a valid object for a valid create token tx`, 
         mockCreateTokenTxBuilderObj.toString(),
     );
     expect(tokenInputObj.remainderXecValue).toStrictEqual(
-        new BigNumber(698999), // tokenInputObj.inputXecUtxos - currency.etokenSats 546 - txFee
+        new BigNumber(698999), // tokenInputObj.inputXecUtxos - appConfig.etokenSats 546 - txFee
     );
 });
 
@@ -903,7 +855,7 @@ it(`generateTokenTxInput() returns a valid object for a valid send token tx`, as
         mockSlpUtxos,
         tokenId,
         new BigNumber(500), // sending 500 of these tokens
-        currency.defaultFee,
+        appConfig.defaultFee,
         txBuilder,
     );
 
@@ -930,7 +882,7 @@ it(`generateTokenTxInput() returns a valid object for a valid burn token tx`, as
         mockSlpUtxos,
         tokenId,
         new BigNumber(500), // burning 500 of these tokens
-        currency.defaultFee,
+        appConfig.defaultFee,
         txBuilder,
     );
 
@@ -1021,7 +973,7 @@ it(`generateTxInput() returns an input object for a valid one to one XEC tx`, as
     );
     const destinationAddressAndValueArray = null;
     const satoshisToSend = new BigNumber(2184);
-    const feeInSatsPerByte = currency.defaultFee;
+    const feeInSatsPerByte = appConfig.defaultFee;
 
     const inputObj = generateTxInput(
         isOneToMany,
@@ -1049,7 +1001,7 @@ it(`generateTxInput() returns an input object for a valid one to many XEC tx`, a
         'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed,3000',
     ];
     const satoshisToSend = new BigNumber(900000);
-    const feeInSatsPerByte = currency.defaultFee;
+    const feeInSatsPerByte = appConfig.defaultFee;
 
     const inputObj = generateTxInput(
         isOneToMany,
@@ -1073,7 +1025,7 @@ it(`generateTxInput() throws error for a one to many XEC tx with invalid destina
     );
     const destinationAddressAndValueArray = null; // invalid since isOneToMany is true
     const satoshisToSend = new BigNumber(900000);
-    const feeInSatsPerByte = currency.defaultFee;
+    const feeInSatsPerByte = appConfig.defaultFee;
 
     let thrownError;
     try {
@@ -1103,7 +1055,7 @@ it(`generateTxInput() throws error for a one to many XEC tx with invalid utxos i
         'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed,3000',
     ];
     const satoshisToSend = new BigNumber(900000);
-    const feeInSatsPerByte = currency.defaultFee;
+    const feeInSatsPerByte = appConfig.defaultFee;
 
     let thrownError;
     try {
@@ -1494,10 +1446,15 @@ describe('Correctly executes cash utility functions', () => {
     it(`Recognizes a stored wallet as invalid if it includes hydratedUtxoDetails in the state field`, () => {
         expect(isValidStoredWallet(invalidpreChronikStoredWallet)).toBe(false);
     });
+    it(`Recognizes a stored wallet as invalid if it's missing the Path1899 and mnemonic keys`, () => {
+        expect(
+            isValidStoredWallet(invalidStoredWalletMissingPath1899AndMnemonic),
+        ).toBe(false);
+    });
     it(`Converts a legacy BCH amount to an XEC amount`, () => {
         expect(fromLegacyDecimals(0.00000546, 2)).toStrictEqual(5.46);
     });
-    it(`Leaves a legacy BCH amount unchanged if currency.cashDecimals is 8`, () => {
+    it(`Leaves a legacy BCH amount unchanged if appConfig.cashDecimals is 8`, () => {
         expect(fromLegacyDecimals(0.00000546, 8)).toStrictEqual(0.00000546);
     });
     it(`convertToEcashPrefix converts a bitcoincash: prefixed address to an ecash: prefixed address`, () => {
@@ -1669,9 +1626,9 @@ describe('Correctly executes cash utility functions', () => {
         // verify airdrop hex prefix is contained in the array returned from parseOpReturn()
         expect(
             result.find(
-                element => element === currency.opReturn.appPrefixesHex.airdrop,
+                element => element === opreturnConfig.appPrefixesHex.airdrop,
             ),
-        ).toStrictEqual(currency.opReturn.appPrefixesHex.airdrop);
+        ).toStrictEqual(opreturnConfig.appPrefixesHex.airdrop);
     });
 
     test('convertEtokenToEcashAddr successfully converts a valid eToken address to eCash', async () => {
@@ -1870,7 +1827,7 @@ describe('Correctly executes cash utility functions', () => {
     });
     it('calculates fee correctly for 2 P2PKH outputs', () => {
         const utxosMock = [{}, {}];
-        expect(calcFee(utxosMock, 2, currency.defaultFee)).toBe(752);
+        expect(calcFee(utxosMock, 2, appConfig.defaultFee)).toBe(752);
     });
     it(`Converts a hash160 to an ecash address`, () => {
         expect(

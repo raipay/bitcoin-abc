@@ -78,6 +78,7 @@ Here are some handy links for development practices aligned with Bitcoin ABC:
 - [Trunk Based Development](https://trunkbaseddevelopment.com/)
 - [Step-by-step: Programming incrementally](https://www.gamedeveloper.com/programming/step-by-step-programming-incrementally)
 - [Semantic Compression](https://caseymuratori.com/blog_0015)
+- [Elon Musk's 5-Step Process](https://youtu.be/t705r8ICkRw?t=806)
 
 Getting set up with the Bitcoin ABC Repository
 ----------------------------------------------
@@ -86,13 +87,17 @@ Getting set up with the Bitcoin ABC Repository
 
 2. Install Git and Arcanist on your machine
 
+To install these packages on Debian or Ubuntu, type: `sudo apt-get install git arcanist`
+
 Git documentation can be found at [git-scm.com](https://git-scm.com/).
 
 For Arcanist documentation, you can read
 [Arcanist Quick Start](https://secure.phabricator.com/book/phabricator/article/arcanist_quick_start/)
 and the [Arcanist User Guide](https://secure.phabricator.com/book/phabricator/article/arcanist/).
 
-To install these packages on Debian or Ubuntu, type: `sudo apt-get install git arcanist`
+The Phabricator version of Arcanist is unmaintained and does not work with PHP 8 or higher. This is an
+issue for Linux distributions such as Ubuntu 22.04. In this case, you can use the
+[Phorge version of Arcanist](https://we.phorge.it/book/phorge/article/arcanist_quick_start/) instead.
 
 3. If you do not already have an SSH key set up, follow these steps:
 
@@ -134,7 +139,7 @@ will have to install the following:
 
 Install all the code formatting tools on Debian Bullseye (11) or Ubuntu 20.04:
 ```
-sudo apt-get install python3-autopep8 python3-pip php-codesniffer shellcheck yamllint
+sudo apt-get install python3-pip php-codesniffer shellcheck yamllint
 pip3 install "black>=23.0" "isort>=5.6.4" "mypy>=0.910" "flynt>=0.78" "flake8>=5" flake8-comprehensions flake8-builtins
 echo "export PATH=\"`python3 -m site --user-base`/bin:\$PATH\"" >> ~/.bashrc
 source ~/.bashrc
@@ -170,10 +175,10 @@ plus a nightly toolchain called "abc-nightly" for formatting:
 # Install latest stable Rust version
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s
 source ~/.cargo/env
-rustup install nightly-2023-02-17
-rustup component add rustfmt --toolchain nightly-2023-02-17
+rustup install nightly-2023-08-23
+rustup component add rustfmt --toolchain nightly-2023-08-23
 # Name the nightly toolchain "abc-nightly"
-rustup toolchain link abc-nightly "$(rustc +nightly-2023-02-17 --print sysroot)"
+rustup toolchain link abc-nightly "$(rustc +nightly-2023-08-23 --print sysroot)"
 ```
 
 Contributing to the web projects
@@ -198,6 +203,11 @@ To work on the extension, you will need `browserify`
 ```
 [sudo] npm install -g browserify
 ```
+
+Contributing to Electrum ABC
+----------------------------
+
+See the dedicated [CONTRIBUTING.md](electrum/CONTRIBUTING.md) document.
 
 Working with The Bitcoin ABC Repository
 ---------------------------------------

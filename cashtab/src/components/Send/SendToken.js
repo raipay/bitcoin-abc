@@ -31,7 +31,7 @@ import { isMobile, isIOS, isSafari } from 'react-device-detect';
 import { Img } from 'react-image';
 import makeBlockie from 'ethereum-blockies-base64';
 import BigNumber from 'bignumber.js';
-import { currency, parseAddressForParams } from 'components/Common/Ticker.js';
+import { parseAddressForParams } from 'utils/cashMethods';
 import { Event } from 'utils/GoogleAnalytics';
 import { getWalletState } from 'utils/cashMethods';
 import { sendToken, burnToken } from 'utils/transactions';
@@ -47,10 +47,15 @@ import {
     isValidEtokenBurnAmount,
     isAliasFormat,
 } from 'utils/validation';
-import { getTokenStats, getAddressFromAlias } from 'utils/chronik';
+import { getTokenStats } from 'utils/chronik';
 import { formatDate } from 'utils/formatting';
 import styled, { css } from 'styled-components';
 import TokenIcon from 'components/Tokens/TokenIcon';
+import { token as tokenConfig } from 'config/token';
+import { explorer } from 'config/explorer';
+import { queryAliasServer } from 'utils/aliasUtils';
+import aliasSettings from 'config/alias';
+
 const AntdDescriptionsCss = css`
     .ant-descriptions-item-label,
     .ant-input-number,
@@ -249,7 +254,7 @@ const SendToken = ({ tokenId, passLoadingStatus }) => {
         const { address, queryString } = addressInfo;
 
         // If query string,
-        // Show an alert that only amount and currency.ticker are supported
+        // Show an alert that only amount and appConfig.ticker are supported
         setQueryStringText(queryString);
 
         const isValid =
@@ -269,19 +274,24 @@ const SendToken = ({ tokenId, passLoadingStatus }) => {
             // extract alias without the `.xec`
             const aliasName = address.slice(0, address.length - 4);
 
-            const aliasAddress = getAddressFromAlias(
-                aliasName,
-                cashtabCache.aliasCache.aliases,
-            );
-
-            // if not found in alias cache, display input error
-            if (!aliasAddress) {
-                error =
-                    'eCash Alias does not exist or yet to receive 1 confirmation';
-                setAliasInputAddress(false);
-            } else {
-                // otherwise set parsed address to state for use in Submit()
-                setAliasInputAddress(aliasAddress);
+            // retrieve the alias details for `aliasName` from alias-server
+            let aliasDetails;
+            try {
+                aliasDetails = await queryAliasServer('alias', aliasName);
+                if (!aliasDetails.address) {
+                    error =
+                        'eCash Alias does not exist or yet to receive 1 confirmation';
+                } else {
+                    // Valid address response returned
+                    setAliasInputAddress(aliasDetails.address);
+                }
+            } catch (err) {
+                console.log(
+                    `handleTokenAddressChange(): error retrieving alias`,
+                    err,
+                );
+                error = 'Error retrieving alias info';
+                errorNotification(null, error);
             }
         }
 
@@ -510,8 +520,7 @@ const SendToken = ({ tokenId, passLoadingStatus }) => {
                                         })
                                     }
                                     inputProps={{
-                                        placeholder: currency.aliasSettings
-                                            .aliasEnabled
+                                        placeholder: aliasSettings.aliasEnabled
                                             ? `Address or Alias`
                                             : `Address`,
                                         name: 'address',
@@ -525,7 +534,7 @@ const SendToken = ({ tokenId, passLoadingStatus }) => {
                                 <AliasAddressPreviewLabel>
                                     <TxLink
                                         key={aliasInputAddress}
-                                        href={`${currency.blockExplorerUrl}/address/${aliasInputAddress}`}
+                                        href={`${explorer.blockExplorerUrl}/address/${aliasInputAddress}`}
                                         target="_blank"
                                         rel="noreferrer"
                                     >
@@ -554,9 +563,9 @@ const SendToken = ({ tokenId, passLoadingStatus }) => {
                                         step: 1 / 10 ** token.info.decimals,
                                         placeholder: 'Amount',
                                         prefix:
-                                            currency.tokenIconsUrl !== '' ? (
+                                            tokenConfig.tokenIconsUrl !== '' ? (
                                                 <Img
-                                                    src={`${currency.tokenIconsUrl}/32/${tokenId}.png`}
+                                                    src={`${tokenConfig.tokenIconsUrl}/32/${tokenId}.png`}
                                                     width={16}
                                                     height={16}
                                                     unloader={

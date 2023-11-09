@@ -1,7 +1,14 @@
+// Copyright (c) 2023 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 import styled from 'styled-components';
 import Neoncity from '/public/images/neon-city.png';
+import { motion } from 'framer-motion';
+import { getAnimationSettings } from '/styles/framer-motion';
 
-export const Hero = styled.div`
+export const Hero = styled(motion.div).attrs(() =>
+    getAnimationSettings({ duration: 2, delay: 0.4, displacement: 300 }),
+)`
     width: 100%;
     height: 100vh;
     min-height: 600px;
@@ -84,6 +91,19 @@ export const ButtonCtn = styled.div`
     display: flex;
     justify-content: center;
     margin-top: 40px;
+    ${props => props.theme.breakpoint.small} {
+        flex-direction: column;
+        a {
+            display: block;
+        }
+    }
+`;
+
+export const MarginButtonWrapper = styled.div`
+    margin: 0 10px;
+    ${props => props.theme.breakpoint.small} {
+        margin: 10px 0;
+    }
 `;
 
 export const HeroImage = styled.div`
@@ -94,6 +114,7 @@ export const HeroImage = styled.div`
     bottom: 0;
     margin: auto;
     width: 80%;
+    max-width: 800px;
     height: 100%;
     z-index: -1;
     animation: bounce 6s infinite;
@@ -152,7 +173,9 @@ export const GradientSpacer = styled.div`
     );
 `;
 
-export const StorySection = styled.div`
+export const StorySection = styled(motion.div).attrs(() =>
+    getAnimationSettings(),
+)`
     display: flex;
     gap: 30px;
     position: relative;
@@ -262,10 +285,17 @@ export const PixelBorder = styled.div`
         linear-gradient(180deg, transparent 79%, rgba(0, 0, 0, 0.67) 97%, #000);
 `;
 
-export const RoadmpaSection = styled.div`
+export const RoadmapSection = styled.div`
     width: 100%;
     text-align: center;
     background-color: ${props => props.theme.colors.black};
     padding: 120px 0;
     position: relative;
+`;
+
+export const TilesSectionCtn = styled(motion.div).attrs(() =>
+    getAnimationSettings(),
+)`
+    margin-top: 200px;
+    text-align: center;
 `;

@@ -5,7 +5,6 @@
 #ifndef BITCOIN_RPC_UTIL_H
 #define BITCOIN_RPC_UTIL_H
 
-#include <node/coinstats.h>
 #include <node/transaction.h>
 #include <outputtype.h>
 #include <protocol.h>
@@ -171,10 +170,11 @@ struct RPCArg {
          */
         OMITTED,
     };
+    using DefaultHint = std::string;
+    using Default = UniValue;
     using Fallback =
-        std::variant<Optional,
-                     /* default value for optional args */ std::string>;
-
+        std::variant<Optional, /* hint for default value */ DefaultHint,
+                     /* default constant value */ Default>;
     //! The name of the arg (can be empty for inner args, can contain multiple
     //! aliases separated by | for named request arguments)
     const std::string m_names;

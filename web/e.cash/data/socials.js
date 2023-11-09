@@ -1,10 +1,13 @@
+// Copyright (c) 2023 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 export const socials = [
     {
         name: 'facebook',
         link: 'https://www.facebook.com/ecashofficial',
     },
     {
-        name: 'twitter',
+        name: 'x',
         link: 'https://twitter.com/ecashofficial',
     },
     {

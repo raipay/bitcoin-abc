@@ -15,6 +15,8 @@ class FeatureBlockfilterindexPruneTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
         self.extra_args = [["-fastprune", "-prune=1", "-blockfilterindex=1"]]
+        # Mining 1000 blocks sometimes causes a timeout for the generatetoaddress RPC
+        self.rpc_timeout = 120
 
     def sync_index(self, height):
         expected = {
@@ -103,16 +105,15 @@ class FeatureBlockfilterindexPruneTest(BitcoinTestFramework):
             "make sure we get an init error when starting the node "
             "again with block filters"
         )
-        with node.assert_debug_log(
-            [
-                "basic block filter index best block of the index goes beyond "
-                "pruned data. Please disable the index or reindex (which will "
-                "download the whole blockchain again)"
-            ]
-        ):
-            node.assert_start_raises_init_error(
-                extra_args=["-fastprune", "-prune=1", "-blockfilterindex=1"]
-            )
+        self.nodes[0].assert_start_raises_init_error(
+            extra_args=["-fastprune", "-prune=1", "-blockfilterindex=1"],
+            expected_msg=(
+                "Error: basic block filter index best block of the index goes beyond"
+                " pruned data. Please disable the index or reindex (which will download"
+                " the whole blockchain again)"
+            ),
+        )
+
         self.log.info("make sure the node starts again with the -reindex arg")
         self.start_node(
             0, extra_args=["-fastprune", "-prune=1", "-blockfilterindex", "-reindex"]

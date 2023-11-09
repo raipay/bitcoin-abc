@@ -6,7 +6,7 @@ const config = require('../config');
 const { parseBlock, getBlockTgMessage } = require('./parse');
 const { getCoingeckoPrices } = require('./utils');
 const { sendBlockSummary } = require('./telegram');
-const { getTokenInfoMap } = require('./chronik');
+const { getTokenInfoMap, getOutputscriptInfoMap } = require('./chronik');
 
 module.exports = {
     handleBlockConnected: async function (
@@ -25,8 +25,11 @@ module.exports = {
 
         // Get some info about this block
         let blockDetails = false;
+        let blockheight;
         try {
             blockDetails = await chronik.block(blockHash);
+            // See blocks.js 'blockDetails' objects for shape of chronik.block return object
+            blockheight = blockDetails.blockInfo.height;
         } catch (err) {
             console.log(`Error in chronik.block(${blockHash})`, err);
         }
@@ -60,9 +63,14 @@ module.exports = {
         const parsedBlock = parseBlock(blockDetails);
 
         // Get token genesis info for token IDs in this block
-        const { tokenIds } = parsedBlock;
+        const { tokenIds, outputScripts } = parsedBlock;
 
         const tokenInfoMap = await getTokenInfoMap(chronik, tokenIds);
+
+        const outputScriptInfoMap = await getOutputscriptInfoMap(
+            chronik,
+            outputScripts,
+        );
 
         // Get price info for tg msg, if available
         const { coingeckoResponse, coingeckoPrices } = await getCoingeckoPrices(
@@ -72,6 +80,7 @@ module.exports = {
             parsedBlock,
             coingeckoPrices,
             tokenInfoMap,
+            outputScriptInfoMap,
         );
 
         // returnMocks is used in the script function generateMocks
@@ -85,6 +94,7 @@ module.exports = {
                 coingeckoResponse,
                 coingeckoPrices,
                 tokenInfoMap,
+                outputScriptInfoMap,
                 blockSummaryTgMsgs,
                 blockSummaryTgMsgsApiFailure: getBlockTgMessage(
                     parsedBlock,
@@ -99,6 +109,7 @@ module.exports = {
             blockSummaryTgMsgs,
             telegramBot,
             channelId,
+            blockheight,
         );
     },
 };

@@ -96,7 +96,6 @@ int64_t CalculateMaximumSignedTxSize(const CTransaction &tx,
  * populate vCoins with vector of available COutputs.
  */
 void AvailableCoins(const CWallet &wallet, std::vector<COutput> &vCoins,
-                    bool fOnlySafe = true,
                     const CCoinControl *coinControl = nullptr,
                     const Amount nMinimumAmount = SATOSHI,
                     const Amount nMaximumAmount = MAX_MONEY,
@@ -121,10 +120,11 @@ const CTxOut &FindNonChangeParentOutput(const CWallet &wallet,
 std::map<CTxDestination, std::vector<COutput>> ListCoins(const CWallet &wallet)
     EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 
-std::vector<OutputGroup> GroupOutputs(const CWallet &wallet,
-                                      const std::vector<COutput> &outputs,
-                                      bool single_coin,
-                                      const size_t max_ancestors);
+std::vector<OutputGroup>
+GroupOutputs(const CWallet &wallet, const std::vector<COutput> &outputs,
+             bool separate_coins, const CFeeRate &effective_feerate,
+             const CFeeRate &long_term_feerate,
+             const CoinEligibilityFilter &filter, bool positive_only);
 
 /**
  * Shuffle and select coins until nTargetValue is reached while avoiding
@@ -140,7 +140,7 @@ std::vector<OutputGroup> GroupOutputs(const CWallet &wallet,
  */
 bool SelectCoinsMinConf(const CWallet &wallet, const Amount nTargetValue,
                         const CoinEligibilityFilter &eligibility_filter,
-                        std::vector<OutputGroup> groups,
+                        std::vector<COutput> coins,
                         std::set<CInputCoin> &setCoinsRet, Amount &nValueRet,
                         const CoinSelectionParams &coin_selection_params,
                         bool &bnb_used);

@@ -80,6 +80,29 @@ BOOST_AUTO_TEST_CASE(util_datadir) {
     BOOST_CHECK_EQUAL(dd_norm, args.GetDataDirBase());
 }
 
+namespace {
+class NoCopyOrMove {
+public:
+    int i;
+    explicit NoCopyOrMove(int i) : i{i} {}
+
+    NoCopyOrMove() = delete;
+    NoCopyOrMove(const NoCopyOrMove &) = delete;
+    NoCopyOrMove(NoCopyOrMove &&) = delete;
+    NoCopyOrMove &operator=(const NoCopyOrMove &) = delete;
+    NoCopyOrMove &operator=(NoCopyOrMove &&) = delete;
+
+    operator bool() const { return i != 0; }
+
+    int get_ip1() { return i + 1; }
+    bool test() {
+        // Check that Assume can be used within a lambda and still call methods
+        [&]() { Assume(get_ip1()); }();
+        return Assume(get_ip1() != 5);
+    }
+};
+} // namespace
+
 BOOST_AUTO_TEST_CASE(util_check) {
     // Check that Assert can forward
     const std::unique_ptr<int> p_two = Assert(std::make_unique<int>(2));
@@ -90,6 +113,19 @@ BOOST_AUTO_TEST_CASE(util_check) {
     // Check that Assume can be used as unary expression
     const bool result{Assume(two == 2)};
     Assert(result);
+
+    // Check that Assert doesn't require copy/move
+    NoCopyOrMove x{9};
+    Assert(x).i += 3;
+    Assert(x).test();
+
+    // Check nested Asserts
+    BOOST_CHECK_EQUAL(Assert((Assert(x).test() ? 3 : 0)), 3);
+
+    // Check -Wdangling-gsl does not trigger when copying the int. (It would
+    // trigger on "const int&")
+    const int nine{*Assert(std::optional<int>{9})};
+    BOOST_CHECK_EQUAL(9, nine);
 }
 
 BOOST_AUTO_TEST_CASE(util_criticalsection) {
@@ -180,6 +216,23 @@ BOOST_AUTO_TEST_CASE(util_Join) {
                       "FOO, BAR");
 }
 
+BOOST_AUTO_TEST_CASE(util_ReplaceAll) {
+    const std::string original("A test \"%s\" string '%s'.");
+    auto test_replaceall = [&original](const std::string &search,
+                                       const std::string &substitute,
+                                       const std::string &expected) {
+        auto test = original;
+        ReplaceAll(test, search, substitute);
+        BOOST_CHECK_EQUAL(test, expected);
+    };
+
+    test_replaceall("", "foo", original);
+    test_replaceall(original, "foo", "foo");
+    test_replaceall("%s", "foo", "A test \"foo\" string 'foo'.");
+    test_replaceall("\"", "foo", "A test foo%sfoo string '%s'.");
+    test_replaceall("'", "foo", "A test \"%s\" string foo%sfoo.");
+}
+
 BOOST_AUTO_TEST_CASE(util_FormatParseISO8601DateTime) {
     BOOST_CHECK_EQUAL(FormatISO8601DateTime(1317425777),
                       "2011-09-30T23:36:17Z");
@@ -188,9 +241,6 @@ BOOST_AUTO_TEST_CASE(util_FormatParseISO8601DateTime) {
     BOOST_CHECK_EQUAL(ParseISO8601DateTime("1970-01-01T00:00:00Z"), 0);
     BOOST_CHECK_EQUAL(ParseISO8601DateTime("1960-01-01T00:00:00Z"), 0);
     BOOST_CHECK_EQUAL(ParseISO8601DateTime("2011-09-30T23:36:17Z"), 1317425777);
-
-    auto time = GetTimeSeconds();
-    BOOST_CHECK_EQUAL(ParseISO8601DateTime(FormatISO8601DateTime(time)), time);
 }
 
 BOOST_AUTO_TEST_CASE(util_FormatISO8601Date) {
@@ -1628,8 +1678,8 @@ BOOST_AUTO_TEST_CASE(gettime) {
 BOOST_AUTO_TEST_CASE(util_time_GetTime) {
     SetMockTime(111);
     // Check that mock time does not change after a sleep
-    for (const auto &num_sleep : {0, 1}) {
-        UninterruptibleSleep(std::chrono::milliseconds{num_sleep});
+    for (const auto &num_sleep : {0ms, 1ms}) {
+        UninterruptibleSleep(num_sleep);
         BOOST_CHECK_EQUAL(111, GetTime()); // Deprecated time getter
         BOOST_CHECK_EQUAL(111, GetTime<std::chrono::seconds>().count());
         BOOST_CHECK_EQUAL(111000, GetTime<std::chrono::milliseconds>().count());
@@ -1638,10 +1688,14 @@ BOOST_AUTO_TEST_CASE(util_time_GetTime) {
     }
 
     SetMockTime(0);
-    // Check that system time changes after a sleep
+    // Check that steady time and system time changes after a sleep
+    const auto steady_ms_0 = Now<SteadyMilliseconds>();
+    const auto steady_0 = std::chrono::steady_clock::now();
     const auto ms_0 = GetTime<std::chrono::milliseconds>();
     const auto us_0 = GetTime<std::chrono::microseconds>();
-    UninterruptibleSleep(std::chrono::milliseconds{1});
+    UninterruptibleSleep(1ms);
+    BOOST_CHECK(steady_ms_0 < Now<SteadyMilliseconds>());
+    BOOST_CHECK(steady_0 + 1ms <= std::chrono::steady_clock::now());
     BOOST_CHECK(ms_0 < GetTime<std::chrono::milliseconds>());
     BOOST_CHECK(us_0 < GetTime<std::chrono::microseconds>());
 }
@@ -2416,6 +2470,54 @@ BOOST_AUTO_TEST_CASE(test_spanparsing) {
     BOOST_CHECK_EQUAL(SpanToStr(results[1]), "foo");
     BOOST_CHECK_EQUAL(SpanToStr(results[2]), "bar");
     BOOST_CHECK_EQUAL(SpanToStr(results[3]), "");
+}
+
+BOOST_AUTO_TEST_CASE(test_SplitString) {
+    // Empty string.
+    {
+        std::vector<std::string> result = SplitString("", '-');
+        BOOST_CHECK_EQUAL(result.size(), 1);
+        BOOST_CHECK_EQUAL(result[0], "");
+    }
+
+    // Empty items.
+    {
+        std::vector<std::string> result = SplitString("-", '-');
+        BOOST_CHECK_EQUAL(result.size(), 2);
+        BOOST_CHECK_EQUAL(result[0], "");
+        BOOST_CHECK_EQUAL(result[1], "");
+    }
+
+    // More empty items.
+    {
+        std::vector<std::string> result = SplitString("--", '-');
+        BOOST_CHECK_EQUAL(result.size(), 3);
+        BOOST_CHECK_EQUAL(result[0], "");
+        BOOST_CHECK_EQUAL(result[1], "");
+        BOOST_CHECK_EQUAL(result[2], "");
+    }
+
+    // Separator is not present.
+    {
+        std::vector<std::string> result = SplitString("abc", '-');
+        BOOST_CHECK_EQUAL(result.size(), 1);
+        BOOST_CHECK_EQUAL(result[0], "abc");
+    }
+
+    // Basic behavior.
+    {
+        std::vector<std::string> result = SplitString("a-b", '-');
+        BOOST_CHECK_EQUAL(result.size(), 2);
+        BOOST_CHECK_EQUAL(result[0], "a");
+        BOOST_CHECK_EQUAL(result[1], "b");
+    }
+
+    // Case-sensitivity of the separator.
+    {
+        std::vector<std::string> result = SplitString("AAA", 'a');
+        BOOST_CHECK_EQUAL(result.size(), 1);
+        BOOST_CHECK_EQUAL(result[0], "AAA");
+    }
 }
 
 BOOST_AUTO_TEST_CASE(test_LogEscapeMessage) {

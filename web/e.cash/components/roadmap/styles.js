@@ -1,8 +1,15 @@
+// Copyright (c) 2023 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 import styled from 'styled-components';
 import Image from 'next/image';
 import { getStatusValues } from './status.js';
+import { motion } from 'framer-motion';
+import { getAnimationSettings } from '/styles/framer-motion';
 
-export const Legend = styled.div`
+export const Legend = styled(motion.div).attrs(() =>
+    getAnimationSettings({ duration: 1, displacement: 200 }),
+)`
     display: flex;
     align-items: center;
     justify-content: center;
@@ -51,7 +58,9 @@ export const RoadmapCtn = styled.div`
     position: relative;
 `;
 
-export const RoadmapBlock = styled.div`
+export const RoadmapBlock = styled(motion.div).attrs(() =>
+    getAnimationSettings({ duration: 2, displacement: 200 }),
+)`
     display: flex;
     width: 100%;
     margin-bottom: 100px;

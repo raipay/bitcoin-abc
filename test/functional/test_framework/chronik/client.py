@@ -106,16 +106,23 @@ class ChronikWs:
 class ChronikClient:
     CONTENT_TYPE = "application/x-protobuf"
 
-    def __init__(self, host: str, port: int, timeout=DEFAULT_TIMEOUT) -> None:
+    def __init__(
+        self, host: str, port: int, https=False, timeout=DEFAULT_TIMEOUT
+    ) -> None:
         self.host = host
         self.port = port
         self.timeout = timeout
+        self.https = https
 
     def _request_get(self, path: str, pb_type):
         kwargs = {}
         if self.timeout is not None:
             kwargs["timeout"] = self.timeout
-        client = http.client.HTTPConnection(self.host, self.port, **kwargs)
+        client = (
+            http.client.HTTPSConnection(self.host, self.port, **kwargs)
+            if self.https
+            else http.client.HTTPConnection(self.host, self.port, **kwargs)
+        )
         client.request("GET", path)
         response = client.getresponse()
         content_type = response.getheader("Content-Type")
@@ -153,6 +160,9 @@ class ChronikClient:
     def blocks(self, start_height: int, end_height: int) -> ChronikResponse:
         return self._request_get(f"/blocks/{start_height}/{end_height}", pb.Blocks)
 
+    def chronik_info(self) -> ChronikResponse:
+        return self._request_get("/chronik-info", pb.ChronikInfo)
+
     def tx(self, txid: str) -> ChronikResponse:
         return self._request_get(f"/tx/{txid}", pb.Tx)
 
@@ -162,9 +172,18 @@ class ChronikClient:
     def script(self, script_type: str, script_payload: str) -> ChronikScriptClient:
         return ChronikScriptClient(self, script_type, script_payload)
 
+    def pause(self) -> ChronikResponse:
+        return self._request_get("/pause", pb.Empty)
+
+    def resume(self) -> ChronikResponse:
+        return self._request_get("/resume", pb.Empty)
+
     def ws(self, *, timeout=None) -> ChronikWs:
         ws = websocket.WebSocket()
-        ws.connect(f"ws://{self.host}:{self.port}/ws", timeout=timeout)
+        ws.connect(
+            f"{'wss' if self.https else 'ws'}://{self.host}:{self.port}/ws",
+            timeout=timeout,
+        )
         return ChronikWs(ws)
 
 

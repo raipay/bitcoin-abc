@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -202,7 +203,7 @@ class Processor final : public NetEventsInterface {
     struct Query {
         NodeId nodeid;
         uint64_t round;
-        TimePoint timeout;
+        SteadyMilliseconds timeout;
 
         /**
          * We declare this as mutable so it can be modified in the multi_index.
@@ -224,7 +225,7 @@ class Processor final : public NetEventsInterface {
             // sorted by timeout
             boost::multi_index::ordered_non_unique<
                 boost::multi_index::tag<query_timeout>,
-                boost::multi_index::member<Query, TimePoint,
+                boost::multi_index::member<Query, SteadyMilliseconds,
                                            &Query::timeout>>>>;
 
     RWCollection<QuerySet> queries;
@@ -266,6 +267,16 @@ class Processor final : public NetEventsInterface {
     std::unordered_set<NodeId>
         delayedAvahelloNodeIds GUARDED_BY(cs_delayedAvahelloNodeIds);
 
+    struct StakingReward {
+        int blockheight;
+        CScript winner;
+        std::vector<CScript> acceptableWinners;
+    };
+
+    mutable Mutex cs_stakingRewards;
+    std::unordered_map<BlockHash, StakingReward, SaltedUint256Hasher>
+        stakingRewards GUARDED_BY(cs_stakingRewards);
+
     Processor(Config avaconfig, interfaces::Chain &chain, CConnman *connmanIn,
               ChainstateManager &chainman, CTxMemPool *mempoolIn,
               CScheduler &scheduler, std::unique_ptr<PeerData> peerDataIn,
@@ -284,8 +295,17 @@ public:
                   bilingual_str &error);
 
     bool addToReconcile(const AnyVoteItem &item);
+    /**
+     * Wrapper around the addToReconcile for proofs that adds back the
+     * finalization flag to the peer if it is not polled due to being recently
+     * finalized.
+     */
+    bool reconcileOrFinalize(const ProofRef &proof);
     bool isAccepted(const AnyVoteItem &item) const;
     int getConfidence(const AnyVoteItem &item) const;
+
+    bool isRecentlyFinalized(const uint256 &itemId) const;
+    void clearFinalizedItems();
 
     // TODO: Refactor the API to remove the dependency on avalanche/protocol.h
     void sendResponse(CNode *pfrom, Response response) const;
@@ -326,8 +346,17 @@ public:
     bool isQuorumEstablished() LOCKS_EXCLUDED(cs_main);
     bool canShareLocalProof();
 
+    bool computeStakingReward(const CBlockIndex *pindex);
+    bool eraseStakingRewardWinner(const BlockHash &prevBlockHash);
+    void cleanupStakingRewards(const int minHeight);
+    bool getStakingRewardWinner(const BlockHash &prevBlockHash,
+                                CScript &winner) const;
+    bool setStakingRewardWinner(const CBlockIndex *pprev,
+                                const CScript &winner);
+
     // Implement NetEventInterface. Only FinalizeNode is of interest.
-    void InitializeNode(const ::Config &config, CNode *pnode) override {}
+    void InitializeNode(const ::Config &config, CNode &pnode,
+                        ServiceFlags our_services) override {}
     bool ProcessMessages(const ::Config &config, CNode *pnode,
                          std::atomic<bool> &interrupt) override {
         return false;
@@ -341,6 +370,7 @@ public:
         LOCKS_EXCLUDED(cs_main);
 
 private:
+    void updatedBlockTip();
     void runEventLoop();
     void clearTimedoutRequests();
     std::vector<CInv> getInvsForNextPoll(bool forPoll = true);

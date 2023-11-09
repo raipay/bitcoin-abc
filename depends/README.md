@@ -44,7 +44,7 @@ No other options are needed, the paths are automatically configured.
 
 #### For macOS cross compilation
 
-    sudo apt-get install imagemagick libbz2-dev libcap-dev librsvg2-bin libtiff-tools libtinfo5 python3-setuptools xorriso
+    sudo apt-get install libbz2-dev libcap-dev libtinfo5 python3-setuptools xorriso
 
 #### For Win64 cross compilation
 
@@ -54,7 +54,7 @@ No other options are needed, the paths are automatically configured.
 
 Common linux dependencies:
 
-    sudo apt-get install gperf
+    sudo apt-get install bison gperf
 
 For linux 32 bits cross compilation:
 

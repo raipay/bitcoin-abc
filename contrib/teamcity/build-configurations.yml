@@ -4,7 +4,7 @@ templates:
   gitian_builds:
     script: |
       "${TOPLEVEL}/contrib/teamcity/gitian.sh"
-    timeout: 7200
+    timeout: 9000
     artifacts:
       gitian-results: ''
 
@@ -368,7 +368,7 @@ builds:
         - install-secp256k1
         - install-tests
     post_build: |
-      export PYTHONPATH="${TOPLEVEL}/depends/x86_64-apple-darwin19/native/lib/python3/dist-packages:${PYTHONPATH:-}"
+      export PYTHONPATH="${TOPLEVEL}/depends/x86_64-apple-darwin/native/lib/python3/dist-packages:${PYTHONPATH:-}"
       ninja osx-dmg
     timeout: 3600
     artifacts:
@@ -651,6 +651,22 @@ builds:
     templates:
       - js-mocha
 
+  app-dev-examples:
+    runOnDiffRegex:
+      - apps/examples/
+    env:
+      JS_PROJECT_ROOT: apps/examples
+    templates:
+      - js-mocha
+
+  chronik-client-tests:
+    runOnDiffRegex:
+      - modules/chronik-client/
+    env:
+      JS_PROJECT_ROOT: modules/chronik-client
+    templates:
+      - js-mocha
+
   ecashaddrjs-tests:
     runOnDiffRegex:
       - modules/ecashaddrjs/
@@ -658,6 +674,34 @@ builds:
       JS_PROJECT_ROOT: modules/ecashaddrjs
     templates:
       - js-mocha
+
+  ecash-script-tests:
+    runOnDiffRegex:
+      - modules/ecash-script/
+    env:
+      JS_PROJECT_ROOT: modules/ecash-script
+    templates:
+      - js-mocha
+
+  ecash-coinselect:
+    runOnDiffRegex:
+      - modules/ecash-coinselect/
+    env:
+      JS_PROJECT_ROOT: modules/ecash-coinselect
+    templates:
+      - js-mocha
+
+  electrum-tests:
+    runOnDiffRegex:
+      - electrum/
+    targets:
+      - - check-electrum
+
+  electrum-functional-tests:
+    script: |
+      pip3 install -r "${TOPLEVEL}/electrum/contrib/requirements/requirements.txt"
+      pip3 install -r "${TOPLEVEL}/electrum/contrib/requirements/requirements-regtest.txt"
+      pytest "${TOPLEVEL}/electrum/electrumabc/tests/regtest"
 
   preview-e.cash:
     docker:

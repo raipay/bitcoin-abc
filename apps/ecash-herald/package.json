@@ -7,9 +7,10 @@
         "test": "mocha",
         "coverage": "nyc mocha",
         "junit": "mocha test --reporter mocha-junit-reporter",
-        "generateMocks": "node scripts/generateMocks",
-        "sendTestTgMsgs": "node scripts/sendTestTgMsgs",
-        "getCoingeckoPrices": "node scripts/getCoingeckoPrices"
+        "generateMock": "node scripts/generateMock",
+        "getCoingeckoPrices": "node scripts/getCoingeckoPrices",
+        "sendMsgByBlock": "node scripts/sendMsgByBlock",
+        "getSlpTwoTokenInfo": "node scripts/getSlpTwoTokenInfo"
     },
     "keywords": [
         "ecash",
@@ -25,7 +26,8 @@
         "axios-mock-adapter": "^1.21.4",
         "bignumber.js": "^9.1.1",
         "chronik-client": "^0.8.2",
-        "ecashaddrjs": "^1.2.0",
+        "ecash-script": "^2.1.1",
+        "ecashaddrjs": "^1.5.1",
         "node-telegram-bot-api": "^0.61.0"
     },
     "devDependencies": {

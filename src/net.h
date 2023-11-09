@@ -30,12 +30,14 @@
 #include <threadinterrupt.h>
 #include <uint256.h>
 #include <util/check.h>
+#include <util/time.h>
 #include <validation.h> // For cs_main
 
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <list>
 #include <map>
 #include <memory>
@@ -209,7 +211,15 @@ enum class ConnectionType {
 
 /** Convert ConnectionType enum to a string value */
 std::string ConnectionTypeAsString(ConnectionType conn_type);
+
+/**
+ * Look up IP addresses from all interfaces on the machine and add them to the
+ * list of local addresses to self-advertise.
+ * The loopback interface is skipped and only the first address from each
+ * interface is used.
+ */
 void Discover();
+
 uint16_t GetListenPort();
 
 enum {
@@ -228,8 +238,8 @@ enum {
 };
 
 bool IsPeerAddrLocalGood(CNode *pnode);
-/** Returns a local address that we should advertise to this peer */
-std::optional<CAddress> GetLocalAddrForPeer(CNode *pnode);
+/** Returns a local address that we should advertise to this peer. */
+std::optional<CService> GetLocalAddrForPeer(CNode &node);
 
 /**
  * Mark a network as reachable or unreachable (no automatic connects to it)
@@ -247,8 +257,7 @@ void RemoveLocal(const CService &addr);
 bool SeenLocal(const CService &addr);
 bool IsLocal(const CService &addr);
 bool GetLocal(CService &addr, const CNetAddr *paddrPeer = nullptr);
-CAddress GetLocalAddress(const CNetAddr *paddrPeer,
-                         ServiceFlags nLocalServices);
+CService GetLocalAddress(const CNetAddr &addrPeer);
 
 extern bool fDiscover;
 extern bool fListen;
@@ -273,8 +282,6 @@ typedef std::map<std::string, uint64_t> mapMsgCmdSize;
  */
 struct CNodeStats {
     NodeId nodeid;
-    ServiceFlags nServices;
-    bool fRelayTxes;
     std::chrono::seconds m_last_send;
     std::chrono::seconds m_last_recv;
     std::chrono::seconds m_last_tx_time;
@@ -296,7 +303,6 @@ struct CNodeStats {
     NetPermissionFlags m_permissionFlags;
     std::chrono::microseconds m_last_ping_time;
     std::chrono::microseconds m_min_ping_time;
-    Amount minFeeFilter;
     // Our address, as reported by the peer
     std::string addrLocal;
     // Address of this peer
@@ -449,7 +455,6 @@ public:
     std::unique_ptr<TransportSerializer> m_serializer;
 
     // socket
-    std::atomic<ServiceFlags> nServices{NODE_NONE};
     SOCKET hSocket GUARDED_BY(cs_hSocket);
     /** Total size of all vSendMsg entries. */
     size_t nSendSize GUARDED_BY(cs_vSend){0};
@@ -498,10 +503,6 @@ public:
     bool HasPermission(NetPermissionFlags permission) const {
         return NetPermissions::HasFlag(m_permissionFlags, permission);
     }
-    // set by version message
-    bool fClient{false};
-    // after BIP159, set by version message
-    bool m_limited_node{false};
     std::atomic_bool fSuccessfullyConnected{false};
     // Setting fDisconnect to true will cause the node to be disconnected the
     // next time DisconnectNodes() runs
@@ -588,56 +589,25 @@ public:
     // Peer selected us as (compact blocks) high-bandwidth peer (BIP152)
     std::atomic<bool> m_bip152_highbandwidth_from{false};
 
-    struct TxRelay {
-        mutable RecursiveMutex cs_filter;
-        // We use fRelayTxes for two purposes -
-        // a) it allows us to not relay tx invs before receiving the peer's
-        //    version message.
-        // b) the peer may tell us in its version message that we should not
-        //    relay tx invs unless it loads a bloom filter.
-        bool fRelayTxes GUARDED_BY(cs_filter){false};
-        std::unique_ptr<CBloomFilter> pfilter PT_GUARDED_BY(cs_filter)
-            GUARDED_BY(cs_filter){nullptr};
+    /**
+     * Whether this peer provides all services that we want.
+     * Used for eviction decisions
+     */
+    std::atomic_bool m_has_all_wanted_services{false};
 
-        mutable RecursiveMutex cs_tx_inventory;
-        CRollingBloomFilter filterInventoryKnown GUARDED_BY(cs_tx_inventory){
-            50000, 0.000001};
-        // Set of transaction ids we still have to announce.
-        // They are sorted by the mempool before relay, so the order is not
-        // important.
-        std::set<TxId> setInventoryTxToSend GUARDED_BY(cs_tx_inventory);
-        // Used for BIP35 mempool sending
-        bool fSendMempool GUARDED_BY(cs_tx_inventory){false};
-        // Last time a "MEMPOOL" request was serviced.
-        std::atomic<std::chrono::seconds> m_last_mempool_req{0s};
-        std::chrono::microseconds nNextInvSend{0};
+    /**
+     * Whether we should relay transactions to this peer (their version
+     * message did not include fRelay=false and this is not a block-relay-only
+     * connection). This only changes from false to true. It will never change
+     * back to false. Used only in inbound eviction logic.
+     */
+    std::atomic_bool m_relays_txs{false};
 
-        /** Minimum fee rate with which to filter inv's to this node */
-        std::atomic<Amount> minFeeFilter{Amount::zero()};
-        Amount lastSentFeeFilter{Amount::zero()};
-        std::chrono::microseconds m_next_send_feefilter{0};
-    };
-
-    // m_tx_relay == nullptr if we're not relaying transactions with this peer
-    const std::unique_ptr<TxRelay> m_tx_relay;
-
-    struct ProofRelay {
-        mutable RecursiveMutex cs_proof_inventory;
-        std::set<avalanche::ProofId>
-            setInventoryProofToSend GUARDED_BY(cs_proof_inventory);
-        // Prevent sending proof invs if the peer already knows about them
-        CRollingBloomFilter filterProofKnown GUARDED_BY(cs_proof_inventory){
-            10000, 0.000001};
-        std::chrono::microseconds nextInvSend{0};
-
-        RadixTree<const avalanche::Proof, avalanche::ProofRadixTreeAdapter>
-            sharedProofs;
-        std::atomic<std::chrono::seconds> lastSharedProofsUpdate{0s};
-        std::atomic<bool> compactproofs_requested{false};
-    };
-
-    // m_proof_relay == nullptr if we're not relaying proofs with this peer
-    const std::unique_ptr<ProofRelay> m_proof_relay;
+    /**
+     * Whether this peer has loaded a bloom filter. Used only in inbound
+     * eviction logic.
+     */
+    std::atomic_bool m_bloom_filter_loaded{false};
 
     // True if we know this peer is using Avalanche (at least polling)
     std::atomic<bool> m_avalanche_enabled{false};
@@ -674,6 +644,13 @@ public:
     // Store the next time we will consider a getavaaddr message from this peer
     std::chrono::seconds m_nextGetAvaAddr{0};
 
+    // The last time the node sent us a faulty message
+    std::atomic<std::chrono::seconds> m_avalanche_last_message_fault{0s};
+    // How much faulty messages did this node accumulate
+    std::atomic<int> m_avalanche_message_fault_counter{0};
+
+    SteadyMilliseconds m_last_poll{};
+
     /**
      * UNIX epoch time of the last block received from this peer that we had
      * not yet seen (e.g. not already received from another peer), that passed
@@ -709,11 +686,11 @@ public:
     std::atomic<std::chrono::microseconds> m_min_ping_time{
         std::chrono::microseconds::max()};
 
-    CNode(NodeId id, ServiceFlags nLocalServicesIn, SOCKET hSocketIn,
-          const CAddress &addrIn, uint64_t nKeyedNetGroupIn,
-          uint64_t nLocalHostNonceIn, uint64_t nLocalExtraEntropyIn,
-          const CAddress &addrBindIn, const std::string &addrNameIn,
-          ConnectionType conn_type_in, bool inbound_onion);
+    CNode(NodeId id, SOCKET hSocketIn, const CAddress &addrIn,
+          uint64_t nKeyedNetGroupIn, uint64_t nLocalHostNonceIn,
+          uint64_t nLocalExtraEntropyIn, const CAddress &addrBindIn,
+          const std::string &addrNameIn, ConnectionType conn_type_in,
+          bool inbound_onion);
     ~CNode();
     CNode(const CNode &) = delete;
     CNode &operator=(const CNode &) = delete;
@@ -755,9 +732,10 @@ public:
     }
     int GetCommonVersion() const { return m_greatest_common_version; }
 
-    CService GetAddrLocal() const;
+    CService GetAddrLocal() const LOCKS_EXCLUDED(m_addr_local_mutex);
     //! May not be called more than once
-    void SetAddrLocal(const CService &addrLocalIn);
+    void SetAddrLocal(const CService &addrLocalIn)
+        LOCKS_EXCLUDED(m_addr_local_mutex);
 
     CNode *AddRef() {
         nRefCount++;
@@ -766,46 +744,9 @@ public:
 
     void Release() { nRefCount--; }
 
-    void AddKnownTx(const TxId &txid) {
-        if (m_tx_relay != nullptr) {
-            LOCK(m_tx_relay->cs_tx_inventory);
-            m_tx_relay->filterInventoryKnown.insert(txid);
-        }
-    }
-
-    void PushTxInventory(const TxId &txid) {
-        if (m_tx_relay == nullptr) {
-            return;
-        }
-        LOCK(m_tx_relay->cs_tx_inventory);
-        if (!m_tx_relay->filterInventoryKnown.contains(txid)) {
-            m_tx_relay->setInventoryTxToSend.insert(txid);
-        }
-    }
-
-    void AddKnownProof(const avalanche::ProofId &proofid) {
-        if (m_proof_relay != nullptr) {
-            LOCK(m_proof_relay->cs_proof_inventory);
-            m_proof_relay->filterProofKnown.insert(proofid);
-        }
-    }
-
-    void PushProofInventory(const avalanche::ProofId &proofid) {
-        if (m_proof_relay == nullptr) {
-            return;
-        }
-
-        LOCK(m_proof_relay->cs_proof_inventory);
-        if (!m_proof_relay->filterProofKnown.contains(proofid)) {
-            m_proof_relay->setInventoryProofToSend.insert(proofid);
-        }
-    }
-
     void CloseSocketDisconnect();
 
     void copyStats(CNodeStats &stats);
-
-    ServiceFlags GetLocalServices() const { return nLocalServices; }
 
     std::string ConnectionTypeAsString() const {
         return ::ConnectionTypeAsString(m_conn_type);
@@ -818,30 +759,13 @@ private:
     const ConnectionType m_conn_type;
     std::atomic<int> m_greatest_common_version{INIT_PROTO_VERSION};
 
-    //! Services offered to this peer.
-    //!
-    //! This is supplied by the parent CConnman during peer connection
-    //! (CConnman::ConnectNode()) from its attribute of the same name.
-    //!
-    //! This is const because there is no protocol defined for renegotiating
-    //! services initially offered to a peer. The set of local services we
-    //! offer should not change after initialization.
-    //!
-    //! An interesting example of this is NODE_NETWORK and initial block
-    //! download: a node which starts up from scratch doesn't have any blocks
-    //! to serve, but still advertises NODE_NETWORK because it will eventually
-    //! fulfill this role after IBD completes. P2P code is written in such a
-    //! way that it can gracefully handle peers who don't make good on their
-    //! service advertisements.
-    const ServiceFlags nLocalServices;
-
     NetPermissionFlags m_permissionFlags{NetPermissionFlags::None};
     // Used only by SocketHandler thread
     std::list<CNetMessage> vRecvMsg;
 
     // Our address, as reported by the peer
-    mutable RecursiveMutex cs_addrLocal;
-    CService addrLocal GUARDED_BY(cs_addrLocal);
+    mutable Mutex m_addr_local_mutex;
+    CService addrLocal GUARDED_BY(m_addr_local_mutex);
 
     /**
      * The inventories polled and voted counters since last score
@@ -863,7 +787,8 @@ private:
 class NetEventsInterface {
 public:
     /** Initialize a peer (setup state, queue any initial messages) */
-    virtual void InitializeNode(const Config &config, CNode *pnode) = 0;
+    virtual void InitializeNode(const Config &config, CNode &node,
+                                ServiceFlags our_services) = 0;
 
     /** Handle removal of a peer (clear state) */
     virtual void FinalizeNode(const Config &config, const CNode &node) = 0;
@@ -1305,16 +1230,14 @@ private:
     std::map<uint64_t, CachedAddrResponse> m_addr_response_caches;
 
     /**
-     * Services this instance offers.
+     * Services this node offers.
      *
-     * This data is replicated in each CNode instance we create during peer
-     * connection (in ConnectNode()) under a member also called
-     * nLocalServices.
+     * This data is replicated in each Peer instance we create.
      *
      * This data is not marked const, but after being set it should not
-     * change. See the note in CNode::nLocalServices documentation.
+     * change.
      *
-     * \sa CNode::nLocalServices
+     * \sa Peer::m_our_services
      */
     ServiceFlags nLocalServices;
 
@@ -1419,8 +1342,15 @@ std::string getSubVersionEB(uint64_t MaxBlockSize);
 std::string userAgent(const Config &config);
 
 /** Dump binary message to file, with timestamp */
-void CaptureMessage(const CAddress &addr, const std::string &msg_type,
-                    const Span<const uint8_t> &data, bool is_incoming);
+void CaptureMessageToFile(const CAddress &addr, const std::string &msg_type,
+                          Span<const uint8_t> data, bool is_incoming);
+
+/**
+ * Defaults to `CaptureMessageToFile()`, but can be overridden by unit tests.
+ */
+extern std::function<void(const CAddress &addr, const std::string &msg_type,
+                          Span<const uint8_t> data, bool is_incoming)>
+    CaptureMessage;
 
 struct NodeEvictionCandidate {
     NodeId id;
@@ -1430,7 +1360,7 @@ struct NodeEvictionCandidate {
     std::chrono::seconds m_last_proof_time;
     std::chrono::seconds m_last_tx_time;
     bool fRelevantServices;
-    bool fRelayTxes;
+    bool m_relay_txs;
     bool fBloomFilter;
     uint64_t nKeyedNetGroup;
     bool prefer_evict;

@@ -10,9 +10,12 @@ import {
     LockOutlined,
     ContactsOutlined,
     FireOutlined,
+    SearchOutlined,
+    UserAddOutlined,
+    WarningOutlined,
+    SwapOutlined,
 } from '@ant-design/icons';
 import { Image } from 'antd';
-import { currency } from 'components/Common/Ticker';
 import { ReactComponent as Send } from 'assets/send.svg';
 import { ReactComponent as Receive } from 'assets/receive.svg';
 import { ReactComponent as Genesis } from 'assets/flask.svg';
@@ -33,13 +36,19 @@ import { ReactComponent as Audit } from 'assets/audit.svg';
 import { ReactComponent as Mail } from 'assets/mail.svg';
 export const CashLoadingIcon = <LoadingOutlined className="cashLoadingIcon" />;
 import { ReactComponent as User } from 'assets/user.svg';
+import appConfig from 'config/app';
 
 export const CashReceivedNotificationIcon = () => (
-    <Image height={'33px'} width={'30px'} src={currency.logo} preview={false} />
+    <Image
+        height={'33px'}
+        width={'30px'}
+        src={appConfig.logo}
+        preview={false}
+    />
 );
 export const TokenReceivedNotificationIcon = () => (
     <Image
-        src={currency.tokenLogo}
+        src={appConfig.tokenLogo}
         height={'33px'}
         width={'30px'}
         preview={false}
@@ -48,7 +57,7 @@ export const TokenReceivedNotificationIcon = () => (
 
 export const MessageSignedNotificationIcon = () => (
     <Image
-        src={currency.tokenLogo}
+        src={appConfig.tokenLogo}
         height={'33px'}
         width={'30px'}
         preview={false}
@@ -196,11 +205,21 @@ export const GenesisIcon = () => <Genesis />;
 export const UnparsedIcon = () => <Unparsed />;
 export const HomeIcon = () => <Home />;
 export const SettingsIcon = () => <Settings height={'33px'} width={'30px'} />;
+export const PendingAliasWarningIcon = () => (
+    <WarningOutlined style={{ fontSize: 25 }} />
+);
 
+export const WarningIcon = () => <WarningOutlined style={{ fontSize: 45 }} />;
 export const AirdropIcon = () => <Airdrop height={'33px'} width={'30px'} />;
-
+export const SwapIcon = () => <SwapOutlined style={{ fontSize: 24 }} />;
 export const SendIcon = styled(Send)`
     transform: rotate(-35deg);
 `;
+export const AliasSearchIcon = () => (
+    <SearchOutlined style={{ fontSize: 20 }} />
+);
+export const AliasRegisterIcon = () => (
+    <UserAddOutlined style={{ fontSize: 20 }} />
+);
 export const AliasIcon = styled(User)``;
 export const CustomSpinner = <LoadingOutlined style={{ fontSize: 24 }} spin />;

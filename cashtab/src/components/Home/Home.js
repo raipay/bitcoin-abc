@@ -2,7 +2,6 @@ import React from 'react';
 import styled from 'styled-components';
 import { WalletContext } from 'utils/context';
 import OnBoarding from 'components/OnBoarding/OnBoarding';
-import { currency } from 'components/Common/Ticker.js';
 import { Link } from 'react-router-dom';
 import TokenList from './TokenList';
 import TxHistory from './TxHistory';
@@ -16,6 +15,10 @@ import {
 } from 'components/Common/Atoms';
 import { getWalletState } from 'utils/cashMethods';
 import WalletLabel from 'components/Common/WalletLabel.js';
+import { SmartButton } from 'components/Common/PrimaryButton';
+import { isValidSideshiftObj } from 'utils/validation';
+
+import appConfig from 'config/app';
 
 export const Tabs = styled.div`
     margin: auto;
@@ -153,7 +156,7 @@ const WalletInfo = () => {
     const walletState = getWalletState(wallet);
     const { balances, parsedTxHistory, tokens } = walletState;
     const [activeTab, setActiveTab] = React.useState('txHistory');
-
+    const sideshift = window.sideshift;
     const hasHistory = parsedTxHistory && parsedTxHistory.length > 0;
 
     return (
@@ -166,7 +169,7 @@ const WalletInfo = () => {
                 ></WalletLabel>
                 <BalanceHeader
                     balance={balances.totalBalance}
-                    ticker={currency.ticker}
+                    ticker={appConfig.ticker}
                     cashtabSettings={cashtabSettings}
                 />
                 <BalanceHeaderFiat
@@ -221,8 +224,15 @@ const WalletInfo = () => {
                                 🎉
                             </span>
                             <br /> Start using the wallet immediately to receive{' '}
-                            {currency.ticker} payments, or load it up with{' '}
-                            {currency.ticker} to send to others
+                            {appConfig.ticker} payments, or load it up with{' '}
+                            {appConfig.ticker} to send to others
+                            <br />
+                            <br />
+                            {isValidSideshiftObj(sideshift) && (
+                                <SmartButton onClick={() => sideshift.show()}>
+                                    Exchange to XEC via SideShift
+                                </SmartButton>
+                            )}
                         </>
                     )}
                 </TabPane>
@@ -238,7 +248,7 @@ const WalletInfo = () => {
                         <TokenList wallet={wallet} tokens={tokens} />
                     ) : (
                         <p>
-                            Tokens sent to your {currency.tokenTicker} address
+                            Tokens sent to your {appConfig.tokenTicker} address
                             will appear here
                         </p>
                     )}

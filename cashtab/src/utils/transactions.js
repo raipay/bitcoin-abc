@@ -1,8 +1,6 @@
-import { currency } from 'components/Common/Ticker';
 import {
     fromXecToSatoshis,
     isValidStoredWallet,
-    parseXecSendValue,
     generateOpReturnScript,
     generateTxInput,
     generateTxOutput,
@@ -14,9 +12,14 @@ import {
     getMessageByteSize,
     generateAliasOpReturnScript,
     fromSatoshisToXec,
+    sumOneToManyXec,
 } from 'utils/cashMethods';
 import ecies from 'ecies-lite';
 import * as utxolib from '@bitgo/utxo-lib';
+import { explorer } from 'config/explorer';
+import appConfig from 'config/app';
+import aliasSettings from 'config/alias';
+import BigNumber from 'bignumber.js';
 
 const SEND_XEC_ERRORS = {
     INSUFFICIENT_FUNDS: 0,
@@ -94,7 +97,7 @@ export const createToken = async (
         }
 
         // return the explorer link for the broadcasted tx
-        return `${currency.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
+        return `${explorer.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
     } catch (err) {
         if (err.error === 'insufficient priority (code 66)') {
             err.code = SEND_XEC_ERRORS.INSUFFICIENT_PRIORITY;
@@ -124,7 +127,7 @@ export const sendToken = async (
     // Handle error of user having no XEC
     if (!nonSlpUtxos || nonSlpUtxos.length === 0) {
         throw new Error(
-            `You need some ${currency.ticker} to send ${currency.tokenTicker}`,
+            `You need some ${appConfig.ticker} to send ${appConfig.tokenTicker}`,
         );
     }
 
@@ -139,7 +142,7 @@ export const sendToken = async (
         slpUtxos,
         tokenId,
         amount,
-        currency.defaultFee,
+        appConfig.defaultFee,
         txBuilder,
     );
     // update txBuilder object with inputs
@@ -186,7 +189,7 @@ export const sendToken = async (
     }
 
     // return the explorer link for the broadcasted tx
-    return `${currency.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
+    return `${explorer.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
 };
 
 export const burnToken = async (chronik, wallet, { tokenId, amount }) => {
@@ -195,7 +198,7 @@ export const burnToken = async (chronik, wallet, { tokenId, amount }) => {
 
     // Handle error of user having no XEC
     if (!nonSlpUtxos || nonSlpUtxos.length === 0) {
-        throw new Error(`You need some ${currency.ticker} to burn eTokens`);
+        throw new Error(`You need some ${appConfig.ticker} to burn eTokens`);
     }
 
     // instance of transaction builder
@@ -209,7 +212,7 @@ export const burnToken = async (chronik, wallet, { tokenId, amount }) => {
         slpUtxos,
         tokenId,
         amount,
-        currency.defaultFee,
+        appConfig.defaultFee,
         txBuilder,
     );
     // update txBuilder object with inputs
@@ -255,7 +258,7 @@ export const burnToken = async (chronik, wallet, { tokenId, amount }) => {
     }
 
     // return the explorer link for the broadcasted tx
-    return `${currency.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
+    return `${explorer.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
 };
 
 export const getRecipientPublicKey = async (
@@ -378,7 +381,7 @@ export const registerNewAlias = async (
             fromSatoshisToXec(registrationFeeSats), // TODO fix this oversight param req in generateTxOutput
             registrationFeeSats,
             txInputObj.totalInputUtxoValue,
-            currency.aliasSettings.aliasPaymentAddress,
+            aliasSettings.aliasPaymentAddress,
             null, // no one-to-many address array
             changeAddress,
             txInputObj.txFee,
@@ -407,7 +410,7 @@ export const registerNewAlias = async (
             throw err;
         }
 
-        const explorerLink = `${currency.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
+        const explorerLink = `${explorer.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
         // return the explorer link for the broadcasted tx
         return { explorerLink, txid: broadcastResponse.txid, rawTxHex };
     } catch (err) {
@@ -444,16 +447,27 @@ export const sendXec = async (
     optionalMockPubKeyResponse = false,
 ) => {
     try {
+        // Validation for missing sendAmount in one to one tx
+        // TODO clean this up and have separate functions for one-to-one and one-to-many sends
+        if (!isOneToMany && sendAmount === null) {
+            throw new Error('Invalid singleSendValue');
+        }
+
         let txBuilder = utxolib.bitgo.createTransactionBuilderForNetwork(
             utxolib.networks.ecash,
         );
 
-        // parse the input value of XECs to send
-        const value = parseXecSendValue(
-            isOneToMany,
-            sendAmount,
-            destinationAddressAndValueArray,
-        );
+        // parse the input value of XEC to send
+        // TODO deprecate BigNumber from the rest of the functions here and in Cashtab
+        const value = isOneToMany
+            ? new BigNumber(sumOneToManyXec(destinationAddressAndValueArray))
+            : new BigNumber(sendAmount);
+
+        // If you have a dust value, throw error here instead of broadcasting the tx and getting it from the node
+        if (value.lt(fromSatoshisToXec(appConfig.dustSats))) {
+            // Throw the same error given by the backend attempting to broadcast such a tx
+            throw new Error('dust');
+        }
 
         const satoshisToSend = fromXecToSatoshis(value);
 
@@ -587,7 +601,7 @@ export const sendXec = async (
         }
 
         // return the explorer link for the broadcasted tx
-        return `${currency.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
+        return `${explorer.blockExplorerUrl}/tx/${broadcastResponse.txid}`;
     } catch (err) {
         if (err.error === 'insufficient priority (code 66)') {
             err.code = SEND_XEC_ERRORS.INSUFFICIENT_PRIORITY;

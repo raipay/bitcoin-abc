@@ -193,9 +193,6 @@ public:
     virtual bool hasBlocks(const BlockHash &block_hash, int min_height = 0,
                            std::optional<int> max_height = {}) = 0;
 
-    //! Check if transaction has descendants in mempool.
-    virtual bool hasDescendantsInMempool(const TxId &txid) = 0;
-
     //! Transaction is added to memory pool, if the transaction fee is below the
     //! amount specified by max_tx_fee, and broadcast to all peers if relay is
     //! set to true. Return false if the transaction could not be added due to
@@ -204,22 +201,6 @@ public:
                                       const CTransactionRef &tx,
                                       const Amount &max_tx_fee, bool relay,
                                       std::string &err_string) = 0;
-
-    //! Calculate mempool ancestor and descendant counts for the given
-    //! transaction.
-    virtual void getTransactionAncestry(const TxId &txid, size_t &ancestors,
-                                        size_t &descendants,
-                                        size_t *ancestorsize = nullptr,
-                                        Amount *ancestorfees = nullptr) = 0;
-
-    //! Get the node's package limits.
-    //! Currently only returns the ancestor and descendant count limits, but
-    //! could be enhanced to return more policy settings.
-    virtual void getPackageLimits(size_t &limit_ancestor_count,
-                                  size_t &limit_descendant_count) = 0;
-
-    //! Check if transaction will pass the mempool's chain limits.
-    virtual bool checkChainLimits(const CTransactionRef &tx) = 0;
 
     //! Estimate fee
     virtual CFeeRate estimateFee() const = 0;

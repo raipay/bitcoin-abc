@@ -3,20 +3,9 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test deprecation of RPC calls."""
-import random
-
-from test_framework.avatools import AvaP2PInterface
+from test_framework.avatools import gen_proof
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import (
-    assert_equal,
-    assert_greater_than,
-    assert_raises_rpc_error,
-    uint256_hex,
-)
-from test_framework.wallet import MiniWallet
-
-QUORUM_NODE_COUNT = 16
-FAR_IN_THE_FUTURE = 2000000000
+from test_framework.wallet_util import bytes_to_wif
 
 
 class DeprecatedRpcTest(BitcoinTestFramework):
@@ -25,29 +14,10 @@ class DeprecatedRpcTest(BitcoinTestFramework):
         self.extra_args = [
             [
                 "-avaproofstakeutxodustthreshold=1000000",
-                "-avaproofstakeutxoconfirmations=1",
-                "-avacooldown=0",
-                "-avaminquorumstake=0",
-                "-avaminavaproofsnodecount=0",
-                "-avaminquorumconnectedstakeratio=0",
             ],
             [
                 "-avaproofstakeutxodustthreshold=1000000",
-                "-avaproofstakeutxoconfirmations=1",
-                "-avacooldown=0",
-                "-avaminquorumstake=0",
-                "-avaminavaproofsnodecount=0",
-                "-avaminquorumconnectedstakeratio=0",
-                "-deprecatedrpc=isfinalblock_noerror",
-                "-deprecatedrpc=isfinaltransaction_noerror",
-                "-deprecatedrpc=getblocktemplate_sigops",
-                "-deprecatedrpc=softforks",
-                # This test checks for the presence of the ancestor count in
-                # the listunspent output. However this is only displayed if the
-                # count is non-null, which will no longer be the case after
-                # wellington activation.
-                f"-wellingtonactivationtime={FAR_IN_THE_FUTURE}",
-                "-deprecatedrpc=mempool_ancestors_descendants",
+                "-deprecatedrpc=getavalancheinfo_sharing",
             ],
         ]
 
@@ -65,119 +35,22 @@ class DeprecatedRpcTest(BitcoinTestFramework):
         # self.log.info("Test generate RPC")
         # assert_raises_rpc_error(-32, 'The wallet generate rpc method is deprecated', self.nodes[0].rpc.generate, 1)
         # self.nodes[1].generate(1)
-        self.log.info(
-            "Check isfinaltransaction returns false when looking for unknown"
-            " transactions"
-        )
-        self.sync_all()
-        random_txid = uint256_hex(random.randint(0, 2**256 - 1))
-        blockhash = self.nodes[0].getbestblockhash()
-
-        self.log.info(
-            "Check isfinalblock and isfinaltransaction returns false when the quorum is"
-            " not established"
-        )
-        assert_raises_rpc_error(
-            -1,
-            "Avalanche is not ready to poll yet.",
-            self.nodes[0].isfinalblock,
-            blockhash,
-        )
-        assert not self.nodes[1].isfinalblock(blockhash)
-
-        cb_txid = self.nodes[0].getblock(blockhash)["tx"][0]
-        assert_raises_rpc_error(
-            -1,
-            "Avalanche is not ready to poll yet.",
-            self.nodes[0].isfinaltransaction,
-            cb_txid,
-            blockhash,
-        )
-        assert not self.nodes[1].isfinaltransaction(cb_txid, blockhash)
-
-        [
-            [
-                node.add_p2p_connection(AvaP2PInterface(self, node))
-                for _ in range(0, QUORUM_NODE_COUNT)
-            ]
-            for node in self.nodes
+        privkey, proof = gen_proof(self, self.nodes[0])
+        proof_args = [
+            f"-avaproof={proof.serialize().hex()}",
+            f"-avamasterkey={bytes_to_wif(privkey.get_bytes())}",
         ]
 
-        self.wait_until(
-            lambda: all(
-                node.getavalancheinfo()["ready_to_poll"] is True for node in self.nodes
-            )
-        )
+        self.restart_node(0, extra_args=self.extra_args[0] + proof_args)
+        self.restart_node(1, extra_args=self.extra_args[1] + proof_args)
 
-        assert_raises_rpc_error(
-            -5,
-            "No such transaction found in the provided block.",
-            self.nodes[0].isfinaltransaction,
-            random_txid,
-            blockhash,
-        )
-        assert not self.nodes[1].isfinaltransaction(random_txid, blockhash)
+        info0 = self.nodes[0].getavalancheinfo()
+        info1 = self.nodes[1].getavalancheinfo()
 
-        self.log.info(
-            "Check the getblocktemplate output with and without"
-            " -deprecatedrpc=getblocktemplate_sigops"
-        )
-
-        # Add a transaction to both nodes mempool
-        wallet = MiniWallet(self.nodes[0])
-        self.generate(wallet, 1)
-        unconfirmed_tx = wallet.send_self_transfer(from_node=self.nodes[0])
-        self.nodes[1].sendrawtransaction(unconfirmed_tx["hex"])
-        assert unconfirmed_tx["txid"] in self.nodes[0].getrawmempool()
-        assert unconfirmed_tx["txid"] in self.nodes[1].getrawmempool()
-
-        block_template = self.nodes[0].getblocktemplate()
-        block_template_txs = block_template.get("transactions", [])
-        assert_greater_than(len(block_template_txs), 0)
-
-        for tx in block_template_txs:
-            assert "sigchecks" in tx
-            assert "sigops" not in tx
-        assert "sigchecklimit" in block_template
-        assert "sigoplimit" not in block_template
-
-        deprecated_block_template = self.nodes[1].getblocktemplate()
-        deprecated_block_template_txs = deprecated_block_template.get(
-            "transactions", []
-        )
-        assert_greater_than(len(deprecated_block_template_txs), 0)
-
-        for tx in deprecated_block_template_txs:
-            assert "sigchecks" in tx
-            assert "sigops" in tx
-        assert "sigchecklimit" in deprecated_block_template
-        assert "sigoplimit" in deprecated_block_template
-
-        self.log.info(
-            "Check the getblockchaininfo output with and without"
-            " -deprecatedrpc=softforks"
-        )
-        assert "softforks" not in self.nodes[0].getblockchaininfo()
-        res = self.nodes[1].getblockchaininfo()
-        assert_equal(res["softforks"], {})
-
-        txid = self.nodes[0].sendtoaddress(
-            self.nodes[0].get_deterministic_priv_key().address, 1000000
-        )
-        assert txid in self.nodes[0].getrawmempool()
-        utxo = self.nodes[0].listunspent(minconf=0, maxconf=0)[0]
-        assert "ancestorcount" not in utxo
-        assert "ancestorsize" not in utxo
-        assert "ancestorfees" not in utxo
-
-        txid = self.nodes[1].sendtoaddress(
-            self.nodes[1].get_deterministic_priv_key().address, 1000000
-        )
-        assert txid in self.nodes[1].getrawmempool()
-        utxo = self.nodes[1].listunspent(minconf=0, maxconf=0)[0]
-        assert "ancestorcount" in utxo
-        assert "ancestorsize" in utxo
-        assert "ancestorfees" in utxo
+        assert "local" in info0
+        assert "local" in info1
+        assert "sharing" not in info0["local"]
+        assert "sharing" in info1["local"]
 
 
 if __name__ == "__main__":

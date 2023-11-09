@@ -3,16 +3,29 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 'use strict';
-const { handleBlockConnected } = require('./events');
+const { handleBlockConnected, handleAddedToMempool } = require('./events');
+const { deletePendingAliases } = require('./db');
 const cashaddr = require('ecashaddrjs');
 const AsyncLock = require('async-lock');
 const blockConnectedLock = new AsyncLock();
 
 module.exports = {
+    /**
+     * Initialize chronik websocket connection to the alias registration address
+     * @param {object} chronik initialized chronik object
+     * @param {string} address address that registeres new aliases
+     * @param {object} db an initialized mongodb instance
+     * @param {object} cache an initialized node-cache instance
+     * @param {object} telegramBot initialized node-telegram-bot-api instance
+     * @param {string} channelId channel where telegramBot is admin
+     * @param {object} avalancheRpc avalanche auth
+     * @returns {object} connected websocket
+     */
     initializeWebsocket: async function (
         chronik,
         address,
         db,
+        cache,
         telegramBot,
         channelId,
         avalancheRpc,
@@ -23,6 +36,7 @@ module.exports = {
                 await module.exports.parseWebsocketMessage(
                     chronik,
                     db,
+                    cache,
                     telegramBot,
                     channelId,
                     avalancheRpc,
@@ -37,31 +51,40 @@ module.exports = {
         ws.subscribe(type, hash);
         return ws;
     },
+    /**
+     * Handle incoming msgs from the connected chronik websocket
+     * @param {object} chronik initialized chronik object
+     * @param {object} db an initialized mongodb instance
+     * @param {object} cache an initialized node-cache instance
+     * @param {object} telegramBot initialized node-telegram-bot-api instance
+     * @param {string} channelId channel where telegramBot is admin
+     * @param {object} avalancheRpc avalanche auth
+     * @param {object} wsMsg msg from connected chronik websocket
+     * @returns
+     */
     parseWebsocketMessage: async function (
         chronik,
         db,
+        cache,
         telegramBot,
         channelId,
         avalancheRpc,
         wsMsg = { type: 'BlockConnected' },
     ) {
-        console.log(`parseWebsocketMessage called on`, wsMsg);
         // Determine type of tx
         const { type } = wsMsg;
-        console.log(`msg type: ${type}`);
         // type can be AddedToMempool, BlockConnected, or Confirmed
         // For now, we are only interested in "Confirmed", as only these are valid
         // We will want to look at AddedToMempool to process pending alias registrations later
 
         switch (type) {
             case 'BlockConnected': {
-                console.log(`New block found: ${wsMsg.blockHash}`);
-
                 return blockConnectedLock
                     .acquire('handleBlockConnected', async function () {
                         return await handleBlockConnected(
                             chronik,
                             db,
+                            cache,
                             telegramBot,
                             channelId,
                             avalancheRpc,
@@ -85,13 +108,12 @@ module.exports = {
                     );
             }
             case 'AddedToMempool':
-                console.log(`New tx: ${wsMsg.txid}`);
-                break;
+                return handleAddedToMempool(chronik, db, cache, wsMsg.txid);
+            case 'RemovedFromMempool':
+                return deletePendingAliases(db, { txid: wsMsg.txid });
             case 'Confirmed':
-                console.log(`New confirmed tx: ${wsMsg.txid}`);
                 break;
             default:
-                console.log(`New websocket message of unknown type:`, wsMsg);
         }
     },
 };

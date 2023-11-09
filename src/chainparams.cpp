@@ -103,6 +103,9 @@ public:
         // The miner fund is enabled by default on mainnet.
         consensus.enableMinerFund = true;
 
+        // The staking rewards are enabled by default on mainnet.
+        consensus.enableStakingRewards = true;
+
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork =
             ChainParamsConstants::MAINNET_MINIMUM_CHAIN_WORK;
@@ -130,14 +133,14 @@ public:
         // Nov 15, 2020 12:00:00 UTC protocol upgrade
         consensus.axionHeight = 661647;
 
-        // May 15, 2022 12:00:00 UTC protocol upgrade
-        consensus.gluonHeight = 739535;
-
         // May 15, 2023 12:00:00 UTC protocol upgrade
-        consensus.wellingtonActivationTime = 1684152000;
+        consensus.wellingtonHeight = 792116;
 
         // Nov 15, 2023 12:00:00 UTC protocol upgrade
         consensus.cowperthwaiteActivationTime = 1700049600;
+
+        // May 15, 2024 12:00:00 UTC protocol upgrade
+        consensus.leeKuanYewActivationTime = 1715774400;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -177,11 +180,8 @@ public:
         // possible.
         // Bitcoin ABC seeder
         vSeeds.emplace_back("seed.bitcoinabc.org");
-        // Amaury SÉCHET
-        vSeeds.emplace_back("seed.deadalnix.me");
         // Fabien
         vSeeds.emplace_back("seeder.fabien.cash");
-        vSeeds.emplace_back("seeder2.fabien.cash");
         // status.cash
         vSeeds.emplace_back("seeder.status.cash");
 
@@ -255,6 +255,9 @@ public:
         // The miner fund is disabled by default on testnet.
         consensus.enableMinerFund = false;
 
+        // The staking rewards are disabled by default on testnet.
+        consensus.enableStakingRewards = false;
+
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork =
             ChainParamsConstants::TESTNET_MINIMUM_CHAIN_WORK;
@@ -282,14 +285,14 @@ public:
         // Nov 15, 2020 12:00:00 UTC protocol upgrade
         consensus.axionHeight = 1421481;
 
-        // May 15, 2022 12:00:00 UTC protocol upgrade
-        consensus.gluonHeight = 1503556;
-
         // May 15, 2023 12:00:00 UTC protocol upgrade
-        consensus.wellingtonActivationTime = 1684152000;
+        consensus.wellingtonHeight = 1556117;
 
         // Nov 15, 2023 12:00:00 UTC protocol upgrade
         consensus.cowperthwaiteActivationTime = 1700049600;
+
+        // May 15, 2024 12:00:00 UTC protocol upgrade
+        consensus.leeKuanYewActivationTime = 1715774400;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -321,8 +324,6 @@ public:
         // nodes with support for servicebits filtering should be at the top
         // Bitcoin ABC seeder
         vSeeds.emplace_back("testnet-seed.bitcoinabc.org");
-        // Amaury SÉCHET
-        vSeeds.emplace_back("testnet-seed.deadalnix.me");
         // Fabien
         vSeeds.emplace_back("testnet-seeder.fabien.cash");
         // status.cash
@@ -387,8 +388,11 @@ public:
         // two days
         consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
 
-        // The miner fund is disabled by default on regnet.
+        // The miner fund is disabled by default on regtest.
         consensus.enableMinerFund = false;
+
+        // The staking rewards are disabled by default on regtest.
+        consensus.enableStakingRewards = false;
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");
@@ -415,14 +419,14 @@ public:
         // Nov 15, 2020 12:00:00 UTC protocol upgrade
         consensus.axionHeight = 0;
 
-        // May 15, 2022 12:00:00 UTC protocol upgrade
-        consensus.gluonHeight = 0;
-
         // May 15, 2023 12:00:00 UTC protocol upgrade
-        consensus.wellingtonActivationTime = 1684152000;
+        consensus.wellingtonHeight = 0;
 
         // Nov 15, 2023 12:00:00 UTC protocol upgrade
         consensus.cowperthwaiteActivationTime = 1700049600;
+
+        // May 15, 2024 12:00:00 UTC protocol upgrade
+        consensus.leeKuanYewActivationTime = 1715774400;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;
@@ -461,14 +465,14 @@ public:
         m_assumeutxo_data = MapAssumeutxo{
             {
                 110,
-                {AssumeutxoHash{uint256S("0xff755939f6fd81bf966e2f347f5d3660d62"
-                                         "39334050eb557a6f005d7d8184ea9")},
+                {AssumeutxoHash{uint256S("0xd754ca97ef24c5132f8d2147c19310b7a6b"
+                                         "d136766430304735a73372fe36213")},
                  110},
             },
             {
                 210,
-                {AssumeutxoHash{uint256S("0xd6089fa8d2100926326cacdd452231e30bb"
-                                         "4e64f07aa5bfec96e055ac2a9a87a")},
+                {AssumeutxoHash{uint256S("0x73b4bc8dd69649c6e9ede39b156713109bf"
+                                         "044d2466661a3fe8a8b91ba601849")},
                  210},
             },
         };

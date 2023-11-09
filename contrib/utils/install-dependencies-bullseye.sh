@@ -11,6 +11,7 @@ PACKAGES=(
   automake
   autotools-dev
   binutils
+  bison
   bsdmainutils
   build-essential
   ccache
@@ -36,12 +37,11 @@ PACKAGES=(
   graphviz
   gperf
   help2man
-  imagemagick
   jq
   lcov
   less
   lib32stdc++-10-dev
-  libboost-all-dev
+  libboost-dev
   libbz2-dev
   libc6-dev:i386
   libcap-dev
@@ -52,14 +52,13 @@ PACKAGES=(
   libminiupnpc-dev
   libnatpmp-dev
   libprotobuf-dev
+  libpcsclite-dev
   libqrencode-dev
   libqt5core5a
   libqt5dbus5
   libqt5gui5
-  librsvg2-bin
   libsqlite3-dev
   libssl-dev
-  libtiff-tools
   libtinfo5
   libtool
   libzmq3-dev
@@ -72,7 +71,6 @@ PACKAGES=(
   pkg-config
   protobuf-compiler
   python3
-  python3-autopep8
   python3-pip
   python3-setuptools
   python3-yaml
@@ -82,9 +80,9 @@ PACKAGES=(
   qttools5-dev-tools
   shellcheck
   software-properties-common
+  swig
   tar
   wget
-  wine
   xorriso
   xvfb
   yamllint
@@ -98,6 +96,14 @@ function join_by() {
 
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y $(join_by ' ' "${PACKAGES[@]}")
+
+BACKPORTS=(
+  git-filter-repo
+)
+
+echo "deb http://deb.debian.org/debian bullseye-backports main" | tee -a /etc/apt/sources.list
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get -t bullseye-backports install -y $(join_by ' ' "${BACKPORTS[@]}")
 
 # Install llvm and clang
 apt-key add "$(dirname "$0")"/llvm.pub
@@ -158,10 +164,10 @@ apt-get install -y nodejs
 # Install nyc for mocha unit test reporting
 npm i -g nyc
 
-# Install Rust stable 1.67.1 and nightly from the 2023-02-17
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain=1.67.1
+# Install Rust stable 1.72.0 and nightly from the 2023-08-23
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain=1.72.0
 RUST_HOME="${HOME}/.cargo/bin"
-RUST_NIGHTLY_DATE=2023-02-17
+RUST_NIGHTLY_DATE=2023-08-23
 "${RUST_HOME}/rustup" install nightly-${RUST_NIGHTLY_DATE}
 "${RUST_HOME}/rustup" component add rustfmt --toolchain nightly-${RUST_NIGHTLY_DATE}
 # Name the nightly toolchain "abc-nightly"
@@ -184,3 +190,19 @@ CORROSION_BUILD_FOLDER=${CORROSION_SRC_FOLDER}-build
 cmake -S${CORROSION_SRC_FOLDER} -B${CORROSION_BUILD_FOLDER} -DCMAKE_BUILD_TYPE=Release
 cmake --build ${CORROSION_BUILD_FOLDER} --config Release
 cmake --install ${CORROSION_BUILD_FOLDER} --config Release
+
+# Install Electrum ABC test dependencies
+here=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
+pip3 install -r "${here}/../../electrum/contrib/requirements/requirements.txt"
+pip3 install -r "${here}/../../electrum/contrib/requirements/requirements-regtest.txt"
+pip3 install -r "${here}/../../electrum/contrib/requirements/requirements-hw.txt"
+
+# Install the winehq-staging version of wine that doesn't suffer from the memory
+# limitations of the previous versions. Installation instructions are from
+# https://wiki.winehq.org/Debian
+mkdir -p /etc/apt/keyrings
+wget -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/debian/dists/bullseye/winehq-bullseye.sources
+apt-get update
+# Pinpoint the version so we get consistent results on CI
+DEBIAN_FRONTEND=noninteractive apt-get install -y winehq-staging=8.19~bullseye-1

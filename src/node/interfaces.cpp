@@ -22,7 +22,6 @@
 #include <node/context.h>
 #include <node/transaction.h>
 #include <node/ui_interface.h>
-#include <policy/mempool.h>
 #include <policy/settings.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
@@ -206,7 +205,7 @@ namespace {
             const CBlockIndex *tip =
                 WITH_LOCK(::cs_main, return chainman().ActiveTip());
             return tip ? tip->GetBlockHash()
-                       : Params().GenesisBlock().GetHash();
+                       : chainman().GetParams().GenesisBlock().GetHash();
         }
         int64_t getLastBlockTime() override {
             LOCK(::cs_main);
@@ -214,7 +213,7 @@ namespace {
                 return chainman().ActiveChain().Tip()->GetBlockTime();
             }
             // Genesis block's time of current network
-            return Params().GenesisBlock().GetBlockTime();
+            return chainman().GetParams().GenesisBlock().GetBlockTime();
         }
         double getVerificationProgress() override {
             const CBlockIndex *tip;
@@ -222,7 +221,8 @@ namespace {
                 LOCK(::cs_main);
                 tip = chainman().ActiveChain().Tip();
             }
-            return GuessVerificationProgress(Params().TxData(), tip);
+            return GuessVerificationProgress(chainman().GetParams().TxData(),
+                                             tip);
         }
         bool isInitialBlockDownload() override {
             return chainman().ActiveChainstate().IsInitialBlockDownload();
@@ -370,7 +370,7 @@ namespace {
             : m_notifications(std::move(notifications)) {}
         virtual ~NotificationsProxy() = default;
         void TransactionAddedToMempool(const CTransactionRef &tx,
-                                       const std::vector<Coin> &spent_coins,
+                                       std::shared_ptr<const std::vector<Coin>>,
                                        uint64_t mempool_sequence) override {
             m_notifications->transactionAddedToMempool(tx, mempool_sequence);
         }
@@ -575,7 +575,7 @@ namespace {
         double guessVerificationProgress(const BlockHash &block_hash) override {
             LOCK(cs_main);
             return GuessVerificationProgress(
-                Params().TxData(),
+                chainman().GetParams().TxData(),
                 chainman().m_blockman.LookupBlockIndex(block_hash));
         }
         bool hasBlocks(const BlockHash &block_hash, int min_height,
@@ -602,74 +602,19 @@ namespace {
             }
             return false;
         }
-        bool hasDescendantsInMempool(const TxId &txid) override {
-            if (!m_node.mempool) {
-                return false;
-            }
-            LOCK(m_node.mempool->cs);
-            auto it = m_node.mempool->GetIter(txid);
-            return it && (*it)->GetCountWithDescendants() > 1;
-        }
         bool broadcastTransaction(const Config &config,
                                   const CTransactionRef &tx,
                                   const Amount &max_tx_fee, bool relay,
                                   std::string &err_string) override {
-            const TransactionError err = BroadcastTransaction(
-                m_node, config, tx, err_string, max_tx_fee, relay,
-                /*wait_callback=*/false);
+            const TransactionError err =
+                BroadcastTransaction(m_node, tx, err_string, max_tx_fee, relay,
+                                     /*wait_callback=*/false);
             // Chain clients only care about failures to accept the tx to the
             // mempool. Disregard non-mempool related failures. Note: this will
             // need to be updated if BroadcastTransactions() is updated to
             // return other non-mempool failures that Chain clients do not need
             // to know about.
             return err == TransactionError::OK;
-        }
-        void getTransactionAncestry(const TxId &txid, size_t &ancestors,
-                                    size_t &descendants, size_t *ancestorsize,
-                                    Amount *ancestorfees) override {
-            ancestors = descendants = 0;
-            // After wellington this stat will no longer exist
-            if (!m_node.mempool || m_node.mempool->wellingtonLatched) {
-                return;
-            }
-            m_node.mempool->GetTransactionAncestry(txid, ancestors, descendants,
-                                                   ancestorsize, ancestorfees);
-        }
-        void getPackageLimits(size_t &limit_ancestor_count,
-                              size_t &limit_descendant_count) override {
-            limit_ancestor_count = size_t(
-                std::max<int64_t>(1, gArgs.GetIntArg("-limitancestorcount",
-                                                     DEFAULT_ANCESTOR_LIMIT)));
-            limit_descendant_count = size_t(std::max<int64_t>(
-                1, gArgs.GetIntArg("-limitdescendantcount",
-                                   DEFAULT_DESCENDANT_LIMIT)));
-        }
-        bool checkChainLimits(const CTransactionRef &tx) override {
-            // After wellington this limitation will no longer exist
-            if (!m_node.mempool || m_node.mempool->wellingtonLatched) {
-                return true;
-            }
-            LockPoints lp;
-            CTxMemPoolEntry entry(tx, Amount(), 0, 0, false, 0, lp);
-            CTxMemPool::setEntries ancestors;
-            auto limit_ancestor_count =
-                gArgs.GetIntArg("-limitancestorcount", DEFAULT_ANCESTOR_LIMIT);
-            auto limit_ancestor_size =
-                gArgs.GetIntArg("-limitancestorsize",
-                                DEFAULT_ANCESTOR_SIZE_LIMIT) *
-                1000;
-            auto limit_descendant_count = gArgs.GetIntArg(
-                "-limitdescendantcount", DEFAULT_DESCENDANT_LIMIT);
-            auto limit_descendant_size =
-                gArgs.GetIntArg("-limitdescendantsize",
-                                DEFAULT_DESCENDANT_SIZE_LIMIT) *
-                1000;
-            std::string unused_error_string;
-            LOCK(m_node.mempool->cs);
-            return m_node.mempool->CalculateMemPoolAncestors(
-                entry, ancestors, limit_ancestor_count, limit_ancestor_size,
-                limit_descendant_count, limit_descendant_size,
-                unused_error_string);
         }
         CFeeRate estimateFee() const override {
             if (!m_node.mempool) {

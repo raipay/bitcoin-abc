@@ -9,6 +9,7 @@
 #include <chainparams.h>
 #include <config.h>
 #include <consensus/consensus.h>
+#include <consensus/merkle.h>
 #include <consensus/validation.h>
 #include <crypto/sha256.h>
 #include <init.h>
@@ -42,14 +43,13 @@
 #include <validationinterface.h>
 #include <walletinitinterface.h>
 
+#include <test/util/mining.h>
+
 #include <functional>
 #include <memory>
 
 using node::BlockAssembler;
 using node::CalculateCacheSizes;
-using node::fPruneMode;
-using node::fReindex;
-using node::IncrementExtraNonce;
 using node::LoadChainstate;
 using node::VerifyLoadedChainstate;
 
@@ -168,6 +168,8 @@ BasicTestingSetup::~BasicTestingSetup() {
 ChainTestingSetup::ChainTestingSetup(
     const std::string &chainName, const std::vector<const char *> &extra_args)
     : BasicTestingSetup(chainName, extra_args) {
+    const Config &config = GetConfig();
+
     // We have to run a scheduler thread to prevent ActivateBestChain
     // from blocking due to queue overrun.
     m_node.scheduler = std::make_unique<CScheduler>();
@@ -180,13 +182,12 @@ ChainTestingSetup::ChainTestingSetup(
 
     m_cache_sizes = CalculateCacheSizes(m_args);
 
-    m_node.chainman = std::make_unique<ChainstateManager>();
+    m_node.chainman = std::make_unique<ChainstateManager>(config);
     m_node.chainman->m_blockman.m_block_tree_db =
         std::make_unique<CBlockTreeDB>(m_cache_sizes.block_tree_db, true);
     // Call Upgrade on the block database so that the version field is set,
     // else LoadBlockIndexGuts will fail (see D8319).
-    m_node.chainman->m_blockman.m_block_tree_db->Upgrade(
-        GetConfig().GetChainParams().GetConsensus());
+    m_node.chainman->m_blockman.m_block_tree_db->Upgrade();
 
     constexpr int script_check_threads = 2;
     StartScriptCheckWorkerThreads(script_check_threads);
@@ -208,11 +209,42 @@ ChainTestingSetup::~ChainTestingSetup() {
     m_node.chainman.reset();
 }
 
+void TestingSetup::LoadVerifyActivateChainstate(const Config &config) {
+    node::ChainstateLoadOptions options;
+    options.mempool = Assert(m_node.mempool.get());
+    options.block_tree_db_in_memory = m_block_tree_db_in_memory;
+    options.coins_db_in_memory = m_coins_db_in_memory;
+    options.reindex = node::fReindex;
+    options.reindex_chainstate =
+        m_args.GetBoolArg("-reindex-chainstate", false);
+    options.prune = node::fPruneMode;
+    options.check_blocks =
+        m_args.GetIntArg("-checkblocks", DEFAULT_CHECKBLOCKS);
+    options.check_level = m_args.GetIntArg("-checklevel", DEFAULT_CHECKLEVEL);
+    auto [status, error] =
+        LoadChainstate(*Assert(m_node.chainman), m_cache_sizes, options);
+    std::cerr << status << "  " << error.original;
+    assert(status == node::ChainstateLoadStatus::SUCCESS);
+
+    std::tie(status, error) =
+        VerifyLoadedChainstate(*Assert(m_node.chainman), options, GetConfig());
+    assert(status == node::ChainstateLoadStatus::SUCCESS);
+
+    BlockValidationState state;
+    if (!m_node.chainman->ActiveChainstate().ActivateBestChain(config, state)) {
+        throw std::runtime_error(
+            strprintf("ActivateBestChain failed. (%s)", state.ToString()));
+    }
+}
+
 TestingSetup::TestingSetup(const std::string &chainName,
-                           const std::vector<const char *> &extra_args)
-    : ChainTestingSetup(chainName, extra_args) {
+                           const std::vector<const char *> &extra_args,
+                           const bool coins_db_in_memory,
+                           const bool block_tree_db_in_memory)
+    : ChainTestingSetup(chainName, extra_args),
+      m_coins_db_in_memory(coins_db_in_memory),
+      m_block_tree_db_in_memory(block_tree_db_in_memory) {
     const Config &config = GetConfig();
-    const CChainParams &chainparams = config.GetChainParams();
 
     // Ideally we'd move all the RPC tests to the functional testing framework
     // instead of unit tests, but for now we need these here.
@@ -229,31 +261,19 @@ TestingSetup::TestingSetup(const std::string &chainName,
         SetRPCWarmupFinished();
     }
 
-    auto rv = LoadChainstate(
-        fReindex.load(), *Assert(m_node.chainman.get()),
-        Assert(m_node.mempool.get()), fPruneMode, chainparams.GetConsensus(),
-        m_args.GetBoolArg("-reindex-chainstate", false),
-        m_cache_sizes.block_tree_db, m_cache_sizes.coins_db,
-        m_cache_sizes.coins, true, true);
-    assert(!rv.has_value());
-
-    BlockValidationState state;
-    if (!m_node.chainman->ActiveChainstate().ActivateBestChain(config, state)) {
-        throw std::runtime_error(
-            strprintf("ActivateBestChain failed. (%s)", state.ToString()));
-    }
+    LoadVerifyActivateChainstate(config);
 
     m_node.addrman = std::make_unique<AddrMan>(
         /* asmap= */ std::vector<bool>(), /* consistency_check_ratio= */ 0);
     m_node.banman = std::make_unique<BanMan>(
-        m_args.GetDataDirBase() / "banlist.dat", chainparams, nullptr,
-        DEFAULT_MISBEHAVING_BANTIME);
+        m_args.GetDataDirBase() / "banlist.dat", config.GetChainParams(),
+        nullptr, DEFAULT_MISBEHAVING_BANTIME);
     // Deterministic randomness for tests.
     m_node.connman =
         std::make_unique<CConnman>(config, 0x1337, 0x1337, *m_node.addrman);
-    m_node.peerman = PeerManager::make(
-        chainparams, *m_node.connman, *m_node.addrman, m_node.banman.get(),
-        *m_node.chainman, *m_node.mempool, false);
+    m_node.peerman =
+        PeerManager::make(*m_node.connman, *m_node.addrman, m_node.banman.get(),
+                          *m_node.chainman, *m_node.mempool, false);
     {
         CConnman::Options options;
         options.m_msgproc.push_back(m_node.peerman.get());
@@ -261,7 +281,11 @@ TestingSetup::TestingSetup(const std::string &chainName,
     }
 }
 
-TestChain100Setup::TestChain100Setup() {
+TestChain100Setup::TestChain100Setup(
+    const std::string &chain_name, const std::vector<const char *> &extra_args,
+    const bool coins_db_in_memory, const bool block_tree_db_in_memory)
+    : TestingSetup{CBaseChainParams::REGTEST, extra_args, coins_db_in_memory,
+                   block_tree_db_in_memory} {
     SetMockTime(1598887952);
     constexpr std::array<uint8_t, 32> vchKey = {
         {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -275,7 +299,7 @@ TestChain100Setup::TestChain100Setup() {
         LOCK(::cs_main);
         assert(
             m_node.chainman->ActiveTip()->GetBlockHash().ToString() ==
-            "7487ae41496da318b430ad04cc5039507a9365bdb26275d79b3fc148c6eea1e9");
+            "5afde277a26b6f36aee8f61a1dbf755587e1c6be63e654a88abe2a1ff0fbfb05");
     }
 }
 
@@ -296,7 +320,7 @@ TestChain100Setup::CreateBlock(const std::vector<CMutableTransaction> &txns,
                                Chainstate &chainstate) {
     const Config &config = GetConfig();
     CTxMemPool empty_pool;
-    CBlock block = BlockAssembler(config, chainstate, empty_pool)
+    CBlock block = BlockAssembler{config, chainstate, empty_pool}
                        .CreateNewBlock(scriptPubKey)
                        ->block;
 
@@ -312,13 +336,10 @@ TestChain100Setup::CreateBlock(const std::vector<CMutableTransaction> &txns,
                   return txa->GetId() < txb->GetId();
               });
 
-    // IncrementExtraNonce creates a valid coinbase and merkleRoot
-    {
-        LOCK(cs_main);
-        unsigned int extraNonce = 0;
-        IncrementExtraNonce(&block, m_node.chainman->ActiveTip(),
-                            config.GetMaxBlockSize(), extraNonce);
-    }
+    createCoinbaseAndMerkleRoot(&block,
+                                WITH_LOCK(m_node.chainman->GetMutex(),
+                                          return m_node.chainman->ActiveTip()),
+                                config.GetMaxBlockSize());
 
     const Consensus::Params &params = config.GetChainParams().GetConsensus();
     while (!CheckProofOfWork(block.GetHash(), block.nBits, params)) {

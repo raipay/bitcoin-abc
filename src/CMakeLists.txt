@@ -189,6 +189,15 @@ if(ENABLE_HARDENING)
 	# Enable stack protection
 	add_cxx_compiler_flags(-fstack-protector-all -Wstack-protector)
 
+	# Enable control-flow enforcement
+	add_cxx_compiler_flags(-fcf-protection=full)
+
+	if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		# stack-clash-protection does not work properly when building for Windows.
+		# See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=90458
+		add_cxx_compiler_flags(-fstack-clash-protection)
+	endif()
+
 	# Enable some buffer overflow checking, except in -O0 builds which
 	# do not support them
 	add_compiler_flags(-U_FORTIFY_SOURCE)
@@ -295,6 +304,7 @@ if(ENABLE_GLIBC_BACK_COMPAT)
 	# Wrap some glibc functions with ours
 	add_linker_flags(-Wl,--wrap=exp)
 	add_linker_flags(-Wl,--wrap=log)
+	add_linker_flags(-Wl,--wrap=log2)
 	add_linker_flags(-Wl,--wrap=pow)
 
 	if(NOT HAVE_LARGE_FILE_SUPPORT)
@@ -416,6 +426,7 @@ add_library(util
 	util/asmap.cpp
 	util/bip32.cpp
 	util/bytevectorhash.cpp
+	util/check.cpp
 	util/hasher.cpp
 	util/error.cpp
 	util/getuniquepath.cpp
@@ -451,9 +462,18 @@ if(ENABLE_GLIBC_BACK_COMPAT)
 	target_sources(util PRIVATE compat/glibc_compat.cpp)
 endif()
 
+# Work around jemalloc printing harmless warnings to stderr with qemu.
+# We match the emulator against qemu but not ^qemu so we are compatible with the
+# use of absolute paths.
+if(CMAKE_CROSSCOMPILING AND USE_JEMALLOC AND CMAKE_CROSSCOMPILING_EMULATOR MATCHES "qemu-.+")
+	message(WARNING "Overriding Jemalloc malloc_message() function for use with QEMU.")
+	target_sources(util PRIVATE jemalloc_message.cpp)
+endif()
+
+set(Boost_USE_STATIC_LIBS ON)
+
 # Target specific configs
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	set(Boost_USE_STATIC_LIBS ON)
 	set(Boost_USE_STATIC_RUNTIME ON)
 	set(Boost_THREADAPI win32)
 
@@ -462,8 +482,6 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 
 	find_library(WS2_32_LIBRARY NAMES ws2_32)
 	target_link_libraries(util ${WS2_32_LIBRARY})
-
-	target_compile_definitions(util PUBLIC BOOST_THREAD_USE_LIB)
 endif()
 
 target_link_libraries(util univalue crypto)
@@ -474,13 +492,15 @@ endmacro()
 
 link_event(util event)
 
-macro(link_boost TARGET)
-	non_native_target_link_libraries(${TARGET} Boost 1.59 ${ARGN})
+macro(link_boost_headers_only TARGET)
+	non_native_target_link_headers_only(${TARGET} Boost 1.64 ${ARGN})
 endmacro()
 
-link_boost(util thread)
-# Make sure boost uses std::atomic (it doesn't before 1.63)
-target_compile_definitions(util PUBLIC BOOST_SP_USE_STD_ATOMIC BOOST_AC_USE_STD_ATOMIC)
+link_boost_headers_only(util headers)
+
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+target_link_libraries(util Threads::Threads)
 
 function(add_network_sources NETWORK_SOURCES)
 	set(NETWORK_DIR abc)
@@ -632,8 +652,10 @@ add_library(server
 	node/psbt.cpp
 	node/transaction.cpp
 	node/ui_interface.cpp
+	node/utxo_snapshot.cpp
 	noui.cpp
 	policy/block/minerfund.cpp
+	policy/block/stakingrewards.cpp
 	policy/fees.cpp
 	policy/packages.cpp
 	policy/settings.cpp

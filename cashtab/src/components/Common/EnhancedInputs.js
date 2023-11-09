@@ -8,7 +8,8 @@ import {
 } from 'components/Common/CustomIcons';
 import styled, { css } from 'styled-components';
 import ScanQRCode from './ScanQRCode';
-import { currency } from 'components/Common/Ticker.js';
+import { supportedFiatCurrencies } from 'config/cashtabSettings';
+import appConfig from 'config/app';
 
 const { TextArea } = Input;
 
@@ -172,8 +173,8 @@ export const SendBchInput = ({
     const { Option } = Select;
     const currencies = [
         {
-            value: currency.ticker,
-            label: currency.ticker,
+            value: appConfig.ticker,
+            label: appConfig.ticker,
         },
         {
             value: activeFiatCode ? activeFiatCode : 'USD',
@@ -194,7 +195,7 @@ export const SendBchInput = ({
 
     const CurrencySelect = (
         <Select
-            defaultValue={currency.ticker}
+            defaultValue={appConfig.ticker}
             className="select-after"
             style={{ width: '30%' }}
             {...selectProps}
@@ -215,14 +216,14 @@ export const SendBchInput = ({
                         step={
                             inputProps.dollar === 1
                                 ? 0.01
-                                : 1 / 10 ** currency.cashDecimals
+                                : 1 / 10 ** appConfig.cashDecimals
                         }
                         prefix={
                             inputProps.dollar === 1 ? (
                                 <ThemedDollarOutlined />
                             ) : (
                                 <img
-                                    src={currency.logo}
+                                    src={appConfig.logo}
                                     alt=""
                                     width={16}
                                     height={16}
@@ -267,7 +268,7 @@ export const DestinationAmount = ({ onMax, inputProps, ...otherProps }) => {
                     onWheel={event => event.target.blur()}
                     prefix={
                         <img
-                            src={currency.logo}
+                            src={appConfig.logo}
                             alt=""
                             width={16}
                             height={16}
@@ -418,16 +419,16 @@ DestinationAddressMulti.propTypes = {
 export const CurrencySelectDropdown = selectProps => {
     const { Option } = Select;
 
-    // Build select dropdown from currency.fiatCurrencies
+    // Build select dropdown from supportedFiatCurrencies
     const currencyMenuOptions = [];
-    const currencyKeys = Object.keys(currency.fiatCurrencies);
+    const currencyKeys = Object.keys(supportedFiatCurrencies);
     for (let i = 0; i < currencyKeys.length; i += 1) {
         const currencyMenuOption = {};
         currencyMenuOption.value =
-            currency.fiatCurrencies[currencyKeys[i]].slug;
+            supportedFiatCurrencies[currencyKeys[i]].slug;
         currencyMenuOption.label = `${
-            currency.fiatCurrencies[currencyKeys[i]].name
-        } (${currency.fiatCurrencies[currencyKeys[i]].symbol})`;
+            supportedFiatCurrencies[currencyKeys[i]].name
+        } (${supportedFiatCurrencies[currencyKeys[i]].symbol})`;
         currencyMenuOptions.push(currencyMenuOption);
     }
     const currencyOptions = currencyMenuOptions.map(currencyMenuOption => {

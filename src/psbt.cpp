@@ -4,6 +4,7 @@
 
 #include <psbt.h>
 
+#include <util/check.h>
 #include <util/strencodings.h>
 
 PartiallySignedTransaction::PartiallySignedTransaction(
@@ -162,7 +163,8 @@ bool PSBTInputSigned(const PSBTInput &input) {
 
 void UpdatePSBTOutput(const SigningProvider &provider,
                       PartiallySignedTransaction &psbt, int index) {
-    const CTxOut &out = psbt.tx->vout.at(index);
+    CMutableTransaction &tx = *Assert(psbt.tx);
+    const CTxOut &out = tx.vout.at(index);
     PSBTOutput &psbt_out = psbt.outputs.at(index);
 
     // Fill a SignatureData with output info
@@ -173,9 +175,8 @@ void UpdatePSBTOutput(const SigningProvider &provider,
     // Note that ProduceSignature is used to fill in metadata (not actual
     // signatures), so provider does not need to provide any private keys (it
     // can be a HidingSigningProvider).
-    MutableTransactionSignatureCreator creator(
-        psbt.tx ? &psbt.tx.value() : nullptr, /* index */ 0, out.nValue,
-        SigHashType().withForkId());
+    MutableTransactionSignatureCreator creator(&tx, /* index */ 0, out.nValue,
+                                               SigHashType().withForkId());
     ProduceSignature(provider, creator, out.scriptPubKey, sigdata);
 
     // Put redeem_script and key paths, into PSBTOutput.
@@ -305,8 +306,7 @@ bool DecodeBase64PSBT(PartiallySignedTransaction &psbt,
 
 bool DecodeRawPSBT(PartiallySignedTransaction &psbt, const std::string &tx_data,
                    std::string &error) {
-    CDataStream ss_data(tx_data.data(), tx_data.data() + tx_data.size(),
-                        SER_NETWORK, PROTOCOL_VERSION);
+    CDataStream ss_data(MakeUCharSpan(tx_data), SER_NETWORK, PROTOCOL_VERSION);
     try {
         ss_data >> psbt;
         if (!ss_data.empty()) {

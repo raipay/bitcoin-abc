@@ -28,7 +28,7 @@ PATTERN_ONION = re.compile(r"^([abcdefghijklmnopqrstuvwxyz234567]{16}\.onion):(\
 
 # Used to only select nodes with a user agent string compatible with the
 # eCash network.
-PATTERN_AGENT = re.compile(r"^(/Bitcoin ABC:0.(26|27).(\d+)\(.+\)/)")
+PATTERN_AGENT = re.compile(r"^(/Bitcoin ABC:0\.(27|28)\.(.+)/)")
 
 
 def parseline(line: str) -> Union[dict, None]:
@@ -232,10 +232,8 @@ def main():
     ips = [parseline(line) for line in lines]
 
     print(
-        (
-            "\x1b[7m  IPv4   IPv6  Onion Pass                                          "
-            "     \x1b[0m"
-        ),
+        "\x1b[7m  IPv4   IPv6  Onion Pass                                          "
+        "     \x1b[0m",
         file=sys.stderr,
     )
     print(f"{ip_stats(ips):s} Initial", file=sys.stderr)

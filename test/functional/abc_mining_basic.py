@@ -17,7 +17,11 @@ from test_framework.util import assert_equal, assert_greater_than_or_equal
 
 MINER_FUND_ADDR = "ecregtest:prfhcnyqnl5cgrnmlfmms675w93ld7mvvq9jcw0zsn"
 MINER_FUND_LEGACY_ADDR = "2NCXTUCFd1Q3EteVpVVDTrBBoKqvMPAoeEn"
-WELLINGTON_ACTIVATION_TIME = 2100000600
+
+LEGACY_MINER_FUND_RATIO = 8
+MINER_FUND_RATIO = 32
+
+THE_FUTURE = 2100000000
 
 
 class AbcMiningRPCTest(BitcoinTestFramework):
@@ -26,12 +30,12 @@ class AbcMiningRPCTest(BitcoinTestFramework):
         self.extra_args = [
             [
                 "-enableminerfund",
-                f"-wellingtonactivationtime={WELLINGTON_ACTIVATION_TIME}",
+                f"-cowperthwaiteactivationtime={THE_FUTURE}",
             ],
             [
                 "-enableminerfund",
                 "-usecashaddr=0",
-                f"-wellingtonactivationtime={WELLINGTON_ACTIVATION_TIME}",
+                f"-cowperthwaiteactivationtime={THE_FUTURE}",
             ],
         ]
 
@@ -75,7 +79,30 @@ class AbcMiningRPCTest(BitcoinTestFramework):
                 "coinbasetxn": {
                     "minerfund": {
                         "addresses": [minerFundAddress],
-                        "minimumvalue": block_reward * 8 // 100 * XEC,
+                        "minimumvalue": (
+                            block_reward * LEGACY_MINER_FUND_RATIO // 100 * XEC
+                        ),
+                    },
+                },
+                # Although the coinbase value need not necessarily be the same as
+                # the last block due to halvings and fees, we know this to be true
+                # since we are not crossing a halving boundary and there are no
+                # transactions in the mempool.
+                "coinbasevalue": block_reward * XEC,
+            }
+        )
+
+        # Cowperthwaite activation
+        node.setmocktime(THE_FUTURE)
+        self.generate(node, 6, sync_fun=self.no_op)
+
+        assert_equal(node.getmempoolinfo()["size"], 0)
+        assert_getblocktemplate(
+            {
+                "coinbasetxn": {
+                    "minerfund": {
+                        "addresses": [minerFundAddress],
+                        "minimumvalue": block_reward * MINER_FUND_RATIO // 100 * XEC,
                     },
                 },
                 # Although the coinbase value need not necessarily be the same as
@@ -87,34 +114,6 @@ class AbcMiningRPCTest(BitcoinTestFramework):
         )
 
     def run_test(self):
-        self.run_for_node(
-            self.nodes[0],
-            MINER_FUND_ADDR,
-        )
-        self.run_for_node(
-            self.nodes[1],
-            MINER_FUND_LEGACY_ADDR,
-        )
-
-        # Move MTP up to wellington activation.
-        address = self.nodes[0].get_deterministic_priv_key().address
-        for n in self.nodes:
-            n.setmocktime(WELLINGTON_ACTIVATION_TIME)
-            self.generatetoaddress(n, 6, address, sync_fun=self.no_op)
-
-        # Check miner fund addresses are correct before wellington rules are
-        # enforced.
-        self.run_for_node(
-            self.nodes[0],
-            MINER_FUND_ADDR,
-        )
-        self.run_for_node(
-            self.nodes[1],
-            MINER_FUND_LEGACY_ADDR,
-        )
-
-        # Wellington rules are enforced. Check miner fund is unchanged.
-        self.generatetoaddress(n, 1, address, sync_fun=self.no_op)
         self.run_for_node(
             self.nodes[0],
             MINER_FUND_ADDR,

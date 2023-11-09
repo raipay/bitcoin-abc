@@ -17,6 +17,7 @@
 #include <scheduler.h>
 #include <util/bitmanip.h>
 #include <util/moneystr.h>
+#include <util/time.h>
 #include <util/translation.h>
 #include <validation.h>
 
@@ -129,34 +130,7 @@ class Processor::NotificationsHandler
 public:
     NotificationsHandler(Processor *p) : m_processor(p) {}
 
-    void updatedBlockTip() override {
-        const bool registerLocalProof = m_processor->canShareLocalProof();
-        auto registerProofs = [&]() {
-            LOCK(m_processor->cs_peerManager);
-
-            auto registeredProofs = m_processor->peerManager->updatedBlockTip();
-
-            ProofRegistrationState localProofState;
-            if (m_processor->peerData && m_processor->peerData->proof &&
-                registerLocalProof) {
-                if (m_processor->peerManager->registerProof(
-                        m_processor->peerData->proof, localProofState)) {
-                    registeredProofs.insert(m_processor->peerData->proof);
-                }
-
-                WITH_LOCK(m_processor->peerData->cs_proofState,
-                          m_processor->peerData->proofState =
-                              std::move(localProofState));
-            }
-
-            return registeredProofs;
-        };
-
-        auto registeredProofs = registerProofs();
-        for (const auto &proof : registeredProofs) {
-            m_processor->addToReconcile(proof);
-        }
-    }
+    void updatedBlockTip() override { m_processor->updatedBlockTip(); }
 };
 
 Processor::Processor(Config avaconfigIn, interfaces::Chain &chain,
@@ -172,7 +146,8 @@ Processor::Processor(Config avaconfigIn, interfaces::Chain &chain,
       chainman(chainmanIn), mempool(mempoolIn),
       voteRecords(RWCollection<VoteMap>(VoteMap(VoteMapComparator(mempool)))),
       round(0), peerManager(std::make_unique<PeerManager>(
-                    stakeUtxoDustThreshold, chainman)),
+                    stakeUtxoDustThreshold, chainman,
+                    peerDataIn ? peerDataIn->proof : ProofRef())),
       peerData(std::move(peerDataIn)), sessionKey(std::move(sessionKeyIn)),
       minQuorumScore(minQuorumTotalScoreIn),
       minQuorumConnectedScoreRatio(minQuorumConnectedScoreRatioIn),
@@ -185,8 +160,15 @@ Processor::Processor(Config avaconfigIn, interfaces::Chain &chain,
 
     scheduler.scheduleEvery(
         [this]() -> bool {
+            std::unordered_set<ProofRef, SaltedProofHasher> registeredProofs;
             WITH_LOCK(cs_peerManager,
-                      peerManager->cleanupDanglingProofs(getLocalProof()));
+                      peerManager->cleanupDanglingProofs(registeredProofs));
+            for (const auto &proof : registeredProofs) {
+                LogPrint(BCLog::AVALANCHE,
+                         "Promoting previously dangling proof %s\n",
+                         proof->getId().ToString());
+                reconcileOrFinalize(proof);
+            }
             return true;
         },
         5min);
@@ -404,6 +386,25 @@ bool Processor::addToReconcile(const AnyVoteItem &item) {
         .second;
 }
 
+bool Processor::reconcileOrFinalize(const ProofRef &proof) {
+    if (!proof) {
+        return false;
+    }
+
+    if (isRecentlyFinalized(proof->getId())) {
+        PeerId peerid;
+        LOCK(cs_peerManager);
+        if (peerManager->forPeer(proof->getId(), [&](const Peer &peer) {
+                peerid = peer.peerid;
+                return true;
+            })) {
+            return peerManager->setFinalized(peerid);
+        }
+    }
+
+    return addToReconcile(proof);
+}
+
 bool Processor::isAccepted(const AnyVoteItem &item) const {
     if (isNull(item)) {
         return false;
@@ -430,6 +431,15 @@ int Processor::getConfidence(const AnyVoteItem &item) const {
     }
 
     return it->second.getConfidence();
+}
+
+bool Processor::isRecentlyFinalized(const uint256 &itemId) const {
+    return WITH_LOCK(cs_finalizedItems, return finalizedItems.contains(itemId));
+}
+
+void Processor::clearFinalizedItems() {
+    LOCK(cs_finalizedItems);
+    finalizedItems.reset();
 }
 
 namespace {
@@ -479,18 +489,21 @@ bool Processor::registerVotes(NodeId nodeid, const Response &response,
         // message. This should check that the message is indeed the most up to
         // date one before updating the time.
         peerManager->updateNextRequestTime(
-            nodeid, std::chrono::steady_clock::now() +
+            nodeid, Now<SteadyMilliseconds>() +
                         std::chrono::milliseconds(response.getCooldown()));
     }
 
     std::vector<CInv> invs;
 
     {
-        // Check that the query exists.
+        // Check that the query exists. There is a possibility that it has been
+        // deleted if the query timed out, so we don't increase the ban score to
+        // slowly banning nodes for poor networking over time. Banning has to be
+        // handled at callsite to avoid DoS.
         auto w = queries.getWriteView();
         auto it = w->find(std::make_tuple(nodeid, response.getRound()));
         if (it == w.end()) {
-            banscore = 2;
+            banscore = 0;
             error = "unexpected-ava-response";
             return false;
         }
@@ -642,7 +655,6 @@ bool Processor::sendHelloInternal(CNode *pfrom) {
             }
         } else {
             delegation = peerData->delegation;
-            pfrom->AddKnownProof(delegation.getProofId());
         }
     }
 
@@ -813,12 +825,134 @@ bool Processor::canShareLocalProof() {
     return m_canShareLocalProof;
 }
 
+bool Processor::computeStakingReward(const CBlockIndex *pindex) {
+    if (!pindex) {
+        return false;
+    }
+
+    // If the quorum is not established there is no point picking a winner that
+    // will be rejected.
+    if (!isQuorumEstablished()) {
+        return false;
+    }
+
+    {
+        LOCK(cs_stakingRewards);
+        if (stakingRewards.count(pindex->GetBlockHash()) > 0) {
+            return true;
+        }
+    }
+
+    StakingReward _stakingRewards;
+    _stakingRewards.blockheight = pindex->nHeight;
+
+    if (WITH_LOCK(cs_peerManager, return peerManager->selectStakingRewardWinner(
+                                      pindex, _stakingRewards.winner))) {
+        LOCK(cs_stakingRewards);
+        return stakingRewards
+            .emplace(pindex->GetBlockHash(), std::move(_stakingRewards))
+            .second;
+    }
+
+    return false;
+}
+
+bool Processor::eraseStakingRewardWinner(const BlockHash &prevBlockHash) {
+    LOCK(cs_stakingRewards);
+    return stakingRewards.erase(prevBlockHash) > 0;
+}
+
+void Processor::cleanupStakingRewards(const int minHeight) {
+    LOCK(cs_stakingRewards);
+    // std::erase_if is only defined since C++20
+    for (auto it = stakingRewards.begin(); it != stakingRewards.end();) {
+        if (it->second.blockheight < minHeight) {
+            it = stakingRewards.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool Processor::getStakingRewardWinner(const BlockHash &prevBlockHash,
+                                       CScript &winner) const {
+    LOCK(cs_stakingRewards);
+    auto it = stakingRewards.find(prevBlockHash);
+    if (it == stakingRewards.end()) {
+        return false;
+    }
+
+    winner = it->second.winner;
+    return true;
+}
+
+bool Processor::setStakingRewardWinner(const CBlockIndex *pprev,
+                                       const CScript &winner) {
+    assert(pprev);
+
+    StakingReward stakingReward;
+    stakingReward.blockheight = pprev->nHeight;
+    stakingReward.winner = winner;
+
+    LOCK(cs_stakingRewards);
+    return stakingRewards.insert_or_assign(pprev->GetBlockHash(), stakingReward)
+        .second;
+}
+
 void Processor::FinalizeNode(const ::Config &config, const CNode &node) {
     AssertLockNotHeld(cs_main);
 
     const NodeId nodeid = node.GetId();
     WITH_LOCK(cs_peerManager, peerManager->removeNode(nodeid));
     WITH_LOCK(cs_delayedAvahelloNodeIds, delayedAvahelloNodeIds.erase(nodeid));
+}
+
+void Processor::updatedBlockTip() {
+    const bool registerLocalProof = canShareLocalProof();
+    auto registerProofs = [&]() {
+        LOCK(cs_peerManager);
+
+        auto registeredProofs = peerManager->updatedBlockTip();
+
+        ProofRegistrationState localProofState;
+        if (peerData && peerData->proof && registerLocalProof) {
+            if (peerManager->registerProof(peerData->proof, localProofState)) {
+                registeredProofs.insert(peerData->proof);
+            }
+
+            if (localProofState.GetResult() ==
+                ProofRegistrationResult::ALREADY_REGISTERED) {
+                // If our proof already exists, that's fine but we don't want to
+                // erase the state with a duplicated proof status, so let's
+                // retrieve the proper state. It also means we are able to
+                // update the status should the proof move from one pool to the
+                // other.
+                const ProofId &localProofId = peerData->proof->getId();
+                if (peerManager->isImmature(localProofId)) {
+                    localProofState.Invalid(ProofRegistrationResult::IMMATURE,
+                                            "immature-proof");
+                }
+                if (peerManager->isInConflictingPool(localProofId)) {
+                    localProofState.Invalid(
+                        ProofRegistrationResult::CONFLICTING,
+                        "conflicting-utxos");
+                }
+                if (peerManager->isBoundToPeer(localProofId)) {
+                    localProofState = ProofRegistrationState();
+                }
+            }
+
+            WITH_LOCK(peerData->cs_proofState,
+                      peerData->proofState = std::move(localProofState));
+        }
+
+        return registeredProofs;
+    };
+
+    auto registeredProofs = registerProofs();
+    for (const auto &proof : registeredProofs) {
+        reconcileOrFinalize(proof);
+    }
 }
 
 void Processor::runEventLoop() {
@@ -857,7 +991,7 @@ void Processor::runEventLoop() {
 
                 {
                     // Compute the time at which this requests times out.
-                    auto timeout = std::chrono::steady_clock::now() +
+                    auto timeout = Now<SteadyMilliseconds>() +
                                    avaconfig.queryTimeoutDuration;
                     // Register the query.
                     queries.getWriteView()->insert(
@@ -890,7 +1024,7 @@ void Processor::runEventLoop() {
 }
 
 void Processor::clearTimedoutRequests() {
-    auto now = std::chrono::steady_clock::now();
+    auto now = Now<SteadyMilliseconds>();
     std::map<CInv, uint8_t> timedout_items{};
 
     {
@@ -1047,8 +1181,7 @@ bool Processor::IsWorthPolling::operator()(const CTransactionRef &tx) const {
 
 bool Processor::isWorthPolling(const AnyVoteItem &item) const {
     return std::visit(IsWorthPolling(*this), item) &&
-           WITH_LOCK(cs_finalizedItems,
-                     return !finalizedItems.contains(GetVoteItemId(item)));
+           !isRecentlyFinalized(GetVoteItemId(item));
 }
 
 bool Processor::GetLocalAcceptance::operator()(

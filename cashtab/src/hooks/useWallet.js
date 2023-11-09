@@ -17,10 +17,8 @@ import {
     isValidContactList,
     parseInvalidSettingsForMigration,
     parseInvalidCashtabCacheForMigration,
-    isValidAliasString,
 } from 'utils/validation';
 import localforage from 'localforage';
-import { currency } from 'components/Common/Ticker';
 import {
     xecReceivedNotification,
     xecReceivedNotificationWebsocket,
@@ -35,35 +33,47 @@ import {
     getTxHistoryChronik,
     parseChronikTx,
 } from 'utils/chronik';
-import { getAliasServerHistory, getAliasServerState } from 'utils/aliasUtils';
+import { queryAliasServer } from 'utils/aliasUtils';
 import { ChronikClient } from 'chronik-client';
+import { chronik as chronikConfig } from 'config/chronik';
 import cashaddr from 'ecashaddrjs';
 import * as bip39 from 'bip39';
 import * as randomBytes from 'randombytes';
 import * as utxolib from '@bitgo/utxo-lib';
+import { websocket as websocketConfig } from 'config/websocket';
+import {
+    cashtabSettings as cashtabDefaultConfig,
+    cashtabSettingsValidation,
+} from 'config/cashtabSettings';
+import defaultCashtabCache from 'config/cashtabCache';
+import appConfig from 'config/app';
+import aliasSettings from 'config/alias';
 
 const useWallet = () => {
     const [chronik, setChronik] = useState(
-        new ChronikClient(currency.chronikUrls[0]),
+        new ChronikClient(chronikConfig.urls[0]),
     );
     const previousChronik = usePrevious(chronik);
     const [walletRefreshInterval, setWalletRefreshInterval] = useState(
-        currency.websocketDisconnectedRefreshInterval,
+        websocketConfig.websocketDisconnectedRefreshInterval,
     );
     const [wallet, setWallet] = useState(false);
     const [chronikWebsocket, setChronikWebsocket] = useState(null);
     const [contactList, setContactList] = useState([{}]);
     const [cashtabSettings, setCashtabSettings] = useState(false);
-    const [cashtabCache, setCashtabCache] = useState(
-        currency.defaultCashtabCache,
-    );
-    const [isAliasServerOnline, setIsAliasServerOnline] = useState(true);
+    const [cashtabCache, setCashtabCache] = useState(defaultCashtabCache);
     const [fiatPrice, setFiatPrice] = useState(null);
     const [apiError, setApiError] = useState(false);
     const [checkFiatInterval, setCheckFiatInterval] = useState(null);
     const [hasUpdated, setHasUpdated] = useState(false);
     const [loading, setLoading] = useState(true);
     const [chronikIndex, setChronikIndex] = useState(0);
+    const [aliases, setAliases] = useState({
+        registered: [],
+        pending: [],
+    });
+    const [aliasServerError, setAliasServerError] = useState(false);
+    const [aliasIntervalId, setAliasIntervalId] = useState(null);
     const { balances, tokens } = isValidStoredWallet(wallet)
         ? wallet.state
         : {
@@ -78,7 +88,7 @@ const useWallet = () => {
         let currentChronikIndex = chronikIndex;
 
         // How many chronik URLs are available?
-        const chronikUrlCount = currency.chronikUrls.length;
+        const chronikUrlCount = chronikConfig.urls.length;
 
         console.log(
             `Cashtab has ${
@@ -100,10 +110,10 @@ const useWallet = () => {
         }
         setChronikIndex(currentChronikIndex);
         console.log(
-            `Creating new chronik client with URL ${currency.chronikUrls[currentChronikIndex]}`,
+            `Creating new chronik client with URL ${chronikConfig.urls[currentChronikIndex]}`,
         );
         return setChronik(
-            new ChronikClient(currency.chronikUrls[currentChronikIndex]),
+            new ChronikClient(chronikConfig.urls[currentChronikIndex]),
         );
     };
 
@@ -143,7 +153,7 @@ const useWallet = () => {
         // If walletRefreshInterval is 10, set it back to the usual refresh rate
         if (walletRefreshInterval === 10) {
             setWalletRefreshInterval(
-                currency.websocketConnectedRefreshInterval,
+                websocketConfig.websocketConnectedRefreshInterval,
             );
         }
         try {
@@ -262,29 +272,6 @@ const useWallet = () => {
             wallet = null;
         }
         return wallet;
-    };
-
-    /*
-      @Returns: 
-          aliases: [
-              {alias: 'foo1', address: 'ecash:asdfjhasfd'},
-              {alias: 'foo2', address: 'ecash:asdfjhasfd'},
-          ],
-          cachedAliasCount: 0,
-    */
-    const getAliasesFromLocalForage = async () => {
-        let cachedAliases, cashtabCache;
-        try {
-            cashtabCache = await localforage.getItem('cashtabCache');
-            cachedAliases = cashtabCache
-                ? cashtabCache.aliasCache
-                : currency.aliasSettings.defaultCashtabCache.aliasCache;
-        } catch (err) {
-            console.log(`Error in getAliasesFromLocalForage`, err);
-            cachedAliases =
-                currency.aliasSettings.defaultCashtabCache.aliasCache;
-        }
-        return cachedAliases;
     };
 
     const getContactListFromLocalForage = async () => {
@@ -410,7 +397,7 @@ const useWallet = () => {
 
     const writeTokenInfoByIdToCache = async tokenInfoById => {
         console.log(`writeTokenInfoByIdToCache`);
-        const cashtabCache = currency.defaultCashtabCache;
+        const cashtabCache = defaultCashtabCache;
         cashtabCache.tokenInfoById = tokenInfoById;
         try {
             await localforage.setItem('cashtabCache', cashtabCache);
@@ -862,34 +849,12 @@ const useWallet = () => {
     const processChronikWsMsg = async (msg, wallet, fiatPrice) => {
         // get the message type
         const { type } = msg;
-        // For now, only act on "first seen" transactions and new blocks, as the only logic to happen is first seen notifications and new block alias history updates
+        // Cashtab only processes "first seen" transactions, i.e. where type === 'AddedToMempool'
         // Dev note: Other chronik msg types
         // "BlockConnected", arrives as new blocks are found
         // "Confirmed", arrives as subscribed + seen txid is confirmed in a block
-        if (type !== 'AddedToMempool' && type !== 'BlockConnected') {
+        if (type !== 'AddedToMempool') {
             return;
-        }
-
-        if (currency.aliasSettings.aliasEnabled) {
-            // only check for new blocks if alias feature is enabled
-
-            // when new blocks are found, clear and refresh aliasCache
-            if (type === 'BlockConnected') {
-                console.log(`New block found, updating aliasCache`);
-                try {
-                    await getLatestAliases();
-                } catch (err) {
-                    console.log(
-                        `Error retrieving latest aliases after finding new block`,
-                        err,
-                    );
-                }
-                return;
-            }
-        } else {
-            if (type === 'BlockConnected') {
-                return; // temporary disabling of checking for new blocks if the alias is disabled in ticker.js
-            }
         }
 
         // If you see a tx from your subscribed addresses added to the mempool, then the wallet utxo set has changed
@@ -935,7 +900,6 @@ const useWallet = () => {
                 if (parsedChronikTx.genesisInfo.success) {
                     // Send this info to the notification function
                     eTokenReceivedNotification(
-                        currency,
                         parsedChronikTx.genesisInfo.tokenTicker,
                         eTokenAmountReceived,
                         parsedChronikTx.genesisInfo.tokenName,
@@ -971,7 +935,6 @@ const useWallet = () => {
 
                         // Send this info to the notification function
                         eTokenReceivedNotification(
-                            currency,
                             genesisInfo.tokenTicker,
                             eTokenAmountReceived,
                             genesisInfo.tokenName,
@@ -1034,11 +997,12 @@ const useWallet = () => {
                     console.log(`Chronik websocket connected`, e);
                     console.log(
                         `Websocket connected, adjusting wallet refresh interval to ${
-                            currency.websocketConnectedRefreshInterval / 1000
+                            websocketConfig.websocketConnectedRefreshInterval /
+                            1000
                         }s`,
                     );
                     setWalletRefreshInterval(
-                        currency.websocketConnectedRefreshInterval,
+                        websocketConfig.websocketConnectedRefreshInterval,
                     );
                 },
             });
@@ -1115,133 +1079,6 @@ const useWallet = () => {
 
     const handleUpdateWallet = async setWallet => {
         await loadWalletFromStorageOnStartup(setWallet);
-
-        if (currency.aliasSettings.aliasEnabled) {
-            // only sync alias cache if alias feature is enabled
-            await getLatestAliases();
-        }
-    };
-
-    const getLatestAliases = async () => {
-        let cachedAliases;
-        // retrieve cached aliases
-        try {
-            cachedAliases = await getAliasesFromLocalForage();
-        } catch (err) {
-            console.log(
-                `getLatestAliases(): Error retrieving aliases from localForage`,
-                err,
-            );
-            return cachedAliases;
-        }
-
-        // reset to default aliasCache if any unexpected issues are encountered with local storage version
-        if (!cachedAliases || !cachedAliases.aliases) {
-            console.log(`Error in getLatestAliases(): Invalid cachedAliases`);
-            cashtabCache.aliasCache = currency.defaultCashtabCache.aliasCache;
-            setCashtabCache(cashtabCache);
-
-            // set array into local forage
-            try {
-                await localforage.setItem('cashtabCache', cashtabCache);
-            } catch (err) {
-                console.log(
-                    'Error updateing cashtabCache object in getLatestAliases',
-                    err,
-                );
-            }
-            return cashtabCache.aliasCache;
-        }
-
-        // clear aliasCache if at least one cached alias is not alphanumeric
-        // NOTE: this is kept here even though alias-server validates this, in order to catch and migrate pre-alias-server wallet caches that may contain non-alphanumeric aliases
-        let invalidAliasFound = false;
-        for (let element of cachedAliases.aliases) {
-            if (!isValidAliasString(element.alias)) {
-                invalidAliasFound = true;
-            }
-        }
-        // if at least one alias is invalid, reset cachedAliases to default
-        if (invalidAliasFound) {
-            cachedAliases = currency.defaultCashtabCache.aliasCache;
-        }
-
-        // retrieve alias-server state
-        let aliasServerStateRespJson;
-        try {
-            aliasServerStateRespJson = await getAliasServerState();
-        } catch (err) {
-            console.log(
-                `getLatestAliases(): Error retrieving server state from alias-server`,
-                err,
-            );
-        }
-
-        // if bad response from alias-server, retain the existing alias cache by skipping the remainder of this function which updates the alias cache
-        if (!aliasServerStateRespJson) {
-            setIsAliasServerOnline(false);
-            return;
-        }
-
-        // get the onchain alias count
-        let onchainAliasCount = 0;
-        if (aliasServerStateRespJson) {
-            onchainAliasCount = aliasServerStateRespJson.registeredAliasCount;
-        }
-
-        // get the cached alias count
-        let cachedAliasCount = 0;
-        if (cachedAliases) {
-            cachedAliasCount = cachedAliases.cachedAliasCount;
-        }
-
-        // if cache alias count does not match onchain alias count, update cache
-        if (cachedAliasCount !== onchainAliasCount) {
-            console.log(
-                `cache alias count does not match onchain alias count, refreshing aliasCache`,
-            );
-
-            // retrieve onchain aliases via alias-server
-            let aliasServerRespJson;
-            try {
-                aliasServerRespJson = await getAliasServerHistory();
-            } catch (err) {
-                console.log(
-                    `getLatestAliases(): Error retrieving aliases from alias-server`,
-                    err,
-                );
-            }
-
-            // if bad response from alias-server, retain the existing alias cache
-            if (!aliasServerRespJson) {
-                setIsAliasServerOnline(false);
-                return;
-            }
-
-            let aliasCacheObject = {
-                aliases: aliasServerRespJson,
-                cachedAliasCount: aliasServerRespJson.length,
-            };
-            cashtabCache.aliasCache = aliasCacheObject;
-
-            // set array into local forage
-            try {
-                await localforage.setItem('cashtabCache', cashtabCache);
-            } catch (err) {
-                console.log(
-                    'Error updateing cashtabCache object in getLatestAliases',
-                    err,
-                );
-            }
-            cachedAliases = aliasCacheObject;
-            setCashtabCache(cashtabCache);
-            console.log(`aliasCache refresh complete`);
-        } else {
-            console.log(
-                `Server and cache both have ${onchainAliasCount} aliases. Cashtab alias cache is up to date.`,
-            );
-        }
-        return cachedAliases;
     };
 
     const loadCashtabSettings = async () => {
@@ -1252,17 +1089,17 @@ const useWallet = () => {
             // If there is no keyvalue pair in localforage with key 'settings'
             if (localSettings === null) {
                 // Create one with the default settings from Ticker.js
-                localforage.setItem('settings', currency.defaultSettings);
+                localforage.setItem('settings', cashtabDefaultConfig);
                 // Set state to default settings
-                setCashtabSettings(currency.defaultSettings);
-                return currency.defaultSettings;
+                setCashtabSettings(cashtabDefaultConfig);
+                return cashtabDefaultConfig;
             }
         } catch (err) {
             console.log(`Error getting cashtabSettings`, err);
             // TODO If they do not exist, write them
             // TODO add function to change them
-            setCashtabSettings(currency.defaultSettings);
-            return currency.defaultSettings;
+            setCashtabSettings(cashtabDefaultConfig);
+            return cashtabDefaultConfig;
         }
         // If you found an object in localforage at the settings key, make sure it's valid
         if (isValidCashtabSettings(localSettings)) {
@@ -1280,9 +1117,9 @@ const useWallet = () => {
             return modifiedLocalSettings;
         } else {
             // if not valid, also set cashtabSettings to default
-            setCashtabSettings(currency.defaultSettings);
+            setCashtabSettings(cashtabDefaultConfig);
             // Since this is returning default settings based on an error from reading storage, do not overwrite whatever is in storage
-            return currency.defaultSettings;
+            return cashtabDefaultConfig;
         }
     };
 
@@ -1321,17 +1158,14 @@ const useWallet = () => {
             // If there is no keyvalue pair in localforage with key 'cashtabCache'
             if (localCashtabCache === null) {
                 // Use the default
-                localforage.setItem(
-                    'cashtabCache',
-                    currency.defaultCashtabCache,
-                );
-                setCashtabCache(currency.defaultCashtabCache);
-                return currency.defaultCashtabCache;
+                localforage.setItem('cashtabCache', defaultCashtabCache);
+                setCashtabCache(defaultCashtabCache);
+                return defaultCashtabCache;
             }
         } catch (err) {
             console.log(`Error getting cashtabCache`, err);
-            setCashtabCache(currency.defaultCashtabCache);
-            return currency.defaultCashtabCache;
+            setCashtabCache(defaultCashtabCache);
+            return defaultCashtabCache;
         }
         // If you found an object in localforage at the cashtabCache key, make sure it's valid
         if (isValidCashtabCache(localCashtabCache)) {
@@ -1343,7 +1177,7 @@ const useWallet = () => {
             parseInvalidCashtabCacheForMigration(localCashtabCache);
         localforage.setItem('cashtabCache', migratedCashtabCache);
         setCashtabCache(migratedCashtabCache);
-        return currency.defaultCashtabCache;
+        return defaultCashtabCache;
     };
 
     // With different currency selections possible, need unique intervals for price checks
@@ -1387,7 +1221,7 @@ const useWallet = () => {
         }
 
         // Make sure function was called with valid params
-        if (currency.settingsValidation[key].includes(newValue)) {
+        if (cashtabSettingsValidation[key].includes(newValue)) {
             // Update settings
             newSettings = currentSettings;
             newSettings[key] = newValue;
@@ -1489,7 +1323,6 @@ const useWallet = () => {
             // Notification if you received SLP
             if (receivedSlpQty > 0) {
                 eTokenReceivedNotification(
-                    currency,
                     receivedSlpTicker,
                     receivedSlpQty,
                     receivedSlpName,
@@ -1521,7 +1354,6 @@ const useWallet = () => {
                     const receivedSlpName = tokens[i].info.tokenName;
 
                     eTokenReceivedNotification(
-                        currency,
                         receivedSlpTicker,
                         receivedSlpQty,
                         receivedSlpName,
@@ -1548,7 +1380,7 @@ const useWallet = () => {
         fiatCode = cashtabSettings ? cashtabSettings.fiatCurrency : 'usd',
     ) => {
         // Split this variable out in case coingecko changes
-        const cryptoId = currency.coingeckoId;
+        const cryptoId = appConfig.coingeckoId;
         // Keep this in the code, because different URLs will have different outputs require different parsing
         const priceApiUrl = `https://api.coingecko.com/api/v3/simple/price?ids=${cryptoId}&vs_currencies=${fiatCode}&include_last_updated_at=true`;
         let bchPrice;
@@ -1577,6 +1409,44 @@ const useWallet = () => {
         }
     };
 
+    /**
+     * Retrieve registered and pending aliases for this active wallet from alias-server
+     * and stores them in the aliases state var for other components to access
+     * @param {string} thisAddress the address to be queried for attached aliases
+     */
+    const refreshAliases = async thisAddress => {
+        try {
+            const aliasesForThisAddress = await queryAliasServer(
+                'address',
+                thisAddress,
+            );
+            if (aliasesForThisAddress.error) {
+                // If an error is returned from the address endpoint
+                throw new Error(aliasesForThisAddress.error);
+            }
+            setAliases({
+                registered: aliasesForThisAddress.registered.sort((a, b) =>
+                    a.alias.localeCompare(b.alias),
+                ),
+                pending: aliasesForThisAddress.pending.sort((a, b) =>
+                    a.alias.localeCompare(b.alias),
+                ),
+            });
+            setAliasServerError(false);
+            // Clear interval if there are no pending aliases
+            if (aliasesForThisAddress.pending.length === 0 && aliasIntervalId) {
+                console.log(
+                    `refreshAliases(): No pending aliases, clearing interval ${aliasIntervalId}`,
+                );
+                clearInterval(aliasIntervalId);
+            }
+        } catch (err) {
+            const errorMsg = 'Error: Unable to retrieve aliases';
+            console.log(`refreshAliases(): ${errorMsg}`, err);
+            setAliasServerError(errorMsg);
+        }
+    };
+
     useEffect(async () => {
         handleUpdateWallet(setWallet);
         await loadContactList();
@@ -1596,6 +1466,35 @@ const useWallet = () => {
         await initializeWebsocket(chronik, wallet, fiatPrice);
     }, [chronik, wallet.mnemonic, fiatPrice]);
 
+    useEffect(async () => {
+        // Initialize a new periodic refresh of aliases which ONLY calls the API if
+        // there are pending aliases since confirmed aliases would not change over time
+        // The interval is also only initialized if there are no other intervals present.
+        if (aliasSettings.aliasEnabled) {
+            if (
+                wallet &&
+                wallet.Path1899 &&
+                wallet.Path1899.cashAddress &&
+                aliasIntervalId === null
+            ) {
+                // Initial refresh to ensure `aliases` state var is up to date
+                await refreshAliases(wallet.Path1899.cashAddress);
+                const aliasRefreshInterval = 30000;
+                const intervalId = setInterval(async function () {
+                    if (aliases?.pending?.length > 0) {
+                        console.log(
+                            'useEffect(): Refreshing registered and pending aliases',
+                        );
+                        await refreshAliases(wallet.Path1899.cashAddress);
+                    }
+                }, aliasRefreshInterval);
+                setAliasIntervalId(intervalId);
+                // Clear the interval when useWallet unmounts
+                return () => clearInterval(intervalId);
+            }
+        }
+    }, [aliases?.pending?.length]);
+
     return {
         chronik,
         wallet,
@@ -1604,17 +1503,20 @@ const useWallet = () => {
         apiError,
         contactList,
         cashtabSettings,
+        loadCashtabSettings,
         cashtabCache,
         changeCashtabSettings,
+        refreshAliases,
+        aliases,
+        setAliases,
+        aliasServerError,
+        setAliasServerError,
         getActiveWalletFromLocalForage,
         getWallet,
         getWalletDetails,
         getSavedWallets,
         migrateLegacyWallet,
-        getLatestAliases,
         getContactListFromLocalForage,
-        getAliasesFromLocalForage,
-        isAliasServerOnline,
         updateContactList,
         createWallet: async importMnemonic => {
             setLoading(true);
@@ -1631,7 +1533,7 @@ const useWallet = () => {
                 `Suspending wallet update interval while new wallet is activated`,
             );
             setWalletRefreshInterval(
-                currency.websocketDisconnectedRefreshInterval,
+                websocketConfig.websocketDisconnectedRefreshInterval,
             );
             const newWallet = await activateWallet(
                 currentlyActiveWallet,
@@ -1649,6 +1551,8 @@ const useWallet = () => {
         renameSavedWallet,
         renameActiveWallet,
         deleteWallet,
+        handleUpdateWallet,
+        processChronikWsMsg,
     };
 };
 

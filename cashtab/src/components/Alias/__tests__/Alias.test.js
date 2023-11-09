@@ -95,10 +95,9 @@ test('Without wallet defined', () => {
         loading: false,
         cashtabCache: {
             tokenInfoById: {},
-            aliasCache: {
-                aliases: [],
-                cachedAliasCount: 0,
-            },
+        },
+        refreshAliases: async () => {
+            return { registered: [], pending: [] };
         },
     };
     const component = renderer.create(

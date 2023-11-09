@@ -79,10 +79,6 @@ struct CompareIteratorById {
  * CTxMemPoolEntry stores data about the corresponding transaction, as well as
  * data about all in-mempool transactions that depend on the transaction
  * ("descendant" transactions).
- *
- * When a new entry is added to the mempool, we update the descendant state
- * (nCountWithDescendants, nSizeWithDescendants, and nModFeesWithDescendants)
- * for all ancestors of the newly added transaction.
  */
 
 class CTxMemPoolEntry {
@@ -119,28 +115,6 @@ private:
     //! Track the height and time at which tx was final
     LockPoints lockPoints;
 
-    // NOTE:
-    // The below members will stop being updated after Wellington activation,
-    // and should be removed in the release after Wellington is checkpointed.
-    //
-    // Information about descendants of this transaction that are in the
-    // mempool; if we remove this transaction we must remove all of these
-    // descendants as well.
-    //! number of descendant transactions
-    uint64_t nCountWithDescendants{1};
-    //! ... and size
-    uint64_t nSizeWithDescendants;
-    //! ... and total fees (all including us)
-    Amount nModFeesWithDescendants;
-    //! ... and sichecks
-    int64_t nSigChecksWithDescendants;
-
-    // Analogous statistics for ancestor transactions
-    uint64_t nCountWithAncestors{1};
-    uint64_t nSizeWithAncestors;
-    Amount nModFeesWithAncestors;
-    int64_t nSigChecksWithAncestors;
-
 public:
     CTxMemPoolEntry(const CTransactionRef &_tx, const Amount fee, int64_t time,
                     unsigned int entry_height, bool spends_coinbase,
@@ -167,36 +141,12 @@ public:
     size_t DynamicMemoryUsage() const { return nUsageSize; }
     const LockPoints &GetLockPoints() const { return lockPoints; }
 
-    // Adjusts the descendant state. -- To be removed after Wellington
-    void UpdateDescendantState(int64_t modifySize, Amount modifyFee,
-                               int64_t modifyCount, int64_t modifySigChecks);
-    // Adjusts the ancestor state -- To be removed after Wellington
-    void UpdateAncestorState(int64_t modifySize, Amount modifyFee,
-                             int64_t modifyCount, int64_t modifySigChecks);
-
-    // Updates the fee delta used for mining priority score, and the
-    // modified fees with descendants.
+    // Updates the fee delta used for mining priority score
     void UpdateFeeDelta(Amount feeDelta);
     // Update the LockPoints after a reorg
     void UpdateLockPoints(const LockPoints &lp);
 
-    uint64_t GetCountWithDescendants() const { return nCountWithDescendants; }
-    uint64_t GetSizeWithDescendants() const { return nSizeWithDescendants; }
-    uint64_t GetVirtualSizeWithDescendants() const;
-    Amount GetModFeesWithDescendants() const { return nModFeesWithDescendants; }
-    int64_t GetSigChecksWithDescendants() const {
-        return nSigChecksWithDescendants;
-    }
-
     bool GetSpendsCoinbase() const { return spendsCoinbase; }
-
-    uint64_t GetCountWithAncestors() const { return nCountWithAncestors; }
-    uint64_t GetSizeWithAncestors() const { return nSizeWithAncestors; }
-    uint64_t GetVirtualSizeWithAncestors() const;
-    Amount GetModFeesWithAncestors() const { return nModFeesWithAncestors; }
-    int64_t GetSigChecksWithAncestors() const {
-        return nSigChecksWithAncestors;
-    }
 
     const Parents &GetMemPoolParentsConst() const { return m_parents; }
     const Children &GetMemPoolChildrenConst() const { return m_children; }
@@ -345,12 +295,6 @@ enum class MemPoolRemovalReason {
  * index (GetEntryId).  As such, we always dump mempool tx's into a disconnect
  * pool on reorg, and simply add them one by one, along with tx's from
  * disconnected blocks, when the reorg is complete.
- *
- * Computational limits:
- *
- * Updating all in-mempool ancestors of a newly added transaction before
- * wellington activates can be slow. After wellington, no bound exists on how
- * many in-mempool ancestors there may be.
  */
 class CTxMemPool {
 private:
@@ -444,10 +388,6 @@ public:
     using txiter = indexed_transaction_set::nth_index<0>::type::const_iterator;
     typedef std::set<txiter, CompareIteratorById> setEntries;
 
-    /// Remove after wellington activates as this will be inaccurate
-    uint64_t CalculateDescendantMaximum(txiter entry) const
-        EXCLUSIVE_LOCKS_REQUIRED(cs);
-
 private:
     void UpdateParent(txiter entry, txiter parent, bool add)
         EXCLUSIVE_LOCKS_REQUIRED(cs);
@@ -462,34 +402,17 @@ private:
 
     /**
      * Helper function to calculate all in-mempool ancestors of staged_ancestors
-     * and apply ancestor and descendant limits (including staged_ancestors
-     * themselves, entry_size and entry_count).
-     * param@[in]   entry_size          Virtual size to include in the limits.
-     * param@[in]   entry_count         How many entries to include in the
-     *                                  limits.
      * param@[in]   staged_ancestors    Should contain entries in the mempool.
      * param@[out]  setAncestors        Will be populated with all mempool
      *                                  ancestors.
      */
-    bool CalculateAncestorsAndCheckLimits(
-        size_t entry_size, size_t entry_count, setEntries &setAncestors,
-        CTxMemPoolEntry::Parents &staged_ancestors, uint64_t limitAncestorCount,
-        uint64_t limitAncestorSize, uint64_t limitDescendantCount,
-        uint64_t limitDescendantSize, std::string &errString) const
+    bool CalculateAncestors(setEntries &setAncestors,
+                            CTxMemPoolEntry::Parents &staged_ancestors) const
         EXCLUSIVE_LOCKS_REQUIRED(cs);
 
 public:
     indirectmap<COutPoint, const CTransaction *> mapNextTx GUARDED_BY(cs);
     std::map<TxId, Amount> mapDeltas GUARDED_BY(cs);
-
-    /**
-     * Wellington activation latch. This is latched permanently to true in
-     * AcceptToMemoryPool the first time a tx arrives and
-     * IsWellingtonActivated() returns true. This should be removed after
-     * wellington is checkpointed and its mempool-accept/relay rules become
-     * retroactively permanent.
-     */
-    std::atomic<bool> wellingtonLatched{false};
 
     /**
      * Create a new CTxMemPool.
@@ -514,16 +437,7 @@ public:
 
     // addUnchecked must update state for all parents of a given transaction,
     // updating child links as necessary.
-    // Pre-wellington: automatically calculates setAncestors, calls
-    // addUnchecked(entry, setAncestors)
-    // Post-wellington: identical to just calling addUnchecked(entry, {})
-    // These 2 overloads should be collapsed down into 1 post-wellington (just a
-    // single-argument version).
     void addUnchecked(const CTxMemPoolEntry &entry)
-        EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
-    void
-    addUnchecked(const CTxMemPoolEntry &entry,
-                 const setEntries &setAncestors /* only used pre-wellington */)
         EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
 
     void removeRecursive(const CTransaction &tx, MemPoolRemovalReason reason)
@@ -572,31 +486,21 @@ public:
     /**
      * Remove a set of transactions from the mempool. If a transaction is in
      * this set, then all in-mempool descendants must also be in the set, unless
-     * this transaction is being removed for being in a block. Set
-     * updateDescendants to true when removing a tx that was in a block, so that
-     * any in-mempool descendants have their ancestor state updated (only
-     * evaluated before wellington activation).
+     * this transaction is being removed for being in a block.
      */
-    void RemoveStaged(const setEntries &stage, bool updateDescendants,
-                      MemPoolRemovalReason reason) EXCLUSIVE_LOCKS_REQUIRED(cs);
+    void RemoveStaged(const setEntries &stage, MemPoolRemovalReason reason)
+        EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /**
      * Try to calculate all in-mempool ancestors of entry.
      *  (these are all calculated including the tx itself)
-     *  limitAncestorCount = max number of ancestors
-     *  limitAncestorSize = max size of ancestors
-     *  limitDescendantCount = max number of descendants any ancestor can have
-     *  limitDescendantSize = max size of descendants any ancestor can have
-     *  errString = populated with error reason if any limits are hit
      * fSearchForParents = whether to search a tx's vin for in-mempool parents,
      * or look up parents from m_parents. Must be true for entries not in the
      * mempool
      */
-    bool CalculateMemPoolAncestors(
-        const CTxMemPoolEntry &entry, setEntries &setAncestors,
-        uint64_t limitAncestorCount, uint64_t limitAncestorSize,
-        uint64_t limitDescendantCount, uint64_t limitDescendantSize,
-        std::string &errString, bool fSearchForParents = true) const
+    bool CalculateMemPoolAncestors(const CTxMemPoolEntry &entry,
+                                   setEntries &setAncestors,
+                                   bool fSearchForParents = true) const
         EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /**
@@ -665,23 +569,6 @@ public:
     void LimitSize(CCoinsViewCache &coins_cache, size_t limit,
                    std::chrono::seconds age)
         EXCLUSIVE_LOCKS_REQUIRED(cs, ::cs_main);
-
-    /**
-     * Calculate the ancestor and descendant count for the given transaction.
-     * The counts include the transaction itself.
-     * When ancestors is non-zero (ie, the transaction itself is in the
-     * mempool), ancestorsize and ancestorfees will also be set to the
-     * appropriate values.
-     *
-     * NOTE: Since we are removing the unconf. ancestor limits after wellington,
-     *       this function's existence is a potential DoS. It should not be
-     *       called after wellington since it relies on calculating quadratic
-     *       stats.
-     */
-    void GetTransactionAncestry(const TxId &txid, size_t &ancestors,
-                                size_t &descendants,
-                                size_t *ancestorsize = nullptr,
-                                Amount *ancestorfees = nullptr) const;
 
     /** @returns true if the mempool is fully loaded */
     bool IsLoaded() const;
@@ -758,18 +645,12 @@ private:
     /**
      * Update parents of `it` to add/remove it as a child transaction.
      */
-    void UpdateParentsOf(
-        bool add, txiter it,
-        const setEntries *setAncestors = nullptr /* only used pre-wellington */)
-        EXCLUSIVE_LOCKS_REQUIRED(cs);
+    void UpdateParentsOf(bool add, txiter it) EXCLUSIVE_LOCKS_REQUIRED(cs);
     /**
      * For each transaction being removed, update ancestors and any direct
-     * children. If updateDescendants is true, then also update in-mempool
-     * descendants' ancestor state. Note that ancestors are only updated before
-     * wellington activation.
+     * children.
      */
-    void UpdateForRemoveFromMempool(const setEntries &entriesToRemove,
-                                    bool updateDescendants)
+    void UpdateForRemoveFromMempool(const setEntries &entriesToRemove)
         EXCLUSIVE_LOCKS_REQUIRED(cs);
     /** Sever link between specified transaction and direct children. */
     void UpdateChildrenForRemoval(txiter entry) EXCLUSIVE_LOCKS_REQUIRED(cs);

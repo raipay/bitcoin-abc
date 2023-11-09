@@ -4,7 +4,7 @@
 
 //! Module containing [`ChronikIndexer`] to index blocks and txs.
 
-use std::path::PathBuf;
+use std::{io::Write, path::PathBuf};
 
 use abc_rust_error::{Result, WrapErr};
 use bitcoinsuite_core::{
@@ -14,16 +14,14 @@ use bitcoinsuite_core::{
 use chronik_bridge::{ffi, util::expect_unique_ptr};
 use chronik_db::{
     db::{Db, WriteBatch},
-    groups::{
-        FnCompressScript, ScriptGroup, ScriptHistoryWriter, ScriptUtxoWriter,
-    },
+    groups::{ScriptGroup, ScriptHistoryWriter, ScriptUtxoWriter},
     index_tx::prepare_indexed_txs,
     io::{
-        BlockHeight, BlockReader, BlockStatsWriter, BlockTxs, BlockWriter,
-        DbBlock, MetadataReader, MetadataWriter, SchemaVersion, SpentByWriter,
-        TxEntry, TxWriter,
+        merge, BlockHeight, BlockReader, BlockStatsWriter, BlockTxs,
+        BlockWriter, DbBlock, MetadataReader, MetadataWriter, SchemaVersion,
+        SpentByWriter, TxEntry, TxWriter,
     },
-    mem::{Mempool, MempoolTx},
+    mem::{MemData, MemDataConf, Mempool, MempoolTx},
 };
 use chronik_util::{log, log_chronik};
 use thiserror::Error;
@@ -36,7 +34,7 @@ use crate::{
     subs_group::TxMsgType,
 };
 
-const CURRENT_INDEXER_VERSION: SchemaVersion = 7;
+const CURRENT_INDEXER_VERSION: SchemaVersion = 8;
 
 /// Params for setting up a [`ChronikIndexer`] instance.
 #[derive(Clone)]
@@ -45,18 +43,27 @@ pub struct ChronikIndexerParams {
     pub datadir_net: PathBuf,
     /// Whether to clear the DB before opening the DB, e.g. when reindexing.
     pub wipe_db: bool,
-    /// Function ptr to compress scripts.
-    pub fn_compress_script: FnCompressScript,
+    /// Whether to output Chronik performance statistics into a perf/ folder
+    pub enable_perf_stats: bool,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
 #[derive(Debug)]
 pub struct ChronikIndexer {
     db: Db,
+    mem_data: MemData,
     mempool: Mempool,
     script_group: ScriptGroup,
     avalanche: Avalanche,
     subs: RwLock<Subs>,
+    perf_path: Option<PathBuf>,
+}
+
+/// Access to the bitcoind node.
+#[derive(Debug)]
+pub struct Node {
+    /// FFI bridge to the node.
+    pub bridge: cxx::UniquePtr<ffi::ChronikBridge>,
 }
 
 /// Block to be indexed by Chronik.
@@ -77,7 +84,7 @@ pub struct ChronikBlock {
 pub enum ChronikIndexerError {
     /// Failed creating the folder for the indexes
     #[error("Failed creating path {0}")]
-    CreateIndexesDirFailed(PathBuf),
+    CreateDirFailed(PathBuf),
 
     /// Cannot rewind blocks that bitcoind doesn't have
     #[error(
@@ -136,10 +143,14 @@ impl ChronikIndexer {
     /// Setup the indexer with the given parameters, e.g. open the DB etc.
     pub fn setup(params: ChronikIndexerParams) -> Result<Self> {
         let indexes_path = params.datadir_net.join("indexes");
+        let perf_path = params.datadir_net.join("perf");
         if !indexes_path.exists() {
-            std::fs::create_dir(&indexes_path).wrap_err_with(|| {
-                CreateIndexesDirFailed(indexes_path.clone())
-            })?;
+            std::fs::create_dir(&indexes_path)
+                .wrap_err_with(|| CreateDirFailed(indexes_path.clone()))?;
+        }
+        if params.enable_perf_stats && !perf_path.exists() {
+            std::fs::create_dir(&perf_path)
+                .wrap_err_with(|| CreateDirFailed(perf_path.clone()))?;
         }
         let db_path = indexes_path.join("chronik");
         if params.wipe_db {
@@ -149,14 +160,15 @@ impl ChronikIndexer {
         log_chronik!("Opening Chronik at {}\n", db_path.to_string_lossy());
         let db = Db::open(&db_path)?;
         verify_schema_version(&db)?;
-        let script_group = ScriptGroup::new(params.fn_compress_script);
-        let mempool = Mempool::new(script_group.clone());
+        let mempool = Mempool::new(ScriptGroup);
         Ok(ChronikIndexer {
             db,
             mempool,
-            script_group: script_group.clone(),
+            mem_data: MemData::new(MemDataConf {}),
+            script_group: ScriptGroup,
             avalanche: Avalanche::default(),
-            subs: RwLock::new(Subs::new(script_group)),
+            subs: RwLock::new(Subs::new(ScriptGroup)),
+            perf_path: params.enable_perf_stats.then_some(perf_path),
         })
     }
 
@@ -178,8 +190,8 @@ impl ChronikIndexer {
         let node_tip_info = ffi::get_block_info(node_tip_index);
         let node_height = node_tip_info.height;
         let node_tip_hash = BlockHash::from(node_tip_info.hash);
-        let fork_height = match indexer_tip {
-            Some(tip) => {
+        let start_height = match indexer_tip {
+            Some(tip) if tip.hash != node_tip_hash => {
                 let indexer_tip_hash = tip.hash.clone();
                 let indexer_height = tip.height;
                 log!(
@@ -192,6 +204,7 @@ impl ChronikIndexer {
                     .map_err(|_| CannotRewindChronik(tip.hash.clone()))?;
                 self.rewind_indexer(bridge, indexer_tip_index, &tip)?
             }
+            Some(tip) => tip.height,
             None => {
                 log!(
                     "Chronik database empty, syncing to block {node_tip_hash} \
@@ -201,7 +214,11 @@ impl ChronikIndexer {
             }
         };
         let tip_height = node_tip_info.height;
-        for height in fork_height + 1..=tip_height {
+        for height in start_height + 1..=tip_height {
+            if ffi::shutdown_requested() {
+                log!("Stopped re-sync adding blocks\n");
+                return Ok(());
+            }
             let block_index = ffi::get_block_ancestor(node_tip_index, height)?;
             let ffi_block = bridge.load_block(block_index)?;
             let ffi_block = expect_unique_ptr("load_block", &ffi_block);
@@ -222,6 +239,11 @@ impl ChronikIndexer {
             "Chronik completed re-syncing with the node, both are now at \
              block {node_tip_hash} at height {node_height}.\n"
         );
+        if let Some(perf_path) = &self.perf_path {
+            let mut resync_stats =
+                std::fs::File::create(perf_path.join("resync_stats.txt"))?;
+            write!(&mut resync_stats, "{:#.3?}", self.mem_data.stats())?;
+        }
         Ok(())
     }
 
@@ -245,6 +267,11 @@ impl ChronikIndexer {
         );
         log!("Reverting Chronik blocks {revert_height} to {indexer_height}.\n");
         for height in (revert_height..indexer_height).rev() {
+            if ffi::shutdown_requested() {
+                log!("Stopped re-sync rewinding blocks\n");
+                // return MAX here so we don't add any blocks
+                return Ok(BlockHeight::MAX);
+            }
             let db_block = BlockReader::new(&self.db)?
                 .by_height(height)?
                 .ok_or(BlocksBelowMissing {
@@ -301,18 +328,35 @@ impl ChronikIndexer {
             ScriptUtxoWriter::new(&self.db, self.script_group.clone())?;
         let spent_by_writer = SpentByWriter::new(&self.db)?;
         block_writer.insert(&mut batch, &block.db_block)?;
-        let first_tx_num = tx_writer.insert(&mut batch, &block.block_txs)?;
+        let first_tx_num = tx_writer.insert(
+            &mut batch,
+            &block.block_txs,
+            &mut self.mem_data.txs,
+        )?;
         let index_txs =
             prepare_indexed_txs(&self.db, first_tx_num, &block.txs)?;
         block_stats_writer
             .insert(&mut batch, height, block.size, &index_txs)?;
-        script_history_writer.insert(&mut batch, &index_txs)?;
-        script_utxo_writer.insert(&mut batch, &index_txs)?;
-        spent_by_writer.insert(&mut batch, &index_txs)?;
+        script_history_writer.insert(
+            &mut batch,
+            &index_txs,
+            &mut self.mem_data.script_history,
+        )?;
+        script_utxo_writer.insert(
+            &mut batch,
+            &index_txs,
+            &mut self.mem_data.script_utxos,
+        )?;
+        spent_by_writer.insert(
+            &mut batch,
+            &index_txs,
+            &mut self.mem_data.spent_by,
+        )?;
         self.db.write_batch(batch)?;
         for tx in &block.block_txs.txs {
             self.mempool.remove_mined(&tx.txid)?;
         }
+        merge::check_for_errors()?;
         let subs = self.subs.get_mut();
         subs.broadcast_block_msg(BlockMsg {
             msg_type: BlockMsgType::Connected,
@@ -340,13 +384,29 @@ impl ChronikIndexer {
             ScriptUtxoWriter::new(&self.db, self.script_group.clone())?;
         let spent_by_writer = SpentByWriter::new(&self.db)?;
         block_writer.delete(&mut batch, &block.db_block)?;
-        let first_tx_num = tx_writer.delete(&mut batch, &block.block_txs)?;
+        let first_tx_num = tx_writer.delete(
+            &mut batch,
+            &block.block_txs,
+            &mut self.mem_data.txs,
+        )?;
         let index_txs =
             prepare_indexed_txs(&self.db, first_tx_num, &block.txs)?;
         block_stats_writer.delete(&mut batch, block.db_block.height);
-        script_history_writer.delete(&mut batch, &index_txs)?;
-        script_utxo_writer.delete(&mut batch, &index_txs)?;
-        spent_by_writer.delete(&mut batch, &index_txs)?;
+        script_history_writer.delete(
+            &mut batch,
+            &index_txs,
+            &mut self.mem_data.script_history,
+        )?;
+        script_utxo_writer.delete(
+            &mut batch,
+            &index_txs,
+            &mut self.mem_data.script_utxos,
+        )?;
+        spent_by_writer.delete(
+            &mut batch,
+            &index_txs,
+            &mut self.mem_data.spent_by,
+        )?;
         self.avalanche.disconnect_block(block.db_block.height)?;
         self.db.write_batch(batch)?;
         let subs = self.subs.get_mut();
@@ -519,7 +579,6 @@ mod tests {
     use bitcoinsuite_core::block::BlockHash;
     use chronik_db::{
         db::{Db, WriteBatch, CF_META},
-        groups::prefix_mock_compress,
         io::{BlockReader, BlockTxs, DbBlock, MetadataReader, MetadataWriter},
     };
     use pretty_assertions::assert_eq;
@@ -536,16 +595,14 @@ mod tests {
         let params = ChronikIndexerParams {
             datadir_net: datadir_net.clone(),
             wipe_db: false,
-            fn_compress_script: prefix_mock_compress,
+            enable_perf_stats: false,
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
             ChronikIndexer::setup(params.clone())
                 .unwrap_err()
                 .downcast::<ChronikIndexerError>()?,
-            ChronikIndexerError::CreateIndexesDirFailed(
-                datadir_net.join("indexes"),
-            ),
+            ChronikIndexerError::CreateDirFailed(datadir_net.join("indexes")),
         );
 
         // create regtest folder, setup will work now
@@ -605,7 +662,7 @@ mod tests {
         let params = ChronikIndexerParams {
             datadir_net: dir.path().to_path_buf(),
             wipe_db: false,
-            fn_compress_script: prefix_mock_compress,
+            enable_perf_stats: false,
         };
 
         // Setting up DB first time sets the schema version

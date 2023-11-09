@@ -4,6 +4,7 @@
 
 'use strict';
 module.exports = {
+    xecSendDisplayCount: 12,
     chronik: 'https://chronik.fabien.cash', // URL of chronik instance
     blockExplorer: 'https://explorer.e.cash',
     priceApi: {
@@ -22,53 +23,50 @@ module.exports = {
         parse_mode: 'HTML',
         disable_web_page_preview: true,
     },
-    knownMiners: [
-        {
-            coinbaseScript: '566961425443',
-            miner: 'ViaBTC',
-        },
-        {
-            coinbaseScript: '4d696e696e672d4475746368',
-            miner: 'Mining-Dutch',
-        },
-    ],
-    opReturn: {
-        opReturnPrefix: '6a',
-        opReturnAppPrefixLength: '04',
-        opPushDataOne: '4c',
-        appPrefixes: {
-            '00746162': 'Cashtab Msg',
-            '2e786563': 'Alias',
-        },
-        memo: {
-            'prefix': '026d',
-            'app': 'memo',
-            '01': 'Set name',
-            '02': 'Post memo',
-            '03': 'Reply to memo',
-            '04': 'Like / tip memo',
-            '05': 'Set profile text',
-            '06': 'Follow user',
-            '07': 'Unfollow user',
-            '0a': 'Set profile picture',
-            '0b': 'Repost memo',
-            '0c': 'Post topic message',
-            '0d': 'Topic follow',
-            '0e': 'Topic unfollow',
-            '10': 'Create poll',
-            '13': 'Add poll option',
-            '14': 'Poll vote',
-            '16': 'Mute user',
-            '17': 'Unmute user',
-            '24': 'Send money',
-            '30': 'Sell tokens Spec',
-            '31': 'Token buy offer Spec',
-            '32': 'Attach token sale signature Spec',
-            '35': 'Pin token post',
-            '20': 'Link request',
-            '21': 'Link accept',
-            '22': 'Link revoke',
-            '26': 'Set address alias',
-        },
+    whaleSats: {
+        // 20 billion xec
+        bigWhale: 2000000000000,
+        // 10 billion xec
+        modestWhale: 1000000000000,
+        // 5 billion xec
+        shark: 500000000000,
+        // 1 billion xec
+        swordfish: 100000000000,
+        // 700 million xec
+        barracuda: 70000000000,
+        // 500 million xec
+        octopus: 50000000000,
+        // 250 million xec
+        piranha: 25000000000,
+        // 100 million xec
+        crab: 10000000000,
+        // anything under 100 million xec
+        shrimp: 0,
+    },
+    emojis: {
+        alias: '👾',
+        block: '📦',
+        xecSend: '💸',
+        arrowRight: '➡️',
+        tokenBurn: '🔥',
+        tokenGenesis: '🧪',
+        tokenSend: '🎟',
+        fusion: '⚛️',
+        cashtabMsg: '🖋',
+        cashtabEncrypted: '🔏',
+        swap: '🤳',
+        airdrop: '🪂',
+        unknown: '❓',
+        memo: '🗞',
+        bigWhale: '🐋',
+        modestWhale: '🐳',
+        shark: '🦈',
+        swordfish: '🐬',
+        barracuda: '🐠',
+        octopus: '🐙',
+        piranha: '🐡',
+        crab: '🦀',
+        // Most addresses seen by the app are shrimp, so use empty string
+        shrimp: '',
     },
 };

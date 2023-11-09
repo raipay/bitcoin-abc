@@ -1,4 +1,3 @@
-import { currency } from 'components/Common/Ticker';
 import {
     isValidXecAddress,
     isValidEtokenAddress,
@@ -10,6 +9,8 @@ import cashaddr from 'ecashaddrjs';
 import bs58 from 'bs58';
 import * as slpMdm from 'slp-mdm';
 import * as utxolib from '@bitgo/utxo-lib';
+import { opReturn as opreturnConfig } from 'config/opreturn';
+import appConfig from 'config/app';
 
 export const getMessageByteSize = (
     msgInputStr,
@@ -47,61 +48,6 @@ export const getMessageByteSize = (
     const msgInputByteSize = opReturnMsg.length / 2; // calculate the byte size
 
     return msgInputByteSize;
-};
-
-export const getAliasByteSize = aliasInputStr => {
-    if (!aliasInputStr || aliasInputStr.trim() === '') {
-        return 0;
-    }
-
-    // generate the OP_RETURN script
-    const opReturnData = generateOpReturnScript(
-        aliasInputStr,
-        false, // encryption use
-        false, // airdrop use
-        null, // airdrop use
-        null, // encrypted use
-        true, // alias registration flag
-    );
-    // extract the alias input from the OP_RETURN script and check the backend size
-    const hexString = opReturnData.toString('hex'); // convert to hex
-    const opReturnAlias = parseOpReturn(hexString)[1]; // extract the alias
-    const aliasInputByteSize = opReturnAlias.length / 2; // calculate the byte size
-
-    return aliasInputByteSize;
-};
-
-export const getAliasRegistrationFee = aliasInputStr => {
-    let registrationFee;
-    let fee = currency.aliasSettings.aliasRegistrationFeeInSats;
-    const aliasByteCount = getAliasByteSize(aliasInputStr);
-    switch (aliasByteCount) {
-        case 1:
-            registrationFee = fee.oneByte;
-            break;
-        case 2:
-            registrationFee = fee.twoByte;
-            break;
-        case 3:
-            registrationFee = fee.threeByte;
-            break;
-        case 4:
-            registrationFee = fee.fourByte;
-            break;
-        case 5:
-            registrationFee = fee.fiveByte;
-            break;
-        case 6:
-            registrationFee = fee.sixByte;
-            break;
-        case 7:
-            registrationFee = fee.sevenByte;
-            break;
-        default:
-            registrationFee = fee.eightByte;
-            break;
-    }
-    return registrationFee;
 };
 
 // function is based on BCH-JS' generateBurnOpReturn() however it's been trimmed down for Cashtab use
@@ -296,7 +242,7 @@ export const getCashtabByteCount = (p2pkhInputCount, p2pkhOutputCount) => {
 export const calcFee = (
     utxos,
     p2pkhOutputNumber = 2,
-    satoshisPerByte = currency.defaultFee,
+    satoshisPerByte = appConfig.defaultFee,
     opReturnByteCount = 0,
 ) => {
     const byteCount = getCashtabByteCount(utxos.length, p2pkhOutputNumber);
@@ -350,7 +296,7 @@ export const generateTokenTxOutput = (
         // add XEC dust output as fee for genesis, send or burn token output
         txBuilder.addOutput(
             cashaddr.toLegacy(destinationAddress),
-            parseInt(currency.etokenSats),
+            parseInt(appConfig.etokenSats),
         );
 
         // Return any token change back to the sender for send and burn txs
@@ -361,12 +307,12 @@ export const generateTokenTxOutput = (
             // add XEC dust output as fee
             txBuilder.addOutput(
                 cashaddr.toLegacy(tokenUtxosBeingSpent[0].address), // etoken address
-                parseInt(currency.etokenSats),
+                parseInt(appConfig.etokenSats),
             );
         }
 
         // Send xec change to own address
-        if (remainderXecValue.gte(new BigNumber(currency.dustSats))) {
+        if (remainderXecValue.gte(new BigNumber(appConfig.dustSats))) {
             txBuilder.addOutput(
                 cashaddr.toLegacy(legacyCashOriginAddress),
                 parseInt(remainderXecValue),
@@ -488,10 +434,10 @@ export const generateTokenTxInput = (
             remainderXecValue =
                 tokenAction === 'GENESIS'
                     ? totalXecInputUtxoValue
-                          .minus(new BigNumber(currency.etokenSats))
+                          .minus(new BigNumber(appConfig.etokenSats))
                           .minus(new BigNumber(txFee))
                     : totalXecInputUtxoValue
-                          .minus(new BigNumber(currency.etokenSats * 2)) // one for token send/burn output, one for token change
+                          .minus(new BigNumber(appConfig.etokenSats * 2)) // one for token send/burn output, one for token change
                           .minus(new BigNumber(txFee));
 
             if (remainderXecValue.gte(0)) {
@@ -587,72 +533,20 @@ export const getChangeAddressFromInputUtxos = (inputUtxos, wallet) => {
     return changeAddress;
 };
 
-/*
- * Parse the total value of a send XEC tx and checks whether it is more than dust
- * One to many: isOneToMany is true, singleSendValue is null
- * One to one: isOneToMany is false, destinationAddressAndValueArray is null
- * Returns the aggregate send value in BigNumber format
+/**
+ * Get the total XEC amount sent in a one-to-many XEC tx
+ * @param {array} destinationAddressAndValueArray
+ * Array constructed by user input of addresses and values
+ * e.g. [
+ *  "<address>, <value>",
+ *   "<address>, <value>"
+ *  ]
+ * @returns {number} total value of XEC
  */
-export const parseXecSendValue = (
-    isOneToMany,
-    singleSendValue,
-    destinationAddressAndValueArray,
-) => {
-    let value = new BigNumber(0);
-
-    try {
-        if (isOneToMany) {
-            // this is a one to many XEC transaction
-            if (
-                !destinationAddressAndValueArray ||
-                !destinationAddressAndValueArray.length
-            ) {
-                throw new Error('Invalid destinationAddressAndValueArray');
-            }
-            const arrayLength = destinationAddressAndValueArray.length;
-            for (let i = 0; i < arrayLength; i++) {
-                // add the total value being sent in this array of recipients
-                // each array row is: 'eCash address, send value'
-                value = BigNumber.sum(
-                    value,
-                    new BigNumber(
-                        destinationAddressAndValueArray[i].split(',')[1],
-                    ),
-                );
-            }
-        } else {
-            // this is a one to one XEC transaction then check singleSendValue
-            // note: one to many transactions won't be sending a singleSendValue param
-
-            if (!singleSendValue) {
-                throw new Error('Invalid singleSendValue');
-            }
-
-            value = new BigNumber(singleSendValue);
-        }
-        // If user is attempting to send an aggregate value that is less than minimum accepted by the backend
-        if (
-            value.lt(
-                new BigNumber(fromSatoshisToXec(currency.dustSats).toString()),
-            )
-        ) {
-            // Throw the same error given by the backend attempting to broadcast such a tx
-            throw new Error('dust');
-        }
-    } catch (err) {
-        console.log('Error in parseXecSendValue: ' + err);
-        throw err;
-    }
-    return value;
-};
-
-export const encodeOpReturnScript = scriptChunks => {
-    // reference https://github.com/Permissionless-Software-Foundation/bch-js/blob/master/src/script.js#L153
-    const arr = [];
-    scriptChunks.forEach(chunk => {
-        arr.push(chunk);
-    });
-    return utxolib.script.compile(arr);
+export const sumOneToManyXec = destinationAddressAndValueArray => {
+    return destinationAddressAndValueArray.reduce((prev, curr) => {
+        return parseFloat(prev) + parseFloat(curr.split(',')[1]);
+    }, 0);
 };
 
 /*
@@ -665,11 +559,11 @@ export const generateAliasOpReturnScript = (alias, address) => {
     // utxolib.script.compile(script) will not add pushdata bytes for raw data
 
     // Initialize script array with OP_RETURN byte (6a) as rawdata (i.e. you want compiled result of 6a, not 016a)
-    let script = [currency.opReturn.opReturnPrefixDec];
+    let script = [opreturnConfig.opReturnPrefixDec];
 
     // Push alias protocol identifier
     script.push(
-        Buffer.from(currency.opReturn.appPrefixesHex.aliasRegistration, 'hex'), // '.xec'
+        Buffer.from(opreturnConfig.appPrefixesHex.aliasRegistration, 'hex'), // '.xec'
     );
 
     // Push alias protocol tx version to stack
@@ -718,10 +612,10 @@ export const generateOpReturnScript = (
         throw new Error('Invalid OP RETURN script input');
     }
 
-    // Note: script.push(Buffer.from(currency.opReturn.opReturnPrefixHex, 'hex')); actually evaluates to '016a'
+    // Note: script.push(Buffer.from(opreturnConfig.opReturnPrefixHex, 'hex')); actually evaluates to '016a'
     // instead of keeping the hex string intact. This behavour is specific to the initial script array element.
     // To get around this, the bch-js approach of directly using the opReturn prefix in decimal form for the initial entry is used here.
-    let script = [currency.opReturn.opReturnPrefixDec]; // initialize script with the OP_RETURN op code (6a) in decimal form (106)
+    let script = [opreturnConfig.opReturnPrefixDec]; // initialize script with the OP_RETURN op code (6a) in decimal form (106)
 
     try {
         if (encryptionFlag) {
@@ -730,7 +624,7 @@ export const generateOpReturnScript = (
             // add the encrypted cashtab messaging prefix and encrypted msg to script
             script.push(
                 Buffer.from(
-                    currency.opReturn.appPrefixesHex.cashtabEncrypted,
+                    opreturnConfig.appPrefixesHex.cashtabEncrypted,
                     'hex',
                 ), // 65746162
             );
@@ -744,10 +638,7 @@ export const generateOpReturnScript = (
                 // if this was routed from the airdrop component
                 // add the airdrop prefix to script
                 script.push(
-                    Buffer.from(
-                        currency.opReturn.appPrefixesHex.airdrop,
-                        'hex',
-                    ), // drop
+                    Buffer.from(opreturnConfig.appPrefixesHex.airdrop, 'hex'), // drop
                 );
                 // add the airdrop token ID to script
                 script.push(Buffer.from(airdropTokenId, 'hex'));
@@ -756,17 +647,14 @@ export const generateOpReturnScript = (
             if (optionalAliasRegistrationFlag) {
                 script.push(
                     Buffer.from(
-                        currency.opReturn.appPrefixesHex.aliasRegistration,
+                        opreturnConfig.appPrefixesHex.aliasRegistration,
                         'hex',
                     ), // '.xec'
                 );
             } else {
                 // add the cashtab prefix to script
                 script.push(
-                    Buffer.from(
-                        currency.opReturn.appPrefixesHex.cashtab,
-                        'hex',
-                    ), // 00746162
+                    Buffer.from(opreturnConfig.appPrefixesHex.cashtab, 'hex'), // 00746162
                 );
             }
             // add the un-encrypted message to script if supplied
@@ -779,7 +667,7 @@ export const generateOpReturnScript = (
         throw err;
     }
 
-    return encodeOpReturnScript(script);
+    return utxolib.script.compile(script);
 };
 
 export const generateTxOutput = (
@@ -838,7 +726,7 @@ export const generateTxOutput = (
         }
 
         // if a remainder exists, return to change address as the final output
-        if (remainder.gte(new BigNumber(currency.dustSats))) {
+        if (remainder.gte(new BigNumber(appConfig.dustSats))) {
             txBuilder.addOutput(
                 cashaddr.toLegacy(changeAddress),
                 parseInt(remainder),
@@ -876,7 +764,7 @@ export function parseOpReturn(hexStr) {
     if (
         !hexStr ||
         typeof hexStr !== 'string' ||
-        hexStr.substring(0, 2) !== currency.opReturn.opReturnPrefixHex
+        hexStr.substring(0, 2) !== opreturnConfig.opReturnPrefixHex
     ) {
         return false;
     }
@@ -897,7 +785,7 @@ export function parseOpReturn(hexStr) {
         // part 1: check the preceding byte value for the subsequent message
         let byteValue = hexStr.substring(0, 2);
         let msgByteSize = 0;
-        if (byteValue === currency.opReturn.opPushDataOne) {
+        if (byteValue === opreturnConfig.opPushDataOne) {
             // if this byte is 4c then the next byte is the message byte size - retrieve the message byte size only
             msgByteSize = parseInt(hexStr.substring(2, 4), 16); // hex base 16 to decimal base 10
             hexStr = hexStr.slice(4); // strip the 4c + message byte size info
@@ -910,30 +798,28 @@ export function parseOpReturn(hexStr) {
         // part 2: parse the subsequent message based on bytesize
         const msgCharLength = 2 * msgByteSize;
         message = hexStr.substring(0, msgCharLength);
-        if (i === 0 && message === currency.opReturn.appPrefixesHex.eToken) {
+        if (i === 0 && message === opreturnConfig.appPrefixesHex.eToken) {
             // add the extracted eToken prefix to array then exit loop
-            resultArray[i] = currency.opReturn.appPrefixesHex.eToken;
+            resultArray[i] = opreturnConfig.appPrefixesHex.eToken;
             break;
         } else if (
             i === 0 &&
-            message === currency.opReturn.appPrefixesHex.cashtab
+            message === opreturnConfig.appPrefixesHex.cashtab
         ) {
             // add the extracted Cashtab prefix to array
-            resultArray[i] = currency.opReturn.appPrefixesHex.cashtab;
+            resultArray[i] = opreturnConfig.appPrefixesHex.cashtab;
         } else if (
             i === 0 &&
-            message === currency.opReturn.appPrefixesHex.cashtabEncrypted
+            message === opreturnConfig.appPrefixesHex.cashtabEncrypted
         ) {
             // add the Cashtab encryption prefix to array
-            resultArray[i] = currency.opReturn.appPrefixesHex.cashtabEncrypted;
+            resultArray[i] = opreturnConfig.appPrefixesHex.cashtabEncrypted;
         } else if (
             i === 0 &&
-            message === currency.opReturn.appPrefixesHex.airdrop
+            message === opreturnConfig.appPrefixesHex.airdrop
         ) {
             // add the airdrop prefix to array
-            resultArray[i] = currency.opReturn.appPrefixesHex.airdrop;
-            // TODO: if i === 1 and message === currency.opReturn.appPrefixesHex.aliasRegistration
-            // flag accordingly
+            resultArray[i] = opreturnConfig.appPrefixesHex.airdrop;
         } else {
             // this is either an external message or a subsequent cashtab message loop to extract the message
             resultArray[i] = message;
@@ -948,10 +834,10 @@ export function parseOpReturn(hexStr) {
 
 export const fromLegacyDecimals = (
     amount,
-    cashDecimals = currency.cashDecimals,
+    cashDecimals = appConfig.cashDecimals,
 ) => {
     // Input 0.00000546 BCH
-    // Output 5.46 XEC or 0.00000546 BCH, depending on currency.cashDecimals
+    // Output 5.46 XEC or 0.00000546 BCH, depending on appConfig.cashDecimals
     const amountBig = new BigNumber(amount);
     const conversionFactor = new BigNumber(10 ** (8 - cashDecimals));
     const amountSmallestDenomination = amountBig
@@ -962,7 +848,7 @@ export const fromLegacyDecimals = (
 
 export const fromSatoshisToXec = (
     amount,
-    cashDecimals = currency.cashDecimals,
+    cashDecimals = appConfig.cashDecimals,
 ) => {
     const amountBig = new BigNumber(amount);
     const multiplier = new BigNumber(10 ** (-1 * cashDecimals));
@@ -972,7 +858,7 @@ export const fromSatoshisToXec = (
 
 export const fromXecToSatoshis = (
     sendAmount,
-    cashDecimals = currency.cashDecimals,
+    cashDecimals = appConfig.cashDecimals,
 ) => {
     // Replace the BCH.toSatoshi method with an equivalent function that works for arbitrary decimal places
     // Example, for an 8 decimal place currency like Bitcoin
@@ -1042,7 +928,7 @@ export const loadStoredWallet = walletStateFromStorage => {
     }
 
     // Also confirm balance is correct
-    // Necessary step in case currency.decimals changed since last startup
+    // Necessary step in case appConfig.decimals changed since last startup
     let nonSlpUtxosToParseForBalance;
     let balancesRebased;
     if (keysInLiveWalletState.length !== 0) {
@@ -1083,6 +969,11 @@ export const isValidStoredWallet = walletStateFromStorage => {
     return (
         typeof walletStateFromStorage === 'object' &&
         'state' in walletStateFromStorage &&
+        'mnemonic' in walletStateFromStorage &&
+        'name' in walletStateFromStorage &&
+        'Path245' in walletStateFromStorage &&
+        'Path145' in walletStateFromStorage &&
+        'Path1899' in walletStateFromStorage &&
         typeof walletStateFromStorage.state === 'object' &&
         'balances' in walletStateFromStorage.state &&
         !('hydratedUtxoDetails' in walletStateFromStorage.state) &&
@@ -1407,3 +1298,42 @@ export const outputScriptToAddress = outputScript => {
 
     return ecashAddress;
 };
+
+export function parseAddressForParams(addressString) {
+    // Build return obj
+    const addressInfo = {
+        address: '',
+        queryString: null,
+        amount: null,
+    };
+    // Parse address string for parameters
+    const paramCheck = addressString.split('?');
+
+    let cleanAddress = paramCheck[0];
+    addressInfo.address = cleanAddress;
+
+    // Check for parameters
+    // only the amount param is currently supported
+    let queryString = null;
+    let amount = null;
+    if (paramCheck.length > 1) {
+        queryString = paramCheck[1];
+        addressInfo.queryString = queryString;
+
+        const addrParams = new URLSearchParams(queryString);
+
+        if (addrParams.has('amount')) {
+            // Amount in XEC
+            try {
+                amount = new BigNumber(
+                    parseFloat(addrParams.get('amount')),
+                ).toString();
+            } catch (err) {
+                amount = null;
+            }
+        }
+    }
+
+    addressInfo.amount = amount;
+    return addressInfo;
+}

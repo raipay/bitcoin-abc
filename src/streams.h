@@ -7,6 +7,7 @@
 #define BITCOIN_STREAMS_H
 
 #include <serialize.h>
+#include <span.h>
 #include <support/allocators/zeroafterfree.h>
 
 #include <algorithm>
@@ -16,6 +17,7 @@
 #include <cstring>
 #include <ios>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -196,9 +198,9 @@ public:
  */
 class CDataStream {
 protected:
-    typedef CSerializeData vector_type;
+    using vector_type = SerializeData;
     vector_type vch;
-    unsigned int nReadPos;
+    unsigned int nReadPos{0};
 
     int nType;
     int nVersion;
@@ -214,58 +216,22 @@ public:
     typedef vector_type::const_iterator const_iterator;
     typedef vector_type::reverse_iterator reverse_iterator;
 
-    explicit CDataStream(int nTypeIn, int nVersionIn) {
-        Init(nTypeIn, nVersionIn);
-    }
+    explicit CDataStream(int nTypeIn, int nVersionIn)
+        : nType{nTypeIn}, nVersion{nVersionIn} {}
 
-    CDataStream(const_iterator pbegin, const_iterator pend, int nTypeIn,
-                int nVersionIn)
-        : vch(pbegin, pend) {
-        Init(nTypeIn, nVersionIn);
-    }
-
-    CDataStream(const char *pbegin, const char *pend, int nTypeIn,
-                int nVersionIn)
-        : vch(pbegin, pend) {
-        Init(nTypeIn, nVersionIn);
-    }
-
-    CDataStream(const vector_type &vchIn, int nTypeIn, int nVersionIn)
-        : vch(vchIn.begin(), vchIn.end()) {
-        Init(nTypeIn, nVersionIn);
-    }
-
-    CDataStream(const std::vector<char> &vchIn, int nTypeIn, int nVersionIn)
-        : vch(vchIn.begin(), vchIn.end()) {
-        Init(nTypeIn, nVersionIn);
-    }
-
-    CDataStream(const std::vector<uint8_t> &vchIn, int nTypeIn, int nVersionIn)
-        : vch(vchIn.begin(), vchIn.end()) {
-        Init(nTypeIn, nVersionIn);
-    }
+    explicit CDataStream(Span<const uint8_t> sp, int nTypeIn, int nVersionIn)
+        : vch(sp.data(), sp.data() + sp.size()), nType{nTypeIn},
+          nVersion{nVersionIn} {}
 
     template <typename... Args>
-    CDataStream(int nTypeIn, int nVersionIn, Args &&...args) {
-        Init(nTypeIn, nVersionIn);
+    CDataStream(int nTypeIn, int nVersionIn, Args &&...args)
+        : nType{nTypeIn}, nVersion{nVersionIn} {
         ::SerializeMany(*this, std::forward<Args>(args)...);
-    }
-
-    void Init(int nTypeIn, int nVersionIn) {
-        nReadPos = 0;
-        nType = nTypeIn;
-        nVersion = nVersionIn;
     }
 
     CDataStream &operator+=(const CDataStream &b) {
         vch.insert(vch.end(), b.begin(), b.end());
         return *this;
-    }
-
-    friend CDataStream operator+(const CDataStream &a, const CDataStream &b) {
-        CDataStream ret = a;
-        ret += b;
-        return (ret);
     }
 
     std::string str() const { return (std::string(begin(), end())); }
@@ -289,17 +255,15 @@ public:
         vch.clear();
         nReadPos = 0;
     }
-    iterator insert(iterator it, const char x = char()) {
-        return vch.insert(it, x);
-    }
-    void insert(iterator it, size_type n, const char x) {
+    iterator insert(iterator it, const uint8_t x) { return vch.insert(it, x); }
+    void insert(iterator it, size_type n, const uint8_t x) {
         vch.insert(it, n, x);
     }
     value_type *data() { return vch.data() + nReadPos; }
     const value_type *data() const { return vch.data() + nReadPos; }
 
-    void insert(iterator it, std::vector<char>::const_iterator first,
-                std::vector<char>::const_iterator last) {
+    void insert(iterator it, std::vector<uint8_t>::const_iterator first,
+                std::vector<uint8_t>::const_iterator last) {
         if (last == first) {
             return;
         }
@@ -365,12 +329,17 @@ public:
         nReadPos = 0;
     }
 
-    bool Rewind(size_type n) {
+    bool Rewind(std::optional<size_type> n = std::nullopt) {
+        // Total rewind if no size is passed
+        if (!n) {
+            nReadPos = 0;
+            return true;
+        }
         // Rewind by n characters if the buffer hasn't been compacted yet
-        if (n > nReadPos) {
+        if (*n > nReadPos) {
             return false;
         }
-        nReadPos -= n;
+        nReadPos -= *n;
         return true;
     }
 
@@ -446,11 +415,6 @@ public:
         // Unserialize from this stream
         ::Unserialize(*this, obj);
         return (*this);
-    }
-
-    void GetAndClear(CSerializeData &d) {
-        d.insert(d.end(), begin(), end());
-        clear();
     }
 
     /**
@@ -578,35 +542,31 @@ public:
  * you're returning the file pointer, return file.release(). If you need to
  * close the file early, use file.fclose() instead of fclose(file).
  */
-class CAutoFile {
-private:
-    const int nType;
-    const int nVersion;
-
+class AutoFile {
+protected:
     FILE *file;
 
 public:
-    CAutoFile(FILE *filenew, int nTypeIn, int nVersionIn)
-        : nType(nTypeIn), nVersion(nVersionIn) {
-        file = filenew;
-    }
+    explicit AutoFile(FILE *filenew) : file{filenew} {}
 
-    ~CAutoFile() { fclose(); }
+    ~AutoFile() { fclose(); }
 
     // Disallow copies
-    CAutoFile(const CAutoFile &) = delete;
-    CAutoFile &operator=(const CAutoFile &) = delete;
+    AutoFile(const AutoFile &) = delete;
+    AutoFile &operator=(const AutoFile &) = delete;
 
-    void fclose() {
+    int fclose() {
+        int retval{0};
         if (file) {
-            ::fclose(file);
+            retval = ::fclose(file);
             file = nullptr;
         }
+        return retval;
     }
 
     /**
      * Get wrapped FILE* with transfer of ownership.
-     * @note This will invalidate the CAutoFile object, and makes it the
+     * @note This will invalidate the AutoFile object, and makes it the
      * responsibility of the caller of this function to clean up the returned
      * FILE*.
      */
@@ -619,7 +579,7 @@ public:
     /**
      * Get wrapped FILE* without transfer of ownership.
      * @note Ownership of the FILE* will remain with this class. Use this only
-     * if the scope of the CAutoFile outlives use of the passed pointer.
+     * if the scope of the AutoFile outlives use of the passed pointer.
      */
     FILE *Get() const { return file; }
 
@@ -629,33 +589,30 @@ public:
     //
     // Stream subset
     //
-    int GetType() const { return nType; }
-    int GetVersion() const { return nVersion; }
-
     void read(char *pch, size_t nSize) {
         if (!file) {
             throw std::ios_base::failure(
-                "CAutoFile::read: file handle is nullptr");
+                "AutoFile::read: file handle is nullptr");
         }
         if (fread(pch, 1, nSize, file) != nSize) {
             throw std::ios_base::failure(feof(file)
-                                             ? "CAutoFile::read: end of file"
-                                             : "CAutoFile::read: fread failed");
+                                             ? "AutoFile::read: end of file"
+                                             : "AutoFile::read: fread failed");
         }
     }
 
     void ignore(size_t nSize) {
         if (!file) {
             throw std::ios_base::failure(
-                "CAutoFile::ignore: file handle is nullptr");
+                "AutoFile::ignore: file handle is nullptr");
         }
         uint8_t data[4096];
         while (nSize > 0) {
             size_t nNow = std::min<size_t>(nSize, sizeof(data));
             if (fread(data, 1, nNow, file) != nNow) {
                 throw std::ios_base::failure(
-                    feof(file) ? "CAutoFile::ignore: end of file"
-                               : "CAutoFile::read: fread failed");
+                    feof(file) ? "AutoFile::ignore: end of file"
+                               : "AutoFile::read: fread failed");
             }
             nSize -= nNow;
         }
@@ -664,12 +621,40 @@ public:
     void write(const char *pch, size_t nSize) {
         if (!file) {
             throw std::ios_base::failure(
-                "CAutoFile::write: file handle is nullptr");
+                "AutoFile::write: file handle is nullptr");
         }
         if (fwrite(pch, 1, nSize, file) != nSize) {
-            throw std::ios_base::failure("CAutoFile::write: write failed");
+            throw std::ios_base::failure("AutoFile::write: write failed");
         }
     }
+
+    template <typename T> AutoFile &operator<<(const T &obj) {
+        if (!file)
+            throw std::ios_base::failure(
+                "AutoFile::operator<<: file handle is nullptr");
+        ::Serialize(*this, obj);
+        return *this;
+    }
+
+    template <typename T> AutoFile &operator>>(T &&obj) {
+        if (!file)
+            throw std::ios_base::failure(
+                "AutoFile::operator>>: file handle is nullptr");
+        ::Unserialize(*this, obj);
+        return *this;
+    }
+};
+
+class CAutoFile : public AutoFile {
+private:
+    const int nType;
+    const int nVersion;
+
+public:
+    CAutoFile(FILE *filenew, int nTypeIn, int nVersionIn)
+        : AutoFile{filenew}, nType(nTypeIn), nVersion(nVersionIn) {}
+    int GetType() const { return nType; }
+    int GetVersion() const { return nVersion; }
 
     template <typename T> CAutoFile &operator<<(const T &obj) {
         // Serialize to this stream

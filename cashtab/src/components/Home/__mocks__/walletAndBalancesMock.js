@@ -1,12 +1,9 @@
 // @generated
 
 export const walletWithBalancesMock = {
+    refreshAliases: async refreshAliases => { return {registered: [], pending: []} },
     cashtabCache: {
         tokenInfoById: {},
-        aliasCache: {
-            aliases: [],
-            cachedAliasCount: 0,
-        },
     },
     wallet: {
         name: 'MigrationTestAlpha',
@@ -49,12 +46,9 @@ export const walletWithBalancesMock = {
 };
 
 export const walletWithoutBalancesMock = {
+    refreshAliases: async refreshAliases => { return {registered: [], pending: []} },
     cashtabCache: {
         tokenInfoById: {},
-        aliasCache: {
-            aliases: [],
-            cachedAliasCount: 0,
-        },
     },
     wallet: {
         name: 'MigrationTestAlpha',
@@ -97,12 +91,9 @@ export const walletWithoutBalancesMock = {
 };
 
 export const walletWithBalancesAndTokens = {
+    refreshAliases: async refreshAliases => { return {registered: [], pending: []} },
     cashtabCache: {
         tokenInfoById: {},
-        aliasCache: {
-            aliases: [],
-            cachedAliasCount: 0,
-        },
     },
     wallet: {
         name: 'MigrationTestAlpha',
@@ -177,12 +168,9 @@ export const walletWithBalancesAndTokens = {
 };
 
 export const walletWithBalancesAndTokensWithCorrectState = {
+    refreshAliases: async refreshAliases => { return {registered: [], pending: []} },
     cashtabCache: {
         tokenInfoById: {},
-        aliasCache: {
-            aliases: [],
-            cachedAliasCount: 0,
-        },
     },
     wallet: {
         name: 'MigrationTestAlpha',

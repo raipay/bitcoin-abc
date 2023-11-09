@@ -19,7 +19,7 @@ import {
     errorNotification,
 } from 'components/Common/Notifications';
 import { isMobile, isIOS, isSafari } from 'react-device-detect';
-import { currency, parseAddressForParams } from 'components/Common/Ticker.js';
+import { parseAddressForParams, sumOneToManyXec } from 'utils/cashMethods';
 import { Event } from 'utils/GoogleAnalytics';
 import {
     fiatToCrypto,
@@ -52,7 +52,12 @@ import ApiError from 'components/Common/ApiError';
 import { formatFiatBalance, formatBalance } from 'utils/formatting';
 import styled from 'styled-components';
 import WalletLabel from 'components/Common/WalletLabel.js';
-import { getAddressFromAlias } from 'utils/chronik';
+import { opReturn as opreturnConfig } from 'config/opreturn';
+import { explorer } from 'config/explorer';
+import { queryAliasServer } from 'utils/aliasUtils';
+import { supportedFiatCurrencies } from 'config/cashtabSettings';
+import appConfig from 'config/app';
+import aliasSettings from 'config/alias';
 
 const { TextArea } = Input;
 
@@ -151,8 +156,6 @@ const SendBCH = ({ passLoadingStatus }) => {
     // Modal settings
     const [isOneToManyXECSend, setIsOneToManyXECSend] = useState(false);
     const [opReturnMsg, setOpReturnMsg] = useState(false);
-    const [isEncryptedOptionalOpReturnMsg, setIsEncryptedOptionalOpReturnMsg] =
-        useState(false);
 
     // Get device window width
     // If this is less than 769, the page will open with QR scanner open
@@ -175,7 +178,7 @@ const SendBCH = ({ passLoadingStatus }) => {
     const [sendBchAmountError, setSendBchAmountError] = useState(false);
     const [isMsgError, setIsMsgError] = useState(false);
     const [aliasInputAddress, setAliasInputAddress] = useState(false);
-    const [selectedCurrency, setSelectedCurrency] = useState(currency.ticker);
+    const [selectedCurrency, setSelectedCurrency] = useState(appConfig.ticker);
 
     // Support cashtab button from web pages
     const [txInfoFromUrl, setTxInfoFromUrl] = useState(false);
@@ -183,7 +186,8 @@ const SendBCH = ({ passLoadingStatus }) => {
     // Show a confirmation modal on transactions created by populating form from web page button
     const [isModalVisible, setIsModalVisible] = useState(false);
 
-    // Airdrop transactions embed the additional tokenId (32 bytes), along with prefix (4 bytes) and two pushdata (2 bytes)// hence setting airdrop tx message limit to 38 bytes less than currency.opReturn.unencryptedMsgByteLimit
+    // Airdrop transactions embed the additional tokenId (32 bytes), along with prefix (4 bytes) and two pushdata (2 bytes)
+    // hence setting airdrop tx message limit to 38 bytes less than opreturnConfig.cashtabMsgByteLimit
     const pushDataByteCount = 1;
     const prefixByteCount = 4;
     const tokenIdByteCount = 32;
@@ -206,7 +210,7 @@ const SendBCH = ({ passLoadingStatus }) => {
     };
 
     const checkForConfirmationBeforeSendXec = () => {
-        if (txInfoFromUrl) {
+        if (txInfoFromUrl || queryStringText !== null) {
             setIsModalVisible(true);
         } else if (cashtabSettings.sendModal) {
             setIsModalVisible(cashtabSettings.sendModal);
@@ -243,7 +247,7 @@ const SendBCH = ({ passLoadingStatus }) => {
         if (location && location.state && location.state.replyAddress) {
             setFormData({
                 address: location.state.replyAddress,
-                value: `${fromSatoshisToXec(currency.dustSats).toString()}`,
+                value: `${fromSatoshisToXec(appConfig.dustSats).toString()}`,
             });
         }
 
@@ -329,7 +333,7 @@ const SendBCH = ({ passLoadingStatus }) => {
                 'too-long-mempool-chain, too many unconfirmed ancestors [limit: 50] (code 64)',
             )
         ) {
-            message = `The ${currency.ticker} you are trying to send has too many unconfirmed ancestors to send (limit 50). Sending will be possible after a block confirmation. Try again in about 10 minutes.`;
+            message = `The ${appConfig.ticker} you are trying to send has too many unconfirmed ancestors to send (limit 50). Sending will be possible after a block confirmation. Try again in about 10 minutes.`;
         } else {
             message =
                 errorObj.message || errorObj.error || JSON.stringify(errorObj);
@@ -370,7 +374,7 @@ const SendBCH = ({ passLoadingStatus }) => {
                     chronik,
                     wallet,
                     nonSlpUtxos,
-                    currency.defaultFee,
+                    appConfig.defaultFee,
                     opReturnMsg,
                     true, // indicate send mode is one to many
                     addressAndValueArray,
@@ -420,29 +424,18 @@ const SendBCH = ({ passLoadingStatus }) => {
                 bchValue = fiatToCrypto(value, fiatPrice);
             }
 
-            // encrypted message limit truncation
-            let optionalOpReturnMsg;
-            if (isEncryptedOptionalOpReturnMsg) {
-                optionalOpReturnMsg = opReturnMsg.substring(
-                    0,
-                    currency.opReturn.encryptedMsgByteLimit,
-                );
-            } else {
-                optionalOpReturnMsg = opReturnMsg;
-            }
-
             try {
                 const link = await sendXec(
                     chronik,
                     wallet,
                     nonSlpUtxos,
-                    currency.defaultFee,
-                    optionalOpReturnMsg,
+                    appConfig.defaultFee,
+                    opReturnMsg,
                     false, // sendToMany boolean flag
                     null, // address array not applicable for one to many tx
                     cleanAddress,
                     bchValue,
-                    isEncryptedOptionalOpReturnMsg,
+                    false,
                 );
                 sendXecNotification(link);
                 clearInputForms();
@@ -464,8 +457,7 @@ const SendBCH = ({ passLoadingStatus }) => {
         // validate address
         const isValid = isValidXecAddress(addressInfo.address);
 
-        // If query string,
-        // Show an alert that only amount and currency.ticker are supported
+        // Store query string in state (disable currency selection if loaded from query string)
         setQueryStringText(queryString);
 
         // Is this valid address?
@@ -473,7 +465,7 @@ const SendBCH = ({ passLoadingStatus }) => {
             error = `Invalid address`;
             // If valid address but token format
             if (isValidEtokenAddress(address)) {
-                error = `eToken addresses are not supported for ${currency.ticker} sends`;
+                error = `eToken addresses are not supported for ${appConfig.ticker} sends`;
             }
         }
 
@@ -487,19 +479,22 @@ const SendBCH = ({ passLoadingStatus }) => {
             // extract alias without the `.xec`
             const aliasName = address.slice(0, address.length - 4);
 
-            const aliasAddress = getAddressFromAlias(
-                aliasName,
-                cashtabCache.aliasCache.aliases,
-            );
-
-            if (!aliasAddress) {
-                // if not found in alias cache, display input error
-                error =
-                    'eCash Alias does not exist or yet to receive 1 confirmation';
+            // retrieve the alias details for `aliasName` from alias-server
+            let aliasDetails;
+            try {
+                aliasDetails = await queryAliasServer('alias', aliasName);
+                if (!aliasDetails.address) {
+                    error =
+                        'eCash Alias does not exist or yet to receive 1 confirmation';
+                    setAliasInputAddress(false);
+                } else {
+                    // Valid address response returned
+                    setAliasInputAddress(aliasDetails.address);
+                }
+            } catch (err) {
+                console.log(`handleAddressChange(): error retrieving alias`);
                 setAliasInputAddress(false);
-            } else {
-                // otherwise set parsed address to state for use in Send()
-                setAliasInputAddress(aliasAddress);
+                errorNotification(null, 'Error retrieving alias info');
             }
         }
 
@@ -508,7 +503,7 @@ const SendBCH = ({ passLoadingStatus }) => {
         // Set amount if it's in the query string
         if (amount !== null) {
             // Set currency to BCHA
-            setSelectedCurrency(currency.ticker);
+            setSelectedCurrency(appConfig.ticker);
 
             // Use this object to mimic user input and get validation for the value
             let amountObj = {
@@ -627,11 +622,8 @@ const SendBCH = ({ passLoadingStatus }) => {
 
         const maxSize =
             location && location.state && location.state.airdropTokenId
-                ? currency.opReturn.unencryptedMsgByteLimit -
-                  localAirdropTxAddedBytes
-                : isEncryptedOptionalOpReturnMsg
-                ? currency.opReturn.encryptedMsgByteLimit
-                : currency.opReturn.unencryptedMsgByteLimit;
+                ? opreturnConfig.cashtabMsgByteLimit - localAirdropTxAddedBytes
+                : opreturnConfig.cashtabMsgByteLimit;
         if (msgByteSize > maxSize) {
             msgError = `Message can not exceed ${maxSize} bytes`;
         }
@@ -643,15 +635,15 @@ const SendBCH = ({ passLoadingStatus }) => {
         // Clear amt error
         setSendBchAmountError(false);
         // Set currency to BCH
-        setSelectedCurrency(currency.ticker);
+        setSelectedCurrency(appConfig.ticker);
         try {
             const txFeeSats = calcFee(nonSlpUtxos);
 
-            const txFeeBch = txFeeSats / 10 ** currency.cashDecimals;
+            const txFeeBch = txFeeSats / 10 ** appConfig.cashDecimals;
             let value =
                 balances.totalBalance - txFeeBch >= 0
                     ? (balances.totalBalance - txFeeBch).toFixed(
-                          currency.cashDecimals,
+                          appConfig.cashDecimals,
                       )
                     : 0;
 
@@ -670,7 +662,7 @@ const SendBCH = ({ passLoadingStatus }) => {
     // Display price in USD below input field for send amount, if it can be calculated
     let fiatPriceString = '';
     if (fiatPrice !== null && !isNaN(formData.value)) {
-        if (selectedCurrency === currency.ticker) {
+        if (selectedCurrency === appConfig.ticker) {
             // calculate conversion to fiatPrice
             fiatPriceString = `${(fiatPrice * Number(formData.value)).toFixed(
                 2,
@@ -686,7 +678,7 @@ const SendBCH = ({ passLoadingStatus }) => {
             fiatPriceString = `${
                 cashtabSettings
                     ? `${
-                          currency.fiatCurrencies[cashtabSettings.fiatCurrency]
+                          supportedFiatCurrencies[cashtabSettings.fiatCurrency]
                               .symbol
                       } `
                     : '$ '
@@ -703,7 +695,7 @@ const SendBCH = ({ passLoadingStatus }) => {
                           userLocale,
                       )
                     : formatFiatBalance(0, userLocale)
-            } ${currency.ticker}`;
+            } ${appConfig.ticker}`;
         }
     }
 
@@ -718,11 +710,30 @@ const SendBCH = ({ passLoadingStatus }) => {
                 onCancel={handleCancel}
             >
                 <p>
-                    {isOneToManyXECSend
-                        ? `are you sure you want to send the following One to Many transaction?
-                    ${formData.address}`
-                        : `Are you sure you want to send ${formData.value}${' '}
-                  ${selectedCurrency} to ${formData.address}?`}
+                    {isOneToManyXECSend ? (
+                        <>
+                            Are you sure you want to send{' '}
+                            {sumOneToManyXec(
+                                formData.address.split('\n'),
+                            ).toLocaleString(userLocale, {
+                                maximumFractionDigits: 2,
+                            })}{' '}
+                            XEC in the following transaction?
+                            <br />
+                            <br />
+                            {formData.address}
+                        </>
+                    ) : (
+                        `Are you sure you want to send ${formData.value}${' '}
+                  ${selectedCurrency} to ${
+                            queryStringText === null
+                                ? formData.address
+                                : formData.address.slice(
+                                      0,
+                                      formData.address.indexOf('?'),
+                                  )
+                        }?`
+                    )}
                 </p>
             </Modal>
             <WalletInfoCtn>
@@ -733,7 +744,7 @@ const SendBCH = ({ passLoadingStatus }) => {
                 ></WalletLabel>
                 {!balances.totalBalance ? (
                     <ZeroBalanceHeader>
-                        You currently have 0 {currency.ticker}
+                        You currently have 0 {appConfig.ticker}
                         <br />
                         Deposit some funds to use this feature
                     </ZeroBalanceHeader>
@@ -741,7 +752,7 @@ const SendBCH = ({ passLoadingStatus }) => {
                     <>
                         <BalanceHeader
                             balance={balances.totalBalance}
-                            ticker={currency.ticker}
+                            ticker={appConfig.ticker}
                             cashtabSettings={cashtabSettings}
                         />
 
@@ -774,9 +785,8 @@ const SendBCH = ({ passLoadingStatus }) => {
                                             setIsOneToManyXECSend(
                                                 !isOneToManyXECSend,
                                             );
-                                            setIsEncryptedOptionalOpReturnMsg(
-                                                false,
-                                            );
+                                            // Do not persist multisend input to single send and vice versa
+                                            clearInputForms();
                                         }}
                                         style={{
                                             marginBottom: '7px',
@@ -815,10 +825,10 @@ const SendBCH = ({ passLoadingStatus }) => {
                                                 })
                                             }
                                             inputProps={{
-                                                placeholder: currency
-                                                    .aliasSettings.aliasEnabled
-                                                    ? `Address or Alias`
-                                                    : `Address`,
+                                                placeholder:
+                                                    aliasSettings.aliasEnabled
+                                                        ? `Address or Alias`
+                                                        : `Address`,
                                                 name: 'address',
                                                 onChange: e =>
                                                     handleAddressChange(e),
@@ -829,7 +839,7 @@ const SendBCH = ({ passLoadingStatus }) => {
                                         <AliasAddressPreviewLabel>
                                             <TxLink
                                                 key={aliasInputAddress}
-                                                href={`${currency.blockExplorerUrl}/address/${aliasInputAddress}`}
+                                                href={`${explorer.blockExplorerUrl}/address/${aliasInputAddress}`}
                                                 target="_blank"
                                                 rel="noreferrer"
                                             >
@@ -889,7 +899,7 @@ const SendBCH = ({ passLoadingStatus }) => {
                                         <AlertMsg>
                                             Error fetching fiat price. Setting
                                             send by{' '}
-                                            {currency.fiatCurrencies[
+                                            {supportedFiatCurrencies[
                                                 cashtabSettings.fiatCurrency
                                             ].slug.toUpperCase()}{' '}
                                             disabled
@@ -925,11 +935,14 @@ const SendBCH = ({ passLoadingStatus }) => {
                                     {!priceApiError && !isOneToManyXECSend && (
                                         <>
                                             <LocaleFormattedValue>
-                                                {formatBalance(
-                                                    formData.value,
-                                                    userLocale,
-                                                )}{' '}
-                                                {selectedCurrency}
+                                                {!isNaN(formData.value)
+                                                    ? formatBalance(
+                                                          formData.value,
+                                                          userLocale,
+                                                      ) +
+                                                      ' ' +
+                                                      selectedCurrency
+                                                    : ''}
                                             </LocaleFormattedValue>
                                             <ConvertAmount>
                                                 {fiatPriceString !== '' && '='}{' '}
@@ -940,12 +953,6 @@ const SendBCH = ({ passLoadingStatus }) => {
                                 </AmountPreviewCtn>
                             </ExpandingAddressInputCtn>
 
-                            {queryStringText && (
-                                <Alert
-                                    message={`You are sending a transaction to an address including query parameters "${queryStringText}." Only the "amount" parameter, in units of ${currency.ticker} satoshis, is currently supported.`}
-                                    type="warning"
-                                />
-                            )}
                             <div
                                 style={{
                                     paddingTop: '1rem',
@@ -956,7 +963,8 @@ const SendBCH = ({ passLoadingStatus }) => {
                                 sendBchAmountError ||
                                 sendBchAddressError ||
                                 isMsgError ||
-                                priceApiError ? (
+                                priceApiError ||
+                                isNaN(formData.value) ? (
                                     <DisabledButton>Send</DisabledButton>
                                 ) : (
                                     <>
@@ -1001,73 +1009,27 @@ const SendBCH = ({ passLoadingStatus }) => {
                                         marginBottom: '20px',
                                     }}
                                 >
-                                    <TextAreaLabel>
-                                        Message:&nbsp;&nbsp;
-                                        <Switch
-                                            disabled={isOneToManyXECSend}
-                                            style={{
-                                                marginBottom: '7px',
-                                            }}
-                                            checkedChildren="Private"
-                                            unCheckedChildren="Public"
-                                            defaultunchecked="true"
-                                            checked={
-                                                isEncryptedOptionalOpReturnMsg
-                                            }
-                                            onChange={() => {
-                                                setIsEncryptedOptionalOpReturnMsg(
-                                                    prev => !prev,
-                                                );
-                                                setIsOneToManyXECSend(false);
-                                            }}
-                                        />
-                                    </TextAreaLabel>
-                                    {isEncryptedOptionalOpReturnMsg ? (
-                                        <Alert
-                                            style={{
-                                                marginBottom: '10px',
-                                            }}
-                                            description="Please note encrypted messages can only be sent to wallets with at least 1 outgoing transaction."
-                                            type="warning"
-                                            showIcon
-                                        />
-                                    ) : (
-                                        <Alert
-                                            style={{
-                                                marginBottom: '10px',
-                                            }}
-                                            description="Please note this message will be public."
-                                            type="warning"
-                                            showIcon
-                                        />
-                                    )}
+                                    <Alert
+                                        style={{
+                                            marginBottom: '10px',
+                                        }}
+                                        description="Please note this message will be public."
+                                        type="warning"
+                                        showIcon
+                                    />
                                     <TextArea
                                         name="opReturnMsg"
                                         placeholder={
-                                            isEncryptedOptionalOpReturnMsg
-                                                ? `(max ${currency.opReturn.encryptedMsgByteLimit} bytes)`
-                                                : location &&
-                                                  location.state &&
-                                                  location.state.airdropTokenId
+                                            location &&
+                                            location.state &&
+                                            location.state.airdropTokenId
                                                 ? `(max ${
-                                                      currency.opReturn
-                                                          .unencryptedMsgByteLimit -
+                                                      opreturnConfig.cashtabMsgByteLimit -
                                                       localAirdropTxAddedBytes
                                                   } bytes)`
-                                                : `(max ${currency.opReturn.unencryptedMsgByteLimit} bytes)`
+                                                : `(max ${opreturnConfig.cashtabMsgByteLimit} bytes)`
                                         }
-                                        value={
-                                            opReturnMsg
-                                                ? isEncryptedOptionalOpReturnMsg
-                                                    ? opReturnMsg.substring(
-                                                          0,
-                                                          currency.opReturn
-                                                              .encryptedMsgByteLimit +
-                                                              1,
-                                                      )
-                                                    : opReturnMsg
-                                                : ''
-                                        }
+                                        value={opReturnMsg ? opReturnMsg : ''}
                                         onChange={e => handleMsgChange(e)}
                                         onKeyDown={e =>
                                             e.keyCode == 13

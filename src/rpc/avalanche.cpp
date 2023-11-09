@@ -16,6 +16,7 @@
 #include <key_io.h>
 #include <net_processing.h>
 #include <node/context.h>
+#include <policy/block/stakingrewards.h>
 #include <rpc/blockchain.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
@@ -241,7 +242,7 @@ static RPCHelpMan buildavalancheproof() {
                             {"height", RPCArg::Type::NUM, RPCArg::Optional::NO,
                              "The height at which this UTXO was mined"},
                             {"iscoinbase", RPCArg::Type::BOOL,
-                             /* default */ "false",
+                             RPCArg::Default{false},
                              "Indicate wether the UTXO is a coinbase"},
                             {"privatekey", RPCArg::Type::STR,
                              RPCArg::Optional::NO,
@@ -659,8 +660,9 @@ static RPCHelpMan getavalancheinfo() {
                       "The proof verification status. Only available if the "
                       "\"verified\" flag is false."},
                      {RPCResult::Type::BOOL, "sharing",
-                      "Whether the node local proof is being advertised on the "
-                      "network or not."},
+                      "DEPRECATED: Whether the node local proof is being "
+                      "advertised on the network or not. Only displayed if the "
+                      "-deprecatedrpc=getavalancheinfo_sharing option is set."},
                      {RPCResult::Type::STR_HEX, "proofid",
                       "The node local proof id."},
                      {RPCResult::Type::STR_HEX, "limited_proofid",
@@ -753,16 +755,21 @@ static RPCHelpMan getavalancheinfo() {
                         return pm.isBoundToPeer(proofid);
                     });
                 local.pushKV("verified", verified);
+                const bool sharing = g_avalanche->canShareLocalProof();
                 if (!verified) {
                     avalanche::ProofRegistrationState state =
                         g_avalanche->getLocalProofRegistrationState();
                     // If the local proof is not registered but the state is
                     // valid, no registration attempt occurred yet.
                     local.pushKV("verification_status",
-                                 state.IsValid() ? "pending"
-                                                 : state.GetRejectReason());
+                                 state.IsValid()
+                                     ? (sharing ? "pending verification"
+                                                : "pending inbound connections")
+                                     : state.GetRejectReason());
                 }
-                local.pushKV("sharing", g_avalanche->canShareLocalProof());
+                if (IsDeprecatedRPCEnabled(gArgs, "getavalancheinfo_sharing")) {
+                    local.pushKV("sharing", sharing);
+                }
                 local.pushKV("proofid", localProof->getId().ToString());
                 local.pushKV("limited_proofid",
                              localProof->getLimitedId().ToString());
@@ -1013,6 +1020,210 @@ static RPCHelpMan getavalancheproofs() {
     };
 }
 
+static RPCHelpMan getstakingreward() {
+    return RPCHelpMan{
+        "getstakingreward",
+        "Return the staking reward winner based on the previous block hash.\n",
+        {
+            {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The previous block hash, hex encoded."},
+            {"recompute", RPCArg::Type::BOOL, RPCArg::Default{false},
+             "Whether to recompute the staking reward winner if there is a "
+             "cached value."},
+        },
+        RPCResult{
+            RPCResult::Type::OBJ,
+            "payoutscript",
+            "The winning proof payout script",
+            {
+                {RPCResult::Type::STR, "asm", "Decoded payout script"},
+                {RPCResult::Type::STR_HEX, "hex",
+                 "Raw payout script in hex format"},
+                {RPCResult::Type::STR, "type",
+                 "The output type (e.g. " + GetAllOutputTypes() + ")"},
+                {RPCResult::Type::NUM, "reqSigs", "The required signatures"},
+                {RPCResult::Type::ARR,
+                 "addresses",
+                 "",
+                 {
+                     {RPCResult::Type::STR, "address", "eCash address"},
+                 }},
+            }},
+        RPCExamples{HelpExampleRpc("getstakingreward", "<blockhash>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            const NodeContext &node = EnsureAnyNodeContext(request.context);
+            ChainstateManager &chainman = EnsureChainman(node);
+
+            const BlockHash blockhash(
+                ParseHashV(request.params[0], "blockhash"));
+
+            const CBlockIndex *pprev;
+            {
+                LOCK(cs_main);
+                pprev = chainman.m_blockman.LookupBlockIndex(blockhash);
+            }
+
+            if (!pprev) {
+                throw JSONRPCError(
+                    RPC_INVALID_PARAMETER,
+                    strprintf("Block not found: %s\n", blockhash.ToString()));
+            }
+
+            if (!IsStakingRewardsActivated(
+                    config.GetChainParams().GetConsensus(), pprev)) {
+                throw JSONRPCError(
+                    RPC_INTERNAL_ERROR,
+                    strprintf(
+                        "Staking rewards are not activated for block %s\n",
+                        blockhash.ToString()));
+            }
+
+            if (!request.params[1].isNull() && request.params[1].get_bool()) {
+                // Force recompute the staking reward winner by first erasing
+                // the cached entry if any
+                g_avalanche->eraseStakingRewardWinner(blockhash);
+            }
+
+            if (!g_avalanche->computeStakingReward(pprev)) {
+                throw JSONRPCError(
+                    RPC_INTERNAL_ERROR,
+                    strprintf("Unable to determine a staking reward winner "
+                              "for block %s\n",
+                              blockhash.ToString()));
+            }
+
+            CScript winnerPayoutScript;
+            if (!g_avalanche->getStakingRewardWinner(blockhash,
+                                                     winnerPayoutScript)) {
+                throw JSONRPCError(
+                    RPC_INTERNAL_ERROR,
+                    strprintf("Unable to retrieve the staking reward winner "
+                              "for block %s\n",
+                              blockhash.ToString()));
+            }
+
+            UniValue stakingRewardsPayoutScriptObj(UniValue::VOBJ);
+            ScriptPubKeyToUniv(winnerPayoutScript,
+                               stakingRewardsPayoutScriptObj,
+                               /*fIncludeHex=*/true);
+            return stakingRewardsPayoutScriptObj;
+        },
+    };
+}
+
+static RPCHelpMan setstakingreward() {
+    return RPCHelpMan{
+        "setstakingreward",
+        "Set the staking reward winner for the given previous block hash.\n",
+        {
+            {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The previous block hash, hex encoded."},
+            {"payoutscript", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The payout script for the staking reward, hex encoded."},
+        },
+        RPCResult{RPCResult::Type::BOOL, "success",
+                  "Whether the payout script was set or not"},
+        RPCExamples{
+            HelpExampleRpc("setstakingreward", "<blockhash> <payout script>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            const NodeContext &node = EnsureAnyNodeContext(request.context);
+            ChainstateManager &chainman = EnsureChainman(node);
+
+            const BlockHash blockhash(
+                ParseHashV(request.params[0], "blockhash"));
+
+            const CBlockIndex *pprev;
+            {
+                LOCK(cs_main);
+                pprev = chainman.m_blockman.LookupBlockIndex(blockhash);
+            }
+
+            if (!pprev) {
+                throw JSONRPCError(
+                    RPC_INVALID_PARAMETER,
+                    strprintf("Block not found: %s\n", blockhash.ToString()));
+            }
+
+            if (!IsStakingRewardsActivated(
+                    config.GetChainParams().GetConsensus(), pprev)) {
+                throw JSONRPCError(
+                    RPC_INTERNAL_ERROR,
+                    strprintf(
+                        "Staking rewards are not activated for block %s\n",
+                        blockhash.ToString()));
+            }
+
+            const std::vector<uint8_t> data =
+                ParseHex(request.params[1].get_str());
+            const CScript payoutScript(data.begin(), data.end());
+
+            // This will return true upon insertion or false upon replacement.
+            // We want to convey the success of the RPC, so we always return
+            // true.
+            g_avalanche->setStakingRewardWinner(pprev, payoutScript);
+            return true;
+        },
+    };
+}
+
+static RPCHelpMan getremoteproofs() {
+    return RPCHelpMan{
+        "getremoteproofs",
+        "Get the list of remote proofs for the given node id.\n",
+        {
+            {"nodeid", RPCArg::Type::NUM, RPCArg::Optional::NO,
+             "The node identifier."},
+        },
+        RPCResult{
+            RPCResult::Type::ARR,
+            "proofs",
+            "",
+            {{
+                RPCResult::Type::OBJ,
+                "proof",
+                "",
+                {{
+                    {RPCResult::Type::STR_HEX, "proofid",
+                     "The hex encoded proof identifier."},
+                    {RPCResult::Type::BOOL, "present",
+                     "Whether the node has the proof."},
+                    {RPCResult::Type::NUM, "last_update",
+                     "The last time this proof status was updated."},
+                }},
+            }},
+        },
+        RPCExamples{HelpExampleRpc("getremoteproofs", "<nodeid>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            if (!g_avalanche) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR,
+                                   "Avalanche is not initialized");
+            }
+
+            const NodeId nodeid = request.params[0].get_int64();
+            auto remoteProofs = g_avalanche->withPeerManager(
+                [nodeid](const avalanche::PeerManager &pm) {
+                    return pm.getRemoteProofs(nodeid);
+                });
+
+            UniValue arrOut(UniValue::VARR);
+
+            for (const auto &remoteProof : remoteProofs) {
+                UniValue obj(UniValue::VOBJ);
+                obj.pushKV("proofid", remoteProof.proofid.ToString());
+                obj.pushKV("present", remoteProof.present);
+                obj.pushKV("last_update", remoteProof.lastUpdate.count());
+
+                arrOut.push_back(obj);
+            }
+
+            return arrOut;
+        },
+    };
+}
+
 static RPCHelpMan getrawavalancheproof() {
     return RPCHelpMan{
         "getrawavalancheproof",
@@ -1085,6 +1296,59 @@ static RPCHelpMan getrawavalancheproof() {
     };
 }
 
+static RPCHelpMan invalidateavalancheproof() {
+    return RPCHelpMan{
+        "invalidateavalancheproof",
+        "Reject a known avalanche proof by id.\n",
+        {
+            {"proofid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The hex encoded avalanche proof identifier."},
+        },
+        RPCResult{
+            RPCResult::Type::BOOL,
+            "success",
+            "",
+        },
+        RPCExamples{HelpExampleRpc("invalidateavalancheproof", "<proofid>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            if (!g_avalanche) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR,
+                                   "Avalanche is not initialized");
+            }
+
+            const avalanche::ProofId proofid =
+                avalanche::ProofId::fromHex(request.params[0].get_str());
+
+            g_avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
+                if (!pm.exists(proofid) && !pm.isDangling(proofid)) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                       "Proof not found");
+                }
+
+                if (!pm.rejectProof(
+                        proofid,
+                        avalanche::PeerManager::RejectionMode::INVALIDATE)) {
+                    throw JSONRPCError(RPC_INTERNAL_ERROR,
+                                       "Failed to reject the proof");
+                }
+
+                pm.setInvalid(proofid);
+            });
+
+            if (g_avalanche->isRecentlyFinalized(proofid)) {
+                // If the proof was previously finalized, clear the status.
+                // Because there is no way to selectively delete an entry from a
+                // Bloom filter, we have to clear the whole filter which could
+                // cause extra voting rounds.
+                g_avalanche->clearFinalizedItems();
+            }
+
+            return true;
+        },
+    };
+}
+
 static RPCHelpMan isfinalblock() {
     return RPCHelpMan{
         "isfinalblock",
@@ -1104,9 +1368,7 @@ static RPCHelpMan isfinalblock() {
                                    "Avalanche is not initialized");
             }
 
-            // Deprecated since 0.26.2
-            if (!IsDeprecatedRPCEnabled(gArgs, "isfinalblock_noerror") &&
-                !g_avalanche->isQuorumEstablished()) {
+            if (!g_avalanche->isQuorumEstablished()) {
                 throw JSONRPCError(RPC_MISC_ERROR,
                                    "Avalanche is not ready to poll yet.");
             }
@@ -1181,38 +1443,31 @@ static RPCHelpMan isfinaltransaction() {
                 pindex, node.mempool.get(), txid,
                 config.GetChainParams().GetConsensus(), hash_block);
 
-            // Deprecated since 0.26.2
-            if (!IsDeprecatedRPCEnabled(gArgs, "isfinaltransaction_noerror")) {
-                if (!g_avalanche->isQuorumEstablished()) {
-                    throw JSONRPCError(RPC_MISC_ERROR,
-                                       "Avalanche is not ready to poll yet.");
-                }
+            if (!g_avalanche->isQuorumEstablished()) {
+                throw JSONRPCError(RPC_MISC_ERROR,
+                                   "Avalanche is not ready to poll yet.");
+            }
 
-                if (!tx) {
-                    std::string errmsg;
-                    if (pindex) {
-                        if (WITH_LOCK(::cs_main,
-                                      return !pindex->nStatus.hasData())) {
-                            throw JSONRPCError(
-                                RPC_MISC_ERROR,
-                                "Block data not downloaded yet.");
-                        }
-                        errmsg =
-                            "No such transaction found in the provided block.";
-                    } else if (!g_txindex) {
-                        errmsg =
-                            "No such transaction. Use -txindex or provide a "
-                            "block "
-                            "hash to enable blockchain transaction queries.";
-                    } else if (!f_txindex_ready) {
-                        errmsg =
-                            "No such transaction. Blockchain transactions are "
-                            "still in the process of being indexed.";
-                    } else {
-                        errmsg = "No such mempool or blockchain transaction.";
+            if (!tx) {
+                std::string errmsg;
+                if (pindex) {
+                    if (WITH_LOCK(::cs_main,
+                                  return !pindex->nStatus.hasData())) {
+                        throw JSONRPCError(RPC_MISC_ERROR,
+                                           "Block data not downloaded yet.");
                     }
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, errmsg);
+                    errmsg = "No such transaction found in the provided block.";
+                } else if (!g_txindex) {
+                    errmsg = "No such transaction. Use -txindex or provide a "
+                             "block "
+                             "hash to enable blockchain transaction queries.";
+                } else if (!f_txindex_ready) {
+                    errmsg = "No such transaction. Blockchain transactions are "
+                             "still in the process of being indexed.";
+                } else {
+                    errmsg = "No such mempool or blockchain transaction.";
                 }
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, errmsg);
             }
 
             if (!pindex) {
@@ -1226,6 +1481,63 @@ static RPCHelpMan isfinaltransaction() {
             return tx != nullptr && !node.mempool->exists(txid) &&
                    chainman.ActiveChainstate().IsBlockAvalancheFinalized(
                        pindex);
+        },
+    };
+}
+
+static RPCHelpMan reconsideravalancheproof() {
+    return RPCHelpMan{
+        "reconsideravalancheproof",
+        "Reconsider a known avalanche proof.\n",
+        {
+            {"proofid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The hex encoded avalanche proof."},
+        },
+        RPCResult{
+            RPCResult::Type::BOOL,
+            "success",
+            "Whether the proof has been successfully registered.",
+        },
+        RPCExamples{HelpExampleRpc("reconsideravalancheproof", "<proof hex>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            if (!g_avalanche) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR,
+                                   "Avalanche is not initialized");
+            }
+
+            auto proof = RCUPtr<avalanche::Proof>::make();
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+
+            // Verify the proof. Note that this is redundant with the
+            // verification done when adding the proof to the pool, but we get a
+            // chance to give a better error message.
+            verifyProofOrThrow(node, *proof, request.params[0].get_str());
+
+            // There is no way to selectively clear the invalidation status of
+            // a single proof, so we clear the whole Bloom filter. This could
+            // cause extra voting rounds.
+            g_avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
+                if (pm.isInvalid(proof->getId())) {
+                    pm.clearAllInvalid();
+                }
+            });
+
+            // Add the proof to the pool if we don't have it already. Since the
+            // proof verification has already been done, a failure likely
+            // indicates that there already is a proof with conflicting utxos.
+            avalanche::ProofRegistrationState state;
+            if (!registerProofIfNeeded(proof, state)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   strprintf("%s (%s)\n",
+                                             state.GetRejectReason(),
+                                             state.GetDebugMessage()));
+            }
+
+            return g_avalanche->withPeerManager(
+                [&](const avalanche::PeerManager &pm) {
+                    return pm.isBoundToPeer(proof->getId());
+                });
         },
     };
 }
@@ -1345,9 +1657,14 @@ void RegisterAvalancheRPCCommands(CRPCTable &t) {
         { "avalanche",         getavalancheinfo,          },
         { "avalanche",         getavalanchepeerinfo,      },
         { "avalanche",         getavalancheproofs,        },
+        { "avalanche",         getstakingreward,          },
+        { "avalanche",         setstakingreward,          },
+        { "avalanche",         getremoteproofs,           },
         { "avalanche",         getrawavalancheproof,      },
+        { "avalanche",         invalidateavalancheproof,  },
         { "avalanche",         isfinalblock,              },
         { "avalanche",         isfinaltransaction,        },
+        { "avalanche",         reconsideravalancheproof,  },
         { "avalanche",         sendavalancheproof,        },
         { "avalanche",         verifyavalancheproof,      },
         { "avalanche",         verifyavalanchedelegation, },

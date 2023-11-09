@@ -12,7 +12,6 @@ import {
     AirdropIcon,
     AliasIcon,
 } from 'components/Common/CustomIcons';
-import { currency } from 'components/Common/Ticker';
 import { formatBalance, formatDate } from 'utils/formatting';
 import TokenIcon from 'components/Tokens/TokenIcon';
 import { Collapse } from 'antd';
@@ -22,6 +21,9 @@ import {
     ThemedLinkSolid,
     ThemedPdfSolid,
 } from 'components/Common/CustomIcons';
+import { explorer } from 'config/explorer';
+import { supportedFiatCurrencies } from 'config/cashtabSettings';
+import appConfig from 'config/app';
 
 const TxIcon = styled.div`
     svg {
@@ -748,7 +750,7 @@ const Tx = ({
                                                                         .xecAmount,
                                                                 )}{' '}
                                                                 {
-                                                                    currency.ticker
+                                                                    appConfig.ticker
                                                                 }
                                                             </h3>
                                                             {fiatPrice !==
@@ -760,8 +762,7 @@ const Tx = ({
                                                                     <h4>
                                                                         -
                                                                         {
-                                                                            currency
-                                                                                .fiatCurrencies[
+                                                                            supportedFiatCurrencies[
                                                                                 fiatCurrency
                                                                             ]
                                                                                 .symbol
@@ -775,9 +776,7 @@ const Tx = ({
                                                                             2,
                                                                         )}{' '}
                                                                         {
-                                                                            currency
-                                                                                .fiatCurrencies
-                                                                                .fiatCurrency
+                                                                            supportedFiatCurrencies.fiatCurrency
                                                                         }
                                                                     </h4>
                                                                 )}
@@ -791,7 +790,7 @@ const Tx = ({
                                                                         .xecAmount,
                                                                 )}{' '}
                                                                 {
-                                                                    currency.ticker
+                                                                    appConfig.ticker
                                                                 }
                                                             </TokenTxAmtReceived>
                                                             {fiatPrice !==
@@ -803,8 +802,7 @@ const Tx = ({
                                                                     <h4>
                                                                         +
                                                                         {
-                                                                            currency
-                                                                                .fiatCurrencies[
+                                                                            supportedFiatCurrencies[
                                                                                 fiatCurrency
                                                                             ]
                                                                                 .symbol
@@ -818,9 +816,7 @@ const Tx = ({
                                                                             2,
                                                                         )}{' '}
                                                                         {
-                                                                            currency
-                                                                                .fiatCurrencies
-                                                                                .fiatCurrency
+                                                                            supportedFiatCurrencies.fiatCurrency
                                                                         }
                                                                     </h4>
                                                                 )}
@@ -1117,7 +1113,7 @@ const Tx = ({
                                 )}
                                 <TxLink
                                     key={data.txid}
-                                    href={`${currency.blockExplorerUrl}/tx/${data.txid}`}
+                                    href={`${explorer.blockExplorerUrl}/tx/${data.txid}`}
                                     target="_blank"
                                     rel="noreferrer"
                                 >
@@ -1132,7 +1128,7 @@ const Tx = ({
                                 </TxLink>
                                 <TxLink
                                     key={`${data.txid}_receipt`}
-                                    href={`${currency.pdfReceiptUrl}/${data.txid}.pdf`}
+                                    href={`${explorer.pdfReceiptUrl}/${data.txid}.pdf`}
                                     target="_blank"
                                     rel="noreferrer"
                                 >

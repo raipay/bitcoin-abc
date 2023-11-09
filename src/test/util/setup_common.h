@@ -5,6 +5,7 @@
 #ifndef BITCOIN_TEST_UTIL_SETUP_COMMON_H
 #define BITCOIN_TEST_UTIL_SETUP_COMMON_H
 
+#include <blockindex.h>
 #include <chainparamsbase.h>
 #include <consensus/amount.h>
 #include <fs.h>
@@ -22,14 +23,7 @@
 #include <type_traits>
 #include <vector>
 
-/**
- * Version of Boost::test prior to 1.64 have issues when dealing with nullptr_t.
- * In order to work around this, we ensure that the null pointers are typed in a
- * way that Boost will like better.
- *
- * TODO: Use nullptr directly once the minimum version of boost is 1.64 or more.
- */
-#define NULLPTR(T) static_cast<T *>(nullptr)
+class Config;
 
 // Enable BOOST_CHECK_EQUAL for enum class types
 template <typename T>
@@ -130,8 +124,15 @@ struct ChainTestingSetup : public BasicTestingSetup {
  * Testing setup that configures a complete environment.
  */
 struct TestingSetup : public ChainTestingSetup {
+    bool m_coins_db_in_memory{true};
+    bool m_block_tree_db_in_memory{true};
+
+    void LoadVerifyActivateChainstate(const Config &config);
+
     explicit TestingSetup(const std::string &chainName = CBaseChainParams::MAIN,
-                          const std::vector<const char *> &extra_args = {});
+                          const std::vector<const char *> &extra_args = {},
+                          const bool coins_db_in_memory = true,
+                          const bool block_tree_db_in_memory = true);
 };
 
 /** Identical to TestingSetup, but chain set to regtest */
@@ -147,8 +148,11 @@ class CScript;
 /**
  * Testing fixture that pre-creates a 100-block REGTEST-mode block chain
  */
-struct TestChain100Setup : public RegTestingSetup {
-    TestChain100Setup();
+struct TestChain100Setup : public TestingSetup {
+    TestChain100Setup(const std::string &chain_name = CBaseChainParams::REGTEST,
+                      const std::vector<const char *> &extra_args = {},
+                      const bool coins_db_in_memory = true,
+                      const bool block_tree_db_in_memory = true);
 
     /**
      * Create a new block with just given transactions, coinbase paying to

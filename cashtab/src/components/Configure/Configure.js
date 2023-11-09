@@ -6,7 +6,16 @@ import {
     errorNotification,
     generalNotification,
 } from 'components/Common/Notifications';
-import { Collapse, Form, Input, Modal, Alert, Switch, Tooltip } from 'antd';
+import {
+    Collapse,
+    Form,
+    Input,
+    Modal,
+    Alert,
+    Switch,
+    Tooltip,
+    Checkbox,
+} from 'antd';
 import { Row, Col } from 'antd';
 import {
     PlusSquareOutlined,
@@ -40,22 +49,21 @@ import {
     ThemedCopySolid,
     ThemedTrashcanOutlined,
     ThemedEditOutlined,
+    WarningIcon,
 } from 'components/Common/CustomIcons';
 import { Event } from 'utils/GoogleAnalytics';
 import ApiError from 'components/Common/ApiError';
 import CopyToClipboard from 'components/Common/CopyToClipboard';
 import { formatSavedBalance } from 'utils/formatting';
 import {
-    isValidXecAddress,
     isValidNewWalletNameLength,
     validateMnemonic,
-    isAliasFormat,
+    isValidRecipient,
 } from 'utils/validation';
-import { isAliasRegistered } from 'utils/chronik';
 import { convertToEcashPrefix } from 'utils/cashMethods';
 import useWindowDimensions from 'hooks/useWindowDimensions';
 import { isMobile, isIOS, isSafari } from 'react-device-detect';
-import { currency } from 'components/Common/Ticker.js';
+import appConfig from 'config/app';
 const { Panel } = Collapse;
 
 const SWRow = styled.div`
@@ -460,7 +468,6 @@ const Configure = ({ passLoadingStatus }) => {
         changeCashtabSettings,
         getContactListFromLocalForage,
         updateContactList,
-        cashtabCache,
     } = ContextValue;
 
     const location = useLocation();
@@ -482,6 +489,7 @@ const Configure = ({ passLoadingStatus }) => {
     const [newWalletNameIsValid, setNewWalletNameIsValid] = useState(null);
     const [walletDeleteValid, setWalletDeleteValid] = useState(null);
     const [seedInput, openSeedInput] = useState(false);
+    const [revealSeed, setRevealSeed] = useState(false);
     const [showTranslationWarning, setShowTranslationWarning] = useState(false);
     const [savedWalletContactModal, setSavedWalletContactModal] =
         useState(false);
@@ -854,7 +862,7 @@ const Configure = ({ passLoadingStatus }) => {
         if (
             value &&
             value.length &&
-            value.length < currency.localStorageMaxCharacters
+            value.length < appConfig.localStorageMaxCharacters
         ) {
             setNewContactNameIsValid(true);
         } else {
@@ -1212,26 +1220,10 @@ const Configure = ({ passLoadingStatus }) => {
         setManualContactName(value);
     };
 
-    const handleManualContactAddressInput = e => {
+    const handleManualContactAddressInput = async e => {
         const { value } = e.target;
-        const isXecAddress = isValidXecAddress(value);
-
-        if (isXecAddress) {
-            setManualContactAddressIsValid(true);
-        } else {
-            // if not a valid XEC address, check if it's an alias
-            const isAlias = isAliasFormat(value);
-            // extract alias without the `.xec`
-            const aliasName = value.slice(0, value.length - 4);
-            const isRegistered = isAliasRegistered(
-                cashtabCache.aliasCache.aliases,
-                aliasName,
-            );
-            const isValidAlias = isAlias && isRegistered ? true : false;
-            setManualContactAddressIsValid(isValidAlias);
-        }
-
         setManualContactAddress(value);
+        setManualContactAddressIsValid(await isValidRecipient(value));
     };
 
     return (
@@ -1505,9 +1497,35 @@ const Configure = ({ passLoadingStatus }) => {
                                 className="notranslate"
                                 style={{ userSelect: 'text' }}
                             >
-                                {wallet && wallet.mnemonic
-                                    ? wallet.mnemonic
-                                    : ''}
+                                {
+                                    <>
+                                        <WarningIcon />
+                                        <br />
+                                        <b>NEVER</b> share your seed phrase.
+                                        <br />
+                                        <b>DO NOT</b> enter it into 3rd party
+                                        websites.
+                                        <br />
+                                        <br />
+                                        <Checkbox
+                                            onChange={() => {
+                                                setRevealSeed(!revealSeed);
+                                            }}
+                                        >
+                                            I understand, show me my seed
+                                            phrase.
+                                        </Checkbox>
+                                        <br />
+                                    </>
+                                }
+                                {wallet && wallet.mnemonic && revealSeed ? (
+                                    <>
+                                        <br />
+                                        {wallet.mnemonic}
+                                    </>
+                                ) : (
+                                    ''
+                                )}
                             </p>
                         </Panel>
                     </StyledCollapse>
@@ -1577,8 +1595,8 @@ const Configure = ({ passLoadingStatus }) => {
                 )}
                 {savedWallets && savedWallets.length > 0 && (
                     <>
-                        <StyledCollapse>
-                            <Panel header="Saved wallets">
+                        <StyledCollapse defaultActiveKey={['1']}>
+                            <Panel header="Saved wallets" key="1">
                                 <AWRow>
                                     <Tooltip title={wallet.name}>
                                         <h3 className="notranslate">

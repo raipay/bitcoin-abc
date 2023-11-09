@@ -11,7 +11,6 @@ export LC_ALL=C
 EXPECTED_BOOST_INCLUDES=(
     boost/algorithm/string.hpp
     boost/algorithm/string/classification.hpp
-    boost/algorithm/string/replace.hpp
     boost/algorithm/string/split.hpp
     boost/date_time/posix_time/posix_time.hpp
     boost/mpl/list.hpp
@@ -28,12 +27,8 @@ EXPECTED_BOOST_INCLUDES=(
     boost/signals2/connection.hpp
     boost/signals2/optional_last_value.hpp
     boost/signals2/signal.hpp
+    boost/test/included/unit_test.hpp
     boost/test/unit_test.hpp
-    boost/thread/lock_types.hpp
-    boost/thread/shared_mutex.hpp
-    boost/variant.hpp
-    boost/variant/apply_visitor.hpp
-    boost/variant/static_visitor.hpp
 )
 
 for BOOST_INCLUDE in $(git grep '^#include <boost/' -- "*.cpp" "*.h" | cut -f2 -d: | cut -f2 -d'<' | cut -f1 -d'>' | sort -u); do

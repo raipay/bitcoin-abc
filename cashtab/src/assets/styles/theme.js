@@ -11,6 +11,7 @@ export const theme = {
     navActive: '#00ABE7',
     encryptionRed: '#DC143C',
     genesisGreen: '#00e781',
+    aliasGreen: '#0FFF50',
     receivedMessage: 'rgba(0,171,231,0.2)',
     sentMessage: 'rgba(255, 255, 255, 0.1)',
     lightWhite: 'rgba(255,255,255,0.4)',
@@ -51,6 +52,11 @@ export const theme = {
         },
         secondary: {
             background: '#4b67e1',
+            color: '#fff',
+            hoverShadow: '0px 3px 10px -5px rgba(0, 0, 0, 0.75)',
+        },
+        alternateSecondary: {
+            background: '#255173',
             color: '#fff',
             hoverShadow: '0px 3px 10px -5px rgba(0, 0, 0, 0.75)',
         },

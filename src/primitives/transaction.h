@@ -13,8 +13,6 @@
 #include <script/script.h>
 #include <serialize.h>
 
-static const int SERIALIZE_TRANSACTION = 0x00;
-
 /**
  * An outpoint - a combination of a transaction hash and an index n into its
  * vout.
@@ -196,13 +194,9 @@ public:
     // Default transaction version.
     static constexpr int32_t CURRENT_VERSION = 2;
 
-    // Policy: Valid min/max for nVersion.
-    // Remove after wellington activation.
-    static constexpr int32_t MIN_STANDARD_VERSION = 1, MAX_STANDARD_VERSION = 2;
-
-    // Consensus: Valid min/max for nVersion, enforced after Wellington.
-    static constexpr int32_t MIN_CONSENSUS_VERSION = 1,
-                             MAX_CONSENSUS_VERSION = 2;
+    // Consensus: Valid min/max for nVersion, enforced as a consensus rule after
+    // Wellington.
+    static constexpr int32_t MIN_VERSION = 1, MAX_VERSION = 2;
 
     // The local variables are made const to prevent unintended modification
     // without updating the cached hash value. However, CTransaction is not

@@ -27,6 +27,11 @@ from test_framework.util import (
 )
 from test_framework.wallet_util import bytes_to_wif
 
+# Interval between 2 proof cleanups
+AVALANCHE_CLEANUP_INTERVAL = 5 * 60
+# Dangling proof timeout
+AVALANCHE_DANGLING_PROOF_TIMEOUT = 15 * 60
+
 
 class GetAvalancheInfoTest(BitcoinTestFramework):
     def set_test_params(self):
@@ -93,8 +98,7 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "ready_to_poll": False,
                 "local": {
                     "verified": False,
-                    "verification_status": "pending",
-                    "sharing": False,
+                    "verification_status": "pending inbound connections",
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -127,8 +131,7 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "ready_to_poll": False,
                 "local": {
                     "verified": False,
-                    "verification_status": "pending",
-                    "sharing": True,
+                    "verification_status": "pending verification",
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -166,8 +169,7 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "ready_to_poll": False,
                 "local": {
                     "verified": False,
-                    "verification_status": "pending",
-                    "sharing": True,
+                    "verification_status": "pending verification",
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -198,7 +200,7 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
             + [
                 f"-avaproof={proof.serialize().hex()}",
                 f"-avamasterkey={bytes_to_wif(privkey.get_bytes())}",
-                "-avaproofstakeutxoconfirmations=3",
+                "-avaproofstakeutxoconfirmations=4",
             ],
         )
 
@@ -207,8 +209,7 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "ready_to_poll": False,
                 "local": {
                     "verified": False,
-                    "verification_status": "pending",
-                    "sharing": False,
+                    "verification_status": "pending inbound connections",
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -245,7 +246,41 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "local": {
                     "verified": False,
                     "verification_status": "immature-proof",
-                    "sharing": True,
+                    "proofid": uint256_hex(proof.proofid),
+                    "limited_proofid": uint256_hex(proof.limited_proofid),
+                    "master": privkey.get_pubkey().get_bytes().hex(),
+                    "stake_amount": coinbase_amount,
+                    "payout_address": ADDRESS_ECREG_UNSPENDABLE,
+                },
+                "network": {
+                    "proof_count": 0,
+                    "connected_proof_count": 0,
+                    "dangling_proof_count": 0,
+                    "finalized_proof_count": 0,
+                    "conflicting_proof_count": 0,
+                    "immature_proof_count": 1,
+                    "total_stake_amount": Decimal("0.00"),
+                    "connected_stake_amount": Decimal("0.00"),
+                    "dangling_stake_amount": Decimal("0.00"),
+                    "immature_stake_amount": coinbase_amount,
+                    "node_count": 0,
+                    "connected_node_count": 0,
+                    "pending_node_count": 0,
+                },
+            }
+        )
+
+        self.log.info(
+            "Mine another block to check the local proof immature state remains"
+        )
+        self.generate(node, 1, sync_fun=self.no_op)
+        self.wait_until(
+            lambda: node.getavalancheinfo()
+            == {
+                "ready_to_poll": False,
+                "local": {
+                    "verified": False,
+                    "verification_status": "immature-proof",
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -278,7 +313,6 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "ready_to_poll": False,
                 "local": {
                     "verified": True,
-                    "sharing": True,
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -329,7 +363,7 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
             conflicting_proofs.append(conflicting_proof)
 
             # Make the proof and its conflicting proof mature
-            self.generate(node, 2, sync_fun=self.no_op)
+            self.generate(node, 3, sync_fun=self.no_op)
 
             n = AvaP2PInterface()
             n.proof = _proof
@@ -354,7 +388,6 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "ready_to_poll": True,
                 "local": {
                     "verified": True,
-                    "sharing": True,
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -393,7 +426,6 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "ready_to_poll": True,
                 "local": {
                     "verified": True,
-                    "sharing": True,
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -455,7 +487,6 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "ready_to_poll": True,
                 "local": {
                     "verified": True,
-                    "sharing": True,
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -541,7 +572,6 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                 "ready_to_poll": False,
                 "local": {
                     "verified": True,
-                    "sharing": True,
                     "proofid": uint256_hex(proof.proofid),
                     "limited_proofid": uint256_hex(proof.limited_proofid),
                     "master": privkey.get_pubkey().get_bytes().hex(),
@@ -561,6 +591,83 @@ class GetAvalancheInfoTest(BitcoinTestFramework):
                     "immature_stake_amount": Decimal("0.00"),
                     "node_count": 1,
                     "connected_node_count": 1,
+                    "pending_node_count": 0,
+                },
+            }
+        )
+
+        self.log.info("The count drops after the dangling proofs are cleaned up")
+
+        node.setmocktime(mock_time + AVALANCHE_DANGLING_PROOF_TIMEOUT + 1)
+        node.mockscheduler(AVALANCHE_CLEANUP_INTERVAL)
+
+        self.wait_until(
+            lambda: node.getavalancheinfo()
+            == {
+                "ready_to_poll": False,
+                "local": {
+                    "verified": True,
+                    "proofid": uint256_hex(proof.proofid),
+                    "limited_proofid": uint256_hex(proof.limited_proofid),
+                    "master": privkey.get_pubkey().get_bytes().hex(),
+                    "stake_amount": coinbase_amount,
+                    "payout_address": ADDRESS_ECREG_UNSPENDABLE,
+                },
+                "network": {
+                    "proof_count": 1,
+                    "connected_proof_count": 1,
+                    "dangling_proof_count": 0,
+                    "finalized_proof_count": 1,
+                    "conflicting_proof_count": 0,
+                    "immature_proof_count": 0,
+                    "total_stake_amount": coinbase_amount,
+                    "connected_stake_amount": coinbase_amount,
+                    "dangling_stake_amount": Decimal("0.00"),
+                    "immature_stake_amount": Decimal("0.00"),
+                    "node_count": 1,
+                    "connected_node_count": 1,
+                    "pending_node_count": 0,
+                },
+            }
+        )
+
+        self.log.info("Reconnect the nodes and check the counts update appropriately")
+
+        for q in quorum:
+            # We don't reuse the quorum nodes directly as we need a clean state
+            # to make sure the messages are sent as expected.
+            n = AvaP2PInterface()
+            n.proof = q.proof
+            n.master_privkey = q.master_privkey
+
+            node.add_p2p_connection(n)
+            n.send_avaproof(n.proof)
+            wait_for_proof(node, uint256_hex(n.proof.proofid))
+
+        assert_avalancheinfo(
+            {
+                "ready_to_poll": True,
+                "local": {
+                    "verified": True,
+                    "proofid": uint256_hex(proof.proofid),
+                    "limited_proofid": uint256_hex(proof.limited_proofid),
+                    "master": privkey.get_pubkey().get_bytes().hex(),
+                    "stake_amount": coinbase_amount,
+                    "payout_address": ADDRESS_ECREG_UNSPENDABLE,
+                },
+                "network": {
+                    "proof_count": N + 1,
+                    "connected_proof_count": N + 1,
+                    "dangling_proof_count": 0,
+                    "finalized_proof_count": N + 1,
+                    "conflicting_proof_count": 0,
+                    "immature_proof_count": 0,
+                    "total_stake_amount": coinbase_amount * (N + 1),
+                    "connected_stake_amount": coinbase_amount * (N + 1),
+                    "dangling_stake_amount": Decimal("0.00"),
+                    "immature_stake_amount": Decimal("0.00"),
+                    "node_count": N + 1,
+                    "connected_node_count": N + 1,
                     "pending_node_count": 0,
                 },
             }

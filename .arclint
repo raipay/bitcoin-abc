@@ -18,14 +18,13 @@
         },
         "black": {
             "type": "black",
-            "version": ">=23.0.0",
+            "version": ">=22.8.0",
             "include": "(\\.py$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
-            ],
-            "flags": [
-                "--preview"
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/electrumabc_gui/qt/icons.py)",
+                "(\\_pb2.py$)"
             ]
         },
         "flake8": {
@@ -34,7 +33,9 @@
             "include": "(\\.py$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/electrumabc_gui/qt/icons.py)",
+                "(\\_pb2.py$)"
             ],
             "flags": [
                 "--ignore=A003,E203,E303,E305,E501,E704,W503,W504",
@@ -91,7 +92,9 @@
                 "(^contrib/gitian-builder/)",
                 "(^src/(qt/locale|secp256k1|univalue|leveldb)/)",
                 "(^test/lint/dictionary/)",
-                "(package-lock.json)"
+                "(^web/e.cash/public/animations/)",
+                "(package-lock.json)",
+                "(^electrum/electrumabc/wordlist/)"
             ],
             "spelling.dictionaries": [
                 "test/lint/dictionary/english.json"
@@ -169,12 +172,13 @@
             "exclude": [
                 "(__init__\\.py$)",
                 "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/electrumabc.*)"
             ]
         },
         "lint-bash-shebang": {
             "type": "lint-bash-shebang",
-            "include": "(\\.sh$)",
+            "include": "(\\.(sh|bash)$)",
             "exclude": [
                 "(^contrib/gitian-builder/)"
             ]
@@ -186,15 +190,16 @@
                 "--external-sources",
                 "--source-path=SCRIPTDIR"
             ],
-            "include": "(\\.sh$)",
+            "include": "(\\.(sh|bash)$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^src/(secp256k1|univalue)/)"
+                "(^src/(secp256k1|univalue)/)",
+                "(^electrum/)"
             ]
         },
         "lint-shell-locale": {
             "type": "lint-shell-locale",
-            "include": "(\\.sh$)",
+            "include": "(\\.(sh|bash)$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
                 "(^src/(secp256k1|univalue)/)",
@@ -265,7 +270,8 @@
             "exclude": [
                 "(^contrib/gitian-builder/)",
                 "(^contrib/apple-sdk-tools/)",
-                "(^contrib/macdeploy/)"
+                "(^contrib/macdeploy/)",
+                "(^electrum/)"
             ],
             "flags": [
                 "--ignore-missing-imports",
@@ -285,10 +291,16 @@
             "type": "prettier",
             "version": ">=2.6.0",
             "include": [
+                "(^apps/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
+                "(^doc/standards/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
                 "(^cashtab/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
+                "(^modules/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
                 "(^web/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)"
             ],
-            "exclude": "(^web/.*/translations/.*\\.json$)"
+            "exclude": [
+                "(^web/.*/translations/.*\\.json$)",
+                "(^web/e.cash/public/animations/)"
+            ]
         },
         "lint-python-isort": {
             "type": "lint-python-isort",
@@ -296,7 +308,9 @@
             "include": "(\\.py$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/electrumabc_gui/qt/icons.py)",
+                "(\\_pb2.py$)"
             ]
         },
         "rustfmt": {
@@ -312,7 +326,8 @@
                 "(apps/alias-server/.*\\.js$)",
                 "(modules/ecashaddrjs/.*\\.js$)",
                 "(apps/ecash-herald/.*\\.js$)",
-                "(modules/chronik-client/.*\\.(js|jsx|ts|tsx)$)"
+                "(modules/chronik-client/.*\\.(js|jsx|ts|tsx)$)",
+                "(^web/e.cash/.*\\.js$)"
             ]
         },
         "lint-python-flynt": {
@@ -321,7 +336,8 @@
             "include": "(\\.py$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)"
+                "(^contrib/apple-sdk-tools/)",
+                "(^electrum/)"
             ]
         }
     }

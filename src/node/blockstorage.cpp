@@ -515,6 +515,17 @@ void BlockManager::FlushUndoFile(int block_file, bool finalize) {
 
 void BlockManager::FlushBlockFile(bool fFinalize, bool finalize_undo) {
     LOCK(cs_LastBlockFile);
+
+    if (m_blockfile_info.empty()) {
+        // Return if we haven't loaded any blockfiles yet. This happens during
+        // chainstate init, when we call
+        // ChainstateManager::MaybeRebalanceCaches() (which then calls
+        // FlushStateToDisk()), resulting in a call to this function before we
+        // have populated `m_blockfile_info` via LoadBlockIndexDB().
+        return;
+    }
+    assert(static_cast<int>(m_blockfile_info.size()) > m_last_blockfile);
+
     FlatFilePos block_pos_old(m_last_blockfile,
                               m_blockfile_info[m_last_blockfile].nSize);
     if (!BlockFileSeq().Flush(block_pos_old, fFinalize)) {
@@ -923,6 +934,12 @@ void ThreadImport(const Config &config, ChainstateManager &chainman,
                 LogPrintf("Reconsidering checkpointed block %s ...\n",
                           hash.GetHex());
                 chainman.ActiveChainstate().ResetBlockFailureFlags(pblockindex);
+            }
+
+            if (pblockindex && pblockindex->nStatus.isOnParkedChain()) {
+                LogPrintf("Unparking checkpointed block %s ...\n",
+                          hash.GetHex());
+                chainman.ActiveChainstate().UnparkBlockAndChildren(pblockindex);
             }
         }
 

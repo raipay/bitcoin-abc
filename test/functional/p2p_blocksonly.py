@@ -65,7 +65,6 @@ class P2PBlocksOnly(BitcoinTestFramework):
                 "-persistmempool=0",
                 "-whitelist=relay@127.0.0.1",
                 "-blocksonly",
-                "-deprecatedrpc=whitelisted",
             ],
         )
         assert_equal(self.nodes[0].getrawmempool(), [])
@@ -127,7 +126,7 @@ class P2PBlocksOnly(BitcoinTestFramework):
 
         self.nodes[0].sendrawtransaction(tx_hex)
 
-        # Bump time forward to ensure nNextInvSend timer pops
+        # Bump time forward to ensure m_next_inv_send_time timer pops
         self.nodes[0].setmocktime(int(time.time()) + 60)
 
         conn.sync_send_with_ping()

@@ -53,8 +53,9 @@ LEAVE_CRITICAL_SECTION(mutex); // no RAII
 ///////////////////////////////
 
 #ifdef DEBUG_LOCKORDER
+template <typename MutexType>
 void EnterCritical(const char *pszName, const char *pszFile, int nLine,
-                   void *cs, bool fTry = false);
+                   MutexType *cs, bool fTry = false);
 void LeaveCritical();
 void CheckLastCritical(void *cs, std::string &lockname, const char *guardname,
                        const char *file, int line);
@@ -75,8 +76,9 @@ bool LockStackEmpty();
  */
 extern bool g_debug_lockorder_abort;
 #else
+template <typename MutexType>
 inline void EnterCritical(const char *pszName, const char *pszFile, int nLine,
-                          void *cs, bool fTry = false) {}
+                          MutexType *cs, bool fTry = false) {}
 inline void LeaveCritical() {}
 inline void CheckLastCritical(void *cs, std::string &lockname,
                               const char *guardname, const char *file,
@@ -137,7 +139,7 @@ template <typename Mutex, typename Base = typename Mutex::UniqueLock>
 class SCOPED_LOCKABLE UniqueLock : public Base {
 private:
     void Enter(const char *pszName, const char *pszFile, int nLine) {
-        EnterCritical(pszName, pszFile, nLine, (void *)(Base::mutex()));
+        EnterCritical(pszName, pszFile, nLine, Base::mutex());
 #ifdef DEBUG_LOCKCONTENTION
         if (Base::try_lock()) {
             return;
@@ -150,12 +152,12 @@ private:
     }
 
     bool TryEnter(const char *pszName, const char *pszFile, int nLine) {
-        EnterCritical(pszName, pszFile, nLine, (void *)(Base::mutex()), true);
-        Base::try_lock();
-        if (!Base::owns_lock()) {
-            LeaveCritical();
+        EnterCritical(pszName, pszFile, nLine, Base::mutex(), true);
+        if (Base::try_lock()) {
+            return true;
         }
-        return Base::owns_lock();
+        LeaveCritical();
+        return false;
     }
 
 public:
@@ -214,8 +216,7 @@ public:
 
         ~reverse_lock() {
             templock.swap(lock);
-            EnterCritical(lockname.c_str(), file.c_str(), line,
-                          (void *)lock.mutex());
+            EnterCritical(lockname.c_str(), file.c_str(), line, lock.mutex());
             lock.lock();
         }
 
@@ -253,7 +254,7 @@ using DebugLock = UniqueLock<typename std::remove_reference<
 
 #define ENTER_CRITICAL_SECTION(cs)                                             \
     {                                                                          \
-        EnterCritical(#cs, __FILE__, __LINE__, (void *)(&cs));                 \
+        EnterCritical(#cs, __FILE__, __LINE__, &cs);                           \
         (cs).lock();                                                           \
     }
 
@@ -273,8 +274,23 @@ using DebugLock = UniqueLock<typename std::remove_reference<
 //!
 //!   int val = WITH_LOCK(cs, return shared_val);
 //!
+//! Note:
+//!
+//! Since the return type deduction follows that of decltype(auto), while the
+//! deduced type of:
+//!
+//!   WITH_LOCK(cs, return {int i = 1; return i;});
+//!
+//! is int, the deduced type of:
+//!
+//!   WITH_LOCK(cs, return {int j = 1; return (j);});
+//!
+//! is &int, a reference to a local variable
+//!
+//! The above is detectable at compile-time with the -Wreturn-local-addr flag in
+//! gcc and the -Wreturn-stack-address flag in clang, both enabled by default.
 #define WITH_LOCK(cs, code)                                                    \
-    [&] {                                                                      \
+    [&]() -> decltype(auto) {                                                  \
         LOCK(cs);                                                              \
         code;                                                                  \
     }()

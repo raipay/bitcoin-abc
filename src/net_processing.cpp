@@ -340,6 +340,26 @@ struct Peer {
     /** Same id as the CNode object for this peer */
     const NodeId m_id{0};
 
+    /**
+     * Services we offered to this peer.
+     *
+     * This is supplied by CConnman during peer initialization. It's const
+     * because there is no protocol defined for renegotiating services
+     * initially offered to a peer. The set of local services we offer should
+     * not change after initialization.
+     *
+     * An interesting example of this is NODE_NETWORK and initial block
+     * download: a node which starts up from scratch doesn't have any blocks
+     * to serve, but still advertises NODE_NETWORK because it will eventually
+     * fulfill this role after IBD completes. P2P code is written in such a
+     * way that it can gracefully handle peers who don't make good on their
+     * service advertisements.
+     */
+    const ServiceFlags m_our_services;
+
+    /** Services this peer offered to us. */
+    std::atomic<ServiceFlags> m_their_services{NODE_NONE};
+
     /** Protects misbehavior data members */
     Mutex m_misbehavior_mutex;
     /** Accumulated misbehavior score for this peer */
@@ -381,6 +401,105 @@ struct Peer {
     std::atomic<std::chrono::microseconds> m_ping_start{0us};
     /** Whether a ping has been requested by the user */
     std::atomic<bool> m_ping_queued{false};
+
+    /**
+     * The feerate in the most recent BIP133 `feefilter` message sent to the
+     * peer.
+     * It is *not* a p2p protocol violation for the peer to send us
+     * transactions with a lower fee rate than this. See BIP133.
+     */
+    Amount m_fee_filter_sent{Amount::zero()};
+    std::chrono::microseconds m_next_send_feefilter{0};
+
+    struct TxRelay {
+        mutable RecursiveMutex m_bloom_filter_mutex;
+        /**
+         * Whether the peer wishes to receive transaction announcements.
+         *
+         * This is initially set based on the fRelay flag in the received
+         * `version` message. If initially set to false, it can only be flipped
+         * to true if we have offered the peer NODE_BLOOM services and it sends
+         * us a `filterload` or `filterclear` message. See BIP37.
+         */
+        bool m_relay_txs GUARDED_BY(m_bloom_filter_mutex){false};
+        /**
+         * A bloom filter for which transactions to announce to the peer.
+         * See BIP37.
+         */
+        std::unique_ptr<CBloomFilter>
+            m_bloom_filter PT_GUARDED_BY(m_bloom_filter_mutex)
+                GUARDED_BY(m_bloom_filter_mutex){nullptr};
+
+        mutable RecursiveMutex m_tx_inventory_mutex;
+        /**
+         * A filter of all the txids that the peer has announced to us or we
+         * have announced to the peer. We use this to avoid announcing
+         * the same txid to a peer that already has the transaction.
+         */
+        CRollingBloomFilter m_tx_inventory_known_filter
+            GUARDED_BY(m_tx_inventory_mutex){50000, 0.000001};
+        /**
+         * Set of transaction ids we still have to announce. We use the
+         * mempool to sort transactions in dependency order before relay, so
+         * this does not have to be sorted.
+         */
+        std::set<TxId> m_tx_inventory_to_send GUARDED_BY(m_tx_inventory_mutex);
+        /**
+         * Whether the peer has requested us to send our complete mempool. Only
+         * permitted if the peer has NetPermissionFlags::Mempool.
+         * See BIP35.
+         */
+        bool m_send_mempool GUARDED_BY(m_tx_inventory_mutex){false};
+        /** The last time a BIP35 `mempool` request was serviced. */
+        std::atomic<std::chrono::seconds> m_last_mempool_req{0s};
+        /**
+         * The next time after which we will send an `inv` message containing
+         * transaction announcements to this peer.
+         */
+        std::chrono::microseconds m_next_inv_send_time{0};
+
+        /**
+         * Minimum fee rate with which to filter transaction announcements to
+         * this node. See BIP133.
+         */
+        std::atomic<Amount> m_fee_filter_received{Amount::zero()};
+    };
+
+    /*
+     * Initializes a TxRelay struct for this peer. Can be called at most once
+     * for a peer.
+     */
+    TxRelay *SetTxRelay() {
+        LOCK(m_tx_relay_mutex);
+        Assume(!m_tx_relay);
+        m_tx_relay = std::make_unique<Peer::TxRelay>();
+        return m_tx_relay.get();
+    };
+
+    TxRelay *GetTxRelay() {
+        return WITH_LOCK(m_tx_relay_mutex, return m_tx_relay.get());
+    };
+
+    struct ProofRelay {
+        mutable RecursiveMutex m_proof_inventory_mutex;
+        std::set<avalanche::ProofId>
+            m_proof_inventory_to_send GUARDED_BY(m_proof_inventory_mutex);
+        // Prevent sending proof invs if the peer already knows about them
+        CRollingBloomFilter m_proof_inventory_known_filter
+            GUARDED_BY(m_proof_inventory_mutex){10000, 0.000001};
+        std::chrono::microseconds m_next_inv_send_time{0};
+
+        RadixTree<const avalanche::Proof, avalanche::ProofRadixTreeAdapter>
+            sharedProofs;
+        std::atomic<std::chrono::seconds> lastSharedProofsUpdate{0s};
+        std::atomic<bool> compactproofs_requested{false};
+    };
+
+    /**
+     * Proof relay data. Will be a nullptr if we're not relaying
+     * proofs with this peer
+     */
+    const std::unique_ptr<ProofRelay> m_proof_relay;
 
     /**
      * A vector of addresses to send to the peer, limited to MAX_ADDR_TO_SEND.
@@ -460,15 +579,28 @@ struct Peer {
     /** Work queue of items requested by this peer **/
     std::deque<CInv> m_getdata_requests GUARDED_BY(m_getdata_requests_mutex);
 
-    explicit Peer(NodeId id) : m_id(id) {}
+    explicit Peer(NodeId id, ServiceFlags our_services)
+        : m_id(id), m_our_services{our_services},
+          m_proof_relay(isAvalancheEnabled(gArgs)
+                            ? std::make_unique<ProofRelay>()
+                            : nullptr) {}
+
+private:
+    Mutex m_tx_relay_mutex;
+
+    /**
+     * Transaction relay data. Will be a nullptr if we're not relaying
+     * transactions with this peer (e.g. if it's a block-relay-only peer or
+     * the peer has sent us fRelay=false with bloom filters disabled).
+     */
+    std::unique_ptr<TxRelay> m_tx_relay GUARDED_BY(m_tx_relay_mutex);
 };
 
 using PeerRef = std::shared_ptr<Peer>;
 
 class PeerManagerImpl final : public PeerManager {
 public:
-    PeerManagerImpl(const CChainParams &chainparams, CConnman &connman,
-                    AddrMan &addrman, BanMan *banman,
+    PeerManagerImpl(CConnman &connman, AddrMan &addrman, BanMan *banman,
                     ChainstateManager &chainman, CTxMemPool &pool,
                     bool ignore_incoming_txs);
 
@@ -486,7 +618,8 @@ public:
                           const std::shared_ptr<const CBlock> &pblock) override;
 
     /** Implement NetEventsInterface */
-    void InitializeNode(const Config &config, CNode *pnode) override;
+    void InitializeNode(const Config &config, CNode &node,
+                        ServiceFlags our_services) override;
     void FinalizeNode(const Config &config, const CNode &node) override;
     bool ProcessMessages(const Config &config, CNode *pfrom,
                          std::atomic<bool> &interrupt) override;
@@ -629,7 +762,7 @@ private:
         EXCLUSIVE_LOCKS_REQUIRED(cs_proofrequest);
 
     /** Send a version message to a peer */
-    void PushNodeVersion(const Config &config, CNode &pnode);
+    void PushNodeVersion(const Config &config, CNode &pnode, const Peer &peer);
 
     /**
      * Send a ping message every PING_INTERVAL or if requested via RPC. May mark
@@ -645,7 +778,7 @@ private:
                        std::chrono::microseconds current_time);
 
     /** Send `feefilter` message. */
-    void MaybeSendFeefilter(CNode &node,
+    void MaybeSendFeefilter(CNode &node, Peer &peer,
                             std::chrono::microseconds current_time);
 
     /**
@@ -886,6 +1019,7 @@ private:
      *
      * May disconnect from the peer in the case of a bad request.
      *
+     * @param[in]   node            The node that we received the request from
      * @param[in]   peer            The peer that we received the request from
      * @param[in]   filter_type     The filter type the request is for. Must be
      *                              basic filters.
@@ -899,7 +1033,8 @@ private:
      *                              serviced.
      * @return                      True if the request can be serviced.
      */
-    bool PrepareBlockFilterRequest(CNode &peer, BlockFilterType filter_type,
+    bool PrepareBlockFilterRequest(CNode &node, Peer &peer,
+                                   BlockFilterType filter_type,
                                    uint32_t start_height,
                                    const BlockHash &stop_hash,
                                    uint32_t max_height_diff,
@@ -911,29 +1046,31 @@ private:
      *
      * May disconnect from the peer in the case of a bad request.
      *
+     * @param[in]   node            The node that we received the request from
      * @param[in]   peer            The peer that we received the request from
      * @param[in]   vRecv           The raw message received
      */
-    void ProcessGetCFilters(CNode &peer, CDataStream &vRecv);
+    void ProcessGetCFilters(CNode &node, Peer &peer, CDataStream &vRecv);
     /**
      * Handle a cfheaders request.
      *
      * May disconnect from the peer in the case of a bad request.
      *
+     * @param[in]   node            The node that we received the request from
      * @param[in]   peer            The peer that we received the request from
      * @param[in]   vRecv           The raw message received
      */
-    void ProcessGetCFHeaders(CNode &peer, CDataStream &vRecv);
-
+    void ProcessGetCFHeaders(CNode &node, Peer &peer, CDataStream &vRecv);
     /**
      * Handle a getcfcheckpt request.
      *
      * May disconnect from the peer in the case of a bad request.
      *
+     * @param[in]   node            The node that we received the request from
      * @param[in]   peer            The peer that we received the request from
      * @param[in]   vRecv           The raw message received
      */
-    void ProcessGetCFCheckPt(CNode &peer, CDataStream &vRecv);
+    void ProcessGetCFCheckPt(CNode &node, Peer &peer, CDataStream &vRecv);
 
     /**
      * Decide a response for an Avalanche poll about the given block.
@@ -967,25 +1104,12 @@ private:
      *
      * @return   False if the peer is misbehaving, true otherwise
      */
-    bool ReceivedAvalancheProof(CNode &peer, const avalanche::ProofRef &proof);
+    bool ReceivedAvalancheProof(CNode &node, Peer &peer,
+                                const avalanche::ProofRef &proof);
 };
 } // namespace
 
 namespace {
-/**
- * Filter for proofs that are consensus-invalid or were recently invalidated
- * by avalanche (finalized rejection). These are not rerequested until they are
- * rolled out of the filter.
- *
- * Without this filter we'd be re-requesting proofs from each of our peers,
- * increasing bandwidth consumption considerably.
- *
- * Decreasing the false positive rate is fairly cheap, so we pick one in a
- * million to make it highly unlikely for users to have issues with this filter.
- */
-Mutex cs_invalidProofs;
-std::unique_ptr<CRollingBloomFilter> invalidProofs GUARDED_BY(cs_invalidProofs);
-
 /** Number of preferable block download peers. */
 int nPreferredDownload GUARDED_BY(cs_main) = 0;
 } // namespace
@@ -1086,12 +1210,6 @@ struct CNodeState {
     //! Time of last new block announcement
     int64_t m_last_block_announcement{0};
 
-    struct AvalancheState {
-        std::chrono::time_point<std::chrono::steady_clock> last_poll;
-    };
-
-    AvalancheState m_avalanche_state;
-
     //! Whether this peer is an inbound connection
     const bool m_is_inbound;
 
@@ -1149,23 +1267,40 @@ static void PushAddress(Peer &peer, const CAddress &addr,
     }
 }
 
+static void AddKnownTx(Peer &peer, const TxId &txid) {
+    auto tx_relay = peer.GetTxRelay();
+    if (!tx_relay) {
+        return;
+    }
+
+    LOCK(tx_relay->m_tx_inventory_mutex);
+    tx_relay->m_tx_inventory_known_filter.insert(txid);
+}
+
+static void AddKnownProof(Peer &peer, const avalanche::ProofId &proofid) {
+    if (peer.m_proof_relay != nullptr) {
+        LOCK(peer.m_proof_relay->m_proof_inventory_mutex);
+        peer.m_proof_relay->m_proof_inventory_known_filter.insert(proofid);
+    }
+}
+
 static bool isPreferredDownloadPeer(const CNode &pfrom) {
     LOCK(cs_main);
     const CNodeState *state = State(pfrom.GetId());
     return state && state->fPreferredDownload;
 }
+/** Whether this peer can serve us blocks. */
+static bool CanServeBlocks(const Peer &peer) {
+    return peer.m_their_services & (NODE_NETWORK | NODE_NETWORK_LIMITED);
+}
 
-static void UpdatePreferredDownload(const CNode &node, CNodeState *state)
-    EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
-    nPreferredDownload -= state->fPreferredDownload;
-
-    // Whether this node should be marked as a preferred download node.
-    state->fPreferredDownload =
-        (!node.IsInboundConn() ||
-         node.HasPermission(NetPermissionFlags::NoBan)) &&
-        !node.IsAddrFetchConn() && !node.fClient;
-
-    nPreferredDownload += state->fPreferredDownload;
+/**
+ * Whether this peer can only serve limited recent blocks (e.g. because
+ * it prunes old blocks)
+ */
+static bool IsLimitedPeer(const Peer &peer) {
+    return (!(peer.m_their_services & NODE_NETWORK) &&
+            (peer.m_their_services & NODE_NETWORK_LIMITED));
 }
 
 bool PeerManagerImpl::IsBlockRequested(const BlockHash &hash) {
@@ -1532,11 +1667,9 @@ ComputeRequestTime(const CNode &node,
     return current_time + delay;
 }
 
-void PeerManagerImpl::PushNodeVersion(const Config &config, CNode &pnode) {
-    // Note that pnode.GetLocalServices() is a reflection of the local
-    // services we were offering when the CNode object was created for this
-    // peer.
-    ServiceFlags nLocalNodeServices = pnode.GetLocalServices();
+void PeerManagerImpl::PushNodeVersion(const Config &config, CNode &pnode,
+                                      const Peer &peer) {
+    uint64_t my_services{peer.m_our_services};
     const int64_t nTime{count_seconds(GetTime<std::chrono::seconds>())};
     uint64_t nonce = pnode.GetLocalNonce();
     const int nNodeStartingHeight{m_best_height};
@@ -1544,33 +1677,36 @@ void PeerManagerImpl::PushNodeVersion(const Config &config, CNode &pnode) {
     CAddress addr = pnode.addr;
     uint64_t extraEntropy = pnode.GetLocalExtraEntropy();
 
-    CAddress addrYou =
+    CService addr_you =
         addr.IsRoutable() && !IsProxy(addr) && addr.IsAddrV1Compatible()
             ? addr
-            : CAddress(CService(), addr.nServices);
-    CAddress addrMe = CAddress(CService(), nLocalNodeServices);
+            : CService();
+    uint64_t your_services{addr.nServices};
 
-    const bool tx_relay = !m_ignore_incoming_txs &&
-                          pnode.m_tx_relay != nullptr && !pnode.IsFeelerConn();
+    const bool tx_relay = !m_ignore_incoming_txs && !pnode.IsBlockOnlyConn() &&
+                          !pnode.IsFeelerConn();
     m_connman.PushMessage(
+        // your_services, addr_you: Together the pre-version-31402 serialization
+        //     of CAddress "addrYou" (without nTime)
+        // my_services, CService(): Together the pre-version-31402 serialization
+        //     of CAddress "addrMe" (without nTime)
         &pnode, CNetMsgMaker(INIT_PROTO_VERSION)
-                    .Make(NetMsgType::VERSION, PROTOCOL_VERSION,
-                          uint64_t(nLocalNodeServices), nTime, addrYou, addrMe,
-                          nonce, userAgent(config), nNodeStartingHeight,
-                          tx_relay, extraEntropy));
+                    .Make(NetMsgType::VERSION, PROTOCOL_VERSION, my_services,
+                          nTime, your_services, addr_you, my_services,
+                          CService(), nonce, userAgent(config),
+                          nNodeStartingHeight, tx_relay, extraEntropy));
 
     if (fLogIPs) {
         LogPrint(BCLog::NET,
-                 "send version message: version %d, blocks=%d, us=%s, them=%s, "
+                 "send version message: version %d, blocks=%d, them=%s, "
                  "txrelay=%d, peer=%d\n",
-                 PROTOCOL_VERSION, nNodeStartingHeight, addrMe.ToString(),
-                 addrYou.ToString(), tx_relay, nodeid);
+                 PROTOCOL_VERSION, nNodeStartingHeight, addr_you.ToString(),
+                 tx_relay, nodeid);
     } else {
         LogPrint(BCLog::NET,
-                 "send version message: version %d, blocks=%d, us=%s, "
+                 "send version message: version %d, blocks=%d, "
                  "txrelay=%d, peer=%d\n",
-                 PROTOCOL_VERSION, nNodeStartingHeight, addrMe.ToString(),
-                 tx_relay, nodeid);
+                 PROTOCOL_VERSION, nNodeStartingHeight, tx_relay, nodeid);
     }
 }
 
@@ -1617,23 +1753,23 @@ void UpdateLastBlockAnnounceTime(NodeId node, int64_t time_in_seconds) {
     }
 }
 
-void PeerManagerImpl::InitializeNode(const Config &config, CNode *pnode) {
-    NodeId nodeid = pnode->GetId();
+void PeerManagerImpl::InitializeNode(const Config &config, CNode &node,
+                                     ServiceFlags our_services) {
+    NodeId nodeid = node.GetId();
     {
         LOCK(cs_main);
-        mapNodeState.emplace_hint(
-            mapNodeState.end(), std::piecewise_construct,
-            std::forward_as_tuple(nodeid),
-            std::forward_as_tuple(pnode->IsInboundConn()));
+        mapNodeState.emplace_hint(mapNodeState.end(), std::piecewise_construct,
+                                  std::forward_as_tuple(nodeid),
+                                  std::forward_as_tuple(node.IsInboundConn()));
         assert(m_txrequest.Count(nodeid) == 0);
     }
+    PeerRef peer = std::make_shared<Peer>(nodeid, our_services);
     {
-        PeerRef peer = std::make_shared<Peer>(nodeid);
         LOCK(m_peer_mutex);
-        m_peer_map.emplace_hint(m_peer_map.end(), nodeid, std::move(peer));
+        m_peer_map.emplace_hint(m_peer_map.end(), nodeid, peer);
     }
-    if (!pnode->IsInboundConn()) {
-        PushNodeVersion(config, *pnode);
+    if (!node.IsInboundConn()) {
+        PushNodeVersion(config, node, *peer);
     }
 }
 
@@ -1741,11 +1877,15 @@ void PeerManagerImpl::AvalanchePeriodicNetworking(CScheduler &scheduler) const {
             avanode_ids.push_back(pnode->GetId());
         }
 
+        PeerRef peer = GetPeerRef(pnode->GetId());
+        if (peer == nullptr) {
+            return;
+        }
         // If a proof radix tree timed out, cleanup
-        if (pnode->m_proof_relay &&
-            now > (pnode->m_proof_relay->lastSharedProofsUpdate.load() +
+        if (peer->m_proof_relay &&
+            now > (peer->m_proof_relay->lastSharedProofsUpdate.load() +
                    AVALANCHE_AVAPROOFS_TIMEOUT)) {
-            pnode->m_proof_relay->sharedProofs = {};
+            peer->m_proof_relay->sharedProofs = {};
         }
     });
 
@@ -1759,9 +1899,6 @@ void PeerManagerImpl::AvalanchePeriodicNetworking(CScheduler &scheduler) const {
     // Request avalanche addresses from our peers
     for (NodeId avanodeId : avanode_ids) {
         m_connman.ForNode(avanodeId, [&](CNode *pavanode) {
-            LogPrint(BCLog::AVALANCHE,
-                     "Requesting more avalanche addresses from peer %d\n",
-                     avanodeId);
             m_connman.PushMessage(pavanode,
                                   CNetMsgMaker(pavanode->GetCommonVersion())
                                       .Make(NetMsgType::GETAVAADDR));
@@ -1792,17 +1929,15 @@ void PeerManagerImpl::AvalanchePeriodicNetworking(CScheduler &scheduler) const {
     }
 
     for (NodeId nodeid : avanode_ids) {
-        // Send a getavaproofs to one of our peers
+        // Send a getavaproofs to all of our peers
         m_connman.ForNode(nodeid, [&](CNode *pavanode) {
-            LogPrint(BCLog::AVALANCHE,
-                     "Requesting compact proofs from peer %d\n",
-                     pavanode->GetId());
-            if (pavanode->m_proof_relay) {
+            PeerRef peer = GetPeerRef(nodeid);
+            if (peer->m_proof_relay) {
                 m_connman.PushMessage(pavanode,
                                       CNetMsgMaker(pavanode->GetCommonVersion())
                                           .Make(NetMsgType::GETAVAPROOFS));
 
-                pavanode->m_proof_relay->compactproofs_requested = true;
+                peer->m_proof_relay->compactproofs_requested = true;
             }
             return true;
         });
@@ -1922,6 +2057,7 @@ bool PeerManagerImpl::GetNodeStateStats(NodeId nodeid,
     if (peer == nullptr) {
         return false;
     }
+    stats.their_services = peer->m_their_services;
     stats.m_starting_height = peer->m_starting_height;
     // It is common for nodes with good ping times to suddenly become lagged,
     // due to a new block arriving or other large transfer.
@@ -1935,6 +2071,15 @@ bool PeerManagerImpl::GetNodeStateStats(NodeId nodeid,
         (0 != peer->m_ping_start.load().count())) {
         ping_wait =
             GetTime<std::chrono::microseconds>() - peer->m_ping_start.load();
+    }
+
+    if (auto tx_relay = peer->GetTxRelay()) {
+        stats.m_relay_txs = WITH_LOCK(tx_relay->m_bloom_filter_mutex,
+                                      return tx_relay->m_relay_txs);
+        stats.m_fee_filter_received = tx_relay->m_fee_filter_received.load();
+    } else {
+        stats.m_relay_txs = false;
+        stats.m_fee_filter_received = Amount::zero();
     }
 
     stats.m_ping_wait = ping_wait;
@@ -2130,27 +2275,21 @@ PeerManagerImpl::FetchBlock(const Config &config, NodeId peer_id,
     return std::nullopt;
 }
 
-std::unique_ptr<PeerManager>
-PeerManager::make(const CChainParams &chainparams, CConnman &connman,
-                  AddrMan &addrman, BanMan *banman, ChainstateManager &chainman,
-                  CTxMemPool &pool, bool ignore_incoming_txs) {
-    return std::make_unique<PeerManagerImpl>(chainparams, connman, addrman,
-                                             banman, chainman, pool,
-                                             ignore_incoming_txs);
+std::unique_ptr<PeerManager> PeerManager::make(CConnman &connman,
+                                               AddrMan &addrman, BanMan *banman,
+                                               ChainstateManager &chainman,
+                                               CTxMemPool &pool,
+                                               bool ignore_incoming_txs) {
+    return std::make_unique<PeerManagerImpl>(connman, addrman, banman, chainman,
+                                             pool, ignore_incoming_txs);
 }
 
-PeerManagerImpl::PeerManagerImpl(const CChainParams &chainparams,
-                                 CConnman &connman, AddrMan &addrman,
+PeerManagerImpl::PeerManagerImpl(CConnman &connman, AddrMan &addrman,
                                  BanMan *banman, ChainstateManager &chainman,
                                  CTxMemPool &pool, bool ignore_incoming_txs)
-    : m_chainparams(chainparams), m_connman(connman), m_addrman(addrman),
-      m_banman(banman), m_chainman(chainman), m_mempool(pool),
-      m_ignore_incoming_txs(ignore_incoming_txs) {
-    {
-        LOCK(cs_invalidProofs);
-        invalidProofs = std::make_unique<CRollingBloomFilter>(100000, 0.000001);
-    }
-}
+    : m_chainparams(chainman.GetParams()), m_connman(connman),
+      m_addrman(addrman), m_banman(banman), m_chainman(chainman),
+      m_mempool(pool), m_ignore_incoming_txs(ignore_incoming_txs) {}
 
 void PeerManagerImpl::StartScheduledTasks(CScheduler &scheduler) {
     // Stale tip checking and peer eviction are on two different timers, but we
@@ -2411,11 +2550,9 @@ bool PeerManagerImpl::AlreadyHaveProof(const avalanche::ProofId &proofid) {
         return true;
     }
 
-    const bool hasProof = g_avalanche->withPeerManager(
-        [&proofid](avalanche::PeerManager &pm) { return pm.exists(proofid); });
-
-    LOCK(cs_invalidProofs);
-    return hasProof || invalidProofs->contains(proofid);
+    return g_avalanche->withPeerManager([&proofid](avalanche::PeerManager &pm) {
+        return pm.exists(proofid) || pm.isInvalid(proofid);
+    });
 }
 
 void PeerManagerImpl::SendPings() {
@@ -2426,13 +2563,34 @@ void PeerManagerImpl::SendPings() {
 }
 
 void PeerManagerImpl::RelayTransaction(const TxId &txid) {
-    m_connman.ForEachNode(
-        [&txid](CNode *pnode) { pnode->PushTxInventory(txid); });
+    LOCK(m_peer_mutex);
+    for (auto &it : m_peer_map) {
+        Peer &peer = *it.second;
+        auto tx_relay = peer.GetTxRelay();
+        if (!tx_relay) {
+            continue;
+        }
+        LOCK(tx_relay->m_tx_inventory_mutex);
+        if (!tx_relay->m_tx_inventory_known_filter.contains(txid)) {
+            tx_relay->m_tx_inventory_to_send.insert(txid);
+        }
+    }
 }
 
 void PeerManagerImpl::RelayProof(const avalanche::ProofId &proofid) {
-    m_connman.ForEachNode(
-        [&proofid](CNode *pnode) { pnode->PushProofInventory(proofid); });
+    LOCK(m_peer_mutex);
+    for (auto &it : m_peer_map) {
+        Peer &peer = *it.second;
+
+        if (!peer.m_proof_relay) {
+            continue;
+        }
+        LOCK(peer.m_proof_relay->m_proof_inventory_mutex);
+        if (!peer.m_proof_relay->m_proof_inventory_known_filter.contains(
+                proofid)) {
+            peer.m_proof_relay->m_proof_inventory_to_send.insert(proofid);
+        }
+    }
 }
 
 void PeerManagerImpl::RelayAddress(NodeId originator, const CAddress &addr,
@@ -2557,9 +2715,9 @@ void PeerManagerImpl::ProcessGetBlockData(const Config &config, CNode &pfrom,
     // NODE_NETWORK_LIMITED threshold.
     // Add two blocks buffer extension for possible races
     if (!pfrom.HasPermission(NetPermissionFlags::NoBan) &&
-        ((((pfrom.GetLocalServices() & NODE_NETWORK_LIMITED) ==
+        ((((peer.m_our_services & NODE_NETWORK_LIMITED) ==
            NODE_NETWORK_LIMITED) &&
-          ((pfrom.GetLocalServices() & NODE_NETWORK) != NODE_NETWORK) &&
+          ((peer.m_our_services & NODE_NETWORK) != NODE_NETWORK) &&
           (m_chainman.ActiveChain().Tip()->nHeight - pindex->nHeight >
            (int)NODE_NETWORK_LIMITED_MIN_BLOCKS + 2)))) {
         LogPrint(BCLog::NET,
@@ -2595,11 +2753,11 @@ void PeerManagerImpl::ProcessGetBlockData(const Config &config, CNode &pfrom,
     } else if (inv.IsMsgFilteredBlk()) {
         bool sendMerkleBlock = false;
         CMerkleBlock merkleBlock;
-        if (pfrom.m_tx_relay != nullptr) {
-            LOCK(pfrom.m_tx_relay->cs_filter);
-            if (pfrom.m_tx_relay->pfilter) {
+        if (auto tx_relay = peer.GetTxRelay()) {
+            LOCK(tx_relay->m_bloom_filter_mutex);
+            if (tx_relay->m_bloom_filter) {
                 sendMerkleBlock = true;
-                merkleBlock = CMerkleBlock(*pblock, *pfrom.m_tx_relay->pfilter);
+                merkleBlock = CMerkleBlock(*pblock, *tx_relay->m_bloom_filter);
             }
         }
         if (sendMerkleBlock) {
@@ -2745,14 +2903,16 @@ void PeerManagerImpl::ProcessGetData(
     const std::atomic<bool> &interruptMsgProc) {
     AssertLockNotHeld(cs_main);
 
+    auto tx_relay = peer.GetTxRelay();
+
     std::deque<CInv>::iterator it = peer.m_getdata_requests.begin();
     std::vector<CInv> vNotFound;
     const CNetMsgMaker msgMaker(pfrom.GetCommonVersion());
 
     const auto now{GetTime<std::chrono::seconds>()};
     // Get last mempool request time
-    const auto mempool_req = pfrom.m_tx_relay != nullptr
-                                 ? pfrom.m_tx_relay->m_last_mempool_req.load()
+    const auto mempool_req = tx_relay != nullptr
+                                 ? tx_relay->m_last_mempool_req.load()
                                  : std::chrono::seconds::min();
 
     // Process as many TX or AVA_PROOF items from the front of the getdata
@@ -2788,9 +2948,10 @@ void PeerManagerImpl::ProcessGetData(
         }
 
         if (it->IsMsgTx()) {
-            if (pfrom.m_tx_relay == nullptr) {
-                // Ignore GETDATA requests for transactions from blocks-only
-                // peers.
+            if (tx_relay == nullptr) {
+                // Ignore GETDATA requests for transactions from
+                // block-relay-only peers and peers that asked us not to
+                // announce transactions.
                 continue;
             }
 
@@ -2824,8 +2985,8 @@ void PeerManagerImpl::ProcessGetData(
                 for (const TxId &parent_txid : parent_ids_to_add) {
                     // Relaying a transaction with a recent but unconfirmed
                     // parent.
-                    if (WITH_LOCK(pfrom.m_tx_relay->cs_tx_inventory,
-                                  return !pfrom.m_tx_relay->filterInventoryKnown
+                    if (WITH_LOCK(tx_relay->m_tx_inventory_mutex,
+                                  return !tx_relay->m_tx_inventory_known_filter
                                               .contains(parent_txid))) {
                         LOCK(cs_main);
                         State(pfrom.GetId())
@@ -3180,17 +3341,17 @@ void PeerManagerImpl::ProcessOrphanTx(const Config &config,
 }
 
 bool PeerManagerImpl::PrepareBlockFilterRequest(
-    CNode &peer, BlockFilterType filter_type, uint32_t start_height,
+    CNode &node, Peer &peer, BlockFilterType filter_type, uint32_t start_height,
     const BlockHash &stop_hash, uint32_t max_height_diff,
     const CBlockIndex *&stop_index, BlockFilterIndex *&filter_index) {
     const bool supported_filter_type =
         (filter_type == BlockFilterType::BASIC &&
-         (peer.GetLocalServices() & NODE_COMPACT_FILTERS));
+         (peer.m_our_services & NODE_COMPACT_FILTERS));
     if (!supported_filter_type) {
         LogPrint(BCLog::NET,
                  "peer %d requested unsupported block filter type: %d\n",
-                 peer.GetId(), static_cast<uint8_t>(filter_type));
-        peer.fDisconnect = true;
+                 node.GetId(), static_cast<uint8_t>(filter_type));
+        node.fDisconnect = true;
         return false;
     }
 
@@ -3202,8 +3363,8 @@ bool PeerManagerImpl::PrepareBlockFilterRequest(
         // fetch it.
         if (!stop_index || !BlockRequestAllowed(stop_index)) {
             LogPrint(BCLog::NET, "peer %d requested invalid block hash: %s\n",
-                     peer.GetId(), stop_hash.ToString());
-            peer.fDisconnect = true;
+                     node.GetId(), stop_hash.ToString());
+            node.fDisconnect = true;
             return false;
         }
     }
@@ -3215,15 +3376,15 @@ bool PeerManagerImpl::PrepareBlockFilterRequest(
             "peer %d sent invalid getcfilters/getcfheaders with " /* Continued
                                                                    */
             "start height %d and stop height %d\n",
-            peer.GetId(), start_height, stop_height);
-        peer.fDisconnect = true;
+            node.GetId(), start_height, stop_height);
+        node.fDisconnect = true;
         return false;
     }
     if (stop_height - start_height >= max_height_diff) {
         LogPrint(BCLog::NET,
                  "peer %d requested too many cfilters/cfheaders: %d / %d\n",
-                 peer.GetId(), stop_height - start_height + 1, max_height_diff);
-        peer.fDisconnect = true;
+                 node.GetId(), stop_height - start_height + 1, max_height_diff);
+        node.fDisconnect = true;
         return false;
     }
 
@@ -3237,7 +3398,8 @@ bool PeerManagerImpl::PrepareBlockFilterRequest(
     return true;
 }
 
-void PeerManagerImpl::ProcessGetCFilters(CNode &peer, CDataStream &vRecv) {
+void PeerManagerImpl::ProcessGetCFilters(CNode &node, Peer &peer,
+                                         CDataStream &vRecv) {
     uint8_t filter_type_ser;
     uint32_t start_height;
     BlockHash stop_hash;
@@ -3249,8 +3411,8 @@ void PeerManagerImpl::ProcessGetCFilters(CNode &peer, CDataStream &vRecv) {
 
     const CBlockIndex *stop_index;
     BlockFilterIndex *filter_index;
-    if (!PrepareBlockFilterRequest(peer, filter_type, start_height, stop_hash,
-                                   MAX_GETCFILTERS_SIZE, stop_index,
+    if (!PrepareBlockFilterRequest(node, peer, filter_type, start_height,
+                                   stop_hash, MAX_GETCFILTERS_SIZE, stop_index,
                                    filter_index)) {
         return;
     }
@@ -3266,13 +3428,14 @@ void PeerManagerImpl::ProcessGetCFilters(CNode &peer, CDataStream &vRecv) {
     }
 
     for (const auto &filter : filters) {
-        CSerializedNetMsg msg = CNetMsgMaker(peer.GetCommonVersion())
+        CSerializedNetMsg msg = CNetMsgMaker(node.GetCommonVersion())
                                     .Make(NetMsgType::CFILTER, filter);
-        m_connman.PushMessage(&peer, std::move(msg));
+        m_connman.PushMessage(&node, std::move(msg));
     }
 }
 
-void PeerManagerImpl::ProcessGetCFHeaders(CNode &peer, CDataStream &vRecv) {
+void PeerManagerImpl::ProcessGetCFHeaders(CNode &node, Peer &peer,
+                                          CDataStream &vRecv) {
     uint8_t filter_type_ser;
     uint32_t start_height;
     BlockHash stop_hash;
@@ -3284,8 +3447,8 @@ void PeerManagerImpl::ProcessGetCFHeaders(CNode &peer, CDataStream &vRecv) {
 
     const CBlockIndex *stop_index;
     BlockFilterIndex *filter_index;
-    if (!PrepareBlockFilterRequest(peer, filter_type, start_height, stop_hash,
-                                   MAX_GETCFHEADERS_SIZE, stop_index,
+    if (!PrepareBlockFilterRequest(node, peer, filter_type, start_height,
+                                   stop_hash, MAX_GETCFHEADERS_SIZE, stop_index,
                                    filter_index)) {
         return;
     }
@@ -3316,13 +3479,14 @@ void PeerManagerImpl::ProcessGetCFHeaders(CNode &peer, CDataStream &vRecv) {
     }
 
     CSerializedNetMsg msg =
-        CNetMsgMaker(peer.GetCommonVersion())
+        CNetMsgMaker(node.GetCommonVersion())
             .Make(NetMsgType::CFHEADERS, filter_type_ser,
                   stop_index->GetBlockHash(), prev_header, filter_hashes);
-    m_connman.PushMessage(&peer, std::move(msg));
+    m_connman.PushMessage(&node, std::move(msg));
 }
 
-void PeerManagerImpl::ProcessGetCFCheckPt(CNode &peer, CDataStream &vRecv) {
+void PeerManagerImpl::ProcessGetCFCheckPt(CNode &node, Peer &peer,
+                                          CDataStream &vRecv) {
     uint8_t filter_type_ser;
     BlockHash stop_hash;
 
@@ -3334,7 +3498,7 @@ void PeerManagerImpl::ProcessGetCFCheckPt(CNode &peer, CDataStream &vRecv) {
     const CBlockIndex *stop_index;
     BlockFilterIndex *filter_index;
     if (!PrepareBlockFilterRequest(
-            peer, filter_type, /*start_height=*/0, stop_hash,
+            node, peer, filter_type, /*start_height=*/0, stop_hash,
             /*max_height_diff=*/std::numeric_limits<uint32_t>::max(),
             stop_index, filter_index)) {
         return;
@@ -3358,10 +3522,10 @@ void PeerManagerImpl::ProcessGetCFCheckPt(CNode &peer, CDataStream &vRecv) {
         }
     }
 
-    CSerializedNetMsg msg = CNetMsgMaker(peer.GetCommonVersion())
+    CSerializedNetMsg msg = CNetMsgMaker(node.GetCommonVersion())
                                 .Make(NetMsgType::CFCHECKPT, filter_type_ser,
                                       stop_index->GetBlockHash(), headers);
-    m_connman.PushMessage(&peer, std::move(msg));
+    m_connman.PushMessage(&node, std::move(msg));
 }
 
 bool IsAvalancheMessageType(const std::string &msg_type) {
@@ -3450,12 +3614,12 @@ uint32_t PeerManagerImpl::GetAvalancheVoteForTx(const TxId &id) const {
 static uint32_t getAvalancheVoteForProof(const avalanche::ProofId &id) {
     assert(g_avalanche);
 
-    // Rejected proof
-    if (WITH_LOCK(cs_invalidProofs, return invalidProofs->contains(id))) {
-        return 1;
-    }
-
     return g_avalanche->withPeerManager([&id](avalanche::PeerManager &pm) {
+        // Rejected proof
+        if (pm.isInvalid(id)) {
+            return 1;
+        }
+
         // The proof is actively bound to a peer
         if (pm.isBoundToPeer(id)) {
             return 0;
@@ -3500,7 +3664,7 @@ void PeerManagerImpl::ProcessMessage(
     const Config &config, CNode &pfrom, const std::string &msg_type,
     CDataStream &vRecv, const std::chrono::microseconds time_received,
     const std::atomic<bool> &interruptMsgProc) {
-    LogPrint(BCLog::NET, "received: %s (%u bytes) peer=%d\n",
+    LogPrint(BCLog::NETDEBUG, "received: %s (%u bytes) peer=%d\n",
              SanitizeString(msg_type), vRecv.size(), pfrom.GetId());
 
     PeerRef peer = GetPeerRef(pfrom.GetId());
@@ -3530,10 +3694,8 @@ void PeerManagerImpl::ProcessMessage(
         }
 
         int64_t nTime;
-        CAddress addrMe;
-        CAddress addrFrom;
+        CService addrMe;
         uint64_t nNonce = 1;
-        uint64_t nServiceInt;
         ServiceFlags nServices;
         int nVersion;
         std::string cleanSubVer;
@@ -3541,11 +3703,13 @@ void PeerManagerImpl::ProcessMessage(
         bool fRelay = true;
         uint64_t nExtraEntropy = 1;
 
-        vRecv >> nVersion >> nServiceInt >> nTime >> addrMe;
+        vRecv >> nVersion >> Using<CustomUintFormatter<8>>(nServices) >> nTime;
         if (nTime < 0) {
             nTime = 0;
         }
-        nServices = ServiceFlags(nServiceInt);
+        // Ignore the addrMe service bits sent by the peer
+        vRecv.ignore(8);
+        vRecv >> addrMe;
         if (!pfrom.IsInboundConn()) {
             m_addrman.SetServices(pfrom.addr, nServices);
         }
@@ -3580,7 +3744,13 @@ void PeerManagerImpl::ProcessMessage(
         }
 
         if (!vRecv.empty()) {
-            vRecv >> addrFrom >> nNonce;
+            // The version message includes information about the sending node
+            // which we don't use:
+            //   - 8 bytes (service bits)
+            //   - 16 bytes (ipv6 address)
+            //   - 2 bytes (port)
+            vRecv.ignore(26);
+            vRecv >> nNonce;
         }
         if (!vRecv.empty()) {
             std::string strSubVer;
@@ -3611,7 +3781,7 @@ void PeerManagerImpl::ProcessMessage(
         // Inbound peers send us their version message when they connect.
         // We send our version message in response.
         if (pfrom.IsInboundConn()) {
-            PushNodeVersion(config, pfrom);
+            PushNodeVersion(config, pfrom, *peer);
         }
 
         // Change version
@@ -3627,7 +3797,9 @@ void PeerManagerImpl::ProcessMessage(
         // Signal ADDRv2 support (BIP155).
         m_connman.PushMessage(&pfrom, msg_maker.Make(NetMsgType::SENDADDRV2));
 
-        pfrom.nServices = nServices;
+        pfrom.m_has_all_wanted_services =
+            HasAllDesirableServiceFlags(nServices);
+        peer->m_their_services = nServices;
         pfrom.SetAddrLocal(addrMe);
         {
             LOCK(pfrom.m_subver_mutex);
@@ -3635,20 +3807,21 @@ void PeerManagerImpl::ProcessMessage(
         }
         peer->m_starting_height = starting_height;
 
-        // set nodes not relaying blocks and tx and not serving (parts) of the
-        // historical blockchain as "clients"
-        pfrom.fClient = (!(nServices & NODE_NETWORK) &&
-                         !(nServices & NODE_NETWORK_LIMITED));
-
-        // set nodes not capable of serving the complete blockchain history as
-        // "limited nodes"
-        pfrom.m_limited_node =
-            (!(nServices & NODE_NETWORK) && (nServices & NODE_NETWORK_LIMITED));
-
-        if (pfrom.m_tx_relay != nullptr) {
-            LOCK(pfrom.m_tx_relay->cs_filter);
-            // set to true after we get the first filter* message
-            pfrom.m_tx_relay->fRelayTxes = fRelay;
+        // We only initialize the m_tx_relay data structure if:
+        // - this isn't an outbound block-relay-only connection; and
+        // - fRelay=true or we're offering NODE_BLOOM to this peer
+        //   (NODE_BLOOM means that the peer may turn on tx relay later)
+        if (!pfrom.IsBlockOnlyConn() &&
+            (fRelay || (peer->m_our_services & NODE_BLOOM))) {
+            auto *const tx_relay = peer->SetTxRelay();
+            {
+                LOCK(tx_relay->m_bloom_filter_mutex);
+                // set to true after we get the first filter* message
+                tx_relay->m_relay_txs = fRelay;
+            }
+            if (fRelay) {
+                pfrom.m_relays_txs = true;
+            }
         }
 
         pfrom.nRemoteHostNonce = nNonce;
@@ -3657,7 +3830,12 @@ void PeerManagerImpl::ProcessMessage(
         // Potentially mark this peer as a preferred download peer.
         {
             LOCK(cs_main);
-            UpdatePreferredDownload(pfrom, State(pfrom.GetId()));
+            CNodeState *state = State(pfrom.GetId());
+            state->fPreferredDownload =
+                (!pfrom.IsInboundConn() ||
+                 pfrom.HasPermission(NetPermissionFlags::NoBan)) &&
+                !pfrom.IsAddrFetchConn() && CanServeBlocks(*peer);
+            nPreferredDownload += state->fPreferredDownload;
         }
 
         // Self advertisement & GETADDR logic
@@ -3675,8 +3853,8 @@ void PeerManagerImpl::ProcessMessage(
             // indicate to the peer that we will participate in addr relay.
             if (fListen &&
                 !m_chainman.ActiveChainstate().IsInitialBlockDownload()) {
-                CAddress addr =
-                    GetLocalAddress(&pfrom.addr, pfrom.GetLocalServices());
+                CAddress addr{GetLocalAddress(pfrom.addr), peer->m_our_services,
+                              (uint32_t)GetAdjustedTime()};
                 FastRandomContext insecure_rand;
                 if (addr.IsRoutable()) {
                     LogPrint(BCLog::NET,
@@ -3684,6 +3862,11 @@ void PeerManagerImpl::ProcessMessage(
                              addr.ToString());
                     PushAddress(*peer, addr, insecure_rand);
                 } else if (IsPeerAddrLocalGood(&pfrom)) {
+                    // Override just the address with whatever the peer sees us
+                    // as. Leave the port in addr as it was returned by
+                    // GetLocalAddress() above, as this is an outbound
+                    // connection and the peer cannot observe our listening
+                    // port.
                     addr.SetIP(addrMe);
                     LogPrint(BCLog::NET,
                              "ProcessMessages: advertising address %s\n",
@@ -3814,6 +3997,7 @@ void PeerManagerImpl::ProcessMessage(
                 auto localProof = g_avalanche->getLocalProof();
 
                 if (localProof) {
+                    AddKnownProof(*peer, localProof->getId());
                     // Add our proof id to the list or the recently announced
                     // proof INVs to this peer. This is used for filtering which
                     // INV can be requested for download.
@@ -4007,8 +4191,7 @@ void PeerManagerImpl::ProcessMessage(
 
         // Reject tx INVs when the -blocksonly setting is enabled, or this is a
         // block-relay-only peer
-        bool reject_tx_invs{m_ignore_incoming_txs ||
-                            (pfrom.m_tx_relay == nullptr)};
+        bool reject_tx_invs{m_ignore_incoming_txs || pfrom.IsBlockOnlyConn()};
 
         // Allow peers with relay permission to send data other than blocks
         // in blocks only mode
@@ -4053,7 +4236,7 @@ void PeerManagerImpl::ProcessMessage(
                 const avalanche::ProofId proofid(inv.hash);
                 const bool fAlreadyHave = AlreadyHaveProof(proofid);
                 logInv(inv, fAlreadyHave);
-                pfrom.AddKnownProof(proofid);
+                AddKnownProof(*peer, proofid);
 
                 if (!fAlreadyHave && g_avalanche && isAvalancheEnabled(gArgs) &&
                     !m_chainman.ActiveChainstate().IsInitialBlockDownload()) {
@@ -4072,7 +4255,7 @@ void PeerManagerImpl::ProcessMessage(
                 const bool fAlreadyHave = AlreadyHaveTx(txid);
                 logInv(inv, fAlreadyHave);
 
-                pfrom.AddKnownTx(txid);
+                AddKnownTx(*peer, txid);
                 if (reject_tx_invs) {
                     LogPrint(BCLog::NET,
                              "transaction (%s) inv sent in violation of "
@@ -4094,6 +4277,7 @@ void PeerManagerImpl::ProcessMessage(
         }
 
         if (best_block) {
+            LOCK(m_chainman.GetMutex());
             m_connman.PushMessage(
                 &pfrom, msgMaker.Make(NetMsgType::GETHEADERS,
                                       m_chainman.ActiveChain().GetLocator(
@@ -4368,11 +4552,11 @@ void PeerManagerImpl::ProcessMessage(
 
     if (msg_type == NetMsgType::TX) {
         // Stop processing the transaction early if
-        // 1) We are in blocks only mode and peer has no relay permission
+        // 1) We are in blocks only mode and peer has no relay permission; OR
         // 2) This peer is a block-relay-only peer
         if ((m_ignore_incoming_txs &&
              !pfrom.HasPermission(NetPermissionFlags::Relay)) ||
-            (pfrom.m_tx_relay == nullptr)) {
+            pfrom.IsBlockOnlyConn()) {
             LogPrint(BCLog::NET,
                      "transaction sent in violation of protocol peer=%d\n",
                      pfrom.GetId());
@@ -4384,7 +4568,7 @@ void PeerManagerImpl::ProcessMessage(
         vRecv >> ptx;
         const CTransaction &tx = *ptx;
         const TxId &txid = tx.GetId();
-        pfrom.AddKnownTx(txid);
+        AddKnownTx(*peer, txid);
 
         LOCK2(cs_main, g_cs_orphans);
 
@@ -4458,7 +4642,7 @@ void PeerManagerImpl::ProcessMessage(
 
                 for (const TxId &parent_txid : unique_parents) {
                     // FIXME: MSG_TX should use a TxHash, not a TxId.
-                    pfrom.AddKnownTx(parent_txid);
+                    AddKnownTx(*peer, parent_txid);
                     if (!AlreadyHaveTx(parent_txid)) {
                         AddTxAnnouncement(pfrom, parent_txid, current_time);
                     }
@@ -5027,11 +5211,11 @@ void PeerManagerImpl::ProcessMessage(
             WITH_LOCK(peer->m_addr_token_bucket_mutex,
                       peer->m_addr_token_bucket += GetMaxAddrToSend());
 
-            if (pfrom.m_proof_relay &&
+            if (peer->m_proof_relay &&
                 !m_chainman.ActiveChainstate().IsInitialBlockDownload()) {
                 m_connman.PushMessage(&pfrom,
                                       msgMaker.Make(NetMsgType::GETAVAPROOFS));
-                pfrom.m_proof_relay->compactproofs_requested = true;
+                peer->m_proof_relay->compactproofs_requested = true;
             }
         }
 
@@ -5039,20 +5223,19 @@ void PeerManagerImpl::ProcessMessage(
     }
 
     if (msg_type == NetMsgType::AVAPOLL) {
-        auto now = std::chrono::steady_clock::now();
-        int64_t cooldown =
+        const auto now = Now<SteadyMilliseconds>();
+        const int64_t cooldown =
             gArgs.GetIntArg("-avacooldown", AVALANCHE_DEFAULT_COOLDOWN);
 
-        {
-            LOCK(cs_main);
-            auto &node_state = State(pfrom.GetId())->m_avalanche_state;
+        const auto last_poll = pfrom.m_last_poll;
+        pfrom.m_last_poll = now;
 
-            if (now <
-                node_state.last_poll + std::chrono::milliseconds(cooldown)) {
-                Misbehaving(pfrom, 20, "avapool-cooldown");
-            }
-
-            node_state.last_poll = now;
+        if (now < last_poll + std::chrono::milliseconds(cooldown)) {
+            LogPrint(BCLog::AVALANCHE,
+                     "Ignoring repeated avapoll from peer %d: cooldown not "
+                     "elapsed\n",
+                     pfrom.GetId());
+            return;
         }
 
         const bool quorum_established =
@@ -5103,7 +5286,8 @@ void PeerManagerImpl::ProcessMessage(
                 } break;
                 default: {
                     LogPrint(BCLog::AVALANCHE,
-                             "poll inv type unknown from peer=%d\n", inv.type);
+                             "poll inv type %d unknown from peer=%d\n",
+                             inv.type, pfrom.GetId());
                 }
             }
 
@@ -5137,13 +5321,39 @@ void PeerManagerImpl::ProcessMessage(
             }
         }
 
+        auto now = GetTime<std::chrono::seconds>();
+
         std::vector<avalanche::VoteItemUpdate> updates;
-        int banscore;
+        int banscore{0};
         std::string error;
         if (!g_avalanche->registerVotes(pfrom.GetId(), response, updates,
                                         banscore, error)) {
-            Misbehaving(pfrom, banscore, error);
-            return;
+            if (banscore > 0) {
+                // If the banscore was set, just increase the node ban score
+                Misbehaving(pfrom, banscore, error);
+                return;
+            }
+
+            // Otherwise the node may have got a network issue. Increase the
+            // fault counter instead and only ban if we reached a threshold.
+            // This allows for fault tolerance should there be a temporary
+            // outage while still preventing DoS'ing behaviors, as the counter
+            // is reset if no fault occured over some time period.
+            pfrom.m_avalanche_message_fault_counter++;
+            pfrom.m_avalanche_last_message_fault = now;
+
+            // Allow up to 12 messages before increasing the ban score. Since
+            // the queries are cleared after 10s, this is at least 2 minutes
+            // of network outage tolerance over the 1h window.
+            if (pfrom.m_avalanche_message_fault_counter > 12) {
+                Misbehaving(pfrom, 2, error);
+                return;
+            }
+        }
+
+        // If no fault occurred within the last hour, reset the fault counter
+        if (now > (pfrom.m_avalanche_last_message_fault.load() + 1h)) {
+            pfrom.m_avalanche_message_fault_counter = 0;
         }
 
         pfrom.invsVoted(response.GetVotes().size());
@@ -5195,8 +5405,10 @@ void PeerManagerImpl::ProcessMessage(
                 auto nextCooldownTimePoint = GetTime<std::chrono::seconds>();
                 switch (u.getStatus()) {
                     case avalanche::VoteStatus::Invalid:
-                        WITH_LOCK(cs_invalidProofs,
-                                  invalidProofs->insert(proofid));
+                        g_avalanche->withPeerManager(
+                            [&](avalanche::PeerManager &pm) {
+                                pm.setInvalid(proofid);
+                            });
                         // Fallthrough
                     case avalanche::VoteStatus::Stale:
                         // Invalidate mode removes the proof from all proof
@@ -5306,26 +5518,26 @@ void PeerManagerImpl::ProcessMessage(
         auto proof = RCUPtr<avalanche::Proof>::make();
         vRecv >> *proof;
 
-        ReceivedAvalancheProof(pfrom, proof);
+        ReceivedAvalancheProof(pfrom, *peer, proof);
 
         return;
     }
 
     if (msg_type == NetMsgType::GETAVAPROOFS) {
-        if (pfrom.m_proof_relay == nullptr) {
+        if (peer->m_proof_relay == nullptr) {
             return;
         }
 
-        pfrom.m_proof_relay->lastSharedProofsUpdate =
+        peer->m_proof_relay->lastSharedProofsUpdate =
             GetTime<std::chrono::seconds>();
 
-        pfrom.m_proof_relay->sharedProofs =
+        peer->m_proof_relay->sharedProofs =
             g_avalanche->withPeerManager([&](const avalanche::PeerManager &pm) {
                 return pm.getShareableProofsSnapshot();
             });
 
         avalanche::CompactProofs compactProofs(
-            pfrom.m_proof_relay->sharedProofs);
+            peer->m_proof_relay->sharedProofs);
         m_connman.PushMessage(
             &pfrom, msgMaker.Make(NetMsgType::AVAPROOFS, compactProofs));
 
@@ -5333,16 +5545,16 @@ void PeerManagerImpl::ProcessMessage(
     }
 
     if (msg_type == NetMsgType::AVAPROOFS) {
-        if (pfrom.m_proof_relay == nullptr) {
+        if (peer->m_proof_relay == nullptr) {
             return;
         }
 
         // Only process the compact proofs if we requested them
-        if (!pfrom.m_proof_relay->compactproofs_requested) {
+        if (!peer->m_proof_relay->compactproofs_requested) {
             LogPrint(BCLog::AVALANCHE, "Ignoring unsollicited avaproofs\n");
             return;
         }
-        pfrom.m_proof_relay->compactproofs_requested = false;
+        peer->m_proof_relay->compactproofs_requested = false;
 
         avalanche::CompactProofs compactProofs;
         try {
@@ -5356,7 +5568,7 @@ void PeerManagerImpl::ProcessMessage(
         // If there are prefilled proofs, process them first
         std::set<uint32_t> prefilledIndexes;
         for (const auto &prefilledProof : compactProofs.getPrefilledProofs()) {
-            if (!ReceivedAvalancheProof(pfrom, prefilledProof.proof)) {
+            if (!ReceivedAvalancheProof(pfrom, *peer, prefilledProof.proof)) {
                 // If we got an invalid proof, the peer is getting banned and we
                 // can bail out.
                 return;
@@ -5404,21 +5616,31 @@ void PeerManagerImpl::ProcessMessage(
             return;
         }
 
-        const auto &proofs =
-            g_avalanche->withPeerManager([&](const avalanche::PeerManager &pm) {
-                return pm.getShareableProofsSnapshot();
-            });
-
         size_t proofCount = 0;
-        proofs.forEachLeaf([&](const avalanche::ProofRef &proof) {
-            uint64_t shortid = compactProofs.getShortID(proof->getId());
+        std::vector<std::pair<avalanche::ProofId, bool>> remoteProofsStatus;
+        g_avalanche->withPeerManager([&](const avalanche::PeerManager &pm) {
+            pm.forEachPeer([&](const avalanche::Peer &peer) {
+                assert(peer.proof);
+                uint64_t shortid = compactProofs.getShortID(peer.getProofId());
 
-            proofCount += shortIdProcessor.matchKnownItem(shortid, proof);
+                int added =
+                    shortIdProcessor.matchKnownItem(shortid, peer.proof);
 
-            // Though ideally we'd continue scanning for the
-            // two-proofs-match-shortid case, the performance win of an early
-            // exit here is too good to pass up and worth the extra risk.
-            return proofCount != shortIdProcessor.getShortIdCount();
+                // No collision
+                if (added >= 0) {
+                    // Because we know the proof, we can determine if our peer
+                    // has it (added = 1) or not (added = 0) and update the
+                    // remote proof status accordingly.
+                    remoteProofsStatus.emplace_back(peer.getProofId(),
+                                                    added > 0);
+                }
+
+                proofCount += added;
+
+                // In order to properly determine which proof is missing, we
+                // need to keep scanning for all our proofs.
+                return true;
+            });
         });
 
         avalanche::ProofsRequest req;
@@ -5431,16 +5653,27 @@ void PeerManagerImpl::ProcessMessage(
         m_connman.PushMessage(&pfrom,
                               msgMaker.Make(NetMsgType::AVAPROOFSREQ, req));
 
+        const NodeId nodeid = pfrom.GetId();
+
         // We want to keep a count of how many nodes we successfully requested
         // avaproofs from as this is used to determine when we are confident our
         // quorum is close enough to the other participants.
-        g_avalanche->avaproofsSent(pfrom.GetId());
+        g_avalanche->avaproofsSent(nodeid);
+
+        if (pfrom.IsAvalancheOutboundConnection() || pfrom.IsManualConn()) {
+            g_avalanche->withPeerManager(
+                [&remoteProofsStatus, nodeid](avalanche::PeerManager &pm) {
+                    for (const auto &[proofid, present] : remoteProofsStatus) {
+                        pm.saveRemoteProof(proofid, nodeid, present);
+                    }
+                });
+        }
 
         return;
     }
 
     if (msg_type == NetMsgType::AVAPROOFSREQ) {
-        if (pfrom.m_proof_relay == nullptr) {
+        if (peer->m_proof_relay == nullptr) {
             return;
         }
 
@@ -5449,7 +5682,7 @@ void PeerManagerImpl::ProcessMessage(
 
         auto requestedIndiceIt = proofreq.indices.begin();
         uint32_t treeIndice = 0;
-        pfrom.m_proof_relay->sharedProofs.forEachLeaf([&](const auto &proof) {
+        peer->m_proof_relay->sharedProofs.forEachLeaf([&](const auto &proof) {
             if (requestedIndiceIt == proofreq.indices.end()) {
                 // No more indice to process
                 return false;
@@ -5464,7 +5697,7 @@ void PeerManagerImpl::ProcessMessage(
             return true;
         });
 
-        pfrom.m_proof_relay->sharedProofs = {};
+        peer->m_proof_relay->sharedProofs = {};
         return;
     }
 
@@ -5572,7 +5805,7 @@ void PeerManagerImpl::ProcessMessage(
     }
 
     if (msg_type == NetMsgType::MEMPOOL) {
-        if (!(pfrom.GetLocalServices() & NODE_BLOOM) &&
+        if (!(peer->m_our_services & NODE_BLOOM) &&
             !pfrom.HasPermission(NetPermissionFlags::Mempool)) {
             if (!pfrom.HasPermission(NetPermissionFlags::NoBan)) {
                 LogPrint(BCLog::NET,
@@ -5596,9 +5829,9 @@ void PeerManagerImpl::ProcessMessage(
             return;
         }
 
-        if (pfrom.m_tx_relay != nullptr) {
-            LOCK(pfrom.m_tx_relay->cs_tx_inventory);
-            pfrom.m_tx_relay->fSendMempool = true;
+        if (auto tx_relay = peer->GetTxRelay()) {
+            LOCK(tx_relay->m_tx_inventory_mutex);
+            tx_relay->m_send_mempool = true;
         }
         return;
     }
@@ -5685,7 +5918,7 @@ void PeerManagerImpl::ProcessMessage(
     }
 
     if (msg_type == NetMsgType::FILTERLOAD) {
-        if (!(pfrom.GetLocalServices() & NODE_BLOOM)) {
+        if (!(peer->m_our_services & NODE_BLOOM)) {
             LogPrint(BCLog::NET,
                      "filterload received despite not offering bloom services "
                      "from peer=%d; disconnecting\n",
@@ -5699,16 +5932,19 @@ void PeerManagerImpl::ProcessMessage(
         if (!filter.IsWithinSizeConstraints()) {
             // There is no excuse for sending a too-large filter
             Misbehaving(pfrom, 100, "too-large bloom filter");
-        } else if (pfrom.m_tx_relay != nullptr) {
-            LOCK(pfrom.m_tx_relay->cs_filter);
-            pfrom.m_tx_relay->pfilter.reset(new CBloomFilter(filter));
-            pfrom.m_tx_relay->fRelayTxes = true;
+        } else if (auto tx_relay = peer->GetTxRelay()) {
+            {
+                LOCK(tx_relay->m_bloom_filter_mutex);
+                tx_relay->m_bloom_filter.reset(new CBloomFilter(filter));
+                tx_relay->m_relay_txs = true;
+            }
+            pfrom.m_bloom_filter_loaded = true;
         }
         return;
     }
 
     if (msg_type == NetMsgType::FILTERADD) {
-        if (!(pfrom.GetLocalServices() & NODE_BLOOM)) {
+        if (!(peer->m_our_services & NODE_BLOOM)) {
             LogPrint(BCLog::NET,
                      "filteradd received despite not offering bloom services "
                      "from peer=%d; disconnecting\n",
@@ -5725,10 +5961,10 @@ void PeerManagerImpl::ProcessMessage(
         bool bad = false;
         if (vData.size() > MAX_SCRIPT_ELEMENT_SIZE) {
             bad = true;
-        } else if (pfrom.m_tx_relay != nullptr) {
-            LOCK(pfrom.m_tx_relay->cs_filter);
-            if (pfrom.m_tx_relay->pfilter) {
-                pfrom.m_tx_relay->pfilter->insert(vData);
+        } else if (auto tx_relay = peer->GetTxRelay()) {
+            LOCK(tx_relay->m_bloom_filter_mutex);
+            if (tx_relay->m_bloom_filter) {
+                tx_relay->m_bloom_filter->insert(vData);
             } else {
                 bad = true;
             }
@@ -5742,7 +5978,7 @@ void PeerManagerImpl::ProcessMessage(
     }
 
     if (msg_type == NetMsgType::FILTERCLEAR) {
-        if (!(pfrom.GetLocalServices() & NODE_BLOOM)) {
+        if (!(peer->m_our_services & NODE_BLOOM)) {
             LogPrint(BCLog::NET,
                      "filterclear received despite not offering bloom services "
                      "from peer=%d; disconnecting\n",
@@ -5750,12 +5986,18 @@ void PeerManagerImpl::ProcessMessage(
             pfrom.fDisconnect = true;
             return;
         }
-        if (pfrom.m_tx_relay == nullptr) {
+        auto tx_relay = peer->GetTxRelay();
+        if (!tx_relay) {
             return;
         }
-        LOCK(pfrom.m_tx_relay->cs_filter);
-        pfrom.m_tx_relay->pfilter = nullptr;
-        pfrom.m_tx_relay->fRelayTxes = true;
+
+        {
+            LOCK(tx_relay->m_bloom_filter_mutex);
+            tx_relay->m_bloom_filter = nullptr;
+            tx_relay->m_relay_txs = true;
+        }
+        pfrom.m_bloom_filter_loaded = false;
+        pfrom.m_relays_txs = true;
         return;
     }
 
@@ -5763,8 +6005,8 @@ void PeerManagerImpl::ProcessMessage(
         Amount newFeeFilter = Amount::zero();
         vRecv >> newFeeFilter;
         if (MoneyRange(newFeeFilter)) {
-            if (pfrom.m_tx_relay != nullptr) {
-                pfrom.m_tx_relay->minFeeFilter = newFeeFilter;
+            if (auto tx_relay = peer->GetTxRelay()) {
+                tx_relay->m_fee_filter_received = newFeeFilter;
             }
             LogPrint(BCLog::NET, "received: feefilter of %s from peer=%d\n",
                      CFeeRate(newFeeFilter).ToString(), pfrom.GetId());
@@ -5773,17 +6015,17 @@ void PeerManagerImpl::ProcessMessage(
     }
 
     if (msg_type == NetMsgType::GETCFILTERS) {
-        ProcessGetCFilters(pfrom, vRecv);
+        ProcessGetCFilters(pfrom, *peer, vRecv);
         return;
     }
 
     if (msg_type == NetMsgType::GETCFHEADERS) {
-        ProcessGetCFHeaders(pfrom, vRecv);
+        ProcessGetCFHeaders(pfrom, *peer, vRecv);
         return;
     }
 
     if (msg_type == NetMsgType::GETCFCHECKPT) {
-        ProcessGetCFCheckPt(pfrom, vRecv);
+        ProcessGetCFCheckPt(pfrom, *peer, vRecv);
         return;
     }
 
@@ -6336,9 +6578,11 @@ void PeerManagerImpl::MaybeSendAddr(CNode &node, Peer &peer,
         if (peer.m_next_local_addr_send != 0us) {
             peer.m_addr_known->reset();
         }
-        if (std::optional<CAddress> local_addr = GetLocalAddrForPeer(&node)) {
+        if (std::optional<CService> local_service = GetLocalAddrForPeer(node)) {
+            CAddress local_addr{*local_service, peer.m_our_services,
+                                (uint32_t)GetAdjustedTime()};
             FastRandomContext insecure_rand;
-            PushAddress(peer, *local_addr, insecure_rand);
+            PushAddress(peer, local_addr, insecure_rand);
         }
         peer.m_next_local_addr_send =
             PoissonNextSend(current_time, AVG_LOCAL_ADDRESS_BROADCAST_INTERVAL);
@@ -6399,11 +6643,8 @@ void PeerManagerImpl::MaybeSendAddr(CNode &node, Peer &peer,
 }
 
 void PeerManagerImpl::MaybeSendFeefilter(
-    CNode &pto, std::chrono::microseconds current_time) {
+    CNode &pto, Peer &peer, std::chrono::microseconds current_time) {
     if (m_ignore_incoming_txs) {
-        return;
-    }
-    if (!pto.m_tx_relay) {
         return;
     }
     if (pto.GetCommonVersion() < FEEFILTER_VERSION) {
@@ -6411,6 +6652,12 @@ void PeerManagerImpl::MaybeSendFeefilter(
     }
     // peers with the forcerelay permission should not filter txs to us
     if (pto.HasPermission(NetPermissionFlags::ForceRelay)) {
+        return;
+    }
+    // Don't send feefilter messages to outbound block-relay-only peers since
+    // they should never announce transactions to us, regardless of feefilter
+    // state.
+    if (pto.IsBlockOnlyConn()) {
         return;
     }
 
@@ -6429,33 +6676,33 @@ void PeerManagerImpl::MaybeSendFeefilter(
         currentFilter = MAX_MONEY;
     } else {
         static const Amount MAX_FILTER{g_filter_rounder.round(MAX_MONEY)};
-        if (pto.m_tx_relay->lastSentFeeFilter == MAX_FILTER) {
+        if (peer.m_fee_filter_sent == MAX_FILTER) {
             // Send the current filter if we sent MAX_FILTER previously
             // and made it out of IBD.
-            pto.m_tx_relay->m_next_send_feefilter = 0us;
+            peer.m_next_send_feefilter = 0us;
         }
     }
-    if (current_time > pto.m_tx_relay->m_next_send_feefilter) {
+    if (current_time > peer.m_next_send_feefilter) {
         Amount filterToSend = g_filter_rounder.round(currentFilter);
         // We always have a fee filter of at least minRelayTxFee
         filterToSend = std::max(filterToSend, ::minRelayTxFee.GetFeePerK());
-        if (filterToSend != pto.m_tx_relay->lastSentFeeFilter) {
+        if (filterToSend != peer.m_fee_filter_sent) {
             m_connman.PushMessage(
                 &pto, CNetMsgMaker(pto.GetCommonVersion())
                           .Make(NetMsgType::FEEFILTER, filterToSend));
-            pto.m_tx_relay->lastSentFeeFilter = filterToSend;
+            peer.m_fee_filter_sent = filterToSend;
         }
-        pto.m_tx_relay->m_next_send_feefilter =
+        peer.m_next_send_feefilter =
             PoissonNextSend(current_time, AVG_FEEFILTER_BROADCAST_INTERVAL);
     }
     // If the fee filter has changed substantially and it's still more than
     // MAX_FEEFILTER_CHANGE_DELAY until scheduled broadcast, then move the
     // broadcast to within MAX_FEEFILTER_CHANGE_DELAY.
     else if (current_time + MAX_FEEFILTER_CHANGE_DELAY <
-                 pto.m_tx_relay->m_next_send_feefilter &&
-             (currentFilter < 3 * pto.m_tx_relay->lastSentFeeFilter / 4 ||
-              currentFilter > 4 * pto.m_tx_relay->lastSentFeeFilter / 3)) {
-        pto.m_tx_relay->m_next_send_feefilter =
+                 peer.m_next_send_feefilter &&
+             (currentFilter < 3 * peer.m_fee_filter_sent / 4 ||
+              currentFilter > 4 * peer.m_fee_filter_sent / 3)) {
+        peer.m_next_send_feefilter =
             current_time + GetRandomDuration<std::chrono::microseconds>(
                                MAX_FEEFILTER_CHANGE_DELAY);
     }
@@ -6553,10 +6800,11 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
         // Download if this is a nice peer, or we have no nice peers and this
         // one might do.
         fFetch = state.fPreferredDownload ||
-                 (nPreferredDownload == 0 && !pto->fClient &&
+                 (nPreferredDownload == 0 && CanServeBlocks(*peer) &&
                   !pto->IsAddrFetchConn());
 
-        if (!state.fSyncStarted && !pto->fClient && !fImporting && !fReindex) {
+        if (!state.fSyncStarted && CanServeBlocks(*peer) && !fImporting &&
+            !fReindex) {
             // Only actively request headers from a single peer, unless we're
             // close to today.
             if ((nSyncStarted == 0 && fFetch) ||
@@ -6820,23 +7068,27 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
         };
 
         // Add proofs to inventory
-        if (pto->m_proof_relay != nullptr) {
-            LOCK(pto->m_proof_relay->cs_proof_inventory);
+        if (peer->m_proof_relay != nullptr) {
+            LOCK(peer->m_proof_relay->m_proof_inventory_mutex);
 
-            if (computeNextInvSendTime(pto->m_proof_relay->nextInvSend)) {
-                auto it = pto->m_proof_relay->setInventoryProofToSend.begin();
+            if (computeNextInvSendTime(
+                    peer->m_proof_relay->m_next_inv_send_time)) {
+                auto it =
+                    peer->m_proof_relay->m_proof_inventory_to_send.begin();
                 while (it !=
-                       pto->m_proof_relay->setInventoryProofToSend.end()) {
+                       peer->m_proof_relay->m_proof_inventory_to_send.end()) {
                     const avalanche::ProofId proofid = *it;
 
-                    it = pto->m_proof_relay->setInventoryProofToSend.erase(it);
+                    it = peer->m_proof_relay->m_proof_inventory_to_send.erase(
+                        it);
 
-                    if (pto->m_proof_relay->filterProofKnown.contains(
-                            proofid)) {
+                    if (peer->m_proof_relay->m_proof_inventory_known_filter
+                            .contains(proofid)) {
                         continue;
                     }
 
-                    pto->m_proof_relay->filterProofKnown.insert(proofid);
+                    peer->m_proof_relay->m_proof_inventory_known_filter.insert(
+                        proofid);
                     addInvAndMaybeFlush(MSG_AVA_PROOF, proofid);
                     State(pto->GetId())
                         ->m_recently_announced_proofs.insert(proofid);
@@ -6844,48 +7096,49 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
             }
         }
 
-        if (pto->m_tx_relay != nullptr) {
-            LOCK(pto->m_tx_relay->cs_tx_inventory);
+        if (auto tx_relay = peer->GetTxRelay()) {
+            LOCK(tx_relay->m_tx_inventory_mutex);
             // Check whether periodic sends should happen
             const bool fSendTrickle =
-                computeNextInvSendTime(pto->m_tx_relay->nNextInvSend);
+                computeNextInvSendTime(tx_relay->m_next_inv_send_time);
 
             // Time to send but the peer has requested we not relay
             // transactions.
             if (fSendTrickle) {
-                LOCK(pto->m_tx_relay->cs_filter);
-                if (!pto->m_tx_relay->fRelayTxes) {
-                    pto->m_tx_relay->setInventoryTxToSend.clear();
+                LOCK(tx_relay->m_bloom_filter_mutex);
+                if (!tx_relay->m_relay_txs) {
+                    tx_relay->m_tx_inventory_to_send.clear();
                 }
             }
 
             // Respond to BIP35 mempool requests
-            if (fSendTrickle && pto->m_tx_relay->fSendMempool) {
+            if (fSendTrickle && tx_relay->m_send_mempool) {
                 auto vtxinfo = m_mempool.infoAll();
-                pto->m_tx_relay->fSendMempool = false;
-                const CFeeRate filterrate{pto->m_tx_relay->minFeeFilter.load()};
+                tx_relay->m_send_mempool = false;
+                const CFeeRate filterrate{
+                    tx_relay->m_fee_filter_received.load()};
 
-                LOCK(pto->m_tx_relay->cs_filter);
+                LOCK(tx_relay->m_bloom_filter_mutex);
 
                 for (const auto &txinfo : vtxinfo) {
                     const TxId &txid = txinfo.tx->GetId();
-                    pto->m_tx_relay->setInventoryTxToSend.erase(txid);
+                    tx_relay->m_tx_inventory_to_send.erase(txid);
                     // Don't send transactions that peers will not put into
                     // their mempool
                     if (txinfo.fee < filterrate.GetFee(txinfo.vsize)) {
                         continue;
                     }
-                    if (pto->m_tx_relay->pfilter &&
-                        !pto->m_tx_relay->pfilter->IsRelevantAndUpdate(
+                    if (tx_relay->m_bloom_filter &&
+                        !tx_relay->m_bloom_filter->IsRelevantAndUpdate(
                             *txinfo.tx)) {
                         continue;
                     }
-                    pto->m_tx_relay->filterInventoryKnown.insert(txid);
+                    tx_relay->m_tx_inventory_known_filter.insert(txid);
                     // Responses to MEMPOOL requests bypass the
                     // m_recently_announced_invs filter.
                     addInvAndMaybeFlush(MSG_TX, txid);
                 }
-                pto->m_tx_relay->m_last_mempool_req =
+                tx_relay->m_last_mempool_req =
                     std::chrono::duration_cast<std::chrono::seconds>(
                         current_time);
             }
@@ -6894,13 +7147,14 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
             if (fSendTrickle) {
                 // Produce a vector with all candidates for sending
                 std::vector<std::set<TxId>::iterator> vInvTx;
-                vInvTx.reserve(pto->m_tx_relay->setInventoryTxToSend.size());
+                vInvTx.reserve(tx_relay->m_tx_inventory_to_send.size());
                 for (std::set<TxId>::iterator it =
-                         pto->m_tx_relay->setInventoryTxToSend.begin();
-                     it != pto->m_tx_relay->setInventoryTxToSend.end(); it++) {
+                         tx_relay->m_tx_inventory_to_send.begin();
+                     it != tx_relay->m_tx_inventory_to_send.end(); it++) {
                     vInvTx.push_back(it);
                 }
-                const CFeeRate filterrate{pto->m_tx_relay->minFeeFilter.load()};
+                const CFeeRate filterrate{
+                    tx_relay->m_fee_filter_received.load()};
                 // Send out the inventory in the order of admission to our
                 // mempool, which is guaranteed to be a topological sort order.
                 // A heap is used so that not all items need sorting if only a
@@ -6912,7 +7166,7 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
                 // capacity, especially since we have many peers and some
                 // will draw much shorter delays.
                 unsigned int nRelayedTransactions = 0;
-                LOCK(pto->m_tx_relay->cs_filter);
+                LOCK(tx_relay->m_bloom_filter_mutex);
                 while (!vInvTx.empty() &&
                        nRelayedTransactions < INVENTORY_BROADCAST_MAX_PER_MB *
                                                   config.GetMaxBlockSize() /
@@ -6924,9 +7178,9 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
                     vInvTx.pop_back();
                     const TxId txid = *it;
                     // Remove it from the to-be-sent set
-                    pto->m_tx_relay->setInventoryTxToSend.erase(it);
+                    tx_relay->m_tx_inventory_to_send.erase(it);
                     // Check if not in the filter already
-                    if (pto->m_tx_relay->filterInventoryKnown.contains(txid)) {
+                    if (tx_relay->m_tx_inventory_known_filter.contains(txid)) {
                         continue;
                     }
                     // Not in the mempool anymore? don't bother sending it.
@@ -6939,8 +7193,8 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
                     if (txinfo.fee < filterrate.GetFee(txinfo.vsize)) {
                         continue;
                     }
-                    if (pto->m_tx_relay->pfilter &&
-                        !pto->m_tx_relay->pfilter->IsRelevantAndUpdate(
+                    if (tx_relay->m_bloom_filter &&
+                        !tx_relay->m_bloom_filter->IsRelevantAndUpdate(
                             *txinfo.tx)) {
                         continue;
                     }
@@ -6964,7 +7218,7 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
                                 current_time + RELAY_TX_CACHE_TIME, ret.first));
                         }
                     }
-                    pto->m_tx_relay->filterInventoryKnown.insert(txid);
+                    tx_relay->m_tx_inventory_known_filter.insert(txid);
                 }
             }
         }
@@ -7073,8 +7327,8 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
 
         CNodeState &state = *State(pto->GetId());
 
-        if (!pto->fClient &&
-            ((fFetch && !pto->m_limited_node) ||
+        if (CanServeBlocks(*peer) &&
+            ((fFetch && !IsLimitedPeer(*peer)) ||
              !m_chainman.ActiveChainstate().IsInitialBlockDownload()) &&
             state.nBlocksInFlight < MAX_BLOCKS_IN_TRANSIT_PER_PEER) {
             std::vector<const CBlockIndex *> vToDownload;
@@ -7172,17 +7426,17 @@ bool PeerManagerImpl::SendMessages(const Config &config, CNode *pto) {
         }
 
     } // release cs_main
-    MaybeSendFeefilter(*pto, current_time);
+    MaybeSendFeefilter(*pto, *peer, current_time);
     return true;
 }
 
-bool PeerManagerImpl::ReceivedAvalancheProof(CNode &peer,
+bool PeerManagerImpl::ReceivedAvalancheProof(CNode &node, Peer &peer,
                                              const avalanche::ProofRef &proof) {
     assert(proof != nullptr);
 
     const avalanche::ProofId &proofid = proof->getId();
 
-    peer.AddKnownProof(proofid);
+    AddKnownProof(peer, proofid);
 
     if (m_chainman.ActiveChainstate().IsInitialBlockDownload()) {
         // We cannot reliably verify proofs during IBD, so bail out early and
@@ -7191,7 +7445,22 @@ bool PeerManagerImpl::ReceivedAvalancheProof(CNode &peer,
         return true;
     }
 
-    const NodeId nodeid = peer.GetId();
+    const NodeId nodeid = node.GetId();
+
+    auto saveProofIfOutbound = [](const CNode &node,
+                                  const avalanche::ProofId &proofid,
+                                  const NodeId nodeid) -> bool {
+        if (node.IsAvalancheOutboundConnection() || node.IsManualConn()) {
+            LogPrint(BCLog::AVALANCHE, "Saving remote proof %s\n",
+                     proofid.ToString());
+            return g_avalanche->withPeerManager(
+                [&](avalanche::PeerManager &pm) {
+                    return pm.saveRemoteProof(proofid, nodeid, true);
+                });
+        }
+
+        return false;
+    };
 
     {
         LOCK(cs_proofrequest);
@@ -7199,6 +7468,7 @@ bool PeerManagerImpl::ReceivedAvalancheProof(CNode &peer,
 
         if (AlreadyHaveProof(proofid)) {
             m_proofrequest.ForgetInvId(proofid);
+            saveProofIfOutbound(node, proofid, nodeid);
             return true;
         }
     }
@@ -7213,14 +7483,15 @@ bool PeerManagerImpl::ReceivedAvalancheProof(CNode &peer,
         WITH_LOCK(cs_proofrequest, m_proofrequest.ForgetInvId(proofid));
         RelayProof(proofid);
 
-        peer.m_last_proof_time = GetTime<std::chrono::seconds>();
+        node.m_last_proof_time = GetTime<std::chrono::seconds>();
 
         LogPrint(BCLog::NET, "New avalanche proof: peer=%d, proofid %s\n",
                  nodeid, proofid.ToString());
     }
 
     if (state.GetResult() == avalanche::ProofRegistrationResult::INVALID) {
-        WITH_LOCK(cs_invalidProofs, invalidProofs->insert(proofid));
+        g_avalanche->withPeerManager(
+            [&](avalanche::PeerManager &pm) { pm.setInvalid(proofid); });
         Misbehaving(nodeid, 100, state.GetRejectReason());
         return false;
     }
@@ -7231,13 +7502,15 @@ bool PeerManagerImpl::ReceivedAvalancheProof(CNode &peer,
         return false;
     }
 
-    if (!g_avalanche->addToReconcile(proof)) {
+    if (!g_avalanche->reconcileOrFinalize(proof)) {
         LogPrint(BCLog::AVALANCHE,
                  "Not polling the avalanche proof (%s): peer=%d, proofid %s\n",
                  state.IsValid() ? "not-worth-polling"
                                  : state.GetRejectReason(),
                  nodeid, proofid.ToString());
     }
+
+    saveProofIfOutbound(node, proofid, nodeid);
 
     return true;
 }

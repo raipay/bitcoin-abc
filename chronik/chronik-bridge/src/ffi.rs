@@ -130,6 +130,7 @@ mod ffi_inner {
     unsafe extern "C++" {
         include!("blockindex.h");
         include!("chronik-cpp/chronik_bridge.h");
+        include!("coins.h");
         include!("node/context.h");
         include!("primitives/block.h");
         include!("primitives/transaction.h");
@@ -145,6 +146,11 @@ mod ffi_inner {
         /// ::CBlock from primitives/block.h
         #[namespace = ""]
         type CBlock;
+
+        /// ::Coin from coins.h (renamed to CCoin to prevent a name clash)
+        #[namespace = ""]
+        #[cxx_name = "Coin"]
+        type CCoin;
 
         /// ::Config from config.h
         #[namespace = ""]
@@ -197,15 +203,27 @@ mod ffi_inner {
             block_index: &CBlockIndex,
         ) -> Result<UniquePtr<CBlock>>;
 
-        /// Bridge CTransaction -> ffi::Tx, including finding the spent coins.
-        /// `tx` can be a mempool tx.
-        fn bridge_tx(self: &ChronikBridge, tx: &CTransaction) -> Result<Tx>;
-
         /// Find at which block the given block_index forks off from the node.
         fn find_fork(
             self: &ChronikBridge,
             block_index: &CBlockIndex,
         ) -> Result<&CBlockIndex>;
+
+        /// Add the given tx to the mempool, and if that succeeds, broadcast it
+        /// to all our peers.
+        /// Also check the actual tx fee doesn't exceed max_fee.
+        /// Note max_fee is absolute, not a fee rate (as in sendrawtransaction).
+        fn broadcast_tx(
+            self: &ChronikBridge,
+            raw_tx: &[u8],
+            max_fee: i64,
+        ) -> Result<[u8; 32]>;
+
+        /// Bridge CTransaction -> ffi::Tx, using the given spent coins.
+        fn bridge_tx(
+            tx: &CTransaction,
+            spent_coins: &CxxVector<CCoin>,
+        ) -> Result<Tx>;
 
         /// Bridge bitcoind's classes to the shared struct [`Block`].
         fn bridge_block(
@@ -242,5 +260,25 @@ mod ffi_inner {
         /// Calls `AbortNode` from shutdown.h to gracefully shut down the node
         /// when an unrecoverable error occured.
         fn abort_node(msg: &str, user_msg: &str);
+
+        /// Returns true if a shutdown is requested, false otherwise.
+        /// See `ShutdownRequested` in `shutdown.h`.
+        fn shutdown_requested() -> bool;
+    }
+}
+
+/// SAFETY: All fields of ChronikBridge (const Consensus::Params &, const
+/// node::NodeContext &) can be moved betweed threads safely.
+#[allow(unsafe_code)]
+unsafe impl Send for ChronikBridge {}
+
+/// SAFETY: All fields of ChronikBridge (const Consensus::Params &, const
+/// node::NodeContext &) can be accessed from different threads safely.
+#[allow(unsafe_code)]
+unsafe impl Sync for ChronikBridge {}
+
+impl std::fmt::Debug for ChronikBridge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChronikBridge").finish_non_exhaustive()
     }
 }

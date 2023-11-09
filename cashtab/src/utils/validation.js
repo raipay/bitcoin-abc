@@ -1,8 +1,53 @@
 import BigNumber from 'bignumber.js';
-import { currency } from 'components/Common/Ticker.js';
 import { fromSatoshisToXec } from 'utils/cashMethods';
 import cashaddr from 'ecashaddrjs';
 import * as bip39 from 'bip39';
+import {
+    cashtabSettings as cashtabDefaultConfig,
+    cashtabSettingsValidation,
+} from 'config/cashtabSettings';
+import tokenBlacklist from 'config/tokenBlacklist';
+import { queryAliasServer } from 'utils/aliasUtils';
+import defaultCashtabCache from 'config/cashtabCache';
+import appConfig from 'config/app';
+
+/**
+ * Checks whether the instantiated sideshift library object has loaded
+ * correctly with the expected API.
+ *
+ * @param {Object} sideshiftObj the instantiated sideshift library object
+ * @returns {boolean} whether or not this sideshift object is valid
+ */
+export const isValidSideshiftObj = sideshiftObj => {
+    return (
+        sideshiftObj !== null &&
+        typeof sideshiftObj === 'object' &&
+        typeof sideshiftObj.show === 'function' &&
+        typeof sideshiftObj.hide === 'function' &&
+        typeof sideshiftObj.addEventListener === 'function'
+    );
+};
+
+// Parses whether the value is a valid eCash address
+// or a valid and registered alias
+export const isValidRecipient = async value => {
+    if (isValidXecAddress(value)) {
+        return true;
+    }
+    // If not a valid XEC address, check if it's an alias
+    if (!isAliasFormat(value)) {
+        return false;
+    }
+    // extract alias without the `.xec`
+    const aliasName = value.slice(0, -4);
+    try {
+        const aliasDetails = await queryAliasServer('alias', aliasName);
+        return aliasDetails && !aliasDetails.error && !!aliasDetails.address;
+    } catch (err) {
+        console.log(`isValidRecipient(): Error retrieving alias details`, err);
+    }
+    return false;
+};
 
 export const isValidAliasString = inputStr => {
     return /^[a-z0-9]+$/.test(inputStr);
@@ -43,8 +88,8 @@ export const shouldRejectAmountInput = (
     let error = false;
     let testedAmount = new BigNumber(cashAmount);
 
-    if (selectedCurrency !== currency.ticker) {
-        // Ensure no more than currency.cashDecimals decimal places
+    if (selectedCurrency !== appConfig.ticker) {
+        // Ensure no more than appConfig.cashDecimals decimal places
         testedAmount = new BigNumber(fiatToCrypto(cashAmount, fiatPrice));
     }
 
@@ -53,17 +98,18 @@ export const shouldRejectAmountInput = (
         error = 'Amount must be a number';
     } else if (testedAmount.lte(0)) {
         error = 'Amount must be greater than 0';
-    } else if (testedAmount.lt(fromSatoshisToXec(currency.dustSats))) {
+    } else if (testedAmount.lt(fromSatoshisToXec(appConfig.dustSats))) {
         error = `Send amount must be at least ${fromSatoshisToXec(
-            currency.dustSats,
-        ).toString()} ${currency.ticker}`;
+            appConfig.dustSats,
+        ).toString()} ${appConfig.ticker}`;
     } else if (testedAmount.gt(totalCashBalance)) {
-        error = `Amount cannot exceed your ${currency.ticker} balance`;
+        error = `Amount cannot exceed your ${appConfig.ticker} balance`;
     } else if (!isNaN(testedAmount) && testedAmount.toString().includes('.')) {
         if (
-            testedAmount.toString().split('.')[1].length > currency.cashDecimals
+            testedAmount.toString().split('.')[1].length >
+            appConfig.cashDecimals
         ) {
-            error = `${currency.ticker} transactions do not support more than ${currency.cashDecimals} decimal places`;
+            error = `${appConfig.ticker} transactions do not support more than ${appConfig.cashDecimals} decimal places`;
         }
     }
     // return false if no error, or string error msg if error
@@ -73,7 +119,7 @@ export const shouldRejectAmountInput = (
 export const fiatToCrypto = (
     fiatAmount,
     fiatPrice,
-    cashDecimals = currency.cashDecimals,
+    cashDecimals = appConfig.cashDecimals,
 ) => {
     let cryptoAmount = new BigNumber(fiatAmount)
         .div(new BigNumber(fiatPrice))
@@ -81,93 +127,17 @@ export const fiatToCrypto = (
     return cryptoAmount;
 };
 
-export const isProbablyNotAScamTokenName = tokenName => {
+export const isProbablyNotAScam = tokenNameOrTicker => {
     // convert to lower case, trim leading and trailing spaces
     // split, filter then join on ' ' for cases where user inputs multiple spaces
-    const sanitizedTokenName = tokenName
+    const sanitized = tokenNameOrTicker
         .toLowerCase()
         .trim()
         .split(' ')
         .filter(string => string)
         .join(' ');
 
-    return (
-        !currency.coingeckoTop500Names.includes(sanitizedTokenName) &&
-        // for cases where user adds spaces between e a c h letter
-        !currency.coingeckoTop500Names.includes(
-            sanitizedTokenName.split(' ').join(''),
-        ) &&
-        // cross reference with coingeckoTop500Tickers
-        !currency.coingeckoTop500Tickers.includes(sanitizedTokenName) &&
-        !currency.coingeckoTop500Tickers.includes(
-            sanitizedTokenName.split(' ').join(''),
-        ) &&
-        //cross reference with coingeckoTop500Ids
-        !currency.coingeckoTop500Ids.includes(sanitizedTokenName) &&
-        !currency.coingeckoTop500Ids.includes(
-            sanitizedTokenName.split(' ').join(''),
-        ) &&
-        //cross reference with bannedFiatCurrencies
-        !currency.settingsValidation.fiatCurrency.includes(
-            sanitizedTokenName,
-        ) &&
-        !currency.settingsValidation.fiatCurrency.includes(
-            sanitizedTokenName.split(' ').join(''),
-        ) &&
-        //cross reference with bannedTickers
-        !currency.bannedTickers.includes(sanitizedTokenName) &&
-        !currency.bannedTickers.includes(
-            sanitizedTokenName.split(' ').join(''),
-        ) &&
-        //cross reference with bannedNames
-        !currency.bannedNames.includes(sanitizedTokenName) &&
-        !currency.bannedNames.includes(sanitizedTokenName.split(' ').join(''))
-    );
-};
-
-export const isProbablyNotAScamTokenTicker = tokenTicker => {
-    // convert to lower case, trim leading and trailing spaces
-    // split, filter then join on ' ' for cases where user inputs multiple spaces
-    const sanitizedTokenTicker = tokenTicker
-        .toLowerCase()
-        .trim()
-        .split(' ')
-        .filter(string => string)
-        .join('');
-
-    return (
-        !currency.coingeckoTop500Tickers.includes(sanitizedTokenTicker) &&
-        // for cases where user adds spaces between e a c h letter
-
-        !currency.coingeckoTop500Tickers.includes(
-            sanitizedTokenTicker.split(' ').join(''),
-        ) &&
-        //cross reference with coingeckoTop500Names
-        !currency.coingeckoTop500Names.includes(sanitizedTokenTicker) &&
-        !currency.coingeckoTop500Names.includes(
-            sanitizedTokenTicker.split(' ').join(''),
-        ) &&
-        //cross reference with coingeckoTop500Ids
-        !currency.coingeckoTop500Ids.includes(sanitizedTokenTicker) &&
-        !currency.coingeckoTop500Ids.includes(
-            sanitizedTokenTicker.split(' ').join(''),
-        ) &&
-        //cross reference with bannedFiatCurrencies
-        !currency.settingsValidation.fiatCurrency.includes(
-            sanitizedTokenTicker,
-        ) &&
-        !currency.settingsValidation.fiatCurrency.includes(
-            sanitizedTokenTicker.split(' ').join(''),
-        ) &&
-        //cross reference with bannedTickers
-        !currency.bannedTickers.includes(sanitizedTokenTicker) &&
-        !currency.bannedTickers.includes(
-            sanitizedTokenTicker.split(' ').join(''),
-        ) &&
-        //cross reference with bannedNames
-        !currency.bannedNames.includes(sanitizedTokenTicker) &&
-        !currency.bannedNames.includes(sanitizedTokenTicker.split(' ').join(''))
-    );
+    return !tokenBlacklist.includes(sanitized);
 };
 
 export const isValidTokenName = tokenName => {
@@ -226,10 +196,10 @@ export const isValidTokenDocumentUrl = tokenDocumentUrl => {
 export const isValidCashtabSettings = settings => {
     try {
         let isValidSettingParams = true;
-        for (let param in currency.defaultSettings) {
+        for (let param in cashtabDefaultConfig) {
             if (
                 !Object.prototype.hasOwnProperty.call(settings, param) ||
-                !currency.settingsValidation[param].includes(settings[param])
+                !cashtabSettingsValidation[param].includes(settings[param])
             ) {
                 isValidSettingParams = false;
                 break;
@@ -247,12 +217,12 @@ export const parseInvalidSettingsForMigration = invalidCashtabSettings => {
     // create a copy of the invalidCashtabSettings
     let migratedCashtabSettings = invalidCashtabSettings;
     // determine if settings are invalid because it is missing a parameter
-    for (let param in currency.defaultSettings) {
+    for (let param in cashtabDefaultConfig) {
         if (
             !Object.prototype.hasOwnProperty.call(invalidCashtabSettings, param)
         ) {
             // adds the default setting for only that parameter
-            migratedCashtabSettings[param] = currency.defaultSettings[param];
+            migratedCashtabSettings[param] = cashtabDefaultConfig[param];
         }
     }
     return migratedCashtabSettings;
@@ -262,25 +232,10 @@ export const parseInvalidCashtabCacheForMigration = invalidCashtabCache => {
     // create a copy of the invalidCashtabCache
     let migratedCashtabCache = invalidCashtabCache;
     // determine if settings are invalid because it is missing a parameter
-    for (let param in currency.defaultCashtabCache) {
+    for (let param in defaultCashtabCache) {
         if (!Object.prototype.hasOwnProperty.call(invalidCashtabCache, param)) {
             // adds the default setting for only that parameter
-            migratedCashtabCache[param] = currency.defaultCashtabCache[param];
-        }
-    }
-
-    // validate aliases array
-    if (
-        !invalidCashtabCache.aliasCache ||
-        !Array.isArray(invalidCashtabCache.aliasCache.aliases)
-    ) {
-        migratedCashtabCache.aliasCache.aliases = [];
-    } else {
-        // determine if there is a non alphanumeric
-        for (let element of invalidCashtabCache.aliasCache.aliases) {
-            if (!isValidAliasString(element.alias)) {
-                migratedCashtabCache.aliasCache.aliases = [];
-            }
+            migratedCashtabCache[param] = defaultCashtabCache[param];
         }
     }
     return migratedCashtabCache;
@@ -335,7 +290,7 @@ export const isValidContactList = contactList => {
 
 export const isValidCashtabCache = cashtabCache => {
     /* 
-        Object must contain all keys listed in currency.defaultCashtabCache
+        Object must contain all keys listed in defaultCashtabCache
         The tokenInfoById object must have keys that are valid token IDs, 
         and at each one an object like:
         {
@@ -354,24 +309,14 @@ export const isValidCashtabCache = cashtabCache => {
         'tokenDocumentHash' is a string
         'decimals' is a number
         'tokenId' is a valid tokenId
-        
-        The aliasCache object must have the following keys:
-        {
-            'aliases' is an array,
-            'paymentTxHistory' is an array,
-            'totalPaymentTxCount' is a number,
-        }
-        
     */
 
-    // Check that every key in currency.defaultCashtabCache is also in this cashtabCache
-    const cashtabCacheKeys = Object.keys(currency.defaultCashtabCache);
+    // Check that every key in defaultCashtabCache is also in this cashtabCache
+    const cashtabCacheKeys = Object.keys(defaultCashtabCache);
     for (let i = 0; i < cashtabCacheKeys.length; i += 1) {
-        const thisKey = cashtabCacheKeys[i];
-        if (thisKey in cashtabCache) {
-            continue;
+        if (!(cashtabCacheKeys[i] in cashtabCache)) {
+            return false;
         }
-        return false;
     }
 
     // Check that tokenInfoById is expected type and that tokenIds are valid
@@ -404,16 +349,6 @@ export const isValidCashtabCache = cashtabCache => {
         ) {
             return false;
         }
-    }
-
-    // check the aliasCache object contains the aliases and paymentTxHistory arrays and the totalPaymentTxCount num
-    const { aliasCache } = cashtabCache;
-    if (!aliasCache) {
-        return false;
-    }
-    const { aliases, cachedAliasCount } = aliasCache;
-    if (!Array.isArray(aliases) || typeof cachedAliasCount !== 'number') {
-        return false;
     }
 
     return true;
@@ -561,7 +496,7 @@ export const isValidXecSendAmount = xecSendAmount => {
         typeof xecSendAmount !== 'undefined' &&
         !isNaN(parseFloat(xecSendAmount)) &&
         parseFloat(xecSendAmount) >=
-            fromSatoshisToXec(currency.dustSats).toNumber()
+            fromSatoshisToXec(appConfig.dustSats).toNumber()
     );
 };
 
@@ -596,7 +531,7 @@ export const isValidNewWalletNameLength = newWalletName => {
     return (
         typeof newWalletName === 'string' &&
         newWalletName.length > 0 &&
-        newWalletName.length <= currency.localStorageMaxCharacters &&
+        newWalletName.length <= appConfig.localStorageMaxCharacters &&
         newWalletName.length !== ''
     );
 };
@@ -626,7 +561,7 @@ export const isValidAirdropOutputsArray = airdropOutputsArray => {
         // if the XEC being sent is less than dust sats or contains extra values per line
         if (
             new BigNumber(valueString).lt(
-                fromSatoshisToXec(currency.dustSats),
+                fromSatoshisToXec(appConfig.dustSats),
             ) ||
             substring.length !== 2
         ) {

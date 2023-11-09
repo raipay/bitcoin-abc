@@ -1,3 +1,6 @@
+// Copyright (c) 2023 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 import styled from 'styled-components';
 
 export const GlitchCtn = styled.div`
@@ -8,28 +11,29 @@ export const GlitchCtn = styled.div`
         position: relative;
         display: inline-block;
     }
-    .glitch::before,
-    .glitch::after {
-        content: attr(data-text);
+    .glitch_before,
+    .glitch_after {
         position: absolute;
         top: 0;
         left: 0;
         width: 100%;
         height: 100%;
     }
-    .glitch::before {
+    .glitch_before {
         left: 2px;
         text-shadow: -2px 0 ${props => props.theme.colors.accent};
         clip: rect(24px, 550px, 90px, 0);
-        -webkit-animation: glitch-anim-2 2.5s infinite linear alternate-reverse;
-        animation: glitch-anim-2 2.5s infinite linear alternate-reverse;
+        animation: glitch-anim-2
+            ${props => props.theme.filters.glitchAnimationSpeed} infinite linear
+            alternate-reverse;
     }
-    .glitch::after {
+    .glitch_after {
         left: -2px;
         text-shadow: -2px 0 ${props => props.theme.colors.primaryLight};
         clip: rect(85px, 550px, 140px, 0);
-        -webkit-animation: glitch-anim 2.5s infinite linear alternate-reverse;
-        animation: glitch-anim 2.5s infinite linear alternate-reverse;
+        animation: glitch-anim
+            ${props => props.theme.filters.glitchAnimationSpeed} infinite linear
+            alternate-reverse;
     }
 
     @keyframes glitch-anim {

@@ -1,5 +1,9 @@
+// Copyright (c) 2023 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 import Head from 'next/head';
 import Nav from '/components/navbar';
+import Footer from '/components/footer';
 
 const Layout = ({
     metaTitle = 'eCash | Wealth Redefined',
@@ -24,15 +28,19 @@ const Layout = ({
                     content={metaDescription}
                 />
                 <meta name="twitter:card" content="summary_large_image" />
+                <meta
+                    name="twitter:image"
+                    content="https://e.cash/images/ecash-twitter-card.jpg"
+                ></meta>
+                <meta
+                    property="og:image"
+                    content="https://e.cash/images/ecash-twitter-card.jpg"
+                ></meta>
                 <meta property="og:type" content="website" />
             </Head>
-            <Nav
-                announcementbar={{
-                    link: 'https://avalanche.cash/',
-                    text: 'Avalanche Consensus is live!',
-                }}
-            />
+            <Nav />
             <main>{children}</main>
+            <Footer />
         </>
     );
 };

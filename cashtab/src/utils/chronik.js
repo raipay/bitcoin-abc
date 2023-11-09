@@ -1,18 +1,18 @@
 // Chronik methods
 import BigNumber from 'bignumber.js';
-import { currency } from 'components/Common/Ticker';
 import {
     parseOpReturn,
     convertToEncryptStruct,
     getHashArrayFromWallet,
     getUtxoWif,
     convertEcashtoEtokenAddr,
-    convertToEcashPrefix,
     outputScriptToAddress,
 } from 'utils/cashMethods';
 import ecies from 'ecies-lite';
 import wif from 'wif';
-import { getPendingAliases } from 'utils/aliasUtils';
+import { opReturn as opreturnConfig } from 'config/opreturn';
+import { chronik as chronikConfig } from 'config/chronik';
+import appConfig from 'config/app';
 
 export const getTxHistoryPage = async (chronik, hash160, page = 0) => {
     let txHistoryPage;
@@ -20,7 +20,7 @@ export const getTxHistoryPage = async (chronik, hash160, page = 0) => {
         txHistoryPage = await chronik
             .script('p2pkh', hash160)
             // Get the 25 most recent transactions
-            .history(page, currency.txHistoryPageSize);
+            .history(page, chronikConfig.txHistoryPageSize);
         return txHistoryPage;
     } catch (err) {
         console.log(`Error in getTxHistoryPage(${hash160})`, err);
@@ -39,7 +39,7 @@ export const returnGetTxHistoryPagePromise = async (
     return new Promise((resolve, reject) => {
         chronik
             .script('p2pkh', hash160)
-            .history(page, currency.txHistoryPageSize)
+            .history(page, chronikConfig.txHistoryPageSize)
             .then(
                 result => {
                     resolve(result);
@@ -49,44 +49,6 @@ export const returnGetTxHistoryPagePromise = async (
                 },
             );
     });
-};
-
-export const getAddressFromAlias = (alias, cachedAliases) => {
-    let aliasAddress = false;
-
-    // loop through cachedAliases and get the matching address
-    // returns false if none found
-    cachedAliases.forEach(function (cachedAliasObj) {
-        if (cachedAliasObj.alias.toLowerCase() === alias.toLowerCase()) {
-            aliasAddress = cachedAliasObj.address;
-        }
-    });
-
-    return aliasAddress;
-};
-
-export const isAliasAvailable = async (alias, aliasesFromLocalForage) => {
-    // check whether alias is reserved
-    const isReservedAlias = currency.aliasSettings.reservedAliases.includes(
-        alias.toLowerCase(),
-    );
-    if (isReservedAlias) {
-        return false;
-    }
-
-    // extract aliases from cache
-    const registeredAliases = aliasesFromLocalForage.aliases;
-
-    // retrieve latest pending aliases
-    const pendingAliases = await getPendingAliases();
-
-    const registeredAndPendingAliases =
-        registeredAliases.concat(pendingAliases);
-
-    // check if the chosen alias has already been registered or in pending state onchain
-    let isAliasTaken = isAliasRegistered(registeredAndPendingAliases, alias);
-
-    return !isAliasTaken; // if isAliasTaken is true then return false for availability
 };
 
 export const isAliasRegistered = (registeredAliases, alias) => {
@@ -100,28 +62,6 @@ export const isAliasRegistered = (registeredAliases, alias) => {
         }
     }
     return false;
-};
-
-export const isAddressRegistered = (activeWallet, aliasCache) => {
-    if (!activeWallet || !aliasCache) {
-        return false;
-    }
-    let addressMatch = false;
-    const activeWalletAddress = convertToEcashPrefix(
-        activeWallet.Path1899.cashAddress,
-    );
-
-    let cachedAliases = aliasCache.aliases;
-    cachedAliases.forEach(function (cachedAliasObj) {
-        if (
-            cachedAliasObj.address.toLowerCase() ===
-            activeWalletAddress.toLowerCase()
-        ) {
-            addressMatch = true;
-        }
-    });
-
-    return addressMatch;
 };
 
 // Return false if do not get a valid response
@@ -522,7 +462,7 @@ export const returnGetTxHistoryChronikPromise = (
     return new Promise((resolve, reject) => {
         chronik
             .script('p2pkh', hash160AndAddressObj.hash160)
-            .history(/*page=*/ 0, /*page_size=*/ currency.txHistoryCount)
+            .history(/*page=*/ 0, /*page_size=*/ chronikConfig.txHistoryCount)
             .then(
                 result => {
                     resolve(result);
@@ -647,7 +587,7 @@ export const parseChronikTx = (tx, wallet, tokenInfoById) => {
             let message = '';
             let txType = parsedOpReturnArray[0];
 
-            if (txType === currency.opReturn.appPrefixesHex.airdrop) {
+            if (txType === opreturnConfig.appPrefixesHex.airdrop) {
                 // this is to facilitate special Cashtab-specific cases of airdrop txs, both with and without msgs
                 // The UI via Tx.js can check this airdropFlag attribute in the parsedTx object to conditionally render airdrop-specific formatting if it's true
                 airdropFlag = true;
@@ -660,7 +600,7 @@ export const parseChronikTx = (tx, wallet, tokenInfoById) => {
                 // index 0 now becomes msg prefix, 1 becomes the msg
             }
 
-            if (txType === currency.opReturn.appPrefixesHex.cashtab) {
+            if (txType === opreturnConfig.appPrefixesHex.cashtab) {
                 // if this is an alias registration, render accordingly
                 // isAliasRegistration = true;
 
@@ -680,7 +620,7 @@ export const parseChronikTx = (tx, wallet, tokenInfoById) => {
                     );
                 }
             } else if (
-                txType === currency.opReturn.appPrefixesHex.cashtabEncrypted
+                txType === opreturnConfig.appPrefixesHex.cashtabEncrypted
             ) {
                 if (!incoming) {
                     // outgoing encrypted messages currently can not be decrypted by sender's wallet since the message is encrypted with the recipient's pub key
@@ -740,11 +680,11 @@ export const parseChronikTx = (tx, wallet, tokenInfoById) => {
                 isEncryptedMessage = true;
                 opReturnMessage = decryptedMessage;
             } else if (
-                txType === currency.opReturn.appPrefixesHex.aliasRegistration
+                txType === opreturnConfig.appPrefixesHex.aliasRegistration
             ) {
                 // if this is an alias registration transaction
                 aliasFlag = true;
-                opReturnMessage = Buffer.from(parsedOpReturnArray[1], 'hex');
+                opReturnMessage = Buffer.from(parsedOpReturnArray[2], 'hex');
             } else {
                 // this is an externally generated message
                 message = txType; // index 0 is the message content in this instance
@@ -828,7 +768,7 @@ export const parseChronikTx = (tx, wallet, tokenInfoById) => {
         opReturnMessage = '';
     }
     // Convert from sats to XEC
-    xecAmount = xecAmount.shiftedBy(-1 * currency.cashDecimals);
+    xecAmount = xecAmount.shiftedBy(-1 * appConfig.cashDecimals);
 
     // Convert from BigNumber to string
     xecAmount = xecAmount.toString();
@@ -936,7 +876,7 @@ export const getTxHistoryChronik = async (chronik, wallet, tokenInfoById) => {
     const flatTxHistoryArray = flattenChronikTxHistory(txHistoryOfAllAddresses);
     const sortedTxHistoryArray = sortAndTrimChronikTxHistory(
         flatTxHistoryArray,
-        currency.txHistoryCount,
+        chronikConfig.txHistoryCount,
     );
 
     // Parse txs

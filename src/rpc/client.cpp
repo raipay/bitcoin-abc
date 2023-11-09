@@ -170,11 +170,14 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"addpeeraddress", 1, "port"},
     {"addpeeraddress", 2, "tried"},
     {"stop", 0, "wait"},
+    {"createwallettransaction", 1, "amount"},
     // Avalanche
     {"addavalanchenode", 0, "nodeid"},
     {"buildavalancheproof", 0, "sequence"},
     {"buildavalancheproof", 1, "expiration"},
     {"buildavalancheproof", 3, "stakes"},
+    {"getremoteproofs", 0, "nodeid"},
+    {"getstakingreward", 1, "recompute"},
 };
 
 class CRPCConvertTable {

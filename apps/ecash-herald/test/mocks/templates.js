@@ -51,5 +51,37 @@ module.exports = {
             preview: 'qqf76...lr8up',
             sliceSize: 5,
         },
+        {
+            address: 'ecash:qq337uy8jdmgg7gdzpyjjne6a7w0k7c9m5m5gnpx4u',
+            preview: 'Binance',
+            sliceSize: 3,
+        },
+        {
+            address: 'ecash:qq580luw0dkypdlrply9ulk3rht6nrqfugvgm9le8a',
+            preview: 'Coinex 1',
+            sliceSize: 3,
+        },
+        {
+            address: 'ecash:qqv2vqz6he83x9pczvt552fuxnvhevlt6ugrqqa7w5',
+            preview: 'Coinex 2',
+            sliceSize: 3,
+        },
+    ],
+    mockCoingeckoPrices: [
+        {
+            fiat: 'usd',
+            price: 0.00003,
+            ticker: 'XEC',
+        },
+        {
+            fiat: 'usd',
+            price: 28044.64857505,
+            ticker: 'BTC',
+        },
+        {
+            fiat: 'usd',
+            price: 1900.73166438,
+            ticker: 'ETH',
+        },
     ],
 };

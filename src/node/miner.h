@@ -82,8 +82,8 @@ public:
 
     BlockAssembler(const Config &config, Chainstate &chainstate,
                    const CTxMemPool &mempool);
-    BlockAssembler(Chainstate &chainstate, const CChainParams &params,
-                   const CTxMemPool &mempool, const Options &options);
+    BlockAssembler(Chainstate &chainstate, const CTxMemPool &mempool,
+                   const Options &options);
 
     /** Construct a new block template with coinbase to scriptPubKeyIn */
     std::unique_ptr<CBlockTemplate>
@@ -115,10 +115,6 @@ private:
     bool CheckTx(const CTransaction &tx) const;
 };
 
-/** Modify the extranonce in a block */
-void IncrementExtraNonce(CBlock *pblock, const CBlockIndex *pindexPrev,
-                         uint64_t nExcessiveBlockSize,
-                         unsigned int &nExtraNonce);
 int64_t UpdateTime(CBlockHeader *pblock, const CChainParams &chainParams,
                    const CBlockIndex *pindexPrev);
 } // namespace node

@@ -2,18 +2,21 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    time::Instant,
+};
 
 use abc_rust_error::Result;
-use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch};
+use rocksdb::{ColumnFamilyDescriptor, Options};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    db::{Db, CF, CF_SPENT_BY},
+    db::{Db, WriteBatch, CF, CF_SPENT_BY},
     index_tx::IndexTx,
-    io::TxNum,
-    ser::{db_deserialize, db_serialize},
+    io::{merge::catch_merge_errors, TxNum},
+    ser::{db_deserialize, db_deserialize_vec, db_serialize, db_serialize_vec},
 };
 
 /// Indicates an output has been spent by an input in a tx.
@@ -64,6 +67,24 @@ pub struct SpentByWriter<'a> {
 #[derive(Debug)]
 pub struct SpentByReader<'a> {
     col: SpentByColumn<'a>,
+}
+
+/// In-memory data for spent-by data.
+#[derive(Debug, Default)]
+pub struct SpentByMemData {
+    /// Stats about cache hits, num requests etc.
+    pub stats: SpentByStats,
+}
+
+/// Stats about cache hits, num requests etc.
+#[derive(Clone, Debug, Default)]
+pub struct SpentByStats {
+    /// Total number of txs updated.
+    pub n_total: usize,
+    /// Time [s] for insert/delete.
+    pub t_total: f64,
+    /// Time [s] for fetching txs.
+    pub t_fetch: f64,
 }
 
 /// Error indicating that something went wrong with writing spent-by data.
@@ -118,6 +139,58 @@ fn ser_tx_num(tx_num: TxNum) -> Result<Vec<u8>> {
     db_serialize(&tx_num)
 }
 
+fn deser_tx_num(bytes: &[u8]) -> Result<TxNum> {
+    db_deserialize(bytes)
+}
+
+fn init_merge_spent_by(
+    _key: &[u8],
+    existing_value: Option<&[u8]>,
+    _operands: &rocksdb::MergeOperands,
+) -> Result<Vec<SpentByEntry>> {
+    match existing_value {
+        Some(bytes) => db_deserialize_vec::<SpentByEntry>(bytes),
+        None => Ok(vec![]),
+    }
+}
+
+fn apply_merge_spent_by(
+    key: &[u8],
+    entries: &mut Vec<SpentByEntry>,
+    operand: &[u8],
+) -> Result<()> {
+    let extra_entries = db_deserialize_vec::<SpentByEntry>(operand)?;
+    entries.reserve(extra_entries.len());
+    for spent_by in extra_entries {
+        let search_idx = entries
+            .binary_search_by_key(&spent_by.out_idx, |entry| entry.out_idx);
+        match search_idx {
+            Ok(idx) => {
+                let input_tx_num = deser_tx_num(key)?;
+                // Output already spent by another tx -> corrupted DB?
+                return Err(DuplicateSpentByEntry {
+                    tx_num: input_tx_num,
+                    existing: entries[idx].clone(),
+                    new: spent_by,
+                }
+                .into());
+            }
+            Err(insert_idx) => {
+                // No entry found -> insert it
+                entries.insert(insert_idx, spent_by);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ser_merge_spent_by(
+    _key: &[u8],
+    entries: Vec<SpentByEntry>,
+) -> Result<Vec<u8>> {
+    db_serialize_vec::<SpentByEntry>(entries)
+}
+
 impl<'a> SpentByColumn<'a> {
     fn new(db: &'a Db) -> Result<Self> {
         let cf = db.cf(CF_SPENT_BY)?;
@@ -138,7 +211,11 @@ impl<'a> SpentByWriter<'a> {
         &self,
         batch: &mut WriteBatch,
         txs: &[IndexTx<'_>],
+        mem_data: &mut SpentByMemData,
     ) -> Result<()> {
+        let stats = &mut mem_data.stats;
+        let t_start = Instant::now();
+        stats.n_total += txs.len();
         let mut spent_by_map = HashMap::<TxNum, Vec<SpentByEntry>>::new();
         for tx in txs {
             if tx.is_coinbase {
@@ -153,36 +230,20 @@ impl<'a> SpentByWriter<'a> {
                     tx_num: tx.tx_num,
                     input_idx: input_idx as u32,
                 };
-                let spent_by_entries =
-                    self.get_or_fetch(&mut spent_by_map, input_tx_num)?;
-                let search_idx = spent_by_entries
-                    .binary_search_by_key(&spent_by.out_idx, |entry| {
-                        entry.out_idx
-                    });
-                match search_idx {
-                    Ok(idx) => {
-                        // Already found a spent-by entry for the output.
-                        return Err(DuplicateSpentByEntry {
-                            tx_num: input_tx_num,
-                            existing: spent_by_entries[idx].clone(),
-                            new: spent_by,
-                        }
-                        .into());
-                    }
-                    Err(insert_idx) => {
-                        // No entry found -> insert it
-                        spent_by_entries.insert(insert_idx, spent_by);
-                    }
-                }
+                spent_by_map
+                    .entry(input_tx_num)
+                    .or_insert(vec![])
+                    .push(spent_by);
             }
         }
         for (tx_num, entries) in spent_by_map {
-            batch.put_cf(
+            batch.merge_cf(
                 self.col.cf,
                 ser_tx_num(tx_num)?,
-                db_serialize(&entries)?,
+                db_serialize_vec::<SpentByEntry>(entries)?,
             );
         }
+        stats.t_total += t_start.elapsed().as_secs_f64();
         Ok(())
     }
 
@@ -192,7 +253,11 @@ impl<'a> SpentByWriter<'a> {
         &self,
         batch: &mut WriteBatch,
         txs: &[IndexTx<'_>],
+        mem_data: &mut SpentByMemData,
     ) -> Result<()> {
+        let stats = &mut mem_data.stats;
+        let t_start = Instant::now();
+        stats.n_total += txs.len();
         let mut spent_by_map = HashMap::<TxNum, Vec<SpentByEntry>>::new();
         for tx in txs {
             if tx.is_coinbase {
@@ -207,8 +272,10 @@ impl<'a> SpentByWriter<'a> {
                     tx_num: tx.tx_num,
                     input_idx: input_idx as u32,
                 };
+                let t_fetch = Instant::now();
                 let spent_by_entries =
                     self.get_or_fetch(&mut spent_by_map, input_tx_num)?;
+                stats.t_fetch += t_fetch.elapsed().as_secs_f64();
                 let search_idx = spent_by_entries
                     .binary_search_by_key(&spent_by.out_idx, |entry| {
                         entry.out_idx
@@ -243,9 +310,10 @@ impl<'a> SpentByWriter<'a> {
             if entries.is_empty() {
                 batch.delete_cf(self.col.cf, ser_num);
             } else {
-                batch.put_cf(self.col.cf, ser_num, db_serialize(&entries)?);
+                batch.put_cf(self.col.cf, ser_num, db_serialize_vec(entries)?);
             }
         }
+        stats.t_total += t_start.elapsed().as_secs_f64();
         Ok(())
     }
 
@@ -260,7 +328,7 @@ impl<'a> SpentByWriter<'a> {
                 let db_entries =
                     match self.col.db.get(self.col.cf, ser_tx_num(tx_num)?)? {
                         Some(data) => {
-                            db_deserialize::<Vec<SpentByEntry>>(&data)?
+                            db_deserialize_vec::<SpentByEntry>(&data)?
                         }
                         None => vec![],
                     };
@@ -270,8 +338,17 @@ impl<'a> SpentByWriter<'a> {
     }
 
     pub(crate) fn add_cfs(columns: &mut Vec<ColumnFamilyDescriptor>) {
-        columns
-            .push(ColumnFamilyDescriptor::new(CF_SPENT_BY, Options::default()));
+        let mut options = Options::default();
+        options.set_merge_operator(
+            "spent_by::merge_op",
+            catch_merge_errors(
+                init_merge_spent_by,
+                apply_merge_spent_by,
+                ser_merge_spent_by,
+            ),
+            |_, _, _| None,
+        );
+        columns.push(ColumnFamilyDescriptor::new(CF_SPENT_BY, options));
     }
 }
 
@@ -288,7 +365,7 @@ impl<'a> SpentByReader<'a> {
         tx_num: TxNum,
     ) -> Result<Option<Vec<SpentByEntry>>> {
         match self.col.db.get(self.col.cf, ser_tx_num(tx_num)?)? {
-            Some(data) => Ok(Some(db_deserialize::<Vec<SpentByEntry>>(&data)?)),
+            Some(data) => Ok(Some(db_deserialize_vec::<SpentByEntry>(&data)?)),
             None => Ok(None),
         }
     }
@@ -309,14 +386,14 @@ mod tests {
 
     use abc_rust_error::Result;
     use bitcoinsuite_core::tx::Tx;
-    use rocksdb::WriteBatch;
 
     use crate::{
-        db::Db,
+        db::{Db, WriteBatch},
         index_tx::prepare_indexed_txs,
         io::{
-            BlockTxs, SpentByEntry, SpentByError, SpentByReader, SpentByWriter,
-            TxEntry, TxWriter,
+            merge::check_for_errors, BlockTxs, SpentByEntry, SpentByError,
+            SpentByMemData, SpentByReader, SpentByWriter, TxEntry, TxWriter,
+            TxsMemData,
         },
         test::make_inputs_tx,
     };
@@ -332,6 +409,8 @@ mod tests {
         let tx_writer = TxWriter::new(&db)?;
         let spent_by_writer = SpentByWriter::new(&db)?;
         let spent_by_reader = SpentByReader::new(&db)?;
+        let mem_data = RefCell::new(SpentByMemData::default());
+        let txs_mem_data = RefCell::new(TxsMemData::default());
 
         let block_height = RefCell::new(-1);
         let txs_batch = |txs: &[Tx]| BlockTxs {
@@ -347,17 +426,39 @@ mod tests {
         let connect_block = |txs: &[Tx]| -> Result<()> {
             let mut batch = WriteBatch::default();
             *block_height.borrow_mut() += 1;
-            let first_tx_num = tx_writer.insert(&mut batch, &txs_batch(txs))?;
+            let first_tx_num = tx_writer.insert(
+                &mut batch,
+                &txs_batch(txs),
+                &mut txs_mem_data.borrow_mut(),
+            )?;
             let index_txs = prepare_indexed_txs(&db, first_tx_num, txs)?;
-            spent_by_writer.insert(&mut batch, &index_txs)?;
+            spent_by_writer.insert(
+                &mut batch,
+                &index_txs,
+                &mut mem_data.borrow_mut(),
+            )?;
             db.write_batch(batch)?;
+            for tx in &index_txs {
+                for &input_tx_num in &tx.input_nums {
+                    spent_by_reader.by_tx_num(input_tx_num)?;
+                    check_for_errors()?;
+                }
+            }
             Ok(())
         };
         let disconnect_block = |txs: &[Tx]| -> Result<()> {
             let mut batch = WriteBatch::default();
-            let first_tx_num = tx_writer.delete(&mut batch, &txs_batch(txs))?;
+            let first_tx_num = tx_writer.delete(
+                &mut batch,
+                &txs_batch(txs),
+                &mut txs_mem_data.borrow_mut(),
+            )?;
             let index_txs = prepare_indexed_txs(&db, first_tx_num, txs)?;
-            spent_by_writer.delete(&mut batch, &index_txs)?;
+            spent_by_writer.delete(
+                &mut batch,
+                &index_txs,
+                &mut mem_data.borrow_mut(),
+            )?;
             db.write_batch(batch)?;
             *block_height.borrow_mut() -= 1;
             Ok(())
@@ -454,6 +555,21 @@ mod tests {
         );
 
         disconnect_block(&block3)?;
+        assert_eq!(
+            spent_by_reader.by_tx_num(0)?,
+            Some(vec![
+                spent_by!(out_idx=1 -> tx_num=5, input_idx=1),
+                spent_by!(out_idx=2 -> tx_num=4, input_idx=0),
+                spent_by!(out_idx=3 -> tx_num=2, input_idx=0),
+            ]),
+        );
+        assert_eq!(
+            spent_by_reader.by_tx_num(1)?,
+            Some(vec![
+                spent_by!(out_idx=0 -> tx_num=4, input_idx=1),
+                spent_by!(out_idx=1 -> tx_num=5, input_idx=0),
+            ]),
+        );
         assert_eq!(spent_by_reader.by_tx_num(2)?, None);
         assert_eq!(spent_by_reader.by_tx_num(4)?, None);
         assert_eq!(spent_by_reader.by_tx_num(5)?, None);
@@ -477,8 +593,30 @@ mod tests {
                 new: spent_by!(out_idx=1 -> tx_num=7, input_idx=0),
             },
         );
-        // connect_block updates blockheight before erring; decrement again
-        *block_height.borrow_mut() -= 1;
+
+        // Ensure failed connect didn't have any side-effects on spent-by data
+        assert_eq!(
+            spent_by_reader.by_tx_num(0)?,
+            Some(vec![
+                spent_by!(out_idx=1 -> tx_num=5, input_idx=1),
+                spent_by!(out_idx=2 -> tx_num=4, input_idx=0),
+                spent_by!(out_idx=3 -> tx_num=2, input_idx=0),
+            ]),
+        );
+        assert_eq!(
+            spent_by_reader.by_tx_num(1)?,
+            Some(vec![
+                spent_by!(out_idx=0 -> tx_num=4, input_idx=1),
+                spent_by!(out_idx=1 -> tx_num=5, input_idx=0),
+            ]),
+        );
+
+        // Undo side effects introduced by failed connect
+        disconnect_block(&[
+            make_inputs_tx(10, [(0x00, u32::MAX, -1)], []),
+            // Note the missing input values
+            make_inputs_tx(11, [], []),
+        ])?;
 
         // failed disconnect: mismatched entry
         let block_mismatched_spend = vec![

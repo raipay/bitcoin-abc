@@ -10,13 +10,17 @@
 #include <avalanche/statistics.h>
 #include <chainparams.h>
 #include <clientversion.h>
+#include <compat.h>
 #include <config.h>
 #include <net_processing.h>
 #include <netaddress.h>
 #include <netbase.h>
+#include <netmessagemaker.h>
 #include <serialize.h>
 #include <span.h>
 #include <streams.h>
+#include <test/util/validation.h>
+#include <timedata.h>
 #include <util/strencodings.h>
 #include <util/string.h>
 #include <util/translation.h> // for bilingual_str
@@ -65,12 +69,7 @@ struct CConnmanTest : public CConnman {
     }
 
     void AddNode(const CAddress &addr, ConnectionType type) {
-        ServiceFlags services = NODE_NETWORK;
-        if (type == ConnectionType::AVALANCHE_OUTBOUND) {
-            services = ServiceFlags(services | NODE_AVALANCHE);
-        }
-
-        CNode *pnode = new CNode(nodeid++, services, INVALID_SOCKET, addr,
+        CNode *pnode = new CNode(nodeid++, INVALID_SOCKET, addr,
                                  CalculateKeyedNetGroup(addr),
                                  /* nLocalHostNonceIn */ 0,
                                  /* nLocalExtraEntropyIn */ 0, addr,
@@ -272,7 +271,7 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
     std::string pszDest;
 
     auto pnode1 =
-        std::make_unique<CNode>(id++, NODE_NETWORK, hSocket, addr,
+        std::make_unique<CNode>(id++, hSocket, addr,
                                 /* nKeyedNetGroupIn = */ 0,
                                 /* nLocalHostNonceIn = */ 0,
                                 /* nLocalExtraEntropyIn */ 0, CAddress(),
@@ -287,9 +286,9 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
     BOOST_CHECK(pnode1->m_inbound_onion == false);
     BOOST_CHECK_EQUAL(pnode1->ConnectedThroughNetwork(), Network::NET_IPV4);
 
-    auto pnode2 = std::make_unique<CNode>(id++, NODE_NETWORK, hSocket, addr, 1,
-                                          1, 1, CAddress(), pszDest,
-                                          ConnectionType::INBOUND, false);
+    auto pnode2 =
+        std::make_unique<CNode>(id++, hSocket, addr, 1, 1, 1, CAddress(),
+                                pszDest, ConnectionType::INBOUND, false);
     BOOST_CHECK(pnode2->IsFullOutboundConn() == false);
     BOOST_CHECK(pnode2->IsManualConn() == false);
     BOOST_CHECK(pnode2->IsBlockOnlyConn() == false);
@@ -300,7 +299,7 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
     BOOST_CHECK_EQUAL(pnode2->ConnectedThroughNetwork(), Network::NET_IPV4);
 
     auto pnode3 = std::make_unique<CNode>(
-        id++, NODE_NETWORK, hSocket, addr, 0, 0, 0, CAddress(), pszDest,
+        id++, hSocket, addr, 0, 0, 0, CAddress(), pszDest,
         ConnectionType::OUTBOUND_FULL_RELAY, false);
     BOOST_CHECK(pnode3->IsFullOutboundConn() == true);
     BOOST_CHECK(pnode3->IsManualConn() == false);
@@ -311,9 +310,9 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
     BOOST_CHECK(pnode3->m_inbound_onion == false);
     BOOST_CHECK_EQUAL(pnode3->ConnectedThroughNetwork(), Network::NET_IPV4);
 
-    auto pnode4 = std::make_unique<CNode>(id++, NODE_NETWORK, hSocket, addr, 1,
-                                          1, 1, CAddress(), pszDest,
-                                          ConnectionType::INBOUND, true);
+    auto pnode4 =
+        std::make_unique<CNode>(id++, hSocket, addr, 1, 1, 1, CAddress(),
+                                pszDest, ConnectionType::INBOUND, true);
     BOOST_CHECK(pnode4->IsFullOutboundConn() == false);
     BOOST_CHECK(pnode4->IsManualConn() == false);
     BOOST_CHECK(pnode4->IsBlockOnlyConn() == false);
@@ -885,15 +884,15 @@ BOOST_AUTO_TEST_CASE(ipv4_peer_with_ipv6_addrMe_test) {
     // set up local addresses; all that's necessary to reproduce the bug is
     // that a normal IPv4 address is among the entries, but if this address is
     // !IsRoutable the undefined behavior is easier to trigger deterministically
+    in_addr raw_addr;
+    raw_addr.s_addr = htonl(0x7f000001);
+    const CNetAddr mapLocalHost_entry = CNetAddr(raw_addr);
     {
         LOCK(g_maplocalhost_mutex);
-        in_addr ipv4AddrLocal;
-        ipv4AddrLocal.s_addr = 0x0100007f;
-        CNetAddr addr = CNetAddr(ipv4AddrLocal);
         LocalServiceInfo lsi;
         lsi.nScore = 23;
         lsi.nPort = 42;
-        mapLocalHost[addr] = lsi;
+        mapLocalHost[mapLocalHost_entry] = lsi;
     }
 
     // create a peer with an IPv4 address
@@ -901,7 +900,7 @@ BOOST_AUTO_TEST_CASE(ipv4_peer_with_ipv6_addrMe_test) {
     ipv4AddrPeer.s_addr = 0xa0b0c001;
     CAddress addr = CAddress(CService(ipv4AddrPeer, 7777), NODE_NETWORK);
     std::unique_ptr<CNode> pnode = std::make_unique<CNode>(
-        0, NODE_NETWORK, INVALID_SOCKET, addr, /* nKeyedNetGroupIn */ 0,
+        0, INVALID_SOCKET, addr, /* nKeyedNetGroupIn */ 0,
         /* nLocalHostNonceIn */ 0, /* nLocalExtraEntropyIn */ 0, CAddress{},
         /* pszDest */ std::string{}, ConnectionType::OUTBOUND_FULL_RELAY,
         /* inbound_onion = */ false);
@@ -916,11 +915,90 @@ BOOST_AUTO_TEST_CASE(ipv4_peer_with_ipv6_addrMe_test) {
 
     // before patch, this causes undefined behavior detectable with clang's
     // -fsanitize=memory
-    GetLocalAddrForPeer(&*pnode);
+    GetLocalAddrForPeer(*pnode);
 
     // suppress no-checks-run warning; if this test fails, it's by triggering a
     // sanitizer
     BOOST_CHECK(1);
+
+    // Cleanup, so that we don't confuse other tests.
+    {
+        LOCK(g_maplocalhost_mutex);
+        mapLocalHost.erase(mapLocalHost_entry);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(get_local_addr_for_peer_port) {
+    // Test that GetLocalAddrForPeer() properly selects the address to
+    // self-advertise:
+    //
+    // 1. GetLocalAddrForPeer() calls GetLocalAddress() which returns an address
+    // that is
+    //    not routable.
+    // 2. GetLocalAddrForPeer() overrides the address with whatever the peer has
+    // told us
+    //    he sees us as.
+    // 2.1. For inbound connections we must override both the address and the
+    // port. 2.2. For outbound connections we must override only the address.
+
+    // Pretend that we bound to this port.
+    const uint16_t bind_port = 20001;
+    m_node.args->ForceSetArg("-bind", strprintf("3.4.5.6:%u", bind_port));
+
+    // Our address:port as seen from the peer, completely different from the
+    // above.
+    in_addr peer_us_addr;
+    peer_us_addr.s_addr = htonl(0x02030405);
+    const CService peer_us{peer_us_addr, 20002};
+
+    // Create a peer with a routable IPv4 address (outbound).
+    in_addr peer_out_in_addr;
+    peer_out_in_addr.s_addr = htonl(0x01020304);
+    CNode peer_out{
+        /*id=*/0,
+        /*hSocketIn=*/INVALID_SOCKET,
+        /*addrIn=*/CAddress{CService{peer_out_in_addr, 8333}, NODE_NETWORK},
+        /*nKeyedNetGroupIn=*/0,
+        /*nLocalHostNonceIn=*/0,
+        /*nLocalExtraEntropyIn=*/0,
+        /*addrBindIn=*/CAddress{},
+        /*addrNameIn=*/std::string{},
+        /*conn_type_in=*/ConnectionType::OUTBOUND_FULL_RELAY,
+        /*inbound_onion=*/false};
+    peer_out.fSuccessfullyConnected = true;
+    peer_out.SetAddrLocal(peer_us);
+
+    // Without the fix peer_us:8333 is chosen instead of the proper
+    // peer_us:bind_port.
+    auto chosen_local_addr = GetLocalAddrForPeer(peer_out);
+    BOOST_REQUIRE(chosen_local_addr);
+    const CService expected{peer_us_addr, bind_port};
+    BOOST_CHECK(*chosen_local_addr == expected);
+
+    // Create a peer with a routable IPv4 address (inbound).
+    in_addr peer_in_in_addr;
+    peer_in_in_addr.s_addr = htonl(0x05060708);
+    CNode peer_in{
+        /*id=*/0,
+        /*hSocketIn=*/INVALID_SOCKET,
+        /*addrIn=*/CAddress{CService{peer_in_in_addr, 8333}, NODE_NETWORK},
+        /*nKeyedNetGroupIn=*/0,
+        /*nLocalHostNonceIn=*/0,
+        /*nLocalExtraEntropyIn=*/0,
+        /*addrBindIn=*/CAddress{},
+        /*addrNameIn=*/std::string{},
+        /*conn_type_in=*/ConnectionType::INBOUND,
+        /*inbound_onion=*/false};
+    peer_in.fSuccessfullyConnected = true;
+    peer_in.SetAddrLocal(peer_us);
+
+    // Without the fix peer_us:8333 is chosen instead of the proper
+    // peer_us:peer_us.GetPort().
+    chosen_local_addr = GetLocalAddrForPeer(peer_in);
+    BOOST_REQUIRE(chosen_local_addr);
+    BOOST_CHECK(*chosen_local_addr == peer_us);
+
+    m_node.args->ForceSetArg("-bind", "");
 }
 
 BOOST_AUTO_TEST_CASE(avalanche_statistics) {
@@ -937,8 +1015,8 @@ BOOST_AUTO_TEST_CASE(avalanche_statistics) {
         ipv4Addr.s_addr = 0xa0b0c001;
         CAddress addr = CAddress(CService(ipv4Addr, 7777), NODE_NETWORK);
         std::unique_ptr<CNode> pnode = std::make_unique<CNode>(
-            0, NODE_NETWORK, INVALID_SOCKET, addr, 0, 0, 0, CAddress(),
-            std::string{}, ConnectionType::OUTBOUND_FULL_RELAY, false);
+            0, INVALID_SOCKET, addr, 0, 0, 0, CAddress(), std::string{},
+            ConnectionType::OUTBOUND_FULL_RELAY, false);
         pnode->m_avalanche_enabled = true;
 
         double previousScore = pnode->getAvailabilityScore();
@@ -1055,13 +1133,11 @@ BOOST_AUTO_TEST_CASE(get_extra_full_outbound_count) {
 }
 
 BOOST_FIXTURE_TEST_CASE(net_group_limit, TestChain100Setup) {
-    const CChainParams &params = GetConfig().GetChainParams();
-
     m_node.connman = std::make_unique<CConnmanTest>(GetConfig(), 0x1337, 0x1337,
                                                     *m_node.addrman);
-    m_node.peerman = PeerManager::make(params, *m_node.connman, *m_node.addrman,
-                                       m_node.banman.get(), *m_node.chainman,
-                                       *m_node.mempool, false);
+    m_node.peerman =
+        PeerManager::make(*m_node.connman, *m_node.addrman, m_node.banman.get(),
+                          *m_node.chainman, *m_node.mempool, false);
 
     bilingual_str error;
     // Init the global avalanche object otherwise the avalanche outbound
@@ -1180,6 +1256,118 @@ BOOST_FIXTURE_TEST_CASE(net_group_limit, TestChain100Setup) {
         ));
 
     g_avalanche.reset();
+}
+
+BOOST_AUTO_TEST_CASE(initial_advertise_from_version_message) {
+    // Tests the following scenario:
+    // * -bind=3.4.5.6:20001 is specified
+    // * we make an outbound connection to a peer
+    // * the peer reports he sees us as 2.3.4.5:20002 in the version message
+    //   (20002 is a random port assigned by our OS for the outgoing TCP
+    //   connection, we cannot accept connections to it)
+    // * we should self-advertise to that peer as 2.3.4.5:20001
+
+    // Pretend that we bound to this port.
+    const uint16_t bind_port = 20001;
+    m_node.args->ForceSetArg("-bind", strprintf("3.4.5.6:%u", bind_port));
+    m_node.args->ForceSetArg("-capturemessages", "1");
+
+    // Our address:port as seen from the peer - 2.3.4.5:20002 (different from
+    // the above).
+    in_addr peer_us_addr;
+    peer_us_addr.s_addr = htonl(0x02030405);
+    const CService peer_us{peer_us_addr, 20002};
+
+    // Create a peer with a routable IPv4 address.
+    in_addr peer_in_addr;
+    peer_in_addr.s_addr = htonl(0x01020304);
+    CNode peer{/*id=*/0,
+               /*hSocketIn=*/INVALID_SOCKET,
+               /*addrIn=*/CAddress{CService{peer_in_addr, 8333}, NODE_NETWORK},
+               /*nKeyedNetGroupIn=*/0,
+               /*nLocalHostNonceIn=*/0,
+               /*nLocalExtraEntropyIn=*/0,
+               /*addrBindIn=*/CAddress{},
+               /*addrNameIn=*/std::string{},
+               /*conn_type_in=*/ConnectionType::OUTBOUND_FULL_RELAY,
+               /*inbound_onion=*/false};
+
+    const uint64_t services{NODE_NETWORK};
+    const int64_t time{0};
+    const CNetMsgMaker msg_maker{PROTOCOL_VERSION};
+
+    // Force CChainState::IsInitialBlockDownload() to return false.
+    // Otherwise PushAddress() isn't called by PeerManager::ProcessMessage().
+    TestChainState &chainstate =
+        *static_cast<TestChainState *>(&m_node.chainman->ActiveChainstate());
+    chainstate.JumpOutOfIbd();
+
+    const Config &config = GetConfig();
+
+    m_node.peerman->InitializeNode(config, peer, NODE_NETWORK);
+
+    std::atomic<bool> interrupt_dummy{false};
+    std::chrono::microseconds time_received_dummy{0};
+
+    const auto msg_version =
+        msg_maker.Make(NetMsgType::VERSION, PROTOCOL_VERSION, services, time,
+                       services, peer_us);
+    CDataStream msg_version_stream{msg_version.data, SER_NETWORK,
+                                   PROTOCOL_VERSION};
+
+    m_node.peerman->ProcessMessage(config, peer, NetMsgType::VERSION,
+                                   msg_version_stream, time_received_dummy,
+                                   interrupt_dummy);
+
+    const auto msg_verack = msg_maker.Make(NetMsgType::VERACK);
+    CDataStream msg_verack_stream{msg_verack.data, SER_NETWORK,
+                                  PROTOCOL_VERSION};
+
+    // Will set peer.fSuccessfullyConnected to true (necessary in
+    // SendMessages()).
+    m_node.peerman->ProcessMessage(config, peer, NetMsgType::VERACK,
+                                   msg_verack_stream, time_received_dummy,
+                                   interrupt_dummy);
+
+    // Ensure that peer_us_addr:bind_port is sent to the peer.
+    const CService expected{peer_us_addr, bind_port};
+    bool sent{false};
+
+    const auto CaptureMessageOrig = CaptureMessage;
+    CaptureMessage =
+        [&sent, &expected](const CAddress &addr, const std::string &msg_type,
+                           Span<const uint8_t> data, bool is_incoming) -> void {
+        if (!is_incoming && msg_type == "addr") {
+            CDataStream s(data, SER_NETWORK, PROTOCOL_VERSION);
+            std::vector<CAddress> addresses;
+
+            s >> addresses;
+
+            for (const auto &deserialized_addr : addresses) {
+                if (deserialized_addr == expected) {
+                    sent = true;
+                    return;
+                }
+            }
+        }
+    };
+
+    {
+        LOCK(peer.cs_sendProcessing);
+        m_node.peerman->SendMessages(config, &peer);
+    }
+
+    BOOST_CHECK(sent);
+
+    CaptureMessage = CaptureMessageOrig;
+    chainstate.ResetIbd();
+    m_node.args->ForceSetArg("-capturemessages", "0");
+    m_node.args->ForceSetArg("-bind", "");
+    // PeerManager::ProcessMessage() calls AddTimeData() which changes the
+    // internal state in timedata.cpp and later confuses the test
+    // "timedata_tests/addtimedata". Thus reset that state as it was before our
+    // test was run.
+    TestOnlyResetTimeData();
 }
 
 BOOST_AUTO_TEST_SUITE_END()

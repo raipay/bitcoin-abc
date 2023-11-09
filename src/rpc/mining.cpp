@@ -3,6 +3,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <avalanche/avalanche.h>
+#include <avalanche/processor.h>
 #include <blockvalidity.h>
 #include <cashaddrenc.h>
 #include <chain.h>
@@ -11,6 +13,7 @@
 #include <consensus/activation.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
+#include <consensus/merkle.h>
 #include <consensus/params.h>
 #include <consensus/validation.h>
 #include <core_io.h>
@@ -19,6 +22,7 @@
 #include <net.h>
 #include <node/context.h>
 #include <node/miner.h>
+#include <policy/block/stakingrewards.h>
 #include <policy/policy.h>
 #include <pow/pow.h>
 #include <rpc/blockchain.h>
@@ -43,7 +47,6 @@
 
 using node::BlockAssembler;
 using node::CBlockTemplate;
-using node::IncrementExtraNonce;
 using node::NodeContext;
 using node::UpdateTime;
 
@@ -108,10 +111,10 @@ static RPCHelpMan getnetworkhashps() {
         "Pass in [height] to estimate the network speed at the time when a "
         "certain block was found.\n",
         {
-            {"nblocks", RPCArg::Type::NUM, /* default */ "120",
+            {"nblocks", RPCArg::Type::NUM, RPCArg::Default{120},
              "The number of blocks, or -1 for blocks since last difficulty "
              "change."},
-            {"height", RPCArg::Type::NUM, /* default */ "-1",
+            {"height", RPCArg::Type::NUM, RPCArg::Default{-1},
              "To estimate at the time of the given height."},
         },
         RPCResult{RPCResult::Type::NUM, "", "Hashes per second estimated"},
@@ -131,15 +134,9 @@ static RPCHelpMan getnetworkhashps() {
 
 static bool GenerateBlock(const Config &config, ChainstateManager &chainman,
                           CBlock &block, uint64_t &max_tries,
-                          unsigned int &extra_nonce, BlockHash &block_hash) {
+                          BlockHash &block_hash) {
     block_hash.SetNull();
-    const uint64_t nExcessiveBlockSize = config.GetMaxBlockSize();
-
-    {
-        LOCK(cs_main);
-        IncrementExtraNonce(&block, chainman.ActiveTip(), nExcessiveBlockSize,
-                            extra_nonce);
-    }
+    block.hashMerkleRoot = BlockMerkleRoot(block);
 
     const Consensus::Params &params = config.GetChainParams().GetConsensus();
 
@@ -173,21 +170,10 @@ static UniValue generateBlocks(const Config &config,
                                const CTxMemPool &mempool,
                                const CScript &coinbase_script, int nGenerate,
                                uint64_t nMaxTries) {
-    int nHeightEnd = 0;
-    int nHeight = 0;
-
-    {
-        // Don't keep cs_main locked.
-        LOCK(cs_main);
-        nHeight = chainman.ActiveHeight();
-        nHeightEnd = nHeight + nGenerate;
-    }
-
-    unsigned int nExtraNonce = 0;
     UniValue blockHashes(UniValue::VARR);
-    while (nHeight < nHeightEnd && !ShutdownRequested()) {
+    while (nGenerate > 0 && !ShutdownRequested()) {
         std::unique_ptr<CBlockTemplate> pblocktemplate(
-            BlockAssembler(config, chainman.ActiveChainstate(), mempool)
+            BlockAssembler{config, chainman.ActiveChainstate(), mempool}
                 .CreateNewBlock(coinbase_script));
 
         if (!pblocktemplate.get()) {
@@ -197,13 +183,12 @@ static UniValue generateBlocks(const Config &config,
         CBlock *pblock = &pblocktemplate->block;
 
         BlockHash block_hash;
-        if (!GenerateBlock(config, chainman, *pblock, nMaxTries, nExtraNonce,
-                           block_hash)) {
+        if (!GenerateBlock(config, chainman, *pblock, nMaxTries, block_hash)) {
             break;
         }
 
         if (!block_hash.IsNull()) {
-            ++nHeight;
+            --nGenerate;
             blockHashes.push_back(block_hash.GetHex());
         }
     }
@@ -261,8 +246,7 @@ static RPCHelpMan generatetodescriptor() {
              "How many blocks are generated immediately."},
             {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The descriptor to send the newly generated bitcoin to."},
-            {"maxtries", RPCArg::Type::NUM,
-             /* default */ ToString(DEFAULT_MAX_TRIES),
+            {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES},
              "How many iterations to try."},
         },
         RPCResult{RPCResult::Type::ARR,
@@ -321,8 +305,7 @@ static RPCHelpMan generatetoaddress() {
              "How many blocks are generated immediately."},
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The address to send the newly generated bitcoin to."},
-            {"maxtries", RPCArg::Type::NUM,
-             /* default */ ToString(DEFAULT_MAX_TRIES),
+            {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES},
              "How many iterations to try."},
         },
         RPCResult{RPCResult::Type::ARR,
@@ -456,8 +439,8 @@ static RPCHelpMan generateblock() {
 
                 CTxMemPool empty_mempool;
                 std::unique_ptr<CBlockTemplate> blocktemplate(
-                    BlockAssembler(config, chainman.ActiveChainstate(),
-                                   empty_mempool)
+                    BlockAssembler{config, chainman.ActiveChainstate(),
+                                   empty_mempool}
                         .CreateNewBlock(coinbase_script));
                 if (!blocktemplate) {
                     throw JSONRPCError(RPC_INTERNAL_ERROR,
@@ -490,9 +473,8 @@ static RPCHelpMan generateblock() {
 
             BlockHash block_hash;
             uint64_t max_tries{DEFAULT_MAX_TRIES};
-            unsigned int extra_nonce{0};
 
-            if (!GenerateBlock(config, chainman, block, max_tries, extra_nonce,
+            if (!GenerateBlock(config, chainman, block, max_tries,
                                block_hash) ||
                 block_hash.IsNull()) {
                 throw JSONRPCError(RPC_MISC_ERROR, "Failed to make block.");
@@ -658,7 +640,7 @@ static RPCHelpMan getblocktemplate() {
         {
             {"template_request",
              RPCArg::Type::OBJ,
-             "{}",
+             RPCArg::Default{UniValue::VOBJ},
              "Format of the template",
              {
                  {"mode", RPCArg::Type::STR, /* treat as named arg */
@@ -732,15 +714,6 @@ static RPCHelpMan getblocktemplate() {
                                "the block subsidy); "
                                "if key is not present, fee is unknown and "
                                "clients MUST NOT assume there isn't one"},
-                              {RPCResult::Type::NUM, "sigops",
-                               "DEPRECATED: total sigChecks, as counted for "
-                               "purposes of block limits; if key is not present"
-                               ", sigChecks are unknown and clients MUST NOT "
-                               "assume it is zero. This value is deprecated "
-                               "since v0.26.8 and must be read from the "
-                               "sigchecks field instead. It is only printed if "
-                               "the -deprecatedrpc=getblocktemplate_sigops "
-                               "option is set"},
                               {RPCResult::Type::NUM, "sigchecks",
                                "total sigChecks, as counted for purposes of "
                                "block limits; if key is not present, sigChecks "
@@ -781,6 +754,39 @@ static RPCHelpMan getblocktemplate() {
                                "pay"},
 
                           }},
+                         {RPCResult::Type::OBJ,
+                          "stakingrewards",
+                          "information related to the coinbase staking reward "
+                          "output, only set after the Nov. 15, 2023 upgrade "
+                          "activated and the -avalanchestakingrewards option "
+                          "is "
+                          "enabled",
+                          {
+                              {RPCResult::Type::OBJ,
+                               "payoutscript",
+                               "The proof payout script",
+                               {
+                                   {RPCResult::Type::STR, "asm",
+                                    "Decoded payout script"},
+                                   {RPCResult::Type::STR_HEX, "hex",
+                                    "Raw payout script in hex format"},
+                                   {RPCResult::Type::STR, "type",
+                                    "The output type (e.g. " +
+                                        GetAllOutputTypes() + ")"},
+                                   {RPCResult::Type::NUM, "reqSigs",
+                                    "The required signatures"},
+                                   {RPCResult::Type::ARR,
+                                    "addresses",
+                                    "",
+                                    {
+                                        {RPCResult::Type::STR, "address",
+                                         "eCash address"},
+                                    }},
+                               }},
+                              {RPCResult::Type::STR_AMOUNT, "minimumvalue",
+                               "The minimum value the staking reward output "
+                               "must pay"},
+                          }},
                          {RPCResult::Type::ELISION, "", ""},
                      }},
                     {RPCResult::Type::STR, "target", "The hash target"},
@@ -800,11 +806,6 @@ static RPCHelpMan getblocktemplate() {
                      "A range of valid nonces"},
                     {RPCResult::Type::NUM, "sigchecklimit",
                      "limit of sigChecks in blocks"},
-                    {RPCResult::Type::NUM, "sigoplimit",
-                     "DEPRECATED: limit of sigChecks in blocks. This value is "
-                     "deprecated since v0.26.8 and must be read from the "
-                     "sigchecklimit field instead. It is only printed if the "
-                     "-deprecatedrpc=getblocktemplate_sigops option is set"},
                     {RPCResult::Type::NUM, "sizelimit", "limit of block size"},
                     {RPCResult::Type::NUM_TIME, "curtime",
                      "current timestamp in " + UNIX_EPOCH_TIME},
@@ -975,7 +976,7 @@ static RPCHelpMan getblocktemplate() {
                 // Create new block
                 CScript scriptDummy = CScript() << OP_TRUE;
                 pblocktemplate =
-                    BlockAssembler(config, active_chainstate, mempool)
+                    BlockAssembler{config, active_chainstate, mempool}
                         .CreateNewBlock(scriptDummy);
                 if (!pblocktemplate) {
                     throw JSONRPCError(RPC_OUT_OF_MEMORY, "Out of memory");
@@ -998,9 +999,6 @@ static RPCHelpMan getblocktemplate() {
 
             Amount coinbasevalue = Amount::zero();
 
-            const bool printSigops{
-                IsDeprecatedRPCEnabled(gArgs, "getblocktemplate_sigops")};
-
             UniValue transactions(UniValue::VARR);
             transactions.reserve(pblock->vtx.size());
             int index_in_template = 0;
@@ -1019,7 +1017,7 @@ static RPCHelpMan getblocktemplate() {
                 }
 
                 UniValue entry(UniValue::VOBJ);
-                entry.reserve(printSigops ? 6 : 5);
+                entry.reserve(5);
                 entry.__pushKV("data", EncodeHexTx(tx));
                 entry.__pushKV("txid", txId.GetHex());
                 entry.__pushKV("hash", tx.GetHash().GetHex());
@@ -1029,9 +1027,6 @@ static RPCHelpMan getblocktemplate() {
                 const int64_t sigChecks =
                     pblocktemplate->entries[index_in_template].sigChecks;
                 entry.__pushKV("sigchecks", sigChecks);
-                if (printSigops) {
-                    entry.__pushKV("sigops", sigChecks);
-                }
 
                 transactions.push_back(entry);
                 index_in_template++;
@@ -1043,7 +1038,7 @@ static RPCHelpMan getblocktemplate() {
             const Consensus::Params &consensusParams =
                 chainparams.GetConsensus();
             for (const auto &fundDestination :
-                 GetMinerFundWhitelist(consensusParams, pindexPrev)) {
+                 GetMinerFundWhitelist(consensusParams)) {
                 minerFundList.push_back(
                     EncodeDestination(fundDestination, config));
             }
@@ -1051,7 +1046,9 @@ static RPCHelpMan getblocktemplate() {
             int64_t minerFundMinValue = 0;
             if (IsAxionEnabled(consensusParams, pindexPrev)) {
                 minerFundMinValue =
-                    int64_t(GetMinerFundAmount(coinbasevalue) / SATOSHI);
+                    int64_t(GetMinerFundAmount(consensusParams, coinbasevalue,
+                                               pindexPrev) /
+                            SATOSHI);
             }
 
             UniValue minerFund(UniValue::VOBJ);
@@ -1060,6 +1057,24 @@ static RPCHelpMan getblocktemplate() {
 
             UniValue coinbasetxn(UniValue::VOBJ);
             coinbasetxn.pushKV("minerfund", minerFund);
+
+            CScript stakingRewardsPayoutScript;
+            if (IsStakingRewardsActivated(consensusParams, pindexPrev) &&
+                g_avalanche->getStakingRewardWinner(
+                    pindexPrev->GetBlockHash(), stakingRewardsPayoutScript)) {
+                UniValue stakingRewards(UniValue::VOBJ);
+                UniValue stakingRewardsPayoutScriptObj(UniValue::VOBJ);
+                ScriptPubKeyToUniv(stakingRewardsPayoutScript,
+                                   stakingRewardsPayoutScriptObj,
+                                   /*fIncludeHex=*/true);
+                stakingRewards.pushKV("payoutscript",
+                                      stakingRewardsPayoutScriptObj);
+                stakingRewards.pushKV(
+                    "minimumvalue",
+                    int64_t(GetStakingRewardsAmount(coinbasevalue) / SATOSHI));
+
+                coinbasetxn.pushKV("stakingrewards", stakingRewards);
+            }
 
             arith_uint256 hashTarget =
                 arith_uint256().SetCompact(pblock->nBits);
@@ -1090,9 +1105,6 @@ static RPCHelpMan getblocktemplate() {
             const uint64_t sigCheckLimit =
                 GetMaxBlockSigChecksCount(DEFAULT_MAX_BLOCK_SIZE);
             result.pushKV("sigchecklimit", sigCheckLimit);
-            if (printSigops) {
-                result.pushKV("sigoplimit", sigCheckLimit);
-            }
             result.pushKV("sizelimit", DEFAULT_MAX_BLOCK_SIZE);
             result.pushKV("curtime", pblock->GetBlockTime());
             result.pushKV("bits", strprintf("%08x", pblock->nBits));
@@ -1133,7 +1145,7 @@ static RPCHelpMan submitblock() {
         {
             {"hexdata", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
              "the hex-encoded block data to submit"},
-            {"dummy", RPCArg::Type::STR, /* default */ "ignored",
+            {"dummy", RPCArg::Type::STR, RPCArg::Default{"ignored"},
              "dummy value, for compatibility with BIP22. This value is "
              "ignored."},
         },

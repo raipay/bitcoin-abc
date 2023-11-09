@@ -1,3 +1,6 @@
+// Copyright (c) 2023 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 import Image from 'next/image';
 import Link from 'next/link';
 import Layout from '/components/layout';
@@ -15,11 +18,14 @@ import {
     StorySection,
     YouTubeVideo,
     PixelBorder,
-    RoadmpaSection,
+    RoadmapSection,
+    TilesSectionCtn,
+    MarginButtonWrapper,
 } from '/styles/pages/homepage';
 import Button from '/components/button';
 import H2 from '/components/h2';
 import Hand from '/public/images/hand.png';
+import HomepageTiles from '/components/homepage-tiles';
 import Roadmap from '/components/roadmap';
 
 export default function Home() {
@@ -39,14 +45,27 @@ export default function Home() {
                         Avalanche.
                     </p>
                     <HeroImage>
-                        <Image src={Hand} alt="eCash" fill />
+                        <Image src={Hand} alt="eCash" fill priority />
                     </HeroImage>
                     <ButtonCtn>
                         <Button
-                            text="Avalanche Consensus"
-                            link="https://avalanche.cash/"
-                            color="white"
-                            glow
+                            text="About eCash"
+                            link="#about-ecash"
+                            corner="topLeft"
+                        />
+                        <MarginButtonWrapper>
+                            <Button
+                                text="Avalanche Consensus"
+                                link="https://avalanche.cash/"
+                                color="white"
+                                glow
+                            />
+                        </MarginButtonWrapper>
+                        <Button
+                            text="Get eCash"
+                            link="/get-ecash"
+                            color="accent"
+                            corner="bottomRight"
                         />
                     </ButtonCtn>
                     <div className="social-ctn">
@@ -73,7 +92,7 @@ export default function Home() {
                 <Overlay />
                 <Container>
                     <StorySection>
-                        <div>
+                        <div id="about-ecash">
                             <H2 subtext="The eCash Story" text="GET STARTED" />
                             <p>
                                 Introducing eCash: the new battle-tested
@@ -98,15 +117,24 @@ export default function Home() {
                             </YouTubeVideo>
                         </div>
                     </StorySection>
+                    <TilesSectionCtn>
+                        <H2
+                            subtext="Why eCash? Key Features"
+                            text="What makes eCash unique?"
+                            center
+                        />
+                    </TilesSectionCtn>
+                    <HomepageTiles />
                 </Container>
             </StoryAndWhySection>
             <PixelBorder />
-            <RoadmpaSection>
+            <RoadmapSection>
                 <Container>
-                    <H2 subtext="Now & Future" text="ROADMAP" />
+                    <div id="roadmap" />
+                    <H2 subtext="Now & Future" text="ROADMAP" center />
                     <Roadmap />
                 </Container>
-            </RoadmpaSection>
+            </RoadmapSection>
         </Layout>
     );
 }

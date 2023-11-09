@@ -207,7 +207,8 @@ void CMainSignals::UpdatedBlockTip(const CBlockIndex *pindexNew,
 }
 
 void CMainSignals::TransactionAddedToMempool(
-    const CTransactionRef &tx, const std::vector<Coin> &spent_coins,
+    const CTransactionRef &tx,
+    std::shared_ptr<const std::vector<Coin>> spent_coins,
     uint64_t mempool_sequence) {
     auto event = [tx, spent_coins, mempool_sequence, this] {
         m_internals->Iterate([&](CValidationInterface &callbacks) {

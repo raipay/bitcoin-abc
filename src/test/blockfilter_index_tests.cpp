@@ -11,6 +11,7 @@
 #include <pow/pow.h>
 #include <script/standard.h>
 #include <test/util/blockfilter.h>
+#include <test/util/mining.h>
 #include <test/util/setup_common.h>
 #include <validation.h>
 
@@ -18,7 +19,6 @@
 
 using node::BlockAssembler;
 using node::CBlockTemplate;
-using node::IncrementExtraNonce;
 
 BOOST_AUTO_TEST_SUITE(blockfilter_index_tests)
 
@@ -73,8 +73,8 @@ CBlock BuildChainTestingSetup::CreateBlock(
     const CScript &scriptPubKey) {
     const Config &config = GetConfig();
     std::unique_ptr<CBlockTemplate> pblocktemplate =
-        BlockAssembler(config, m_node.chainman->ActiveChainstate(),
-                       *m_node.mempool)
+        BlockAssembler{config, m_node.chainman->ActiveChainstate(),
+                       *m_node.mempool}
             .CreateNewBlock(scriptPubKey);
     CBlock &block = pblocktemplate->block;
     block.hashPrevBlock = prev->GetBlockHash();
@@ -85,9 +85,7 @@ CBlock BuildChainTestingSetup::CreateBlock(
     for (const CMutableTransaction &tx : txns) {
         block.vtx.push_back(MakeTransactionRef(tx));
     }
-    // IncrementExtraNonce creates a valid coinbase and merkleRoot
-    unsigned int extraNonce = 0;
-    IncrementExtraNonce(&block, prev, config.GetMaxBlockSize(), extraNonce);
+    createCoinbaseAndMerkleRoot(&block, prev, config.GetMaxBlockSize());
 
     while (!CheckProofOfWork(block.GetHash(), block.nBits,
                              config.GetChainParams().GetConsensus())) {
@@ -152,10 +150,10 @@ BOOST_FIXTURE_TEST_CASE(blockfilter_index_initial_sync,
     // started.
     BOOST_CHECK(!filter_index.BlockUntilSyncedToCurrentChain());
 
-    filter_index.Start(m_node.chainman->ActiveChainstate());
+    BOOST_REQUIRE(filter_index.Start(m_node.chainman->ActiveChainstate()));
 
     // Allow filter index to catch up with the block index.
-    constexpr int64_t timeout_ms = 10 * 1000;
+    constexpr int64_t timeout_ms = 30 * 1000;
     int64_t time_start = GetTimeMillis();
     while (!filter_index.BlockUntilSyncedToCurrentChain()) {
         BOOST_REQUIRE(time_start + timeout_ms > GetTimeMillis());

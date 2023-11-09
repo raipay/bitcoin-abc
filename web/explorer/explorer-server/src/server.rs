@@ -24,6 +24,7 @@ use crate::{
         calculate_block_difficulty, cash_addr_to_script_type_payload,
         from_be_hex, to_be_hex, to_legacy_address,
     },
+    chain::Chain,
     server_http::{
         address, address_qr, block, block_height, blocks, data_address_txs,
         data_block_txs, data_blocks, search, serve_files, tx,
@@ -47,11 +48,16 @@ impl Server {
     pub async fn setup(
         chronik: ChronikClient,
         base_dir: PathBuf,
+        chain: Chain,
     ) -> Result<Self> {
         Ok(Server {
             chronik,
             base_dir,
-            satoshi_addr_prefix: "ecash",
+            satoshi_addr_prefix: match chain {
+                Chain::Mainnet => "ecash",
+                Chain::Testnet => "ectest",
+                Chain::Regtest => "ecregtest",
+            },
             tokens_addr_prefix: "etoken",
         })
     }
@@ -126,6 +132,9 @@ impl Server {
             .filter_map(|tx| {
                 let slp_tx_data = tx.slp_tx_data.as_ref()?;
                 let slp_meta = slp_tx_data.slp_meta.as_ref()?;
+                if slp_meta.token_type() == SlpTokenType::UnknownTokenType {
+                    return None;
+                }
                 Some(
                     Sha256d::from_slice_be(&slp_meta.token_id)
                         .expect("Impossible"),
@@ -168,6 +177,9 @@ impl Server {
             .filter_map(|tx| {
                 let slp_tx_data = tx.slp_tx_data.as_ref()?;
                 let slp_meta = slp_tx_data.slp_meta.as_ref()?;
+                if slp_meta.token_type() == SlpTokenType::UnknownTokenType {
+                    return None;
+                }
                 Some(Sha256d::from_slice_be_or_null(&slp_meta.token_id))
             })
             .collect();
@@ -219,17 +231,18 @@ impl Server {
     pub async fn tx(&self, tx_hex: &str) -> Result<String> {
         let tx_hash = Sha256d::from_hex_be(tx_hex)?;
         let tx = self.chronik.tx(&tx_hash).await?;
-        let token_id = match &tx.slp_tx_data {
+        let (token_id, token) = match &tx.slp_tx_data {
             Some(slp_tx_data) => {
                 let slp_meta =
                     slp_tx_data.slp_meta.as_ref().expect("Impossible");
-                Some(Sha256d::from_slice_be(&slp_meta.token_id)?)
+                let token_id = Sha256d::from_slice_be(&slp_meta.token_id)?;
+                let mut token = None;
+                if slp_meta.token_type() != SlpTokenType::UnknownTokenType {
+                    token = Some(self.chronik.token(&token_id).await?);
+                }
+                (Some(token_id), token)
             }
-            None => None,
-        };
-        let token = match &token_id {
-            Some(token_id) => Some(self.chronik.token(token_id).await?),
-            None => None,
+            None => (None, None),
         };
         let token_ticker = token.as_ref().and_then(|token| {
             Some(String::from_utf8_lossy(
@@ -325,6 +338,8 @@ impl Server {
 
         let transaction_template = TransactionTemplate {
             title: &title,
+            sats_addr_prefix: &self.satoshi_addr_prefix,
+            tokens_addr_prefix: &self.tokens_addr_prefix,
             token_section_title: &token_section_title,
             is_token,
             tx_hex,
@@ -514,6 +529,25 @@ impl Server {
         if let Ok(address) = CashAddress::parse_cow(query.into()) {
             return Ok(self.redirect(format!("/address/{}", address.as_str())));
         }
+
+        // Check for prefixless address search
+        if let Ok(address) = format!("{}:{}", self.satoshi_addr_prefix, query)
+            .parse::<CashAddress>()
+        {
+            return Ok(self.redirect(format!("/address/{}", address.as_str())));
+        }
+        if let Ok(address) = format!("{}:{}", self.tokens_addr_prefix, query)
+            .parse::<CashAddress>()
+        {
+            return Ok(self.redirect(format!("/address/{}", address.as_str())));
+        }
+
+        if let Ok(height) = query.parse::<i32>() {
+            if self.chronik.block_by_height(height).await.is_ok() {
+                return Ok(self.redirect(format!("/block-height/{}", query)));
+            }
+        }
+
         let bytes = from_be_hex(query)?;
         let unknown_hash = Sha256d::from_slice(&bytes)?;
 

@@ -16,10 +16,16 @@
 /**
  * Percentage of the block reward to be sent to the fund.
  */
-static constexpr int MINER_FUND_RATIO = 8;
+static constexpr int LEGACY_MINER_FUND_RATIO = 8;
+static constexpr int MINER_FUND_RATIO = 32;
 
-Amount GetMinerFundAmount(const Amount &coinbaseValue) {
-    return MINER_FUND_RATIO * coinbaseValue / 100;
+Amount GetMinerFundAmount(const Consensus::Params &params,
+                          const Amount &coinbaseValue,
+                          const CBlockIndex *pprev) {
+    const int minerFundRatio = IsCowperthwaiteEnabled(params, pprev)
+                                   ? MINER_FUND_RATIO
+                                   : LEGACY_MINER_FUND_RATIO;
+    return minerFundRatio * coinbaseValue / 100;
 }
 
 static CTxDestination BuildDestination(const std::string &dest) {
@@ -27,16 +33,7 @@ static CTxDestination BuildDestination(const std::string &dest) {
     return DecodeDestination(dest, *mainNetParams);
 }
 
-static const CTxDestination &
-GetMinerFundDestination(const bool useAxionDestination) {
-    static const std::string ecashMinerFundAxion =
-        "ecash:pqnqv9lt7e5vjyp0w88zf2af0l92l8rxdg2jj94l5j";
-    static const std::string bitcoinCashMinerFundAxion =
-        "bitcoincash:pqnqv9lt7e5vjyp0w88zf2af0l92l8rxdgnlxww9j9";
-    static CTxDestination destAxion = BuildDestination(
-        gArgs.GetBoolArg("-ecash", DEFAULT_ECASH) ? ecashMinerFundAxion
-                                                  : bitcoinCashMinerFundAxion);
-
+static const CTxDestination &GetMinerFundDestination() {
     static const std::string ecashMinerFund =
         "ecash:prfhcnyqnl5cgrnmlfmms675w93ld7mvvqd0y8lz07";
     static const std::string bitcoinCashMinerFund =
@@ -45,33 +42,27 @@ GetMinerFundDestination(const bool useAxionDestination) {
         gArgs.GetBoolArg("-ecash", DEFAULT_ECASH) ? ecashMinerFund
                                                   : bitcoinCashMinerFund);
 
-    return useAxionDestination ? destAxion : dest;
+    return dest;
 }
 
 std::unordered_set<CTxDestination, TxDestinationHasher>
-GetMinerFundWhitelist(const Consensus::Params &params,
-                      const CBlockIndex *pindexPrev) {
+GetMinerFundWhitelist(const Consensus::Params &params) {
     if (!gArgs.GetBoolArg("-enableminerfund", params.enableMinerFund)) {
         return {};
     }
 
-    if (!IsAxionEnabled(params, pindexPrev)) {
-        return {};
-    }
-
-    return {GetMinerFundDestination(!IsGluonEnabled(params, pindexPrev))};
+    return {GetMinerFundDestination()};
 }
 
 bool CheckMinerFund(const Consensus::Params &params,
-                    const CBlockIndex *pindexPrev,
                     const std::vector<CTxOut> &coinbaseTxOut,
-                    const Amount &blockReward) {
-    const auto whitelist = GetMinerFundWhitelist(params, pindexPrev);
+                    const Amount &blockReward, const CBlockIndex *pprev) {
+    const auto whitelist = GetMinerFundWhitelist(params);
     if (whitelist.empty()) {
         return true;
     }
 
-    const Amount required = GetMinerFundAmount(blockReward);
+    const Amount required = GetMinerFundAmount(params, blockReward, pprev);
     for (auto &o : coinbaseTxOut) {
         if (o.nValue < required) {
             // This output doesn't qualify because its amount is too low.

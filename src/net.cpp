@@ -134,6 +134,36 @@ void CConnman::AddAddrFetch(const std::string &strDest) {
 }
 
 uint16_t GetListenPort() {
+    // If -bind= is provided with ":port" part, use that (first one if multiple
+    // are provided).
+    for (const std::string &bind_arg : gArgs.GetArgs("-bind")) {
+        CService bind_addr;
+        constexpr uint16_t dummy_port = 0;
+
+        if (Lookup(bind_arg, bind_addr, dummy_port, /*fAllowLookup=*/false)) {
+            if (bind_addr.GetPort() != dummy_port) {
+                return bind_addr.GetPort();
+            }
+        }
+    }
+
+    // Otherwise, if -whitebind= without NetPermissionFlags::NoBan is provided,
+    // use that
+    // (-whitebind= is required to have ":port").
+    for (const std::string &whitebind_arg : gArgs.GetArgs("-whitebind")) {
+        NetWhitebindPermissions whitebind;
+        bilingual_str error;
+        if (NetWhitebindPermissions::TryParse(whitebind_arg, whitebind,
+                                              error)) {
+            if (!NetPermissions::HasFlag(whitebind.m_flags,
+                                         NetPermissionFlags::NoBan)) {
+                return whitebind.m_service.GetPort();
+            }
+        }
+    }
+
+    // Otherwise, if -port= is provided, use that. Otherwise use the default
+    // port.
     return static_cast<uint16_t>(
         gArgs.GetIntArg("-port", Params().GetDefaultPort()));
 }
@@ -183,17 +213,15 @@ convertSeed6(const std::vector<SeedSpec6> &vSeedsIn) {
     return vSeedsOut;
 }
 
-// Get best local address for a particular peer as a CAddress. Otherwise, return
+// Get best local address for a particular peer as a CService. Otherwise, return
 // the unroutable 0.0.0.0 but filled in with the normal parameters, since the IP
 // may be changed to a useful one by discovery.
-CAddress GetLocalAddress(const CNetAddr *paddrPeer,
-                         ServiceFlags nLocalServices) {
-    CAddress ret(CService(CNetAddr(), GetListenPort()), nLocalServices);
+CService GetLocalAddress(const CNetAddr &addrPeer) {
+    CService ret{CNetAddr(), GetListenPort()};
     CService addr;
-    if (GetLocal(addr, paddrPeer)) {
-        ret = CAddress(addr, nLocalServices);
+    if (GetLocal(addr, &addrPeer)) {
+        ret = CService{addr};
     }
-    ret.nTime = GetAdjustedTime();
     return ret;
 }
 
@@ -210,27 +238,34 @@ bool IsPeerAddrLocalGood(CNode *pnode) {
            IsReachable(addrLocal.GetNetwork());
 }
 
-std::optional<CAddress> GetLocalAddrForPeer(CNode *pnode) {
-    CAddress addrLocal =
-        GetLocalAddress(&pnode->addr, pnode->GetLocalServices());
+std::optional<CService> GetLocalAddrForPeer(CNode &node) {
+    CService addrLocal{GetLocalAddress(node.addr)};
     if (gArgs.GetBoolArg("-addrmantest", false)) {
         // use IPv4 loopback during addrmantest
-        addrLocal =
-            CAddress(CService(LookupNumeric("127.0.0.1", GetListenPort())),
-                     pnode->GetLocalServices());
+        addrLocal = CService(LookupNumeric("127.0.0.1", GetListenPort()));
     }
     // If discovery is enabled, sometimes give our peer the address it
     // tells us that it sees us as in case it has a better idea of our
     // address than we do.
     FastRandomContext rng;
-    if (IsPeerAddrLocalGood(pnode) &&
+    if (IsPeerAddrLocalGood(&node) &&
         (!addrLocal.IsRoutable() ||
          rng.randbits((GetnScore(addrLocal) > LOCAL_MANUAL) ? 3 : 1) == 0)) {
-        addrLocal.SetIP(pnode->GetAddrLocal());
+        if (node.IsInboundConn()) {
+            // For inbound connections, assume both the address and the port
+            // as seen from the peer.
+            addrLocal = CService{node.GetAddrLocal()};
+        } else {
+            // For outbound connections, assume just the address as seen from
+            // the peer and leave the port in `addrLocal` as returned by
+            // `GetLocalAddress()` above. The peer has no way to observe our
+            // listening port when we have initiated the connection.
+            addrLocal.SetIP(node.GetAddrLocal());
+        }
     }
     if (addrLocal.IsRoutable() || gArgs.GetBoolArg("-addrmantest", false)) {
         LogPrint(BCLog::NET, "Advertising address %s to peer=%d\n",
-                 addrLocal.ToString(), pnode->GetId());
+                 addrLocal.ToString(), node.GetId());
         return addrLocal;
     }
     // Address is unroutable. Don't advertise.
@@ -507,11 +542,10 @@ CNode *CConnman::ConnectNode(CAddress addrConnect, const char *pszDest,
     if (!addr_bind.IsValid()) {
         addr_bind = GetBindAddress(sock->Get());
     }
-    CNode *pnode =
-        new CNode(id, nLocalServices, sock->Release(), addrConnect,
-                  CalculateKeyedNetGroup(addrConnect), nonce, extra_entropy,
-                  addr_bind, pszDest ? pszDest : "", conn_type,
-                  /* inbound_onion */ false);
+    CNode *pnode = new CNode(
+        id, sock->Release(), addrConnect, CalculateKeyedNetGroup(addrConnect),
+        nonce, extra_entropy, addr_bind, pszDest ? pszDest : "", conn_type,
+        /* inbound_onion */ false);
     pnode->AddRef();
 
     // We're making a new connection, harvest entropy from the time (and our
@@ -561,12 +595,14 @@ std::string ConnectionTypeAsString(ConnectionType conn_type) {
 }
 
 CService CNode::GetAddrLocal() const {
-    LOCK(cs_addrLocal);
+    AssertLockNotHeld(m_addr_local_mutex);
+    LOCK(m_addr_local_mutex);
     return addrLocal;
 }
 
 void CNode::SetAddrLocal(const CService &addrLocalIn) {
-    LOCK(cs_addrLocal);
+    AssertLockNotHeld(m_addr_local_mutex);
+    LOCK(m_addr_local_mutex);
     if (addrLocal.IsValid()) {
         error("Addr local already set for node: %i. Refusing to change from %s "
               "to %s",
@@ -582,16 +618,9 @@ Network CNode::ConnectedThroughNetwork() const {
 
 void CNode::copyStats(CNodeStats &stats) {
     stats.nodeid = this->GetId();
-    stats.nServices = nServices;
     stats.addr = addr;
     stats.addrBind = addrBind;
     stats.m_network = ConnectedThroughNetwork();
-    if (m_tx_relay != nullptr) {
-        LOCK(m_tx_relay->cs_filter);
-        stats.fRelayTxes = m_tx_relay->fRelayTxes;
-    } else {
-        stats.fRelayTxes = false;
-    }
     stats.m_last_send = m_last_send;
     stats.m_last_recv = m_last_recv;
     stats.m_last_tx_time = m_last_tx_time;
@@ -619,11 +648,6 @@ void CNode::copyStats(CNodeStats &stats) {
         stats.nRecvBytes = nRecvBytes;
     }
     stats.m_permissionFlags = m_permissionFlags;
-    if (m_tx_relay != nullptr) {
-        stats.minFeeFilter = m_tx_relay->minFeeFilter;
-    } else {
-        stats.minFeeFilter = Amount::zero();
-    }
 
     stats.m_last_ping_time = m_last_ping_time;
     stats.m_min_ping_time = m_min_ping_time;
@@ -901,8 +925,8 @@ static bool CompareNodeTXTime(const NodeEvictionCandidate &a,
         return a.m_last_tx_time < b.m_last_tx_time;
     }
 
-    if (a.fRelayTxes != b.fRelayTxes) {
-        return b.fRelayTxes;
+    if (a.m_relay_txs != b.m_relay_txs) {
+        return b.m_relay_txs;
     }
 
     if (a.fBloomFilter != b.fBloomFilter) {
@@ -928,8 +952,8 @@ static bool CompareNodeProofTime(const NodeEvictionCandidate &a,
 // time.
 static bool CompareNodeBlockRelayOnlyTime(const NodeEvictionCandidate &a,
                                           const NodeEvictionCandidate &b) {
-    if (a.fRelayTxes != b.fRelayTxes) {
-        return a.fRelayTxes;
+    if (a.m_relay_txs != b.m_relay_txs) {
+        return a.m_relay_txs;
     }
 
     if (a.m_last_block_time != b.m_last_block_time) {
@@ -1113,7 +1137,7 @@ SelectNodeToEvict(std::vector<NodeEvictionCandidate> &&vEvictionCandidates) {
     // Protect up to 8 non-tx-relay peers that have sent us novel blocks.
     EraseLastKElements(vEvictionCandidates, CompareNodeBlockRelayOnlyTime, 8,
                        [](const NodeEvictionCandidate &n) {
-                           return !n.fRelayTxes && n.fRelevantServices;
+                           return !n.m_relay_txs && n.fRelevantServices;
                        });
 
     // Protect 4 nodes that most recently sent us novel blocks.
@@ -1199,13 +1223,6 @@ bool CConnman::AttemptToEvictConnection() {
             if (node->fDisconnect) {
                 continue;
             }
-            bool peer_relay_txes = false;
-            bool peer_filter_not_null = false;
-            if (node->m_tx_relay != nullptr) {
-                LOCK(node->m_tx_relay->cs_filter);
-                peer_relay_txes = node->m_tx_relay->fRelayTxes;
-                peer_filter_not_null = node->m_tx_relay->pfilter != nullptr;
-            }
 
             NodeEvictionCandidate candidate = {
                 node->GetId(),
@@ -1214,9 +1231,9 @@ bool CConnman::AttemptToEvictConnection() {
                 node->m_last_block_time,
                 node->m_last_proof_time,
                 node->m_last_tx_time,
-                HasAllDesirableServiceFlags(node->nServices),
-                peer_relay_txes,
-                peer_filter_not_null,
+                node->m_has_all_wanted_services,
+                node->m_relays_txs.load(),
+                node->m_bloom_filter_loaded.load(),
                 node->nKeyedNetGroup,
                 node->m_prefer_evict,
                 node->addr.IsLocal(),
@@ -1375,14 +1392,14 @@ void CConnman::CreateNodeFromAcceptedSocket(SOCKET hSocket,
     const bool inbound_onion =
         std::find(m_onion_binds.begin(), m_onion_binds.end(), addr_bind) !=
         m_onion_binds.end();
-    CNode *pnode = new CNode(
-        id, nodeServices, hSocket, addr, CalculateKeyedNetGroup(addr), nonce,
-        extra_entropy, addr_bind, "", ConnectionType::INBOUND, inbound_onion);
+    CNode *pnode = new CNode(id, hSocket, addr, CalculateKeyedNetGroup(addr),
+                             nonce, extra_entropy, addr_bind, "",
+                             ConnectionType::INBOUND, inbound_onion);
     pnode->AddRef();
     pnode->m_permissionFlags = permissionFlags;
     pnode->m_prefer_evict = discouraged;
     for (auto interface : m_msgproc) {
-        interface->InitializeNode(*config, pnode);
+        interface->InitializeNode(*config, *pnode, nodeServices);
     }
 
     LogPrint(BCLog::NET, "connection from %s accepted\n", addr.ToString());
@@ -2583,7 +2600,7 @@ void CConnman::OpenNetworkConnection(const CAddress &addrConnect,
     }
 
     for (auto interface : m_msgproc) {
-        interface->InitializeNode(*config, pnode);
+        interface->InitializeNode(*config, *pnode, nLocalServices);
     }
 
     {
@@ -2942,7 +2959,7 @@ bool CConnman::Start(CScheduler &scheduler, const Options &connOptions) {
 
     if (m_client_interface) {
         m_client_interface->InitMessage(
-            _("Starting network threads…").translated);
+            _("Starting network threads...").translated);
     }
 
     fAddressesInitialized = true;
@@ -3430,27 +3447,21 @@ double CNode::getAvailabilityScore() const {
     return availabilityScore;
 }
 
-CNode::CNode(NodeId idIn, ServiceFlags nLocalServicesIn, SOCKET hSocketIn,
-             const CAddress &addrIn, uint64_t nKeyedNetGroupIn,
-             uint64_t nLocalHostNonceIn, uint64_t nLocalExtraEntropyIn,
-             const CAddress &addrBindIn, const std::string &addrNameIn,
-             ConnectionType conn_type_in, bool inbound_onion)
+CNode::CNode(NodeId idIn, SOCKET hSocketIn, const CAddress &addrIn,
+             uint64_t nKeyedNetGroupIn, uint64_t nLocalHostNonceIn,
+             uint64_t nLocalExtraEntropyIn, const CAddress &addrBindIn,
+             const std::string &addrNameIn, ConnectionType conn_type_in,
+             bool inbound_onion)
     : m_connected(GetTime<std::chrono::seconds>()), addr(addrIn),
       addrBind(addrBindIn), m_addr_name{addrNameIn.empty()
                                             ? addr.ToStringIPPort()
                                             : addrNameIn},
       m_inbound_onion(inbound_onion), nKeyedNetGroup(nKeyedNetGroupIn),
-      m_tx_relay(conn_type_in != ConnectionType::BLOCK_RELAY
-                     ? std::make_unique<TxRelay>()
-                     : nullptr),
-      m_proof_relay(isAvalancheEnabled(gArgs) ? std::make_unique<ProofRelay>()
-                                              : nullptr),
       // Don't relay addr messages to peers that we connect to as
       // block-relay-only peers (to prevent adversaries from inferring these
       // links from addr traffic).
       id(idIn), nLocalHostNonce(nLocalHostNonceIn),
-      nLocalExtraEntropy(nLocalExtraEntropyIn), m_conn_type(conn_type_in),
-      nLocalServices(nLocalServicesIn) {
+      nLocalExtraEntropy(nLocalExtraEntropyIn), m_conn_type(conn_type_in) {
     if (inbound_onion) {
         assert(conn_type_in == ConnectionType::INBOUND);
     }
@@ -3485,7 +3496,7 @@ bool CConnman::NodeFullyConnected(const CNode *pnode) {
 
 void CConnman::PushMessage(CNode *pnode, CSerializedNetMsg &&msg) {
     size_t nMessageSize = msg.data.size();
-    LogPrint(BCLog::NET, "sending %s (%d bytes) peer=%d\n", msg.m_type,
+    LogPrint(BCLog::NETDEBUG, "sending %s (%d bytes) peer=%d\n", msg.m_type,
              nMessageSize, pnode->GetId());
     if (gArgs.GetBoolArg("-capturemessages", false)) {
         CaptureMessage(pnode->addr, msg.m_type, msg.data,
@@ -3622,8 +3633,8 @@ std::string userAgent(const Config &config) {
     return FormatUserAgent(client_name, client_version, uacomments);
 }
 
-void CaptureMessage(const CAddress &addr, const std::string &msg_type,
-                    const Span<const uint8_t> &data, bool is_incoming) {
+void CaptureMessageToFile(const CAddress &addr, const std::string &msg_type,
+                          Span<const uint8_t> data, bool is_incoming) {
     // Note: This function captures the message at the time of processing,
     // not at socket receive/send time.
     // This ensures that the messages are always in order from an application
@@ -3639,7 +3650,7 @@ void CaptureMessage(const CAddress &addr, const std::string &msg_type,
 
     fs::path path =
         base_path / (is_incoming ? "msgs_recv.dat" : "msgs_sent.dat");
-    CAutoFile f(fsbridge::fopen(path, "ab"), SER_DISK, CLIENT_VERSION);
+    AutoFile f{fsbridge::fopen(path, "ab")};
 
     ser_writedata64(f, now.count());
     f.write(msg_type.data(), msg_type.length());
@@ -3650,3 +3661,7 @@ void CaptureMessage(const CAddress &addr, const std::string &msg_type,
     ser_writedata32(f, size);
     f.write((const char *)data.data(), data.size());
 }
+
+std::function<void(const CAddress &addr, const std::string &msg_type,
+                   Span<const uint8_t> data, bool is_incoming)>
+    CaptureMessage = CaptureMessageToFile;

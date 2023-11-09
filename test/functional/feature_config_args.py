@@ -7,7 +7,7 @@ import os
 import time
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal
+from test_framework.util import assert_equal, write_config
 
 
 class ConfArgsTest(BitcoinTestFramework):
@@ -62,13 +62,20 @@ class ConfArgsTest(BitcoinTestFramework):
                 )
             )
 
+        main_conf_file_path = os.path.join(
+            self.options.tmpdir, "node0", "bitcoin_main.conf"
+        )
+        write_config(
+            main_conf_file_path,
+            n=0,
+            chain="",
+            extra_config=f"includeconf={inc_conf_file_path}\n",
+        )
         with open(inc_conf_file_path, "w", encoding="utf-8") as conf:
-            conf.write("regtest=0\n")  # mainnet
             conf.write("acceptnonstdtxn=1\n")
         self.nodes[0].assert_start_raises_init_error(
-            expected_msg=(
-                "Error: acceptnonstdtxn is not currently supported for main chain"
-            )
+            extra_args=[f"-conf={main_conf_file_path}"],
+            expected_msg="Error: acceptnonstdtxn is not currently supported for main chain",
         )
 
         with open(inc_conf_file_path, "w", encoding="utf-8") as conf:
@@ -343,10 +350,8 @@ class ConfArgsTest(BitcoinTestFramework):
 
         self.nodes[0].assert_start_raises_init_error(
             [f"-conf={conf_file}"],
-            (
-                "Error: Error reading configuration file: specified data directory"
-                f' "{new_data_dir}" does not exist.'
-            ),
+            "Error: Error reading configuration file: specified data directory"
+            f' "{new_data_dir}" does not exist.',
         )
 
         # Create the directory and ensure the config file now works

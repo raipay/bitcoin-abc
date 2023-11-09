@@ -4,7 +4,7 @@
 name = "bitcoinsuite-core"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.61.0"
+rust-version.workspace = true
 license = "MIT"
 
 [dependencies]
@@ -18,6 +18,12 @@ hex = "0.4"
 
 # hex!() macro for byte array hex literals
 hex-literal = "0.3"
+
+# Implementation of RIPEMD-160 etc. cryptographic hash functions
+ripemd = "0.1"
+
+# Implementation of SHA-256 etc. cryptographic hash functions
+sha2 = "0.10"
 
 # Derive error enums
 thiserror = "1.0"

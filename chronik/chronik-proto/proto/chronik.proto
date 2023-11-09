@@ -26,6 +26,12 @@ message BlockchainInfo {
     int32 tip_height = 2;
 }
 
+// Info about the chronik software this server is running
+message ChronikInfo {
+    // chronik server version from chronik-http/Cargo.toml
+    string version = 1;
+}
+
 // Info about a block
 message BlockInfo {
     // Hash (little-endian)
@@ -252,6 +258,9 @@ enum TxMsgType {
     // Tx finalized by Avalanche
     TX_FINALIZED = 3;
 }
+
+// Empty msg without any data
+message Empty {}
 
 // Error message returned from our APIs.
 message Error {

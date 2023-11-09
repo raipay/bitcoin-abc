@@ -146,7 +146,8 @@ void CZMQNotificationInterface::UpdatedBlockTip(const CBlockIndex *pindexNew,
 }
 
 void CZMQNotificationInterface::TransactionAddedToMempool(
-    const CTransactionRef &ptx, const std::vector<Coin> &spent_coins, uint64_t mempool_sequence) {
+    const CTransactionRef &ptx, std::shared_ptr<const std::vector<Coin>>,
+    uint64_t mempool_sequence) {
     const CTransaction &tx = *ptx;
 
     TryForEachAndRemoveFailed(

@@ -22,6 +22,11 @@ mod ffi_inner {
         pub default_port: u16,
         /// Whether to clear the DB before proceeding, e.g. when reindexing
         pub wipe_db: bool,
+        /// Whether pausing Chronik indexing is allowed
+        pub is_pause_allowed: bool,
+        /// Whether to output Chronik performance statistics into a perf/
+        /// folder
+        pub enable_perf_stats: bool,
     }
 
     extern "Rust" {
@@ -35,6 +40,7 @@ mod ffi_inner {
         fn handle_tx_added_to_mempool(
             &self,
             ptx: &CTransaction,
+            spent_coins: &CxxVector<CCoin>,
             time_first_seen: i64,
         );
         fn handle_tx_removed_from_mempool(&self, txid: [u8; 32]);
@@ -50,6 +56,7 @@ mod ffi_inner {
     unsafe extern "C++" {
         include!("blockindex.h");
         include!("chronik-cpp/chronik_validationinterface.h");
+        include!("coins.h");
         include!("config.h");
         include!("node/context.h");
         include!("primitives/block.h");
@@ -62,6 +69,11 @@ mod ffi_inner {
         /// ::CBlock from primitives/block.h
         #[namespace = ""]
         type CBlock = chronik_bridge::ffi::CBlock;
+
+        /// ::Coin from coins.h (renamed to CCoin to prevent a name clash)
+        #[namespace = ""]
+        #[cxx_name = "Coin"]
+        type CCoin = chronik_bridge::ffi::CCoin;
 
         /// ::Config from config.h
         #[namespace = ""]

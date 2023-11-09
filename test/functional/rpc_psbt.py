@@ -269,6 +269,25 @@ class PSBTTest(BitcoinTestFramework):
         # We don't care about the decode result, but decoding must succeed.
         self.nodes[0].decodepsbt(double_processed_psbt["psbt"])
 
+        # Make sure unsafe inputs are included if specified
+        self.nodes[2].createwallet(wallet_name="unsafe")
+        wunsafe = self.nodes[2].get_wallet_rpc("unsafe")
+        self.nodes[0].sendtoaddress(wunsafe.getnewaddress(), 2_000_000)
+        self.sync_mempools()
+        assert_raises_rpc_error(
+            -4,
+            "Insufficient funds",
+            wunsafe.walletcreatefundedpsbt,
+            [],
+            [{self.nodes[0].getnewaddress(): 1_000_000}],
+        )
+        wunsafe.walletcreatefundedpsbt(
+            [],
+            [{self.nodes[0].getnewaddress(): 1_000_000}],
+            0,
+            {"include_unsafe": True},
+        )
+
         # BIP 174 Test Vectors
 
         # Check that unknown values are just passed through
@@ -513,6 +532,12 @@ class PSBTTest(BitcoinTestFramework):
         )
         assert_equal(analysis["next"], "creator")
         assert_equal(analysis["error"], "PSBT is not valid. Input 0 has invalid value")
+
+        self.log.info(
+            "PSBT with signed, but not finalized, inputs should have Finalizer as next"
+        )
+        analysis = self.nodes[0].analyzepsbt(finalizers[0]["finalize"])
+        assert_equal(analysis["next"], "finalizer")
 
         analysis = self.nodes[0].analyzepsbt(
             "cHNidP8BAHECAAAAAfA00BFgAm6tp86RowwH6BMImQNL5zXUcTT97XoLGz0BAAAAAAD/////AgCAgWrj0AcAFgAUKNw0x8HRctAgmvoevm4u1SbN7XL87QKVAAAAABYAFPck4gF7iL4NL4wtfRAKgQbghiTUAAAAAAABAB8A8gUqAQAAABYAFJUDtxf2PHo641HEOBOAIvFMNTr2AAAA"

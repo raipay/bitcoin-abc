@@ -8,8 +8,6 @@ import {
     sortAndTrimChronikTxHistory,
     parseChronikTx,
     getMintAddress,
-    isAliasRegistered,
-    getAddressFromAlias,
 } from 'utils/chronik';
 import {
     mockChronikUtxos,
@@ -39,6 +37,7 @@ import {
     mockFlatTxHistoryWithAllUnconfirmed,
     mockSortedFlatTxHistoryWithAllUnconfirmed,
     mockParseTxWallet,
+    mockParseAliasTxWallet,
     lambdaIncomingXecTx,
     lambdaOutgoingXecTx,
     lambdaIncomingEtokenTx,
@@ -68,23 +67,8 @@ import {
     mintingAddressBuxSelfMint,
     mintingTxBuxSelfMint,
 } from '../__mocks__/chronikMintTxs';
-import { mockAliasLocalStorage } from 'utils/__mocks__/mockCachedAliases';
 import { ChronikClient } from 'chronik-client';
 import { when } from 'jest-when';
-
-it(`getAddressFromAlias successfully returns a corresponding address`, async () => {
-    const alias = mockAliasLocalStorage[1].alias;
-    expect(getAddressFromAlias(alias, mockAliasLocalStorage)).toStrictEqual(
-        mockAliasLocalStorage[1].address,
-    );
-});
-
-it(`getAddressFromAlias successfully returns false on a non-existent alias`, async () => {
-    const alias = 'thisAliasDoesNotExist';
-    expect(getAddressFromAlias(alias, mockAliasLocalStorage)).toStrictEqual(
-        false,
-    );
-});
 
 it(`getTokenStats successfully returns a token stats object`, async () => {
     // Initialize chronik
@@ -296,7 +280,7 @@ it(`Successfully parses an outgoing Alias Registration tx`, () => {
     expect(
         parseChronikTx(
             lambdaOutgoingAliasRegistrationTx,
-            mockParseTxWallet,
+            mockParseAliasTxWallet,
             txHistoryTokenInfoById,
         ),
     ).toStrictEqual({
@@ -309,8 +293,8 @@ it(`Successfully parses an outgoing Alias Registration tx`, () => {
         decryptionSuccess: false,
         isCashtabMessage: false,
         isEncryptedMessage: false,
-        opReturnMessage: 'fade',
-        replyAddress: 'ecash:qpmytrdsakt0axrrlswvaj069nat3p9s7cjctmjasj',
+        opReturnMessage: 'bug2',
+        replyAddress: 'ecash:qrwpz3mx89y0ph8mqrxyqlk6gxcjzuf66vc4ajscad',
     });
 });
 it(`Successfully parses an incoming eToken tx`, () => {
@@ -748,40 +732,4 @@ it(`getMintAddress successfully parses chronik.tx response to determine mint add
     expect(await getMintAddress(chronik, mintingTxBuxSelfMint.txid)).toBe(
         mintingAddressBuxSelfMint,
     );
-});
-
-it(`isAliasRegistered() returns true for a registered alias`, () => {
-    const registeredAliases = [
-        {
-            alias: 'joey',
-            address: 'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed',
-        },
-        {
-            alias: 'ethan',
-            address: 'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed',
-        },
-        {
-            alias: 'antony',
-            address: 'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed',
-        },
-    ];
-    expect(isAliasRegistered(registeredAliases, 'ethan')).toStrictEqual(true);
-});
-
-it(`isAliasRegistered() returns false for an unregistered alias`, () => {
-    const registeredAliases = [
-        {
-            alias: 'joey',
-            address: 'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed',
-        },
-        {
-            alias: 'ethan',
-            address: 'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed',
-        },
-        {
-            alias: 'antony',
-            address: 'ecash:qzvydd4n3lm3xv62cx078nu9rg0e3srmqq0knykfed',
-        },
-    ];
-    expect(isAliasRegistered(registeredAliases, 'koush')).toStrictEqual(false);
 });
