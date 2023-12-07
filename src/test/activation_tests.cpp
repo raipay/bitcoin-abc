@@ -90,7 +90,7 @@ BOOST_AUTO_TEST_CASE(isemaenabled) {
 
     const Consensus::Params &params = Params().GetConsensus();
     const auto activation = gArgs.GetIntArg("-ergonemaactivationtime",
-                                            params.tachyonActivationTime);
+                                            params.emaDAAActivationTime);
     SetMockTime(activation - 1000000);
 
     BOOST_CHECK(!IsErgonEMAEnabled(params, nullptr));

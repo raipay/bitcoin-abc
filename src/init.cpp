@@ -1915,6 +1915,16 @@ bool AppInitParameterInteraction(Config &config, ArgsManager &args) {
             "peertimeout cannot be configured with a negative value."));
     }
 
+    // Override defaults on Ergon
+    if (network == CBaseChainParams::ERGON) {
+        args.SoftSetArg("-blockmintxfee",
+                        FormatMoney(ERGON_DEFAULT_BLOCK_MIN_TX_FEE_PER_KB));
+        args.SoftSetArg("-minrelaytxfee",
+                        FormatMoney(ERGON_DEFAULT_MIN_RELAY_TX_FEE_PER_KB));
+        args.SoftSetArg("-dustrelayfee", FormatMoney(ERGON_DUST_RELAY_TX_FEE));
+        args.SoftSetBoolArg("-avalanche", false);
+    }
+
     if (args.IsArgSet("-minrelaytxfee")) {
         Amount n = Amount::zero();
         auto parsed = ParseMoney(args.GetArg("-minrelaytxfee", ""), n);
@@ -1935,16 +1945,6 @@ bool AppInitParameterInteraction(Config &config, ArgsManager &args) {
             return InitError(AmountErrMsg("blockmintxfee",
                                           args.GetArg("-blockmintxfee", "")));
         }
-    }
-
-    // Override defaults on Ergon
-    if (network == CBaseChainParams::ERGON) {
-        args.SoftSetArg("-blockmintxfee",
-                        FormatMoney(ERGON_DEFAULT_BLOCK_MIN_TX_FEE_PER_KB));
-        args.SoftSetArg("-minrelaytxfee",
-                        FormatMoney(ERGON_DEFAULT_MIN_RELAY_TX_FEE_PER_KB));
-        args.SoftSetArg("-dustrelayfee", FormatMoney(ERGON_DUST_RELAY_TX_FEE));
-        args.SoftSetBoolArg("-avalanche", false);
     }
 
     // Feerate used to define dust.  Shouldn't be changed lightly as old
