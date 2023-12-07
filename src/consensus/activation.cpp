@@ -128,3 +128,14 @@ bool IsLeeKuanYewEnabled(const Consensus::Params &params,
 
     return IsLeeKuanYewEnabled(params, pindexPrev->GetMedianTimePast());
 }
+
+bool IsErgonEMAEnabled(const Consensus::Params &params,
+                       const CBlockIndex *pindexPrev) {
+    if (pindexPrev == nullptr) {
+        return false;
+    }
+
+    return pindexPrev->GetMedianTimePast() >=
+           gArgs.GetIntArg("-ergonemaactivationtime",
+                           params.emaDAAActivationTime);
+}

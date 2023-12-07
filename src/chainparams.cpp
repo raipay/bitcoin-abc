@@ -106,6 +106,9 @@ public:
         // The staking rewards are enabled by default on mainnet.
         consensus.enableStakingRewards = true;
 
+        // Proportional rewards are disabled on eCash
+        consensus.enableProportionalReward = false;
+
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork =
             ChainParamsConstants::MAINNET_MINIMUM_CHAIN_WORK;
@@ -141,6 +144,8 @@ public:
 
         // May 15, 2024 12:00:00 UTC protocol upgrade
         consensus.leeKuanYewActivationTime = 1715774400;
+
+        consensus.emaDAAActivationTime = 1200000000;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -258,6 +263,9 @@ public:
         // The staking rewards are disabled by default on testnet.
         consensus.enableStakingRewards = false;
 
+        // Proportional rewards are disabled on testnet
+        consensus.enableProportionalReward = false;
+
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork =
             ChainParamsConstants::TESTNET_MINIMUM_CHAIN_WORK;
@@ -293,6 +301,8 @@ public:
 
         // May 15, 2024 12:00:00 UTC protocol upgrade
         consensus.leeKuanYewActivationTime = 1715774400;
+
+        consensus.emaDAAActivationTime = 1200000000;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -394,6 +404,9 @@ public:
         // The staking rewards are disabled by default on regtest.
         consensus.enableStakingRewards = false;
 
+        // Proportional rewards are disabled on regtest
+        consensus.enableProportionalReward = false;
+
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");
 
@@ -427,6 +440,8 @@ public:
 
         // May 15, 2024 12:00:00 UTC protocol upgrade
         consensus.leeKuanYewActivationTime = 1715774400;
+
+        consensus.emaDAAActivationTime = 1200000000;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;
@@ -489,6 +504,144 @@ public:
     }
 };
 
+/**
+ * Ergon network
+ */
+class CErgonParams : public CChainParams {
+public:
+    CErgonParams() {
+        strNetworkID = CBaseChainParams::ERGON;
+        consensus.nSubsidyHalvingInterval = 144;
+        consensus.BIP16Height = 0;
+        consensus.BIP34Height = 0;
+        consensus.BIP34Hash = BlockHash::fromHex(
+            "000000000000024b89b42a942fe0d9fea3bb44ab7bd1b19115dd6a759c0808b8");
+        consensus.BIP65Height = 0;
+        consensus.BIP66Height = 0;
+        consensus.CSVHeight = 0;
+        consensus.powLimit = uint256S(
+            "0000000fffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        // two weeks
+        consensus.nPowTargetTimespan = 14 * 24 * 60 * 60;
+        consensus.nPowTargetSpacing = 10 * 60;
+        consensus.fPowAllowMinDifficultyBlocks = false;
+        consensus.fPowNoRetargeting = false;
+        consensus.nValueCalibration = 7100000000000;
+
+        // two days
+        consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
+
+        // Ergon has no miner fund
+        consensus.enableMinerFund = false;
+
+        // Ergon has no staking rewards
+        consensus.enableStakingRewards = false;
+
+        // Proportional rewards are enabled on Ergon
+        consensus.enableProportionalReward = true;
+
+        // The best chain should have at least this much work.
+        consensus.nMinimumChainWork = uint256S(
+            "0000000000000000000000000000000000000000000000000000000000000184");
+
+        // By default assume that the signatures in ancestors of this block are
+        // valid.
+        consensus.defaultAssumeValid =
+            BlockHash::fromHex("0x000000070e37bfee7e84b94f997f38155a85b22172f5c"
+                               "a25fd4eb3d64c5ad7c");
+
+        // August 1, 2017 hard fork
+        consensus.uahfHeight = 0;
+
+        // November 13, 2017 hard fork
+        consensus.daaHeight = 0;
+
+        // November 15, 2018 hard fork
+        consensus.magneticAnomalyHeight = 0;
+
+        // November 15, 2019 protocol upgrade
+        consensus.gravitonHeight = 0;
+
+        // May 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.phononHeight = 0;
+
+        // Nov 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.axionHeight = 0;
+
+        // May 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.wellingtonHeight = 0;
+
+        // Nov 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.cowperthwaiteHeight = 0;
+
+        // May 15, 2024 12:00:00 UTC protocol upgrade
+        consensus.leeKuanYewActivationTime = 0x7fffffff;
+
+        consensus.emaDAAActivationTime = 1659182400;
+
+        /**
+         * The message start string is designed to be unlikely to occur in
+         * normal data. The characters are rarely used upper ASCII, not valid as
+         * UTF-8, and produce a large 32-bit integer with any alignment.
+         */
+        diskMagic[0] = 194;
+        diskMagic[1] = 95;
+        diskMagic[2] = 143;
+        diskMagic[3] = 196;
+        netMagic[0] = 135;
+        netMagic[1] = 215;
+        netMagic[2] = 51;
+        netMagic[3] = 46;
+        nDefaultPort = 2137;
+        nPruneAfterHeight = 100000;
+        m_assumed_blockchain_size = 0;
+        m_assumed_chain_state_size = 0;
+
+        genesis =
+            CreateGenesisBlock(1607003022, 92586649, 0x1d0fffff, 1, 0 * COIN);
+        consensus.hashGenesisBlock = genesis.GetHash();
+        assert(consensus.hashGenesisBlock ==
+               uint256S("000000070e37bfee7e84b94f997f38155a85b22172f5ca25fd4eb3"
+                        "d64c5ad7c5"));
+        assert(genesis.hashMerkleRoot ==
+               uint256S("dc6c10ad2a26613ae9b8a156ed9ca15e3e355a994a7e32cd7a4c3d"
+                        "7a478f57d2"));
+
+        // Note that of those which support the service bits prefix, most only
+        // support a subset of possible options. This is fine at runtime as
+        // we'll fall back to using them as an addrfetch if they don't support
+        // the service bits we want, but we should get them updated to support
+        // all service bits wanted by any release ASAP to avoid it where
+        // possible.
+        vSeeds.clear();
+        vSeeds.emplace_back("dnsseed.ergon.moe");
+        vSeeds.emplace_back("seed.ergon.loping.net");
+
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 0);
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 5);
+        base58Prefixes[SECRET_KEY] = std::vector<uint8_t>(1, 128);
+        base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x88, 0xB2, 0x1E};
+        base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
+        cashaddrPrefix = "ergon";
+
+        vFixedSeeds = std::vector<SeedSpec6>(std::begin(pnSeed6_ergon),
+                                             std::end(pnSeed6_ergon));
+
+        fDefaultConsistencyChecks = false;
+        fRequireStandard = true;
+        m_is_test_chain = false;
+        m_is_mockable_chain = false;
+
+        checkpointData = {.mapCheckpoints = {}};
+
+        m_assumeutxo_data = MapAssumeutxo{
+            // TODO to be specified in a future patch.
+        };
+
+        chainTxData = ChainTxData{1620430294, 1713, 0.00167};
+    }
+};
+
 static std::unique_ptr<CChainParams> globalChainParams;
 
 const CChainParams &Params() {
@@ -507,6 +660,10 @@ std::unique_ptr<CChainParams> CreateChainParams(const std::string &chain) {
 
     if (chain == CBaseChainParams::REGTEST) {
         return std::make_unique<CRegTestParams>();
+    }
+
+    if (chain == CBaseChainParams::ERGON) {
+        return std::make_unique<CErgonParams>();
     }
 
     throw std::runtime_error(

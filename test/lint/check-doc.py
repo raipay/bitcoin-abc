@@ -29,6 +29,7 @@ SET_FALSE_POSITIVE_UNKNOWNS = {
     "-includeconf",
     "-regtest",
     "-testnet",
+    "-ergon",
     "-zmqpubhashblock",
     "-zmqpubhashtx",
     "-zmqpubrawblock",
@@ -58,6 +59,7 @@ SET_FALSE_POSITIVE_UNDOCUMENTED = {
     "-replayprotectionactivationtime",
     # Remove after May. 2024 upgrade
     "-leekuanyewactivationtime",
+    "-ergonemaactivationtime",
 }
 
 

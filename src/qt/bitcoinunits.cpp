@@ -4,6 +4,7 @@
 
 #include <qt/bitcoinunits.h>
 
+#include <chainparamsbase.h>
 #include <consensus/amount.h>
 #include <currencyunit.h>
 #include <util/system.h>
@@ -37,9 +38,20 @@ static const unitNameMap bchUnits = {
         {"Satoshi (sat)",
         "Satoshi (sat) (1 / 100" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)"}},
 };
+static const unitNameMap xrgUnits = {
+    {BitcoinUnits::Unit::base,
+        {"XRG",
+        "Ergons"}},
+    {BitcoinUnits::Unit::sub,
+        {"Satoshi (sat)",
+        "Satoshi (sat) (1 / 100" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)"}},
+};
 // clang-format on
 
 static const unitNameMap &getUnitsAtRuntime() {
+    if (gArgs.GetChainName() == CBaseChainParams::ERGON) {
+        return xrgUnits;
+    }
     return gArgs.GetBoolArg("-ecash", DEFAULT_ECASH) ? xecUnits : bchUnits;
 }
 

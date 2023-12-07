@@ -18,7 +18,8 @@ static const struct {
     const int iconColorSaturationReduction;
 } network_styles[] = {{"main", QAPP_APP_NAME_DEFAULT, 0, 0},
                       {"test", QAPP_APP_NAME_TESTNET, 70, 30},
-                      {"regtest", QAPP_APP_NAME_REGTEST, 160, 30}};
+                      {"regtest", QAPP_APP_NAME_REGTEST, 160, 30},
+                      {"ergon", QAPP_APP_NAME_ERGON, 100, 60}};
 
 // titleAddText needs to be const char* for tr()
 NetworkStyle::NetworkStyle(const QString &_appName, const int iconColorHueShift,

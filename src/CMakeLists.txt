@@ -665,6 +665,7 @@ add_library(server
 	pow/aserti32d.cpp
 	pow/daa.cpp
 	pow/eda.cpp
+	pow/ergon.cpp
 	pow/grasberg.cpp
 	pow/pow.cpp
 	rest.cpp
@@ -876,6 +877,7 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		pow/aserti32d.cpp
 		pow/daa.cpp
 		pow/eda.cpp
+		pow/ergon.cpp
 		pow/pow.cpp
 		primitives/block.cpp
 		primitives/transaction.cpp

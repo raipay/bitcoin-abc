@@ -134,6 +134,8 @@ static CCheckpointData regTestCheckpointData = {
                                "36012afca590b1a11466e2206")},
     }};
 
+static CCheckpointData ergonCheckpointData = {.mapCheckpoints = {}};
+
 const CCheckpointData &CheckpointData(const std::string &chain) {
     if (chain == CBaseChainParams::MAIN) {
         return mainNetCheckpointData;
@@ -143,6 +145,9 @@ const CCheckpointData &CheckpointData(const std::string &chain) {
     }
     if (chain == CBaseChainParams::REGTEST) {
         return regTestCheckpointData;
+    }
+    if (chain == CBaseChainParams::ERGON) {
+        return ergonCheckpointData;
     }
 
     throw std::runtime_error(

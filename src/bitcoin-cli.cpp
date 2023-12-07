@@ -58,6 +58,7 @@ static void SetupCliArgs(ArgsManager &argsman) {
         CreateBaseChainParams(CBaseChainParams::TESTNET);
     const auto regtestBaseParams =
         CreateBaseChainParams(CBaseChainParams::REGTEST);
+    const auto ergonBaseParams = CreateBaseChainParams(CBaseChainParams::ERGON);
 
     SetupCurrencyUnitOptions(argsman);
     argsman.AddArg("-version", "Print version and exit", ArgsManager::ALLOW_ANY,
@@ -111,14 +112,14 @@ static void SetupCliArgs(ArgsManager &argsman) {
         "Location of the auth cookie. Relative paths will be prefixed "
         "by a net-specific datadir location. (default: data dir)",
         ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-rpcport=<port>",
-                   strprintf("Connect to JSON-RPC on <port> (default: %u, "
-                             "testnet: %u, regtest: %u)",
-                             defaultBaseParams->RPCPort(),
-                             testnetBaseParams->RPCPort(),
-                             regtestBaseParams->RPCPort()),
-                   ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
-                   OptionsCategory::OPTIONS);
+    argsman.AddArg(
+        "-rpcport=<port>",
+        strprintf("Connect to JSON-RPC on <port> (default: %u, "
+                  "testnet: %u, regtest: %u, ergon: %u)",
+                  defaultBaseParams->RPCPort(), testnetBaseParams->RPCPort(),
+                  regtestBaseParams->RPCPort(), ergonBaseParams->RPCPort()),
+        ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
+        OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcwait", "Wait for RPC server to start",
                    ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcuser=<user>", "Username for JSON-RPC connections",
@@ -465,6 +466,9 @@ private:
         }
         if (gArgs.GetChainName() == CBaseChainParams::REGTEST) {
             return " regtest";
+        }
+        if (gArgs.GetChainName() == CBaseChainParams::ERGON) {
+            return " ergon";
         }
         return "";
     }

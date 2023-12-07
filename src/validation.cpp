@@ -1150,7 +1150,67 @@ ProcessNewPackage(const Config &config, Chainstate &active_chainstate,
     return result;
 }
 
-Amount GetBlockSubsidy(int nHeight, const Consensus::Params &consensusParams) {
+static Amount GetErgonBlockSubsidy(CBlockIndex *pindexPrev, uint32_t nBits,
+                                   int nHeight,
+                                   const Consensus::Params &consensusParams) {
+    // calculate work based on nBits like in GetBlockProof from chain.cpp
+    arith_uint256 bnTarget;
+    bool fNegative;
+    bool fOverflow;
+    bnTarget.SetCompact(nBits, &fNegative, &fOverflow);
+    if (fNegative || fOverflow || bnTarget == 0) {
+        return Amount::zero();
+    }
+
+    arith_uint256 aWork = (~bnTarget / (bnTarget + 1)) + 1;
+
+    const CBlockIndex *emaBlock = pindexPrev;
+
+    while (emaBlock->pprev) {
+        // first, skip backwards testing IsErgonEMAEnabled
+        // The below code leverages CBlockIndex::pskip to walk back efficiently.
+        if (IsErgonEMAEnabled(consensusParams, emaBlock->pskip)) {
+            // skip backward
+            emaBlock = emaBlock->pskip;
+            continue; // continue skipping
+        }
+        // cannot skip here, walk back by 1
+        if (!IsErgonEMAEnabled(consensusParams, emaBlock->pprev)) {
+            // found it -- highest block where EMA is not enabled is
+            // emaBlock->pprev, and emaBlock points to the first block for which
+            // IsAxionEnabled() == true
+            break;
+        }
+        // Walking back by 1
+        emaBlock = emaBlock->pprev;
+    }
+    int divisions = nHeight / consensusParams.nSubsidyHalvingInterval;
+    int emaHeight = emaBlock->nHeight / consensusParams.nSubsidyHalvingInterval;
+    for (int a = 0; a < divisions; a++) {
+        // to be tunned in few years based on high quality empirical research
+        if (a < emaHeight) {
+            aWork *= 99826;
+            aWork /= 100000;
+        } else {
+            aWork *= 99918;
+            aWork /= 100000;
+        }
+    }
+
+    aWork /= consensusParams.nValueCalibration; // 14200000000000
+    uint256 uWork = ArithToUint256(aWork);
+    int64_t iWork = uWork.GetUint64(0);
+    Amount nSubsidy = iWork * Amount::satoshi();
+    return nSubsidy;
+}
+
+Amount GetBlockSubsidy(CBlockIndex *pindexPrev, uint32_t nBits, int nHeight,
+                       const Consensus::Params &consensusParams) {
+    if (consensusParams.enableProportionalReward) {
+        return GetErgonBlockSubsidy(pindexPrev, nBits, nHeight,
+                                    consensusParams);
+    }
+
     int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
     // Force block reward to zero when right shift is undefined.
     if (halvings >= 64) {
@@ -1161,6 +1221,16 @@ Amount GetBlockSubsidy(int nHeight, const Consensus::Params &consensusParams) {
     // Subsidy is cut in half every 210,000 blocks which will occur
     // approximately every 4 years.
     return ((nSubsidy / SATOSHI) >> halvings) * SATOSHI;
+}
+
+Amount GetBlockReward(CBlockIndex *pindexPrev, uint32_t nBits, int nHeight,
+                      const Consensus::Params &consensusParams, Amount nFees) {
+    const Amount subsidy =
+        GetBlockSubsidy(pindexPrev, nBits, nHeight, consensusParams);
+    if (consensusParams.enableProportionalReward) {
+        return nFees / 2 + subsidy;
+    }
+    return nFees + subsidy;
 }
 
 CoinsViews::CoinsViews(std::string ldb_name, size_t cache_size_bytes,
@@ -2109,8 +2179,8 @@ bool Chainstate::ConnectBlock(const CBlock &block, BlockValidationState &state,
              nInputs <= 1 ? 0 : MILLI * (nTime3 - nTime2) / (nInputs - 1),
              nTimeConnect * MICRO, nTimeConnect * MILLI / nBlocksTotal);
 
-    const Amount blockReward =
-        nFees + GetBlockSubsidy(pindex->nHeight, consensusParams);
+    const Amount blockReward = GetBlockReward(
+        pindex->pprev, pindex->nBits, pindex->nHeight, consensusParams, nFees);
     if (block.vtx[0]->GetValueOut() > blockReward) {
         LogPrintf("ERROR: ConnectBlock(): coinbase pays too much (actual=%d vs "
                   "limit=%d)\n",
@@ -2635,8 +2705,8 @@ bool Chainstate::ConnectTip(const Config &config, BlockValidationState &state,
             m_filterParkingPoliciesApplied.insert(blockhash);
 
             const Amount blockReward =
-                blockFees +
-                GetBlockSubsidy(pindexNew->nHeight, consensusParams);
+                GetBlockReward(pindexNew->pprev, pindexNew->nBits,
+                               pindexNew->nHeight, consensusParams, blockFees);
 
             std::vector<std::unique_ptr<ParkingPolicy>> parkingPolicies;
             parkingPolicies.emplace_back(std::make_unique<MinerFundPolicy>(

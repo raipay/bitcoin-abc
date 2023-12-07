@@ -63,12 +63,17 @@ struct Params {
     int cowperthwaiteHeight;
     /** Unix time used for MTP activation of 15 May 2024 12:00:00 UTC upgrade */
     int leeKuanYewActivationTime;
+    /** Block height at which the new EMA daa becomes active */
+    int emaDAAActivationTime;
 
     /** Enable or disable the miner fund by default */
     bool enableMinerFund;
 
     /** Enable or disable the staking rewards by default */
     bool enableStakingRewards;
+
+    /** Whether to enable Ergon-esque block rewards */
+    bool enableProportionalReward;
 
     /** Proof of work parameters */
     uint256 powLimit;
@@ -77,6 +82,8 @@ struct Params {
     int64_t nDAAHalfLife;
     int64_t nPowTargetSpacing;
     int64_t nPowTargetTimespan;
+    int64_t nValueCalibration;
+
     std::chrono::seconds PowTargetSpacing() const {
         return std::chrono::seconds{nPowTargetSpacing};
     }

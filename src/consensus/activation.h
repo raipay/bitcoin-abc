@@ -56,4 +56,7 @@ bool IsLeeKuanYewEnabled(const Consensus::Params &params,
 bool IsLeeKuanYewEnabled(const Consensus::Params &params,
                          const CBlockIndex *pindexPrev);
 
+bool IsErgonEMAEnabled(const Consensus::Params &params,
+                       const CBlockIndex *pindexPrev);
+
 #endif // BITCOIN_CONSENSUS_ACTIVATION_H
