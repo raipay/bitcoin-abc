@@ -9,7 +9,7 @@ const { ChronikClient } = require('chronik-client');
 const chronik = new ChronikClient(config.chronik);
 const { MockChronikClient } = require('../../mock-chronik-client');
 const mockedChronik = new MockChronikClient();
-const { jsonReplacer } = require('../src/utils');
+const { jsonReplacer, getCoingeckoApiUrl } = require('../src/utils');
 const unrevivedBlockMocks = require('../test/mocks/block');
 const { jsonReviver } = require('../src/utils');
 const blockMocks = JSON.parse(JSON.stringify(unrevivedBlockMocks), jsonReviver);
@@ -30,6 +30,7 @@ const { dev } = secrets;
 const { botId, channelId } = dev.telegram;
 // Create a bot that uses 'polling' to fetch new updates
 const telegramBotDev = new TelegramBot(botId, { polling: true });
+const recentStakersApiResponse = require('../test/mocks/recentStakersApiResponse');
 
 /**
  * generateMock.js
@@ -44,7 +45,7 @@ const telegramBotDev = new TelegramBot(botId, { polling: true });
 // Add txids to this array related to new features as new diffs are added
 const txids = [
     // Coinbase tx
-    'e45e1b3d4664950176f5b23c86bc30d2790ae5e80cded861584c627c172395dc', // Coinbase tx, ViaBTC, Mined by volpe1564
+    '0bf6e9cd974cd5fc6fbbf739a42447d41a301890e2db242295c64df63dc3ee7e', // Coinbase tx with staking rwds
 
     // eToken mint tx
     '010114b9bbe776def1a512ad1e96a4a06ec4c34fc79bcb5d908845f5102f6b0f', // etoken genesis txs
@@ -194,7 +195,8 @@ async function generateMock(
     });
 
     // Mock a successful API request
-    mock.onGet().reply(200, coingeckoResponse);
+    mock.onGet(getCoingeckoApiUrl(config)).reply(200, coingeckoResponse);
+    mock.onGet(config.stakerPeerApi).reply(200, recentStakersApiResponse);
 
     // Generate app mocks using this block
     // TODO need to mock all the calls here

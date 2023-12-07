@@ -20,6 +20,7 @@
 #include <span.h>
 #include <streams.h>
 #include <test/util/validation.h>
+#include <threadsafety.h>
 #include <timedata.h>
 #include <util/strencodings.h>
 #include <util/string.h>
@@ -62,7 +63,7 @@ struct CConnmanTest : public CConnman {
 
     void AddNode(ConnectionType type) {
         CAddress addr(
-            CService(ip(GetRandInt(0xffffffff)), Params().GetDefaultPort()),
+            CService(ip(GetRand<uint32_t>()), Params().GetDefaultPort()),
             NODE_NONE);
 
         return AddNode(addr, type);
@@ -114,7 +115,8 @@ struct CConnmanTest : public CConnman {
     }
 
     void openNetworkConnection(const CAddress &addrConnect,
-                               ConnectionType connType) {
+                               ConnectionType connType)
+        EXCLUSIVE_LOCKS_REQUIRED(!cs) {
         bool newConnection = !AlreadyConnectedToAddress(addrConnect);
         addrman.Attempt(addrConnect, true);
 
@@ -147,7 +149,7 @@ struct CConnmanTest : public CConnman {
     bool checkContiguousAddressesConnection(
         const std::vector<TestAddresses> &testAddresses,
         size_t expectedOutboundFullRelayCount,
-        size_t expectedAvalancheOutboundsCount) {
+        size_t expectedAvalancheOutboundsCount) EXCLUSIVE_LOCKS_REQUIRED(!cs) {
         {
             LOCK(cs);
 

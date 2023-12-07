@@ -18,18 +18,18 @@ def get_auxiliary_privkey(
     wallet: DeterministicWallet,
     key_index: int = 0,
     pwd: Optional[str] = None,
-) -> str:
+) -> Optional[str]:
     """Get a deterministic private key derived from a BIP44 path that is not used
     by the wallet to generate addresses.
 
-    Return it in WIF format, or return an empty string on failure (pwd dialog
+    Return it in WIF format, or return None on failure (pwd dialog
     cancelled).
     """
     # Use BIP44 change_index 2, which is not used by any application.
     privkey_index = (2, key_index)
 
     if wallet.has_password() and pwd is None:
-        raise RuntimeError("Wallet password required")
+        return None
     return wallet.export_private_key_for_index(privkey_index, pwd)
 
 
@@ -153,35 +153,33 @@ class AuxiliaryKeysWidget(CachedWalletPasswordWidget):
         self.key_widget = KeyWidget()
         layout.addWidget(self.key_widget)
 
-        self.max_shown_index = self.wallet.storage.get(StorageKeys.AUXILIARY_KEY_INDEX)
-        # increment for the next time
-        self.wallet.storage.put(
-            StorageKeys.AUXILIARY_KEY_INDEX,
-            min(MAXIMUM_INDEX_DERIVATION_PATH, self.max_shown_index + 1),
-        )
-        self.index_spinbox.valueChanged.connect(self.on_index_changed)
-        self.index_spinbox.setValue(self.max_shown_index)
+        # The value is 0 by default, so we need to manually call the slot as the
+        # valueChanged signal will not be emitted. For any other value this call
+        # will be overridden by the index change event.
+        self.set_keys_for_index(0)
+        shown_index = self.wallet.storage.get(StorageKeys.AUXILIARY_KEY_INDEX)
+        self.index_spinbox.valueChanged.connect(self.set_keys_for_index)
+        self.index_spinbox.setValue(shown_index)
 
-    def on_index_changed(self, index: int):
-        if index > self.max_shown_index:
-            self.max_shown_index = index
-            self.wallet.storage.put(
-                StorageKeys.AUXILIARY_KEY_INDEX,
-                min(MAXIMUM_INDEX_DERIVATION_PATH, self.max_shown_index + 1),
-            )
-
+    def set_keys_for_index(self, index: int):
         wif_key = get_auxiliary_privkey(self.wallet, index, self.pwd)
+        if wif_key is None:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Failed to generate key",
+                "If this wallet is encrypted, you must provide the password to export a private key.",
+            )
+            return
         self.key_widget.setPrivkey(wif_key)
-
-        was_blocked = self.index_spinbox.blockSignals(True)
-        self.index_spinbox.setValue(index)
-        self.index_spinbox.blockSignals(was_blocked)
 
     def get_wif_private_key(self) -> str:
         return self.key_widget.privkey_view.text()
 
     def get_hex_public_key(self) -> str:
         return self.key_widget.pubkey_view.text()
+
+    def get_key_index(self) -> int:
+        return self.index_spinbox.value()
 
 
 class AuxiliaryKeysDialog(QtWidgets.QDialog):
@@ -212,3 +210,6 @@ class AuxiliaryKeysDialog(QtWidgets.QDialog):
 
     def get_wif_private_key(self) -> str:
         return self.aux_keys_widget.get_wif_private_key()
+
+    def get_key_index(self) -> int:
+        return self.aux_keys_widget.get_key_index()

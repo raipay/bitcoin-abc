@@ -52,8 +52,6 @@ static CService ip(uint32_t i) {
 
 static NodeId id = 0;
 
-void UpdateLastBlockAnnounceTime(NodeId node, int64_t time_in_seconds);
-
 BOOST_FIXTURE_TEST_SUITE(denialofservice_tests, TestingSetup)
 
 // Test eviction of an outbound peer whose chain never advances
@@ -221,7 +219,7 @@ BOOST_AUTO_TEST_CASE(stale_tip_peer_management) {
 
     // Update the last announced block time for the last
     // peer, and check that the next newest node gets evicted.
-    UpdateLastBlockAnnounceTime(vNodes.back()->GetId(), GetTime());
+    peerLogic->UpdateLastBlockAnnounceTime(vNodes.back()->GetId(), GetTime());
 
     peerLogic->CheckForStaleTipAndEvictPeers();
     for (int i = 0; i < max_outbound_full_relay - 1; ++i) {
@@ -259,8 +257,8 @@ BOOST_AUTO_TEST_CASE(peer_discouragement) {
     peerLogic->InitializeNode(config, dummyNode1, NODE_NETWORK);
     dummyNode1.fSuccessfullyConnected = true;
     // Should be discouraged
-    peerLogic->Misbehaving(dummyNode1.GetId(), DISCOURAGEMENT_THRESHOLD,
-                           /* message */ "");
+    peerLogic->UnitTestMisbehaving(dummyNode1.GetId(),
+                                   DISCOURAGEMENT_THRESHOLD);
     {
         LOCK(dummyNode1.cs_sendProcessing);
         BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode1));
@@ -278,8 +276,8 @@ BOOST_AUTO_TEST_CASE(peer_discouragement) {
     dummyNode2.SetCommonVersion(PROTOCOL_VERSION);
     peerLogic->InitializeNode(config, dummyNode2, NODE_NETWORK);
     dummyNode2.fSuccessfullyConnected = true;
-    peerLogic->Misbehaving(dummyNode2.GetId(), DISCOURAGEMENT_THRESHOLD - 1,
-                           /* message */ "");
+    peerLogic->UnitTestMisbehaving(dummyNode2.GetId(),
+                                   DISCOURAGEMENT_THRESHOLD - 1);
     {
         LOCK(dummyNode2.cs_sendProcessing);
         BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode2));
@@ -289,7 +287,7 @@ BOOST_AUTO_TEST_CASE(peer_discouragement) {
     // ... but 1 still should be
     BOOST_CHECK(banman->IsDiscouraged(addr1));
     // 2 reaches discouragement threshold
-    peerLogic->Misbehaving(dummyNode2.GetId(), 1, /* message */ "");
+    peerLogic->UnitTestMisbehaving(dummyNode2.GetId(), 1);
     {
         LOCK(dummyNode2.cs_sendProcessing);
         BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode2));
@@ -327,8 +325,7 @@ BOOST_AUTO_TEST_CASE(DoS_bantime) {
     peerLogic->InitializeNode(config, dummyNode, NODE_NETWORK);
     dummyNode.fSuccessfullyConnected = true;
 
-    peerLogic->Misbehaving(dummyNode.GetId(), DISCOURAGEMENT_THRESHOLD,
-                           /* message */ "");
+    peerLogic->UnitTestMisbehaving(dummyNode.GetId(), DISCOURAGEMENT_THRESHOLD);
     {
         LOCK(dummyNode.cs_sendProcessing);
         BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode));

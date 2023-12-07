@@ -123,7 +123,7 @@ static const uint64_t RANDOMIZER_ID_ADDRCACHE = 0x1cf2e4ddd306dda9ULL;
 //
 bool fDiscover = true;
 bool fListen = true;
-Mutex g_maplocalhost_mutex;
+GlobalMutex g_maplocalhost_mutex;
 std::map<CNetAddr, LocalServiceInfo>
     mapLocalHost GUARDED_BY(g_maplocalhost_mutex);
 static bool vfLimited[NET_MAX] GUARDED_BY(g_maplocalhost_mutex) = {};
@@ -2436,7 +2436,7 @@ void CConnman::ThreadOpenConnections(
             if (fFeeler) {
                 // Add small amount of random noise before connection to avoid
                 // synchronization.
-                int randsleep = GetRandInt(FEELER_SLEEP_WINDOW * 1000);
+                int randsleep = GetRand<int>(FEELER_SLEEP_WINDOW * 1000);
                 if (!interruptNet.sleep_for(
                         std::chrono::milliseconds(randsleep))) {
                     return;

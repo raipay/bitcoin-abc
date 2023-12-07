@@ -31,6 +31,7 @@ module.exports = {
         // Parse coinbase string
         const coinbaseTx = txs[0];
         const miner = module.exports.getMinerFromCoinbaseTx(coinbaseTx, miners);
+        const staker = module.exports.getStakerFromCoinbaseTx(coinbaseTx);
 
         // Start with i=1 to skip Coinbase tx
         let parsedTxs = [];
@@ -89,11 +90,50 @@ module.exports = {
             hash,
             height,
             miner,
+            staker,
             numTxs,
             parsedTxs,
             tokenIds,
             outputScripts,
         };
+    },
+    getStakerFromCoinbaseTx: function (coinbaseTx) {
+        const STAKING_ACTIVATION_HEIGHT = 818670;
+        if (coinbaseTx.block.height < STAKING_ACTIVATION_HEIGHT) {
+            // Do not parse for staking rwds if they are not expected to exist
+            return false;
+        }
+        const STAKING_REWARDS_PERCENT = 10;
+        const { outputs } = coinbaseTx;
+        const totalCoinbaseSats = outputs
+            .map(output => parseInt(output.value))
+            .reduce((prev, curr) => prev + curr, 0);
+        for (let output of outputs) {
+            const thisValue = parseInt(output.value);
+            const minStakerValue = Math.floor(
+                totalCoinbaseSats * STAKING_REWARDS_PERCENT * 0.01,
+            );
+            // In practice, the staking reward will almost always be the one that is exactly 10% of totalCoinbaseSats
+            // Use a STAKER_PERCENT_PADDING range to exclude miner and ifp outputs
+            const STAKER_PERCENT_PADDING = 1;
+            const assumedMaxStakerValue = Math.floor(
+                totalCoinbaseSats *
+                    (STAKING_REWARDS_PERCENT + STAKER_PERCENT_PADDING) *
+                    0.01,
+            );
+            if (
+                thisValue >= minStakerValue &&
+                thisValue <= assumedMaxStakerValue
+            ) {
+                return {
+                    staker: cashaddr.encodeOutputScript(output.outputScript),
+                    reward: thisValue,
+                };
+            }
+        }
+        // If you don't find a staker, don't add it in msg. Can troubleshoot if see this in the app.
+        // This can happen if a miner overpays staking rwds, underpays miner rwds
+        return false;
     },
     getMinerFromCoinbaseTx: function (coinbaseTx, knownMiners) {
         // get coinbase inputScript
@@ -1209,6 +1249,7 @@ module.exports = {
      * Build a string formatted for Telegram's API using HTML encoding
      * @param {object} parsedBlock
      * @param {array or false} coingeckoPrices if no coingecko API error
+     * @param {string | false} avalanchePeerName avalanche peername of staking rwd winner if available
      * @param {Map or false} tokenInfoMap if no chronik API error
      * @param {Map or false} addressInfoMap if no chronik API error
      * @returns {function} splitOverflowTgMsg(tgMsg)
@@ -1216,10 +1257,11 @@ module.exports = {
     getBlockTgMessage: function (
         parsedBlock,
         coingeckoPrices,
+        avalanchePeerName,
         tokenInfoMap,
         outputScriptInfoMap,
     ) {
-        const { hash, height, miner, numTxs, parsedTxs } = parsedBlock;
+        const { hash, height, miner, staker, numTxs, parsedTxs } = parsedBlock;
         const { emojis } = config;
 
         // Define newsworthy types of txs in parsedTxs
@@ -1564,6 +1606,22 @@ module.exports = {
                 numTxs > 1 ? `s` : ''
             } | ${miner}`,
         );
+
+        // Staker
+        // Staking rewards to <staker>
+        if (staker) {
+            // Get fiat amount of staking rwds
+            tgMsg.push(
+                `${emojis.staker}${satsToFormattedValue(
+                    staker.reward,
+                    coingeckoPrices,
+                )} to <a href="${config.blockExplorer}/address/${
+                    staker.staker
+                }">${returnAddressPreview(staker.staker)}</a>${
+                    avalanchePeerName ? ` | ${avalanchePeerName}` : ''
+                }`,
+            );
+        }
 
         // Display prices as set in config.js
         if (coingeckoPrices) {

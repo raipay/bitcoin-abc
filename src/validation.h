@@ -75,10 +75,6 @@ struct Params;
 #define MIN_TRANSACTION_SIZE                                                   \
     (::GetSerializeSize(CTransaction(), PROTOCOL_VERSION))
 
-/** Default for -minrelaytxfee, minimum relay fee for transactions */
-static const Amount DEFAULT_MIN_RELAY_TX_FEE_PER_KB(1000 * SATOSHI);
-/** Default for -excessutxocharge for transactions transactions */
-static const Amount DEFAULT_UTXO_FEE = Amount::zero();
 /**
  * Default for -mempoolexpiry, expiration time for mempool transactions in
  * hours.
@@ -127,7 +123,7 @@ static const uint64_t MIN_DISK_SPACE_FOR_BLOCK_FILES = 550 * 1024 * 1024;
 enum class SynchronizationState { INIT_REINDEX, INIT_DOWNLOAD, POST_INIT };
 
 extern RecursiveMutex cs_main;
-extern Mutex g_best_block_mutex;
+extern GlobalMutex g_best_block_mutex;
 extern std::condition_variable g_best_block_cv;
 /** Used to notify getblocktemplate RPC of new tips. */
 extern uint256 g_best_block;
@@ -135,11 +131,6 @@ extern bool fRequireStandard;
 extern bool fCheckBlockIndex;
 extern bool fCheckpointsEnabled;
 
-/**
- * A fee rate smaller than this is considered zero fee (for relaying, mining and
- * transaction creation)
- */
-extern CFeeRate minRelayTxFee;
 /**
  * If the tip is older than this (in seconds), the node is considered to be in
  * initial block download.
@@ -830,7 +821,8 @@ public:
     /** Import blocks from an external file */
     void LoadExternalBlockFile(const Config &config, FILE *fileIn,
                                FlatFilePos *dbp = nullptr)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex);
+        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex,
+                                 !cs_avalancheFinalizedBlockIndex);
 
     /**
      * Update the on-disk chain state.
@@ -876,7 +868,9 @@ public:
      */
     bool ActivateBestChain(const Config &config, BlockValidationState &state,
                            std::shared_ptr<const CBlock> pblock = nullptr)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex) LOCKS_EXCLUDED(cs_main);
+        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex,
+                                 !cs_avalancheFinalizedBlockIndex)
+            LOCKS_EXCLUDED(cs_main);
 
     bool AcceptBlock(const Config &config,
                      const std::shared_ptr<const CBlock> &pblock,
@@ -908,30 +902,37 @@ public:
      */
     bool PreciousBlock(const Config &config, BlockValidationState &state,
                        CBlockIndex *pindex)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex) LOCKS_EXCLUDED(cs_main);
+        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex,
+                                 !cs_avalancheFinalizedBlockIndex)
+            LOCKS_EXCLUDED(cs_main);
     /** Mark a block as invalid. */
     bool InvalidateBlock(const Config &config, BlockValidationState &state,
                          CBlockIndex *pindex) LOCKS_EXCLUDED(cs_main)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex);
+        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex,
+                                 !cs_avalancheFinalizedBlockIndex);
     /** Park a block. */
     bool ParkBlock(const Config &config, BlockValidationState &state,
                    CBlockIndex *pindex) LOCKS_EXCLUDED(cs_main)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex);
+        EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex,
+                                 !cs_avalancheFinalizedBlockIndex);
 
     /**
      * Mark a block as finalized by avalanche.
      */
-    bool AvalancheFinalizeBlock(CBlockIndex *pindex);
+    bool AvalancheFinalizeBlock(CBlockIndex *pindex)
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_avalancheFinalizedBlockIndex);
 
     /**
      * Clear avalanche finalization.
      */
-    void ClearAvalancheFinalizedBlock();
+    void ClearAvalancheFinalizedBlock()
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_avalancheFinalizedBlockIndex);
 
     /**
      * Checks if a block is finalized by avalanche voting.
      */
-    bool IsBlockAvalancheFinalized(const CBlockIndex *pindex) const;
+    bool IsBlockAvalancheFinalized(const CBlockIndex *pindex) const
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_avalancheFinalizedBlockIndex);
 
     /** Remove invalidity status from a block and its descendants. */
     void ResetBlockFailureFlags(CBlockIndex *pindex)
@@ -1014,20 +1015,22 @@ private:
                                CBlockIndex *pindexMostWork,
                                const std::shared_ptr<const CBlock> &pblock,
                                bool &fInvalidFound, ConnectTrace &connectTrace)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main, m_mempool->cs);
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main, m_mempool->cs,
+                                 !cs_avalancheFinalizedBlockIndex);
     bool ConnectTip(const Config &config, BlockValidationState &state,
                     BlockPolicyValidationState &blockPolicyState,
                     CBlockIndex *pindexNew,
                     const std::shared_ptr<const CBlock> &pblock,
                     ConnectTrace &connectTrace,
                     DisconnectedBlockTransactions &disconnectpool)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main, m_mempool->cs);
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main, m_mempool->cs,
+                                 !cs_avalancheFinalizedBlockIndex);
     void InvalidBlockFound(CBlockIndex *pindex,
                            const BlockValidationState &state)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main, !cs_avalancheFinalizedBlockIndex);
     CBlockIndex *
     FindMostWorkChain(std::vector<const CBlockIndex *> &blocksToReconcile)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main, !cs_avalancheFinalizedBlockIndex);
     void ReceivedBlockTransactions(const CBlock &block, CBlockIndex *pindexNew,
                                    const FlatFilePos &pos)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
@@ -1040,13 +1043,14 @@ private:
 
     bool UnwindBlock(const Config &config, BlockValidationState &state,
                      CBlockIndex *pindex, bool invalidate)
-        EXCLUSIVE_LOCKS_REQUIRED(m_chainstate_mutex);
+        EXCLUSIVE_LOCKS_REQUIRED(m_chainstate_mutex,
+                                 !cs_avalancheFinalizedBlockIndex);
 
     void CheckForkWarningConditions() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     void CheckForkWarningConditionsOnNewFork(CBlockIndex *pindexNewForkTip)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     void InvalidChainFound(CBlockIndex *pindexNew)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main, !cs_avalancheFinalizedBlockIndex);
 
     const CBlockIndex *FindBlockToFinalize(CBlockIndex *pindexNew)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);

@@ -22,16 +22,21 @@ module.exports = {
             sliceSize,
         )}...${unprefixedAddress.slice(-sliceSize)}`;
     },
+    /**
+     * Get the price API url herald would use for specified config
+     * @param {object} config ecash-herald config object
+     * @returns {string} expected URL of price API call
+     */
+    getCoingeckoApiUrl: function (config) {
+        return `${config.priceApi.apiBase}?ids=${config.priceApi.cryptos
+            .map(crypto => crypto.coingeckoSlug)
+            .join(',')}&vs_currencies=${
+            config.priceApi.fiat
+        }&precision=${config.priceApi.precision.toString()}`;
+    },
     getCoingeckoPrices: async function (priceInfoObj) {
         const { apiBase, cryptos, fiat, precision } = priceInfoObj;
-        let tickerReference = {};
-        let coingeckoSlugs = [];
-        for (let i = 0; i < cryptos.length; i += 1) {
-            const thisCoingeckoSlug = cryptos[i].coingeckoSlug;
-            const thisTicker = cryptos[i].ticker;
-            coingeckoSlugs.push(thisCoingeckoSlug);
-            tickerReference[thisCoingeckoSlug] = thisTicker;
-        }
+        let coingeckoSlugs = cryptos.map(crypto => crypto.coingeckoSlug);
         let apiUrl = `${apiBase}?ids=${coingeckoSlugs.join(
             ',',
         )}&vs_currencies=${fiat}&precision=${precision.toString()}`;
@@ -56,7 +61,9 @@ module.exports = {
                     const thisPriceInfo = {
                         fiat,
                         price: data[thisCoingeckoSlug][fiat],
-                        ticker: tickerReference[thisCoingeckoSlug],
+                        ticker: cryptos.filter(
+                            el => el.coingeckoSlug === thisCoingeckoSlug,
+                        )[0].ticker,
                     };
                     if (thisPriceInfo.ticker === 'XEC') {
                         coingeckoPriceArray.unshift(thisPriceInfo);
@@ -77,6 +84,35 @@ module.exports = {
                 )} from ${apiUrl}`,
                 err,
             );
+        }
+        return false;
+    },
+    /**
+     * Get staker's peer name as set on https://ecash.coin.dance/avalanche
+     * Note these peerNames are available at api endpoint https://avalanche.cash/api/recentstakingpayouts/XEC
+     * @param {object} parsedBlock the object returned by the parseBlock function in parse.js
+     * @returns {string | boolean} peerName or false if it cannot be determined
+     */
+    getStakerPeerName: async function (parsedBlock) {
+        if (!parsedBlock.staker) {
+            // Don't look for peerName if no staker
+            return;
+        }
+        try {
+            const resp = await axios.get(config.stakerPeerApi);
+            const { data } = resp;
+            // Match blockheight of parsedBlock with results from recent staking winners
+            const thisBlockWinner = data.filter(
+                winner => winner.blockHeight === parsedBlock.height.toString(),
+            );
+            if (
+                thisBlockWinner.length === 1 &&
+                typeof thisBlockWinner[0].peerName !== 'undefined'
+            ) {
+                return thisBlockWinner[0].peerName;
+            }
+        } catch (err) {
+            console.log(`Error in getting staker peerName`, err);
         }
         return false;
     },

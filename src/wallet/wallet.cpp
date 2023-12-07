@@ -172,8 +172,8 @@ HandleLoadWallet(LoadWalletFn load_wallet) {
     });
 }
 
-static Mutex g_loading_wallet_mutex;
-static Mutex g_wallet_release_mutex;
+static GlobalMutex g_loading_wallet_mutex;
+static GlobalMutex g_wallet_release_mutex;
 static std::condition_variable g_wallet_release_cv;
 static std::set<std::string>
     g_loading_wallet_set GUARDED_BY(g_loading_wallet_mutex);
@@ -709,12 +709,12 @@ bool CWallet::EncryptWallet(const SecureString &strWalletPassphrase) {
     CKeyingMaterial _vMasterKey;
 
     _vMasterKey.resize(WALLET_CRYPTO_KEY_SIZE);
-    GetStrongRandBytes(&_vMasterKey[0], WALLET_CRYPTO_KEY_SIZE);
+    GetStrongRandBytes(_vMasterKey);
 
     CMasterKey kMasterKey;
 
     kMasterKey.vchSalt.resize(WALLET_CRYPTO_SALT_SIZE);
-    GetStrongRandBytes(&kMasterKey.vchSalt[0], WALLET_CRYPTO_SALT_SIZE);
+    GetStrongRandBytes(kMasterKey.vchSalt);
 
     CCrypter crypter;
     int64_t nStartTime = GetTimeMillis();

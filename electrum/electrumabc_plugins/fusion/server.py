@@ -841,7 +841,7 @@ class FusionController(threading.Thread, PrintError):
 
             sighashes = [
                 sha256(sha256(tx.serialize_preimage(i, 0x41, use_cache=True)))
-                for i in range(len(tx.inputs()))
+                for i in range(len(tx.txinputs()))
             ]
             pubkeys = [bytes.fromhex(inp["pubkeys"][0]) for inp in tx.inputs()]
 
@@ -894,8 +894,8 @@ class FusionController(threading.Thread, PrintError):
             if bad_inputs:
                 bad_components.update(input_indices[i] for i in bad_inputs)
             else:
-                for i, (inp, sig) in enumerate(zip(tx.inputs(), signatures)):
-                    inp["signatures"][0] = sig.hex() + "41"
+                for i, (inp, sig) in enumerate(zip(tx.txinputs(), signatures)):
+                    inp.update_signature(sig + b"\x41", 0)
 
                 assert tx.is_complete()
                 txid = tx.txid()
