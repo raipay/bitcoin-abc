@@ -660,6 +660,7 @@ add_library(server
 	pow/aserti32d.cpp
 	pow/daa.cpp
 	pow/eda.cpp
+	pow/ergon.cpp
 	pow/grasberg.cpp
 	pow/pow.cpp
 	rest.cpp

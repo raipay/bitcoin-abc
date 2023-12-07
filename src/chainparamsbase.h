@@ -21,6 +21,7 @@ public:
     static const std::string MAIN;
     static const std::string TESTNET;
     static const std::string REGTEST;
+    static const std::string ERGON;
 
     const std::string &DataDir() const { return strDataDir; }
     uint16_t RPCPort() const { return m_rpc_port; }

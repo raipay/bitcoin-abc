@@ -178,14 +178,16 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     m_last_block_num_txs = nBlockTx;
     m_last_block_size = nBlockSize;
 
+    pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, chainParams);
+
     // Create coinbase transaction.
     CMutableTransaction coinbaseTx;
     coinbaseTx.vin.resize(1);
     coinbaseTx.vin[0].prevout = COutPoint();
     coinbaseTx.vout.resize(1);
     coinbaseTx.vout[0].scriptPubKey = scriptPubKeyIn;
-    coinbaseTx.vout[0].nValue =
-        nFees + GetBlockSubsidy(nHeight, consensusParams);
+    coinbaseTx.vout[0].nValue = GetBlockReward(pindexPrev, pblock->nBits,
+                                               nHeight, consensusParams, nFees);
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
 
     const Amount blockReward = coinbaseTx.vout[0].nValue;
@@ -229,7 +231,6 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     // Fill in header.
     pblock->hashPrevBlock = pindexPrev->GetBlockHash();
     UpdateTime(pblock, chainParams, pindexPrev);
-    pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, chainParams);
     pblock->nNonce = 0;
     pblocktemplate->entries[0].sigChecks = 0;
 

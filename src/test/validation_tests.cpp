@@ -37,13 +37,14 @@ static void TestBlockSubsidyHalvings(const Consensus::Params &consensusParams) {
     BOOST_CHECK_EQUAL(nPreviousSubsidy, 2 * nInitialSubsidy);
     for (int nHalvings = 0; nHalvings < maxHalvings; nHalvings++) {
         int nHeight = nHalvings * consensusParams.nSubsidyHalvingInterval;
-        Amount nSubsidy = GetBlockSubsidy(nHeight, consensusParams);
+        Amount nSubsidy = GetBlockSubsidy(nullptr, 0, nHeight, consensusParams);
         BOOST_CHECK(nSubsidy <= nInitialSubsidy);
         BOOST_CHECK_EQUAL(nSubsidy, nPreviousSubsidy / 2);
         nPreviousSubsidy = nSubsidy;
     }
     BOOST_CHECK_EQUAL(
-        GetBlockSubsidy(maxHalvings * consensusParams.nSubsidyHalvingInterval,
+        GetBlockSubsidy(nullptr, 0,
+                        maxHalvings * consensusParams.nSubsidyHalvingInterval,
                         consensusParams),
         Amount::zero());
 }
@@ -51,6 +52,7 @@ static void TestBlockSubsidyHalvings(const Consensus::Params &consensusParams) {
 static void TestBlockSubsidyHalvings(int nSubsidyHalvingInterval) {
     Consensus::Params consensusParams;
     consensusParams.nSubsidyHalvingInterval = nSubsidyHalvingInterval;
+    consensusParams.enableProportionalReward = false;
     TestBlockSubsidyHalvings(consensusParams);
 }
 
@@ -68,7 +70,8 @@ BOOST_AUTO_TEST_CASE(subsidy_limit_test) {
     const auto chainParams = CreateChainParams(CBaseChainParams::MAIN);
     Amount nSum = Amount::zero();
     for (int nHeight = 0; nHeight < 14000000; nHeight += 1000) {
-        Amount nSubsidy = GetBlockSubsidy(nHeight, chainParams->GetConsensus());
+        Amount nSubsidy =
+            GetBlockSubsidy(nullptr, 0, nHeight, chainParams->GetConsensus());
         BOOST_CHECK(nSubsidy <= 50 * COIN);
         nSum += 1000 * nSubsidy;
         BOOST_CHECK(MoneyRange(nSum));

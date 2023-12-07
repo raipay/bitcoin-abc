@@ -194,7 +194,11 @@ void StartScriptCheckWorkerThreads(int threads_num);
  */
 void StopScriptCheckWorkerThreads();
 
-Amount GetBlockSubsidy(int nHeight, const Consensus::Params &consensusParams);
+Amount GetBlockSubsidy(CBlockIndex *pindexPrev, uint32_t nBits, int nHeight,
+                       const Consensus::Params &consensusParams);
+
+Amount GetBlockReward(CBlockIndex *pindexPrev, uint32_t nBits, int nHeight,
+                      const Consensus::Params &consensusParams, Amount nFees);
 
 bool AbortNode(BlockValidationState &state, const std::string &strMessage,
                const bilingual_str &userMessage = bilingual_str{});

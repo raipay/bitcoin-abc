@@ -10,6 +10,7 @@ argument:
 
     nodes_main.txt
     nodes_test.txt
+    nodes_ergon.txt
 
 These files must consist of lines in the format
 
@@ -140,6 +141,8 @@ def main():
     g.write('\n')
     with open(os.path.join(indir, 'nodes_test.txt'), 'r', encoding="utf8") as f:
         process_nodes(g, f, 'pnSeed6_test', 18333)
+    with open(os.path.join(indir, 'nodes_ergon.txt'), 'r', encoding="utf8") as f:
+        process_nodes(g, f, 'pnSeed6_ergon', 2137)
     g.write('#endif // BITCOIN_CHAINPARAMSSEEDS_H\n')
 
 

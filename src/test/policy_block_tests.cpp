@@ -58,7 +58,7 @@ BOOST_AUTO_TEST_CASE(policy_minerfund) {
     CBlockIndex &lastBlockIndexRef = blocks.back();
 
     const Amount blockReward =
-        GetBlockSubsidy(lastBlockIndexRef.nHeight, consensusParams);
+        GetBlockSubsidy(nullptr, 0, lastBlockIndexRef.nHeight, consensusParams);
 
     auto checkMinerFundPolicy = [&](CBlock block, const CBlockIndex &blockIndex,
                                     bool expected) {

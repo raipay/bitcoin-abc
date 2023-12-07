@@ -52,7 +52,7 @@ bool AppInitBasicSetup(const ArgsManager &args);
  * @pre Parameters should be parsed and config file should be read,
  * AppInitBasicSetup should have been called.
  */
-bool AppInitParameterInteraction(Config &config, const ArgsManager &args);
+bool AppInitParameterInteraction(Config &config, ArgsManager &args);
 /**
  * Initialization sanity checks: ecc init, sanity checks, dir lock.
  * @note This can be done before daemonization.

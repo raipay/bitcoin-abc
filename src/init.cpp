@@ -418,11 +418,13 @@ void SetupServerArgs(NodeContext &node) {
         CreateBaseChainParams(CBaseChainParams::TESTNET);
     const auto regtestBaseParams =
         CreateBaseChainParams(CBaseChainParams::REGTEST);
+    const auto ergonBaseParams = CreateBaseChainParams(CBaseChainParams::ERGON);
     const auto defaultChainParams = CreateChainParams(CBaseChainParams::MAIN);
     const auto testnetChainParams =
         CreateChainParams(CBaseChainParams::TESTNET);
     const auto regtestChainParams =
         CreateChainParams(CBaseChainParams::REGTEST);
+    const auto ergonChainParams = CreateChainParams(CBaseChainParams::ERGON);
 
     // Hidden Options
     std::vector<std::string> hidden_args = {
@@ -445,6 +447,7 @@ void SetupServerArgs(NodeContext &node) {
         "-uiplatform",
         // TODO remove after the May. 2024 upgrade
         "-leekuanyewactivationtime",
+        "-ergonemaactivationtime",
     };
 
     // Set all of the args and their help
@@ -638,10 +641,10 @@ void SetupServerArgs(NodeContext &node) {
             "HTTP/Protobuf connections to access the index. Unlike the "
             "JSON-RPC, it's ok to have this publicly exposed on the internet. "
             "This option can be specified multiple times (default: %s; default "
-            "port: %u, testnet: %u, regtest: %u)",
+            "port: %u, testnet: %u, regtest: %u, ergon: %u)",
             Join(chronik::DEFAULT_BINDS, ", "),
             defaultBaseParams->ChronikPort(), testnetBaseParams->ChronikPort(),
-            regtestBaseParams->ChronikPort()),
+            regtestBaseParams->ChronikPort(), ergonBaseParams->ChronikPort()),
         ArgsManager::ALLOW_STRING | ArgsManager::NETWORK_ONLY,
         OptionsCategory::CHRONIK);
     argsman.AddArg("-chronikreindex",
@@ -690,10 +693,12 @@ void SetupServerArgs(NodeContext &node) {
                   "0.0.0.0). Use [host]:port notation for IPv6. Append =onion "
                   "to tag any incoming connections to that address and port as "
                   "incoming Tor connections (default: 127.0.0.1:%u=onion, "
-                  "testnet: 127.0.0.1:%u=onion, regtest: 127.0.0.1:%u=onion)",
+                  "testnet: 127.0.0.1:%u=onion, regtest: 127.0.0.1:%u=onion, "
+                  "ergon: 127.0.0.1:%u=onion)",
                   defaultBaseParams->OnionServiceTargetPort(),
                   testnetBaseParams->OnionServiceTargetPort(),
-                  regtestBaseParams->OnionServiceTargetPort()),
+                  regtestBaseParams->OnionServiceTargetPort(),
+                  ergonBaseParams->OnionServiceTargetPort()),
         ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
         OptionsCategory::CONNECTION);
     argsman.AddArg(
@@ -1127,8 +1132,10 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg(
         "-minrelaytxfee=<amt>",
         strprintf("Fees (in %s/kB) smaller than this are rejected for "
-                  "relaying, mining and transaction creation (default: %s)",
-                  ticker, FormatMoney(DEFAULT_MIN_RELAY_TX_FEE_PER_KB)),
+                  "relaying, mining and transaction creation (default: %s, "
+                  "ergon: %s)",
+                  ticker, FormatMoney(DEFAULT_MIN_RELAY_TX_FEE_PER_KB),
+                  FormatMoney(ERGON_DEFAULT_MIN_RELAY_TX_FEE_PER_KB)),
         ArgsManager::ALLOW_ANY, OptionsCategory::NODE_RELAY);
     argsman.AddArg(
         "-whitelistrelay",
@@ -1154,8 +1161,9 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg(
         "-blockmintxfee=<amt>",
         strprintf("Set lowest fee rate (in %s/kB) for transactions to "
-                  "be included in block creation. (default: %s)",
-                  ticker, FormatMoney(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB)),
+                  "be included in block creation. (default: %s, ergon: %s)",
+                  ticker, FormatMoney(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB),
+                  FormatMoney(ERGON_DEFAULT_BLOCK_MIN_TX_FEE_PER_KB)),
         ArgsManager::ALLOW_ANY, OptionsCategory::BLOCK_CREATION);
 
     argsman.AddArg("-blockversion=<n>",
@@ -1216,14 +1224,14 @@ void SetupServerArgs(NodeContext &node) {
         "connects normally using the rpcuser=<USERNAME>/rpcpassword=<PASSWORD> "
         "pair of arguments. This option can be specified multiple times",
         ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::RPC);
-    argsman.AddArg("-rpcport=<port>",
-                   strprintf("Listen for JSON-RPC connections on <port> "
-                             "(default: %u, testnet: %u, regtest: %u)",
-                             defaultBaseParams->RPCPort(),
-                             testnetBaseParams->RPCPort(),
-                             regtestBaseParams->RPCPort()),
-                   ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
-                   OptionsCategory::RPC);
+    argsman.AddArg(
+        "-rpcport=<port>",
+        strprintf("Listen for JSON-RPC connections on <port> (default: %u, "
+                  "testnet: %u, regtest: %u, ergon: %u)",
+                  defaultBaseParams->RPCPort(), testnetBaseParams->RPCPort(),
+                  regtestBaseParams->RPCPort(), ergonBaseParams->RPCPort()),
+        ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
+        OptionsCategory::RPC);
     argsman.AddArg(
         "-rpcallowip=<ip>",
         "Allow JSON-RPC connections from specified source. Valid for "
@@ -1676,7 +1684,7 @@ bool AppInitBasicSetup(const ArgsManager &args) {
     return true;
 }
 
-bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
+bool AppInitParameterInteraction(Config &config, ArgsManager &args) {
     const CChainParams &chainparams = config.GetChainParams();
     // Step 2: parameter interactions
 
@@ -1927,6 +1935,16 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
             return InitError(AmountErrMsg("blockmintxfee",
                                           args.GetArg("-blockmintxfee", "")));
         }
+    }
+
+    // Override defaults on Ergon
+    if (network == CBaseChainParams::ERGON) {
+        args.SoftSetArg("-blockmintxfee",
+                        FormatMoney(ERGON_DEFAULT_BLOCK_MIN_TX_FEE_PER_KB));
+        args.SoftSetArg("-minrelaytxfee",
+                        FormatMoney(ERGON_DEFAULT_MIN_RELAY_TX_FEE_PER_KB));
+        args.SoftSetArg("-dustrelayfee", FormatMoney(ERGON_DUST_RELAY_TX_FEE));
+        args.SoftSetBoolArg("-avalanche", false);
     }
 
     // Feerate used to define dust.  Shouldn't be changed lightly as old

@@ -22,7 +22,7 @@ namespace {
 
 std::vector<std::string> GetNetworks() {
     return {CBaseChainParams::MAIN, CBaseChainParams::TESTNET,
-            CBaseChainParams::REGTEST};
+            CBaseChainParams::REGTEST, CBaseChainParams::ERGON};
 }
 
 std::vector<uint8_t> insecure_GetRandomByteArray(FastRandomContext &rand,
