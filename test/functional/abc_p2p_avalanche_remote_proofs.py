@@ -41,6 +41,7 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
                 "-avaminavaproofsnodecount=0",
                 "-avacooldown=0",
                 "-whitelist=noban@127.0.0.1",
+                "-persistavapeers=0",
             ]
         ] * self.num_nodes
 
@@ -105,7 +106,7 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
 
         outbound.peer_disconnect()
         outbound.wait_for_disconnect()
-        assert_remote_proofs(outbound.nodeid, [])
+        self.wait_until(lambda: check_remote_proofs(node, outbound.nodeid, [])[0] == [])
 
         self.log.info("Check the compact proofs update the remote proofs status")
 

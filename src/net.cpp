@@ -123,7 +123,7 @@ static const uint64_t RANDOMIZER_ID_ADDRCACHE = 0x1cf2e4ddd306dda9ULL;
 //
 bool fDiscover = true;
 bool fListen = true;
-Mutex g_maplocalhost_mutex;
+GlobalMutex g_maplocalhost_mutex;
 std::map<CNetAddr, LocalServiceInfo>
     mapLocalHost GUARDED_BY(g_maplocalhost_mutex);
 static bool vfLimited[NET_MAX] GUARDED_BY(g_maplocalhost_mutex) = {};
@@ -684,8 +684,7 @@ bool CNode::ReceiveMsgBytes(const Config &config, Span<const uint8_t> msg_bytes,
 
             // Store received bytes per message command to prevent a memory DOS,
             // only allow valid commands.
-            mapMsgCmdSize::iterator i =
-                mapRecvBytesPerMsgCmd.find(msg.m_command);
+            mapMsgCmdSize::iterator i = mapRecvBytesPerMsgCmd.find(msg.m_type);
             if (i == mapRecvBytesPerMsgCmd.end()) {
                 i = mapRecvBytesPerMsgCmd.find(NET_MESSAGE_COMMAND_OTHER);
             }
@@ -778,7 +777,7 @@ V1TransportDeserializer::GetMessage(const Config &config,
     uint256 hash = GetMessageHash();
 
     // store command string, payload size
-    msg.m_command = hdr.GetCommand();
+    msg.m_type = hdr.GetCommand();
     msg.m_message_size = hdr.nMessageSize;
     msg.m_raw_message_size = hdr.nMessageSize + CMessageHeader::HEADER_SIZE;
 
@@ -790,12 +789,11 @@ V1TransportDeserializer::GetMessage(const Config &config,
                                    CMessageHeader::CHECKSUM_SIZE) == 0);
 
     if (!msg.m_valid_checksum) {
-        LogPrint(
-            BCLog::NET, "CHECKSUM ERROR (%s, %u bytes), expected %s was %s\n",
-            SanitizeString(msg.m_command), msg.m_message_size,
-            HexStr(Span<uint8_t>(hash.begin(),
-                                 hash.begin() + CMessageHeader::CHECKSUM_SIZE)),
-            HexStr(hdr.pchChecksum));
+        LogPrint(BCLog::NET,
+                 "CHECKSUM ERROR (%s, %u bytes), expected %s was %s\n",
+                 SanitizeString(msg.m_type), msg.m_message_size,
+                 HexStr(Span{hash}.first(CMessageHeader::CHECKSUM_SIZE)),
+                 HexStr(hdr.pchChecksum));
     }
 
     // store receive time
@@ -1823,8 +1821,8 @@ void CConnman::SocketHandler() {
             }
             if (nBytes > 0) {
                 bool notify = false;
-                if (!pnode->ReceiveMsgBytes(
-                        *config, Span<const uint8_t>(pchBuf, nBytes), notify)) {
+                if (!pnode->ReceiveMsgBytes(*config, {pchBuf, (size_t)nBytes},
+                                            notify)) {
                     pnode->CloseSocketDisconnect();
                 }
                 RecordBytesRecv(nBytes);
@@ -2144,9 +2142,9 @@ void CConnman::ThreadOpenConnections(
     auto start = GetTime<std::chrono::microseconds>();
 
     // Minimum time before next feeler connection (in microseconds).
-    auto next_feeler = PoissonNextSend(start, FEELER_INTERVAL);
+    auto next_feeler = GetExponentialRand(start, FEELER_INTERVAL);
     auto next_extra_block_relay =
-        PoissonNextSend(start, EXTRA_BLOCK_RELAY_ONLY_PEER_INTERVAL);
+        GetExponentialRand(start, EXTRA_BLOCK_RELAY_ONLY_PEER_INTERVAL);
     const bool dnsseed = gArgs.GetBoolArg("-dnsseed", DEFAULT_DNSSEED);
     bool add_fixed_seeds = gArgs.GetBoolArg("-fixedseeds", DEFAULT_FIXEDSEEDS);
 
@@ -2294,8 +2292,8 @@ void CConnman::ThreadOpenConnections(
             //
             // This is similar to the logic for trying extra outbound
             // (full-relay) peers, except:
-            // - we do this all the time on a poisson timer, rather than just
-            //   when our tip is stale
+            // - we do this all the time on an exponential timer, rather than
+            //   just  when our tip is stale
             // - we potentially disconnect our next-youngest block-relay-only
             //   peer, if our newest block-relay-only peer delivers a block more
             //   recently.
@@ -2305,10 +2303,10 @@ void CConnman::ThreadOpenConnections(
             // connections, they do not get their own ConnectionType enum
             // (similar to how we deal with extra outbound peers).
             next_extra_block_relay =
-                PoissonNextSend(now, EXTRA_BLOCK_RELAY_ONLY_PEER_INTERVAL);
+                GetExponentialRand(now, EXTRA_BLOCK_RELAY_ONLY_PEER_INTERVAL);
             conn_type = ConnectionType::BLOCK_RELAY;
         } else if (now > next_feeler) {
-            next_feeler = PoissonNextSend(now, FEELER_INTERVAL);
+            next_feeler = GetExponentialRand(now, FEELER_INTERVAL);
             conn_type = ConnectionType::FEELER;
             fFeeler = true;
         } else {
@@ -2438,7 +2436,7 @@ void CConnman::ThreadOpenConnections(
             if (fFeeler) {
                 // Add small amount of random noise before connection to avoid
                 // synchronization.
-                int randsleep = GetRandInt(FEELER_SLEEP_WINDOW * 1000);
+                int randsleep = GetRand<int>(FEELER_SLEEP_WINDOW * 1000);
                 if (!interruptNet.sleep_for(
                         std::chrono::milliseconds(randsleep))) {
                     return;
@@ -3549,28 +3547,6 @@ bool CConnman::ForNode(NodeId id, std::function<bool(CNode *pnode)> func) {
         }
     }
     return found != nullptr && NodeFullyConnected(found) && func(found);
-}
-
-std::chrono::microseconds
-CConnman::PoissonNextSendInbound(std::chrono::microseconds now,
-                                 std::chrono::seconds average_interval) {
-    if (m_next_send_inv_to_incoming.load() < now) {
-        // If this function were called from multiple threads simultaneously
-        // it would be possible that both update the next send variable, and
-        // return a different result to their caller. This is not possible in
-        // practice as only the net processing thread invokes this function.
-        m_next_send_inv_to_incoming = PoissonNextSend(now, average_interval);
-    }
-    return m_next_send_inv_to_incoming;
-}
-
-std::chrono::microseconds
-PoissonNextSend(std::chrono::microseconds now,
-                std::chrono::seconds average_interval) {
-    double unscaled = -log1p(GetRand(1ULL << 48) *
-                             -0.0000000000000035527136788 /* -1/2^48 */);
-    return now + std::chrono::duration_cast<std::chrono::microseconds>(
-                     unscaled * average_interval + 0.5us);
 }
 
 CSipHasher CConnman::GetDeterministicRandomizer(uint64_t id) const {

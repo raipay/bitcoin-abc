@@ -70,6 +70,146 @@ def proof_to_rich_text(proof: Proof) -> str:
     return rich_text + colored_text(proof.signature.hex(), TextColor.BAD_SIG)
 
 
+class StakesWidget(QtWidgets.QTableWidget):
+    """A table widget to display basic info about UTXOs, color coded to highlight
+    immature stakes or stakes below the dust threshold.
+    """
+
+    total_amount_changed = QtCore.pyqtSignal("quint64")
+    """Emit total stake amount in sats."""
+
+    def __init__(self, blockchain__height: int):
+        super().__init__()
+        self.setColumnCount(5)
+        self.setHorizontalHeaderLabels(
+            ["txid", "vout", "amount (XEC)", "block height", ""]
+        )
+        self.verticalHeader().setVisible(False)
+        self.setSelectionMode(QtWidgets.QTableWidget.NoSelection)
+        # This is a simple global way to make the table read-only, without having to
+        # set flags on each individual item.
+        self.setEditTriggers(QtWidgets.QTableWidget.NoEditTriggers)
+        self.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        self.setColumnWidth(4, 50)
+
+        # select whole rows, with Ctrl and Shift key for selecting multiple rows
+        self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.create_menu)
+
+        self.stakes: List[Union[SignedStake, StakeAndKey]] = []
+
+        # We assume that the tip height is not going to change much during the lifetime
+        # of this widget, so we don't have to watch for new blocks and update the
+        # maturity statuses.
+        self.blockchain_height = blockchain__height
+
+        self._red_cross_icon = QtGui.QIcon(":icons/red_cross.svg")
+
+    def create_menu(self, position):
+        menu = QtWidgets.QMenu()
+        selected_rows = [index.row() for index in self.selectionModel().selectedRows()]
+        if not selected_rows:
+            return
+
+        # Sort in descending order so we can simply delete the stakes one by one
+        # by index from the self.stakes list
+        selected_rows.sort(reverse=True)
+
+        def remove_coins():
+            ret = QtWidgets.QMessageBox.question(
+                self,
+                _("Confirm coin deletion"),
+                _("Are you sure you want to remove {} coins").format(
+                    len(selected_rows)
+                ),
+            )
+            if ret != QtWidgets.QMessageBox.Yes:
+                return
+            for idx in selected_rows:
+                self.remove_stake_by_row_index(idx)
+
+        menu.addAction(
+            _("Remove coins"),
+            remove_coins,
+        )
+        menu.exec_(self.viewport().mapToGlobal(position))
+
+    def delete_this_line(self):
+        # This method must be triggered by a signal emitted by a widget in a cell
+        # of this table.
+        row = self.indexAt(self.sender().pos()).row()
+        self.remove_stake_by_row_index(row)
+
+    def remove_stake_by_row_index(self, row_index: int):
+        self.removeRow(row_index)
+        del self.stakes[row_index]
+        self.update_total_amount()
+
+    def update_total_amount(self):
+        total_amount_sats = 0
+        for s in self.stakes:
+            total_amount_sats += s.stake.amount
+        self.total_amount_changed.emit(total_amount_sats)
+
+    def clear(self):
+        self.stakes.clear()
+        self.clearContents()
+
+    def add_stakes(self, stakes: List[Union[SignedStake, StakeAndKey]]):
+        previous_utxo_count = len(self.stakes)
+        self.stakes += stakes
+        self.setRowCount(len(self.stakes))
+
+        for i, ss in enumerate(stakes):
+            stake = ss.stake
+            height = stake.height
+
+            row_index = previous_utxo_count + i
+            txid_item = QtWidgets.QTableWidgetItem(stake.utxo.txid.get_hex())
+            self.setItem(row_index, 0, txid_item)
+
+            vout_item = QtWidgets.QTableWidgetItem(str(stake.utxo.n))
+            self.setItem(row_index, 1, vout_item)
+
+            amount_item = QtWidgets.QTableWidgetItem(
+                format_satoshis(stake.amount, num_zeros=2)
+            )
+            amount_item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            if stake.amount < PROOF_DUST_THRESHOLD:
+                amount_item.setForeground(QtGui.QColor("red"))
+                amount_item.setToolTip(
+                    _(
+                        "The minimum threshold for a coin in an avalanche proof is "
+                        f"{format_satoshis(PROOF_DUST_THRESHOLD)} XEC."
+                    )
+                )
+            self.setItem(row_index, 2, amount_item)
+
+            height_item = QtWidgets.QTableWidgetItem(str(height))
+            utxo_validity_height = height + STAKE_UTXO_CONFIRMATIONS
+            if utxo_validity_height > self.blockchain_height:
+                height_item.setForeground(QtGui.QColor("orange"))
+                height_item.setToolTip(
+                    _(
+                        f"UTXOs with less than {STAKE_UTXO_CONFIRMATIONS} "
+                        "confirmations cannot be used as stake proofs."
+                    )
+                    + f"\nCurrent known block height is {self.blockchain_height}.\n"
+                    f"Your proof will be valid after block {utxo_validity_height}."
+                )
+            self.setItem(row_index, 3, height_item)
+
+            del_button = QtWidgets.QPushButton()
+            del_button.setIcon(self._red_cross_icon)
+            del_button.clicked.connect(self.delete_this_line)
+            self.setCellWidget(row_index, 4, del_button)
+
+        self.update_total_amount()
+
+
 class AvaProofEditor(CachedWalletPasswordWidget):
     def __init__(
         self,
@@ -83,7 +223,6 @@ class AvaProofEditor(CachedWalletPasswordWidget):
         # Enough height to show the entire proof without scrolling.
         self.setMinimumHeight(680)
 
-        self.stakes: List[Union[SignedStake, StakeAndKey]] = []
         self.receive_address = receive_address
 
         self.wallet = wallet
@@ -161,19 +300,7 @@ class AvaProofEditor(CachedWalletPasswordWidget):
         layout.addWidget(self.payout_addr_edit)
         layout.addSpacing(10)
 
-        self.utxos_wigdet = QtWidgets.QTableWidget()
-        self.utxos_wigdet.setColumnCount(4)
-        self.utxos_wigdet.setHorizontalHeaderLabels(
-            ["txid", "vout", "amount (XEC)", "block height"]
-        )
-        self.utxos_wigdet.verticalHeader().setVisible(False)
-        self.utxos_wigdet.setSelectionMode(QtWidgets.QTableWidget.NoSelection)
-        # This is a simple global way to make the table read-only, without having to
-        # set flags on each individual item.
-        self.utxos_wigdet.setEditTriggers(QtWidgets.QTableWidget.NoEditTriggers)
-        self.utxos_wigdet.horizontalHeader().setSectionResizeMode(
-            0, QtWidgets.QHeaderView.Stretch
-        )
+        self.utxos_wigdet = StakesWidget(self.wallet.get_local_height())
         layout.addWidget(self.utxos_wigdet)
 
         self.total_amount_label = QtWidgets.QLabel("Total amount:")
@@ -249,15 +376,16 @@ class AvaProofEditor(CachedWalletPasswordWidget):
         self.generate_dg_button.clicked.connect(self.open_dg_dialog)
         self.load_proof_button.clicked.connect(self.on_load_proof_clicked)
         self.save_proof_button.clicked.connect(self.on_save_proof_clicked)
+        self.utxos_wigdet.total_amount_changed.connect(self.on_stake_amount_changed)
 
         # Init widgets
         self.dg_dialog = None
-        self.init_data()
+        # Suggest a private key to the user. He can change it if he wants.
+        self.master_key_suggestion: str = self._get_privkey_suggestion()
+        self.init_widgets()
 
-    def init_data(self):
+    def init_widgets(self):
         # Clear internal state
-        self.stakes.clear()
-
         self.sequence_sb.setValue(0)
 
         # Set a default expiration date
@@ -266,18 +394,21 @@ class AvaProofEditor(CachedWalletPasswordWidget):
         self.calendar.setDateTime(now.addYears(3))
 
         self.master_pubkey_view.setText("")
-        # Suggest a private key to the user. He can change it if he wants.
-        master_key_suggestion = self._get_privkey_suggestion()
-        self.master_key_edit.setText(master_key_suggestion)
+        self.master_key_edit.setText(self.master_key_suggestion)
 
         if self.receive_address is not None:
             self.payout_addr_edit.setText(self.receive_address.to_ui_string())
 
-        self.utxos_wigdet.clearContents()
+        self.utxos_wigdet.clear()
         self.total_amount_label.setText("Total amount:")
         self.proof_display.setText("")
         self.master_sig_status_label.clear()
         self.stake_sigs_status_label.clear()
+
+    def on_stake_amount_changed(self, amount: int):
+        self.total_amount_label.setText(
+            f"Total amount: <b>{format_satoshis(amount)} XEC</b>"
+        )
 
     def add_utxos(self, utxos: List[dict]):
         """Add UTXOs from a list of dict objects, such as stored internally by
@@ -345,59 +476,7 @@ class AvaProofEditor(CachedWalletPasswordWidget):
                 "unconfirmed or do not have a block height specified.",
             )
 
-        self.add_stakes(stakes)
-
-    def add_stakes(self, stakes: List[Union[SignedStake, StakeAndKey]]):
-        previous_utxo_count = len(self.stakes)
-        self.stakes += stakes
-        self.utxos_wigdet.setRowCount(len(self.stakes))
-
-        tip = self.wallet.get_local_height()
-        for i, ss in enumerate(stakes):
-            stake = ss.stake
-            height = stake.height
-
-            row_index = previous_utxo_count + i
-            txid_item = QtWidgets.QTableWidgetItem(stake.utxo.txid.get_hex())
-            self.utxos_wigdet.setItem(row_index, 0, txid_item)
-
-            vout_item = QtWidgets.QTableWidgetItem(str(stake.utxo.n))
-            self.utxos_wigdet.setItem(row_index, 1, vout_item)
-
-            amount_item = QtWidgets.QTableWidgetItem(
-                format_satoshis(stake.amount, num_zeros=2)
-            )
-            amount_item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-            if stake.amount < PROOF_DUST_THRESHOLD:
-                amount_item.setForeground(QtGui.QColor("red"))
-                amount_item.setToolTip(
-                    _(
-                        "The minimum threshold for a coin in an avalanche proof is "
-                        f"{format_satoshis(PROOF_DUST_THRESHOLD)} XEC."
-                    )
-                )
-            self.utxos_wigdet.setItem(row_index, 2, amount_item)
-
-            height_item = QtWidgets.QTableWidgetItem(str(height))
-            utxo_validity_height = height + STAKE_UTXO_CONFIRMATIONS
-            if utxo_validity_height > tip:
-                height_item.setForeground(QtGui.QColor("orange"))
-                height_item.setToolTip(
-                    _(
-                        f"UTXOs with less than {STAKE_UTXO_CONFIRMATIONS} "
-                        "confirmations cannot be used as stake proofs."
-                    )
-                    + f"\nCurrent known block height is {tip}.\nYour proof will be "
-                    f"valid after block {utxo_validity_height}."
-                )
-            self.utxos_wigdet.setItem(row_index, 3, height_item)
-
-        total_amount_sats = 0
-        for s in self.stakes:
-            total_amount_sats += s.stake.amount
-        self.total_amount_label.setText(
-            f"Total amount: <b>{format_satoshis(total_amount_sats)} XEC</b>"
-        )
+        self.utxos_wigdet.add_stakes(stakes)
 
     def _get_privkey_suggestion(self) -> str:
         """Get a private key to pre-fill the master key field.
@@ -414,11 +493,23 @@ class AvaProofEditor(CachedWalletPasswordWidget):
             wif_pk = get_auxiliary_privkey(
                 self.wallet, key_index=auxiliary_key_index, pwd=self.pwd
             )
-            self.wallet.storage.put(
-                StorageKeys.AUXILIARY_KEY_INDEX,
-                min(auxiliary_key_index + 1, MAXIMUM_INDEX_DERIVATION_PATH),
-            )
         return wif_pk
+
+    def maybe_increment_auxkey_index(self):
+        """Increment the index if the suggested key was used to sign the proof,
+        to discourage key reuse by suggesting another key the next time."""
+        if (
+            not self.master_key_suggestion
+            or self.master_key_edit.text() != self.master_key_suggestion
+        ):
+            return
+        self.wallet.storage.put(
+            StorageKeys.AUXILIARY_KEY_INDEX,
+            min(
+                self.wallet.storage.get(StorageKeys.AUXILIARY_KEY_INDEX) + 1,
+                MAXIMUM_INDEX_DERIVATION_PATH,
+            ),
+        )
 
     def on_expiration_cb_toggled(self, is_checked: bool):
         self.timestamp_widget.setEnabled(is_checked)
@@ -476,7 +567,7 @@ class AvaProofEditor(CachedWalletPasswordWidget):
             proof_hex = f.read()
 
         # TODO: catch possible decoding, format, hex ... errors
-        self.add_stakes(Proof.from_hex(proof_hex).signed_stakes)
+        self.utxos_wigdet.add_stakes(Proof.from_hex(proof_hex).signed_stakes)
 
         self._on_generate_clicked()
 
@@ -559,7 +650,7 @@ class AvaProofEditor(CachedWalletPasswordWidget):
         else:
             known_privkey = self.find_auxiliary_privkey_from_pubkey(proof.master_pub)
 
-        self.init_data()
+        self.init_widgets()
 
         self.sequence_sb.setValue(proof.sequence)
         if proof.expiration_time <= 0:
@@ -584,7 +675,7 @@ class AvaProofEditor(CachedWalletPasswordWidget):
         # note: this will work even if the "addr" is not an address (PublicKey or
         # ScriptOutput), but the proof generation currently only supports addresses
         self.payout_addr_edit.setText(addr.to_ui_string())
-        self.add_stakes(proof.signed_stakes)
+        self.utxos_wigdet.add_stakes(proof.signed_stakes)
 
         self.displayProof(proof)
 
@@ -621,6 +712,8 @@ class AvaProofEditor(CachedWalletPasswordWidget):
         proof = self._build()
         if proof is not None:
             self.displayProof(proof)
+            if proof.is_signed():
+                self.maybe_increment_auxkey_index()
         self.generate_dg_button.setEnabled(proof is not None)
         self.save_proof_button.setEnabled(proof is not None)
 
@@ -634,7 +727,7 @@ class AvaProofEditor(CachedWalletPasswordWidget):
                     self,
                     "No valid master key",
                     "You need to specify either a master private key or a master "
-                    "public key before generate a proof.",
+                    "public key before generating a proof.",
                 )
                 return
             QtWidgets.QMessageBox.warning(
@@ -673,7 +766,7 @@ class AvaProofEditor(CachedWalletPasswordWidget):
             master_pub=master_pub,
         )
 
-        for ss in self.stakes:
+        for ss in self.utxos_wigdet.stakes:
             if isinstance(ss, StakeAndKey):
                 proofbuilder.sign_and_add_stake(ss.stake, ss.key)
             else:

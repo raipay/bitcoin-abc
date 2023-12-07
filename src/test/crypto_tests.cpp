@@ -35,7 +35,9 @@ static void TestVector(const Hasher &h, const In &in, const Out &out) {
     hash.resize(out.size());
     {
         // Test that writing the whole input string at once works.
-        Hasher(h).Write((uint8_t *)&in[0], in.size()).Finalize(&hash[0]);
+        Hasher(h)
+            .Write((const uint8_t *)in.data(), in.size())
+            .Finalize(hash.data());
         BOOST_CHECK(hash == out);
     }
     for (int i = 0; i < 32; i++) {
@@ -44,19 +46,19 @@ static void TestVector(const Hasher &h, const In &in, const Out &out) {
         size_t pos = 0;
         while (pos < in.size()) {
             size_t len = InsecureRandRange((in.size() - pos + 1) / 2 + 1);
-            hasher.Write((uint8_t *)&in[pos], len);
+            hasher.Write((const uint8_t *)in.data() + pos, len);
             pos += len;
             if (pos > 0 && pos + 2 * out.size() > in.size() &&
                 pos < in.size()) {
                 // Test that writing the rest at once to a copy of a hasher
                 // works.
                 Hasher(hasher)
-                    .Write((uint8_t *)&in[pos], in.size() - pos)
-                    .Finalize(&hash[0]);
+                    .Write((const uint8_t *)in.data() + pos, in.size() - pos)
+                    .Finalize(hash.data());
                 BOOST_CHECK(hash == out);
             }
         }
-        hasher.Finalize(&hash[0]);
+        hasher.Finalize(hash.data());
         BOOST_CHECK(hash == out);
     }
 }
@@ -1089,9 +1091,8 @@ static void TestSHA3_256(const std::string &input, const std::string &output) {
     int s1 = InsecureRandRange(in_bytes.size() + 1);
     int s2 = InsecureRandRange(in_bytes.size() + 1 - s1);
     int s3 = in_bytes.size() - s1 - s2;
-    sha.Write(MakeSpan(in_bytes).first(s1))
-        .Write(MakeSpan(in_bytes).subspan(s1, s2));
-    sha.Write(MakeSpan(in_bytes).last(s3)).Finalize(out);
+    sha.Write(Span{in_bytes}.first(s1)).Write(Span{in_bytes}.subspan(s1, s2));
+    sha.Write(Span{in_bytes}.last(s3)).Finalize(out);
     BOOST_CHECK(std::equal(std::begin(out_bytes), std::end(out_bytes), out));
 }
 

@@ -5,8 +5,13 @@
 'use strict';
 module.exports = {
     xecSendDisplayCount: 12,
-    chronik: 'https://chronik.fabien.cash', // URL of chronik instance
+    chronik: [
+        'https://chronik.fabien.cash',
+        'https://chronik2.fabien.cash',
+        'https://chronik.be.cash/xec',
+    ],
     blockExplorer: 'https://explorer.e.cash',
+    stakerPeerApi: 'https://avalanche.cash/api/recentstakingpayouts/XEC',
     priceApi: {
         apiBase: 'https://api.coingecko.com/api/v3/simple/price',
         cryptos: [
@@ -46,6 +51,7 @@ module.exports = {
     emojis: {
         alias: '👾',
         block: '📦',
+        staker: '💰',
         xecSend: '💸',
         arrowRight: '➡️',
         tokenBurn: '🔥',

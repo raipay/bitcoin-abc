@@ -14,11 +14,13 @@
 #include <crypto/sha512.h>
 #include <logging.h> // for LogPrintf()
 #include <randomenv.h>
+#include <span.h>
 #include <support/allocators/secure.h>
 #include <support/cleanse.h>
 #include <sync.h>      // for Mutex
 #include <util/time.h> // for GetTimeMicros()
 
+#include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <thread>
@@ -419,7 +421,8 @@ public:
 
     ~RNGState() {}
 
-    void AddEvent(uint32_t event_info) noexcept {
+    void AddEvent(uint32_t event_info) noexcept
+        EXCLUSIVE_LOCKS_REQUIRED(!m_events_mutex) {
         LOCK(m_events_mutex);
 
         m_events_hasher.Write((const uint8_t *)&event_info, sizeof(event_info));
@@ -433,7 +436,8 @@ public:
     /**
      * Feed (the hash of) all events added through AddEvent() to hasher.
      */
-    void SeedEvents(CSHA512 &hasher) noexcept {
+    void SeedEvents(CSHA512 &hasher) noexcept
+        EXCLUSIVE_LOCKS_REQUIRED(!m_events_mutex) {
         // We use only SHA256 for the events hashing to get the ASM speedups we
         // have for SHA256, since we want it to be fast as network peers may be
         // able to trigger it repeatedly.
@@ -456,7 +460,8 @@ public:
      * returned.
      */
     bool MixExtract(uint8_t *out, size_t num, CSHA512 &&hasher,
-                    bool strong_seed) noexcept {
+                    bool strong_seed) noexcept
+        EXCLUSIVE_LOCKS_REQUIRED(!m_mutex) {
         assert(num <= 32);
         uint8_t buf[64];
         static_assert(sizeof(buf) == CSHA512::OUTPUT_SIZE,
@@ -631,11 +636,11 @@ static void ProcRand(uint8_t *out, int num, RNGLevel level) noexcept {
     }
 }
 
-void GetRandBytes(uint8_t *buf, int num) noexcept {
-    ProcRand(buf, num, RNGLevel::FAST);
+void GetRandBytes(Span<uint8_t> bytes) noexcept {
+    ProcRand(bytes.data(), bytes.size(), RNGLevel::FAST);
 }
-void GetStrongRandBytes(uint8_t *buf, int num) noexcept {
-    ProcRand(buf, num, RNGLevel::SLOW);
+void GetStrongRandBytes(Span<uint8_t> bytes) noexcept {
+    ProcRand(bytes.data(), bytes.size(), RNGLevel::SLOW);
 }
 void RandAddPeriodic() noexcept {
     ProcRand(nullptr, 0, RNGLevel::PERIODIC);
@@ -647,17 +652,13 @@ void RandAddEvent(const uint32_t event_info) noexcept {
 
 bool g_mock_deterministic_tests{false};
 
-uint64_t GetRand(uint64_t nMax) noexcept {
+uint64_t GetRandInternal(uint64_t nMax) noexcept {
     return FastRandomContext(g_mock_deterministic_tests).randrange(nMax);
-}
-
-int GetRandInt(int nMax) noexcept {
-    return GetRand(nMax);
 }
 
 uint256 GetRandHash() noexcept {
     uint256 hash;
-    GetRandBytes((uint8_t *)&hash, sizeof(hash));
+    GetRandBytes(hash);
     return hash;
 }
 
@@ -692,7 +693,7 @@ std::vector<uint8_t> FastRandomContext::randbytes(size_t len) {
     }
     std::vector<uint8_t> ret(len);
     if (len > 0) {
-        rng.Keystream(&ret[0], len);
+        rng.Keystream(ret.data(), len);
     }
     return ret;
 }
@@ -787,4 +788,13 @@ void RandomInit() {
     ProcRand(nullptr, 0, RNGLevel::FAST);
 
     ReportHardwareRand();
+}
+
+std::chrono::microseconds
+GetExponentialRand(std::chrono::microseconds now,
+                   std::chrono::seconds average_interval) {
+    double unscaled = -std::log1p(GetRand(uint64_t{1} << 48) *
+                                  -0.0000000000000035527136788 /* -1/2^48 */);
+    return now + std::chrono::duration_cast<std::chrono::microseconds>(
+                     unscaled * average_interval + 0.5us);
 }

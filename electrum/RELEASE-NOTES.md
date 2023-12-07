@@ -1,5 +1,32 @@
 # Release notes
 
+## Release 5.2.10
+
+- Don't change the master private key every time the Avalanche proof editor is
+  opened. This improves the automatic key detection when loading an Avalanche
+  proof by making it less likely that the proof's key is beyond the gap
+  limit for key detection (D14804).
+- Fix automatic private key detection when building multi-level Avalanche
+  delegations in a wallet that owns the key for the previous level (D14802).
+- Fix an integer overflow when displaying the total amount of stakes in an
+  Avalanche proof (D14781).
+- Fix transaction signing in CashFusion, broken in 5.2.8 and 5.2.9 (D14795, D14810).
+- Fix miscellaneous bugs and improve test coverage for RPC commands (D14780).
+- Electron Cash backports:
+  - Speed up loading of very large wallets (D14703, D14785)
+
+
+## Release 5.2.9
+
+- Implement the option to remove coins from the list of stakes in the proof
+  editor (D14761).
+- Fix the automatic detection of the master private key when loading a proof
+  created by the same wallet (D14726).
+- Fix the decryption of encrypted hardware wallets, broken in 5.2.8 (D14645).
+- Suppress a RuntimeError when the release checker fails to start a new thread
+  (D14674).
+
+
 ## Release 5.2.8
 
 - Fix a bug affecting the expected number of signatures by multisig wallets:

@@ -32,10 +32,8 @@ class ChronikWsTest(BitcoinTestFramework):
         self.skip_if_no_chronik()
 
     def run_test(self):
-        from test_framework.chronik.client import ChronikClient, pb
-
         node = self.nodes[0]
-        chronik = ChronikClient("127.0.0.1", node.chronik_port)
+        chronik = node.get_chronik_client()
 
         # Build a fake quorum of nodes.
         def get_quorum():
@@ -49,7 +47,7 @@ class ChronikWsTest(BitcoinTestFramework):
             return node.isfinalblock(tip_expected)
 
         # Connect, but don't subscribe yet
-        ws = chronik.ws(timeout=30)
+        ws = chronik.ws()
 
         # Pick one node from the quorum for polling.
         # ws will not receive msgs because it's not subscribed to blocks yet.
@@ -66,6 +64,8 @@ class ChronikWsTest(BitcoinTestFramework):
         # Mine block
         tip = self.generate(node, 1)[-1]
         height = node.getblockcount()
+
+        from test_framework.chronik.client import pb
 
         # We get a CONNECTED msg
         assert_equal(
@@ -104,6 +104,8 @@ class ChronikWsTest(BitcoinTestFramework):
                 )
             ),
         )
+
+        ws.close()
 
 
 if __name__ == "__main__":

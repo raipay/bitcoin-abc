@@ -90,7 +90,7 @@ public:
     }
 
     //! Construct a public key from a byte vector.
-    explicit CPubKey(const std::vector<uint8_t> &_vch) {
+    explicit CPubKey(Span<const uint8_t> _vch) {
         Set(_vch.begin(), _vch.end());
     }
 
@@ -137,12 +137,10 @@ public:
     }
 
     //! Get the KeyID of this public key (hash of its serialization)
-    CKeyID GetID() const {
-        return CKeyID(Hash160(MakeSpan(vch).first(size())));
-    }
+    CKeyID GetID() const { return CKeyID(Hash160(Span{vch}.first(size()))); }
 
     //! Get the 256-bit hash of this public key.
-    uint256 GetHash() const { return Hash(MakeSpan(vch).first(size())); }
+    uint256 GetHash() const { return Hash(Span{vch}.first(size())); }
 
     /*
      * Check syntactic correctness.
@@ -204,7 +202,7 @@ struct CExtPubKey {
 
     friend bool operator==(const CExtPubKey &a, const CExtPubKey &b) {
         return a.nDepth == b.nDepth &&
-               memcmp(&a.vchFingerprint[0], &b.vchFingerprint[0],
+               memcmp(a.vchFingerprint, b.vchFingerprint,
                       sizeof(vchFingerprint)) == 0 &&
                a.nChild == b.nChild && a.chaincode == b.chaincode &&
                a.pubkey == b.pubkey;

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from typing import Any, Generator, Optional
+from typing import Any, Callable, Generator, Optional
 
 import pytest
 import requests
@@ -29,49 +29,71 @@ BITCOIND_RPC_URL = "http://user:pass@0.0.0.0:18333"
 ELECTRUM_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 ELECTRUMABC_COMMAND = os.path.join(ELECTRUM_ROOT, "electrum-abc")
 
+DEFAULT_TIMEOUT = 10
+DEFAULT_POLL_INTERVAL = 1
+
+COINBASE_MATURITY = 100
+
+
+def get_fulcrum_stat(json_path: str) -> Any:
+    """Get fulcrum's stats, parse the answer and return a particular field defined
+    by the json path.
+    Return None in case of connection error or if the field is not found.
+    """
+    try:
+        json_result = requests.get(FULCRUM_STATS_URL).json()
+    except requests.exceptions.ConnectionError:
+        return None
+
+    jsonpath_expr = path_parse(json_path)
+    expect_element = jsonpath_expr.find(json_result)
+
+    if len(expect_element) > 0:
+        return expect_element[0].value
+    return None
+
 
 def poll_for_answer(
     url: Any,
-    json_req: Optional[Any] = None,
-    poll_interval: int = 1,
-    poll_timeout: int = 10,
+    json_req: Any,
+    poll_interval: int = DEFAULT_POLL_INTERVAL,
+    poll_timeout: int = DEFAULT_TIMEOUT,
     expected_answer: Optional[Any] = None,
 ) -> Any:
     """Poll an RPC method until timeout or an expected answer has been received"""
     start = current = time.time()
 
-    while current < start + poll_timeout:
-        retry = False
-        try:
-            if json_req is None:
-                resp = requests.get(url)
-                json_result = resp.json()
-            else:
-                resp = requests.post(url, json=json_req)
-                if resp.status_code == 500:
-                    retry = True
-                else:
-                    parsed = rpc_parse(resp.json())
-                    if not isinstance(parsed, rpc_Ok):
-                        raise RuntimeError(
-                            f"Unable to parse JSON-RPC: {parsed.message}"
-                        )
-                    json_result = rpc_parse(resp.json()).result
-
-            if expected_answer is not None and not retry:
-                path, answer = expected_answer
-                jsonpath_expr = path_parse(path)
-                expect_element = jsonpath_expr.find(json_result)
-                if len(expect_element) > 0 and expect_element[0].value == answer:
-                    return json_result
-            elif retry:
-                pass
-            else:
-                return json_result
-        except requests.exceptions.ConnectionError:
-            pass
+    def sleep_and_get_time():
         time.sleep(poll_interval)
-        current = time.time()
+        return time.time()
+
+    while current < start + poll_timeout:
+        try:
+            resp = requests.post(url, json=json_req)
+        except requests.exceptions.ConnectionError:
+            current = sleep_and_get_time()
+            continue
+
+        if resp.status_code == 500:
+            current = sleep_and_get_time()
+            continue
+
+        parsed = rpc_parse(resp.json())
+        if not isinstance(parsed, rpc_Ok):
+            raise RuntimeError(f"Unable to parse JSON-RPC: {parsed.message}")
+        json_result = rpc_parse(resp.json()).result
+        if expected_answer is None:
+            return json_result
+
+        # We expect a specific result, so check it and keep polling until we get it.
+        path, answer = expected_answer
+        jsonpath_expr = path_parse(path)
+        expect_element = jsonpath_expr.find(json_result)
+        if len(expect_element) > 0 and expect_element[0].value == answer:
+            return json_result
+
+        current = sleep_and_get_time()
+
     raise TimeoutError("Timed out waiting for an answer")
 
 
@@ -89,7 +111,8 @@ def bitcoind_rpc_connection() -> AuthServiceProxy:
         addr = _bitcoind.getnewaddress()
         _bitcoind.generatetoaddress(101, addr)
 
-    poll_for_answer(FULCRUM_STATS_URL, expected_answer=("Controller.TxNum", 102))
+    # Let Fulcrum catch up with the indexing
+    wait_until(lambda: get_fulcrum_stat("Controller.TxNum") == 102)
 
     return _bitcoind
 
@@ -195,7 +218,9 @@ def fulcrum_service(docker_services: Any) -> Generator[None, None, None]:
     """
     electrum_datadir = make_tmp_electrum_data_dir()
     bitcoind_rpc_connection()
-    poll_for_answer(FULCRUM_STATS_URL, expected_answer=("Controller.Chain", "regtest"))
+
+    # Sanity check that fulcrum is running and responding
+    assert get_fulcrum_stat("Controller.Chain") == "regtest"
 
     try:
         start_ec_daemon(electrum_datadir)
@@ -203,3 +228,50 @@ def fulcrum_service(docker_services: Any) -> Generator[None, None, None]:
         stop_ec_daemon(electrum_datadir)
     finally:
         shutil.rmtree(electrum_datadir)
+
+
+def wait_for_len(json_req, expected_len: int, timeout=DEFAULT_TIMEOUT):
+    """Poll Electrum ABC with a RPC request until the result is the expected length.
+    The RPC request must return a sequence (e.g. a list).
+    Raise an AssertionError if the request does not have the expected length after the
+    timeout.
+    Return the result in case of success.
+    """
+    result = []
+
+    def poll_and_check_len():
+        nonlocal result
+        result = poll_for_answer(EC_DAEMON_RPC_URL, json_req)
+        return len(result) == expected_len
+
+    wait_until(poll_and_check_len, timeout)
+    return result
+
+
+def wait_until(
+    test_function: Callable[[], bool],
+    timeout=DEFAULT_TIMEOUT,
+    interval=DEFAULT_POLL_INTERVAL,
+):
+    """Run a test function in a loop until it returns True. Raise an AssertionError
+    if it did not return True before the timeout is reached.
+    """
+    t0 = time.time()
+    time_end = t0 + timeout
+    success = False
+    while not success and time.time() < time_end:
+        success = test_function()
+        time.sleep(interval)
+    assert success, f"wait_until: predicate not True after {timeout} seconds"
+
+
+def get_block_subsidy(blockheight) -> int:
+    """Compute the expected coinbase amount in satoshis for a given block height,
+    for an empty block (no tx fees)."""
+    # See GetBlockSubsidy function in the node
+    subsidy_halving_interval = 150
+    initial_subsidy = 5_000_000_000
+    halvings = blockheight // subsidy_halving_interval
+    if halvings >= 64:
+        return 0
+    return initial_subsidy >> halvings

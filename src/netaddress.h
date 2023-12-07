@@ -451,7 +451,7 @@ private:
 
         if (SetNetFromBIP155Network(bip155_net, address_size)) {
             m_addr.resize(address_size);
-            s >> MakeSpan(m_addr);
+            s >> Span{m_addr};
 
             if (m_net != NET_IPV6) {
                 return;
@@ -529,8 +529,9 @@ public:
             // the relevant bytes for an IPv4 mask. For compatiblity reasons,
             // keep doing so in serialized form.
             uint8_t dummy[12] = {0};
+            auto netmask_span = Span{obj.netmask};
             READWRITE(dummy);
-            READWRITE(MakeSpan(obj.netmask).first(4));
+            READWRITE(netmask_span.first(4));
         } else {
             READWRITE(obj.netmask);
         }
@@ -578,8 +579,7 @@ public:
 class CServiceHash {
 public:
     CServiceHash()
-        : m_salt_k0{GetRand(std::numeric_limits<uint64_t>::max())},
-          m_salt_k1{GetRand(std::numeric_limits<uint64_t>::max())} {}
+        : m_salt_k0{GetRand<uint64_t>()}, m_salt_k1{GetRand<uint64_t>()} {}
 
     CServiceHash(uint64_t salt_k0, uint64_t salt_k1)
         : m_salt_k0{salt_k0}, m_salt_k1{salt_k1} {}

@@ -62,11 +62,12 @@ export default function Navbar({ announcementbar }) {
 
     return (
         <NavbarOuter navBackground={navBackground}>
-            <AnnouncementBar
-                href="/upgrade"
-                text="Prepare for the eCash network upgrade!"
-                navBackground={navBackground}
-            />
+            <AnnouncementBar navBackground={navBackground} href="/upgrade">
+                <span>
+                    <span>The network upgrade has activated!</span>
+                    <span>Click here for more details</span>
+                </span>
+            </AnnouncementBar>
             {!process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS_ID && (
                 <EnvVarMessage>
                     Google Analytics is disabled, set the env

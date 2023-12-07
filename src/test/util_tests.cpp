@@ -189,13 +189,9 @@ BOOST_AUTO_TEST_CASE(util_HexStr) {
                       "ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d"
                       "578a4c702b6bf11d5f");
 
-    BOOST_CHECK_EQUAL(HexStr(Span<const uint8_t>(
-                          ParseHex_expected + sizeof(ParseHex_expected),
-                          ParseHex_expected + sizeof(ParseHex_expected))),
-                      "");
+    BOOST_CHECK_EQUAL(HexStr(Span{ParseHex_expected}.last(0)), "");
 
-    BOOST_CHECK_EQUAL(
-        HexStr(Span<const uint8_t>(ParseHex_expected, ParseHex_expected)), "");
+    BOOST_CHECK_EQUAL(HexStr(Span{ParseHex_expected}.first(0)), "");
 
     std::vector<uint8_t> ParseHex_vec(ParseHex_expected, ParseHex_expected + 5);
 
@@ -1681,8 +1677,15 @@ BOOST_AUTO_TEST_CASE(util_time_GetTime) {
     for (const auto &num_sleep : {0ms, 1ms}) {
         UninterruptibleSleep(num_sleep);
         BOOST_CHECK_EQUAL(111, GetTime()); // Deprecated time getter
+        BOOST_CHECK_EQUAL(111, Now<NodeSeconds>().time_since_epoch().count());
+        BOOST_CHECK_EQUAL(
+            111, TicksSinceEpoch<std::chrono::seconds>(NodeClock::now()));
+        BOOST_CHECK_EQUAL(111,
+                          TicksSinceEpoch<SecondsDouble>(Now<NodeSeconds>()));
         BOOST_CHECK_EQUAL(111, GetTime<std::chrono::seconds>().count());
         BOOST_CHECK_EQUAL(111000, GetTime<std::chrono::milliseconds>().count());
+        BOOST_CHECK_EQUAL(111000, TicksSinceEpoch<std::chrono::milliseconds>(
+                                      NodeClock::now()));
         BOOST_CHECK_EQUAL(111000000,
                           GetTime<std::chrono::microseconds>().count());
     }

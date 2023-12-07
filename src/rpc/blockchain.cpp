@@ -26,6 +26,7 @@
 #include <node/context.h>
 #include <node/utxo_snapshot.h>
 #include <policy/policy.h>
+#include <policy/settings.h>
 #include <primitives/transaction.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
@@ -61,7 +62,7 @@ struct CUpdatedBlock {
     int height;
 };
 
-static Mutex cs_blockchange;
+static GlobalMutex cs_blockchange;
 static std::condition_variable cond_blockchange;
 static CUpdatedBlock latestblock GUARDED_BY(cs_blockchange);
 

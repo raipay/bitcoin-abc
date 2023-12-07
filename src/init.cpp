@@ -251,14 +251,6 @@ void Shutdown(NodeContext &node) {
         node.connman->Stop();
     }
 
-#if ENABLE_CHRONIK
-    chronik::Stop();
-#endif
-
-#if ENABLE_NNG
-    StopNngInterface();
-#endif
-
     StopTorControl();
 
     // After everything has been shut down, but before things get flushed, stop
@@ -300,6 +292,10 @@ void Shutdown(NodeContext &node) {
     // After there are no more peers/RPC left to give us new data which may
     // generate CValidationInterface callbacks, flush them...
     GetMainSignals().FlushBackgroundCallbacks();
+
+#if ENABLE_CHRONIK
+    chronik::Stop();
+#endif
 
     // Stop and delete all indexes only after flushing background callbacks.
     if (g_txindex) {
@@ -434,15 +430,21 @@ void SetupServerArgs(NodeContext &node) {
 
     // Hidden Options
     std::vector<std::string> hidden_args = {
-        "-dbcrashratio", "-forcecompactdb", "-maxaddrtosend", "-parkdeepreorg",
-        "-automaticunparking", "-replayprotectionactivationtime",
-        "-enableminerfund", "-chronikallowpause",
+        "-dbcrashratio",
+        "-forcecompactdb",
+        "-maxaddrtosend",
+        "-parkdeepreorg",
+        "-automaticunparking",
+        "-replayprotectionactivationtime",
+        "-enableminerfund",
+        "-chronikallowpause",
         // GUI args. These will be overwritten by SetupUIArgs for the GUI
         "-allowselfsignedrootcertificates", "-choosedatadir", "-lang=<lang>",
         "-min", "-resetguisettings", "-rootcertificates=<file>", "-splash",
         "-uiplatform",
-        // TODO remove after the Nov. 2023 upgrade
-        "-cowperthwaiteactivationtime"};
+        // TODO remove after the May. 2024 upgrade
+        "-leekuanyewactivationtime",
+    };
 
     // Set all of the args and their help
     // When adding new options to the categories, please keep and ensure
@@ -1144,15 +1146,6 @@ void SetupServerArgs(NodeContext &node) {
                   DEFAULT_WHITELISTFORCERELAY),
         ArgsManager::ALLOW_ANY, OptionsCategory::NODE_RELAY);
 
-    // Not sure this really belongs here, but it will do for now.
-    // FIXME: This doesn't work anyways.
-    argsman.AddArg("-excessutxocharge=<amt>",
-                   strprintf("Fees (in %s/kB) to charge per utxo created for "
-                             "relaying, and mining (default: %s)",
-                             ticker, FormatMoney(DEFAULT_UTXO_FEE)),
-                   ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
-                   OptionsCategory::NODE_RELAY);
-
     argsman.AddArg("-blockmaxsize=<n>",
                    strprintf("Set maximum block size in bytes (default: %d)",
                              DEFAULT_MAX_GENERATED_BLOCK_SIZE),
@@ -1400,6 +1393,12 @@ void SetupServerArgs(NodeContext &node) {
             "%u).",
             DEFAULT_MAX_AVALANCHE_OUTBOUND_CONNECTIONS),
         ArgsManager::ALLOW_INT, OptionsCategory::AVALANCHE);
+    argsman.AddArg(
+        "-persistavapeers",
+        strprintf("Whether to save the avalanche peers upon shutdown and load "
+                  "them upon startup (default: %u).",
+                  DEFAULT_PERSIST_AVAPEERS),
+        ArgsManager::ALLOW_BOOL, OptionsCategory::AVALANCHE);
 
     hidden_args.emplace_back("-avalanchepreconsensus");
 
@@ -1439,7 +1438,7 @@ std::string LicenseInfo() {
 }
 
 static bool fHaveGenesis = false;
-static Mutex g_genesis_wait_mutex;
+static GlobalMutex g_genesis_wait_mutex;
 static std::condition_variable g_genesis_wait_cv;
 
 static void BlockNotifyGenesisWait(const CBlockIndex *pBlockIndex) {
@@ -1927,19 +1926,6 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
             "peertimeout cannot be configured with a negative value."));
     }
 
-    // Obtain the amount to charge excess UTXO
-    if (args.IsArgSet("-excessutxocharge")) {
-        Amount n = Amount::zero();
-        auto parsed = ParseMoney(args.GetArg("-excessutxocharge", ""), n);
-        if (!parsed || Amount::zero() > n) {
-            return InitError(AmountErrMsg(
-                "excessutxocharge", args.GetArg("-excessutxocharge", "")));
-        }
-        config.SetExcessUTXOCharge(n);
-    } else {
-        config.SetExcessUTXOCharge(DEFAULT_UTXO_FEE);
-    }
-
     if (args.IsArgSet("-minrelaytxfee")) {
         Amount n = Amount::zero();
         auto parsed = ParseMoney(args.GetArg("-minrelaytxfee", ""), n);
@@ -2267,8 +2253,7 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         &uiInterface, args.GetIntArg("-bantime", DEFAULT_MISBEHAVING_BANTIME));
     assert(!node.connman);
     node.connman = std::make_unique<CConnman>(
-        config, GetRand(std::numeric_limits<uint64_t>::max()),
-        GetRand(std::numeric_limits<uint64_t>::max()), *node.addrman,
+        config, GetRand<uint64_t>(), GetRand<uint64_t>(), *node.addrman,
         args.GetBoolArg("-networkactive", true));
 
     // sanitize comments per BIP-0014, format user agent and check total size

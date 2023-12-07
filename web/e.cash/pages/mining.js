@@ -4,7 +4,8 @@
 import Layout from '/components/layout';
 import SubPageHero from '/components/sub-page-hero';
 import H3 from '/components/h3';
-import CustomLink from '/components/custom-link';
+import Link from 'next/link';
+import ExternalLink from '/components/external-link';
 import { Container, GradientSpacer } from '/components/atoms';
 import CodeBlock from '/components/code-block';
 import mining from '/public/animations/mining.json';
@@ -85,14 +86,14 @@ function Mining(props) {
                 </p>
                 <ul>
                     <li>
-                        <CustomLink href="https://xec.solopool.org/">
+                        <ExternalLink href="https://xec.solopool.org/">
                             Solopool
-                        </CustomLink>
+                        </ExternalLink>
                     </li>
                     <li>
-                        <CustomLink href="https://xec.molepool.com/">
+                        <ExternalLink href="https://xec.molepool.com/">
                             Molepool
-                        </CustomLink>
+                        </ExternalLink>
                     </li>
                 </ul>
                 <h4>Using a mining pool</h4>
@@ -104,27 +105,29 @@ function Mining(props) {
                 </p>
                 <ul>
                     <li>
-                        <CustomLink href="https://support.viabtc.com/hc/en-us/articles/7207444931599">
+                        <ExternalLink href="https://support.viabtc.com/hc/en-us/articles/7207444931599">
                             ViaBTC
-                        </CustomLink>
+                        </ExternalLink>
                     </li>
                     <li>
-                        <CustomLink href="https://www.mining-dutch.nl/pools/ecash.php?page=dashboard">
+                        <ExternalLink href="https://www.mining-dutch.nl/pools/ecash.php?page=dashboard">
                             Mining Dutch
-                        </CustomLink>
+                        </ExternalLink>
                     </li>
                     <li>
-                        <CustomLink href="https://beta.zulupool.com/">
+                        <ExternalLink href="https://beta.zulupool.com/">
                             Zulupool
-                        </CustomLink>
+                        </ExternalLink>
                     </li>
                     <li>
-                        <CustomLink href="https://zergpool.com/site/block?coin=XEC">
+                        <ExternalLink href="https://zergpool.com/site/block?coin=XEC">
                             Zergpool
-                        </CustomLink>
+                        </ExternalLink>
                     </li>
                     <li>
-                        <CustomLink href="https://zpool.ca/">Zpool</CustomLink>
+                        <ExternalLink href="https://zpool.ca/">
+                            Zpool
+                        </ExternalLink>
                     </li>
                 </ul>
 
@@ -140,10 +143,10 @@ function Mining(props) {
                     Solo mining requires running an eCash node along with
                     specialized mining software. Such mining software is
                     available{' '}
-                    <CustomLink href="https://github.com/Bitcoin-ABC/ecash-ckpool-solo">
+                    <ExternalLink href="https://github.com/Bitcoin-ABC/ecash-ckpool-solo">
                         {' '}
                         here
-                    </CustomLink>
+                    </ExternalLink>
                     .
                 </p>
                 <h4>Operating a mining pool</h4>
@@ -163,8 +166,9 @@ function Mining(props) {
                         avalanche enabled (it is enabled by default).
                     </li>
                     <li>
-                        In order to maximize profit, a mining node can also be
-                        staking and benefit from the staking rewards.
+                        In order to maximize profit, a mining node can also be{' '}
+                        <Link href="/staking/">staking</Link> and benefit from
+                        the staking rewards.
                     </li>
                     <li>
                         Ensure the node has good connectivity. It should accept

@@ -47,10 +47,8 @@ class ChronikWsScriptTest(BitcoinTestFramework):
         self.skip_if_no_chronik()
 
     def run_test(self):
-        from test_framework.chronik.client import ChronikClient, pb
-
         node = self.nodes[0]
-        chronik = ChronikClient("127.0.0.1", node.chronik_port)
+        chronik = node.get_chronik_client()
         node.setmocktime(1300000000)
         peer = node.add_p2p_connection(P2PDataStore())
 
@@ -94,8 +92,8 @@ class ChronikWsScriptTest(BitcoinTestFramework):
         ]
 
         # Connect 2 websocket clients
-        ws1 = chronik.ws(timeout=30)
-        ws2 = chronik.ws(timeout=30)
+        ws1 = chronik.ws()
+        ws2 = chronik.ws()
         # Subscribe to 2 scripts on ws1 and 1 on ws2
         ws1.sub_script("p2sh", send_script_hashes[1])
         ws1.sub_script("p2sh", send_script_hashes[2])
@@ -103,6 +101,9 @@ class ChronikWsScriptTest(BitcoinTestFramework):
 
         # Send the tx, will send updates to ws1 and ws2
         txid = node.sendrawtransaction(tx.serialize().hex())
+        self.wait_until(lambda: txid in node.getrawmempool())
+
+        from test_framework.chronik.client import pb
 
         expected_msg = pb.WsMsg(
             tx=pb.MsgTx(
@@ -215,6 +216,9 @@ class ChronikWsScriptTest(BitcoinTestFramework):
         self.wait_until(lambda: has_finalized_tip(tip))
         check_tx_msgs(ws1, pb.TX_FINALIZED, sorted([txid, tx3_conflict.hash]))
         check_tx_msgs(ws2, pb.TX_FINALIZED, sorted([txid, txid2]))
+
+        ws1.close()
+        ws2.close()
 
 
 if __name__ == "__main__":

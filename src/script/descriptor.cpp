@@ -953,11 +953,11 @@ std::unique_ptr<PubkeyProvider> ParsePubkeyInner(uint32_t key_exp_index,
     }
     KeyPath path;
     DeriveType type = DeriveType::NO;
-    if (split.back() == MakeSpan("*").first(1)) {
+    if (split.back() == Span{"*"}.first(1)) {
         split.pop_back();
         type = DeriveType::UNHARDENED;
-    } else if (split.back() == MakeSpan("*'").first(2) ||
-               split.back() == MakeSpan("*h").first(2)) {
+    } else if (split.back() == Span{"*'"}.first(2) ||
+               split.back() == Span{"*h"}.first(2)) {
         split.pop_back();
         type = DeriveType::HARDENED;
     }
@@ -1179,7 +1179,7 @@ std::unique_ptr<DescriptorImpl> InferScript(const CScript &script,
     TxoutType txntype = Solver(script, data);
 
     if (txntype == TxoutType::PUBKEY) {
-        CPubKey pubkey(data[0].begin(), data[0].end());
+        CPubKey pubkey(data[0]);
         if (pubkey.IsValid()) {
             return std::make_unique<PKDescriptor>(
                 InferPubkey(pubkey, ctx, provider));
@@ -1197,7 +1197,7 @@ std::unique_ptr<DescriptorImpl> InferScript(const CScript &script,
     if (txntype == TxoutType::MULTISIG) {
         std::vector<std::unique_ptr<PubkeyProvider>> providers;
         for (size_t i = 1; i + 1 < data.size(); ++i) {
-            CPubKey pubkey(data[i].begin(), data[i].end());
+            CPubKey pubkey(data[i]);
             providers.push_back(InferPubkey(pubkey, ctx, provider));
         }
         return std::make_unique<MultisigDescriptor>((int)data[0][0],
