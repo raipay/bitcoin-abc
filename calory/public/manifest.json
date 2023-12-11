@@ -1,0 +1,36 @@
+{
+    "manifest_version": 3,
+
+    "name": "Calory",
+    "description": "A browser-integrated ergon wallet",
+    "version": "0.1.0",
+    "content_scripts": [
+        {
+            "matches": ["file://*/*", "http://*/*", "https://*/*"],
+            "js": ["contentscript.js"],
+            "run_at": "document_idle",
+            "all_frames": true
+        }
+    ],
+    "background": {
+        "service_worker": "service_worker.js"
+    },
+    "action": {
+        "default_popup": "index.html",
+        "default_title": "Calory"
+    },
+    "icons": {
+        "16": "ergon16.png",
+        "48": "ergon48.png",
+        "128": "ergon128.png",
+        "192": "ergon192.png",
+        "512": "ergon512.png"
+    },
+    "permissions": ["storage", "tabs"],
+    "web_accessible_resources": [
+        {
+            "resources": ["script.js"],
+            "matches": ["<all_urls>"]
+        }
+    ]
+}
