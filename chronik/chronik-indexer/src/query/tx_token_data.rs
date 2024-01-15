@@ -7,10 +7,7 @@
 use std::borrow::Cow;
 
 use abc_rust_error::Result;
-use bitcoinsuite_core::{
-    hash::Hashed,
-    tx::{Tx, TxId},
-};
+use bitcoinsuite_core::{hash::Hashed, tx::Tx};
 use bitcoinsuite_slp::{
     color::ColoredTx,
     structs::{GenesisInfo, Token, TxType},
@@ -30,8 +27,7 @@ use crate::query::tx_token_data::TxTokenDataError::*;
 
 /// Helper struct to bundle token data coming from the DB or mempool.
 ///
-/// We use [`Cow`]s so we can either reference the mempool directly (`Borrowed`)
-/// or store the loaded result from the DB (`Owned`).
+/// We use [`Cow`]s so we can either reference the mempool directly (`Borrowed`) or store the loaded result from the DB (`Owned`).
 #[derive(Debug)]
 pub struct TxTokenData<'m> {
     /// Token inputs of the token tx.
@@ -50,19 +46,16 @@ pub enum TxTokenDataError {
 
 impl<'m> TxTokenData<'m> {
     /// Load token data from the mempool
-    pub fn from_mempool(
-        mempool: &'m MempoolTokens,
-        txid: &TxId,
-    ) -> Option<Self> {
-        let token_tx = mempool.token_tx(txid);
-        let token_inputs = mempool.tx_token_inputs(txid);
+    pub fn from_mempool(mempool: &'m MempoolTokens, tx: &Tx) -> Option<Self> {
+        let token_tx = mempool.token_tx(tx.txid_ref());
+        let token_inputs = mempool.tx_token_inputs(tx.txid_ref());
         if token_tx.is_none() && token_inputs.is_none() {
             return None;
         }
         Some(TxTokenData {
             inputs: token_inputs
                 .map(Cow::Borrowed)
-                .unwrap_or(Cow::Borrowed(&[])),
+                .unwrap_or(Cow::Owned(vec![None; tx.inputs.len()])),
             tx: token_tx.map(Cow::Borrowed).unwrap_or_else(|| {
                 let context = VerifyContext {
                     genesis_info: None,
@@ -70,7 +63,10 @@ impl<'m> TxTokenData<'m> {
                     spent_scripts: None,
                     override_has_mint_vault: Some(false),
                 };
-                Cow::Owned(context.verify(ColoredTx::default()))
+                Cow::Owned(context.verify(ColoredTx {
+                    outputs: vec![None; tx.outputs.len()],
+                    ..Default::default()
+                }))
             }),
         })
     }

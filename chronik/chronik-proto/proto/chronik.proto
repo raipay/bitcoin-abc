@@ -88,7 +88,7 @@ message Tx {
     repeated TokenEntry token_entries = 13;
     // Failed parsing attempts of this tx
     repeated TokenFailedParsing token_failed_parsings = 14;
-    // Whether this tx has unintentional burns or something unexpected, like failed parsings etc.
+    // Whether this tx has unintentional token burns or something unexpected, like failed parsings etc.
     bool token_is_invalid = 15;
 }
 

@@ -63,7 +63,7 @@ impl<'a> QueryTxs<'a> {
                 false,
                 None,
                 self.avalanche,
-                TxTokenData::from_mempool(self.mempool.tokens(), &txid)
+                TxTokenData::from_mempool(self.mempool.tokens(), &tx.tx)
                     .as_ref(),
             )),
             None => {

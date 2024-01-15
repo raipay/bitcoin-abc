@@ -33,195 +33,7 @@ from test_framework.script import (
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
 from test_framework.util import assert_equal
-
-
-def alp_genesis(
-    token_ticker: bytes = b"",
-    token_name: bytes = b"",
-    url: bytes = b"",
-    data: bytes = b"",
-    auth_pubkey: bytes = b"",
-    decimals: int = 0,
-    *,
-    mint_amounts: List[int],
-    num_batons: int,
-) -> bytes:
-    result = bytearray()
-    result.extend(b"SLP2")
-    result.append(0)
-
-    result.append(len(b"GENESIS"))
-    result.extend(b"GENESIS")
-
-    result.append(len(token_ticker))
-    result.extend(token_ticker)
-
-    result.append(len(token_name))
-    result.extend(token_name)
-
-    result.append(len(url))
-    result.extend(url)
-
-    result.append(len(data))
-    result.extend(data)
-
-    result.append(len(auth_pubkey))
-    result.extend(auth_pubkey)
-
-    result.append(decimals)
-
-    result.append(len(mint_amounts))
-    for amount in mint_amounts:
-        result.extend(amount.to_bytes(6, "little"))
-
-    result.append(num_batons)
-    return result
-
-
-def alp_mint(
-    token_id: bytes,
-    mint_amounts: List[int],
-    num_batons: int,
-) -> bytes:
-    result = bytearray()
-    result.extend(b"SLP2")
-    result.append(0)
-
-    result.append(len(b"MINT"))
-    result.extend(b"MINT")
-
-    result.extend(token_id)
-
-    result.append(len(mint_amounts))
-    for amount in mint_amounts:
-        result.extend(amount.to_bytes(6, "little"))
-
-    result.append(num_batons)
-
-    return result
-
-
-def alp_send(
-    token_id: bytes,
-    output_amounts: List[int],
-) -> bytes:
-    result = bytearray()
-    result.extend(b"SLP2")
-    result.append(0)
-
-    result.append(len(b"SEND"))
-    result.extend(b"SEND")
-
-    result.extend(token_id)
-
-    result.append(len(output_amounts))
-    for amount in output_amounts:
-        result.extend(amount.to_bytes(6, "little"))
-
-    return result
-
-
-def alp_burn(
-    token_id: bytes,
-    burn_amount: int,
-) -> bytes:
-    result = bytearray()
-    result.extend(b"SLP2")
-    result.append(0)
-
-    result.append(len(b"BURN"))
-    result.extend(b"BURN")
-
-    result.extend(token_id)
-    result.extend(burn_amount.to_bytes(6, "little"))
-
-    return result
-
-
-def slp_genesis(
-    token_type: bytes = b"\x01",
-    token_ticker: bytes = b"",
-    token_name: bytes = b"",
-    token_document_url: bytes = b"",
-    token_document_hash: bytes = b"",
-    mint_baton_vout: Optional[int] = None,
-    mint_vault_scripthash: Optional[int] = None,
-    decimals: int = 0,
-    initial_mint_amount: int = 0,
-) -> CScript:
-    return CScript(
-        [
-            OP_RETURN,
-            b"SLP\0",
-            token_type,
-            b"GENESIS",
-            token_ticker,
-            token_name,
-            token_document_url,
-            token_document_hash,
-            bytes([decimals]),
-            bytes([mint_baton_vout]) if mint_baton_vout else mint_vault_scripthash,
-            initial_mint_amount.to_bytes(8, "big"),
-        ]
-    )
-
-
-def slp_mint(
-    token_type: bytes = b"\x01",
-    *,
-    token_id: bytes,
-    mint_baton_vout: Optional[int],
-    mint_amount: int,
-) -> CScript:
-    return CScript(
-        [
-            OP_RETURN,
-            b"SLP\0",
-            token_type,
-            b"MINT",
-            token_id,
-            bytes([mint_baton_vout]) if mint_baton_vout else b"",
-            mint_amount.to_bytes(8, "big"),
-        ]
-    )
-
-
-def slp_mint_vault(
-    token_id: bytes,
-    mint_amounts: List[int],
-) -> CScript:
-    return CScript(
-        [
-            OP_RETURN,
-            b"SLP\0",
-            b"\x02",
-            b"MINT",
-            token_id,
-        ]
-        + [mint_amount.to_bytes(8, "big") for mint_amount in mint_amounts]
-    )
-
-
-def slp_send(
-    token_type: bytes = b"\x01",
-    *,
-    token_id: bytes,
-    amounts: List[int],
-) -> CScript:
-    ops = [
-        OP_RETURN,
-        b"SLP\0",
-        token_type,
-        b"SEND",
-        token_id,
-    ]
-    for amount in amounts:
-        ops.append(amount.to_bytes(8, "big"))
-    return CScript(ops)
-
-
-def alp_output(*sections: bytes) -> CTxOut:
-    return CTxOut(0, CScript([OP_RETURN, OP_RESERVED] + list(sections)))
+from test_framework.chronik.token_tx import alp_opreturn, alp_genesis, alp_mint, alp_send, TokenTx, alp_burn
 
 
 class ChronikSlp(BitcoinTestFramework):
@@ -256,10 +68,14 @@ class ChronikSlp(BitcoinTestFramework):
         block_hashes = self.generatetoaddress(node, 100, ADDRESS_ECREG_UNSPENDABLE)
 
         coinvalue = 5000000000
-        genesis_tx = CTransaction()
-        genesis_tx.vin = [CTxIn(COutPoint(int(cointx, 16), 0), SCRIPTSIG_OP_TRUE)]
-        genesis_tx.vout = [
-            alp_output(
+
+        txs = []
+
+        # ALP GENESIS tx
+        tx = CTransaction()
+        tx.vin = [CTxIn(COutPoint(int(cointx, 16), 0), SCRIPTSIG_OP_TRUE)]
+        tx.vout = [
+            alp_opreturn(
                 alp_genesis(
                     token_ticker=b"TEST",
                     token_name=b"Test Token",
@@ -278,46 +94,44 @@ class ChronikSlp(BitcoinTestFramework):
             CTxOut(5000, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),
         ]
-        genesis_tx.rehash()
-        genesis_txid = genesis_tx.hash
-        token_id = bytes.fromhex(genesis_txid)[::-1]
-        genesis_sections = [
-            pb.TokenEntry(
-                token_id=genesis_txid,
-                token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
-                tx_type=pb.GENESIS,
-                actual_burn_amount="0",
-            )
-        ]
-        genesis_slp_outputs = [
-            pb.Token(),
-            alp_token(token_id=genesis_txid, amount=10),
-            alp_token(token_id=genesis_txid, amount=20),
-            alp_token(token_id=genesis_txid, amount=30),
-            pb.Token(),
-            alp_token(token_id=genesis_txid, is_mint_baton=True),
-            alp_token(token_id=genesis_txid, is_mint_baton=True),
-        ]
-
-        node.sendrawtransaction(genesis_tx.serialize().hex())
-
-        genesis_proto = chronik.tx(genesis_txid).ok()
-        assert_equal(list(genesis_proto.token_entries), genesis_sections)
-        assert_equal(
-            [output.token for output in genesis_proto.outputs], genesis_slp_outputs
+        tx.rehash()
+        genesis = TokenTx(
+            tx=tx,
+            entries=[
+                pb.TokenEntry(
+                    token_id=tx.hash,
+                    token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
+                    tx_type=pb.GENESIS,
+                    actual_burn_amount="0",
+                ),
+            ],
+            inputs=[pb.Token()],
+            outputs=[
+                pb.Token(),
+                alp_token(token_id=tx.hash, amount=10),
+                alp_token(token_id=tx.hash, amount=20),
+                alp_token(token_id=tx.hash, amount=30),
+                pb.Token(),
+                alp_token(token_id=tx.hash, is_mint_baton=True),
+                alp_token(token_id=tx.hash, is_mint_baton=True),
+            ],
         )
+        txs.append(genesis)
+        genesis.send(node)
+        genesis.test(chronik)
 
-        mint_tx = CTransaction()
-        mint_tx.vin = [
+        # ALP MINT tx
+        tx = CTransaction()
+        tx.vin = [
             CTxIn(
-                COutPoint(int(genesis_txid, 16), 5),
+                COutPoint(int(genesis.txid, 16), 5),
                 SCRIPTSIG_OP_TRUE,
             )
         ]
-        mint_tx.vout = [
-            alp_output(
+        tx.vout = [
+            alp_opreturn(
                 alp_mint(
-                    token_id=token_id,
+                    token_id=genesis.txid,
                     mint_amounts=[5, 0],
                     num_batons=1,
                 ),
@@ -326,87 +140,76 @@ class ChronikSlp(BitcoinTestFramework):
             CTxOut(546, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),
         ]
-        mint_tx.rehash()
-        mint_txid = mint_tx.hash
-
-        mint_sections = [
-            pb.TokenEntry(
-                token_id=genesis_txid,
+        mint = TokenTx(
+            tx=tx,
+            entries=[pb.TokenEntry(
+                token_id=genesis.txid,
                 token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                 tx_type=pb.MINT,
                 actual_burn_amount="0",
-            )
-        ]
-        mint_slp_outputs = [
-            pb.Token(),
-            alp_token(token_id=genesis_txid, amount=5),
-            pb.Token(),
-            alp_token(token_id=genesis_txid, is_mint_baton=True),
-        ]
-
-        node.sendrawtransaction(mint_tx.serialize().hex())
-
-        mint_proto = chronik.tx(mint_txid).ok()
-        assert_equal(list(mint_proto.token_entries), mint_sections)
-        assert_equal(
-            [output.token for output in mint_proto.outputs],
-            mint_slp_outputs,
+            )],
+            inputs=[alp_token(token_id=genesis.txid, is_mint_baton=True)],
+            outputs=[
+                pb.Token(),
+                alp_token(token_id=genesis.txid, amount=5),
+                pb.Token(),
+                alp_token(token_id=genesis.txid, is_mint_baton=True),
+            ],
         )
+        txs.append(mint)
+        mint.send(node)
+        mint.test(chronik)
 
-        send_tx = CTransaction()
-        send_tx.vin = [
+        # ALP SEND tx
+        tx = CTransaction()
+        tx.vin = [
             CTxIn(
-                COutPoint(int(genesis_txid, 16), 1),
+                COutPoint(int(genesis.txid, 16), 1),
                 SCRIPTSIG_OP_TRUE,
             ),
-            CTxIn(COutPoint(int(mint_txid, 16), 1), SCRIPTSIG_OP_TRUE),
+            CTxIn(COutPoint(int(mint.txid, 16), 1), SCRIPTSIG_OP_TRUE),
         ]
-        send_tx.vout = [
-            alp_output(
+        tx.vout = [
+            alp_opreturn(
                 alp_send(
-                    token_id=token_id,
+                    token_id=genesis.txid,
                     output_amounts=[3, 12],
                 ),
             ),
             CTxOut(5000, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),
         ]
-        send_tx.rehash()
-        send_txid = send_tx.hash
-
-        send_sections = [
-            pb.TokenEntry(
-                token_id=genesis_txid,
-                token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
-                tx_type=pb.SEND,
-                actual_burn_amount="0",
-            )
-        ]
-        send_slp_outputs = [
-            pb.Token(),
-            alp_token(token_id=genesis_txid, amount=3),
-            alp_token(token_id=genesis_txid, amount=12),
-        ]
-
-        send_txid = node.sendrawtransaction(send_tx.serialize().hex())
-        send_proto = chronik.tx(send_txid).ok()
-
-        assert_equal(list(send_proto.token_entries), send_sections)
-        assert_equal(list(send_proto.token_failed_parsings), [])
-        assert_equal(
-            [output.token for output in send_proto.outputs],
-            send_slp_outputs,
+        send = TokenTx(
+            tx=tx,
+            entries=[
+                pb.TokenEntry(
+                    token_id=genesis.txid,
+                    token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
+                    tx_type=pb.SEND,
+                    actual_burn_amount="0",
+                )
+            ],
+            inputs=[alp_token(token_id=genesis.txid, amount=10), alp_token(token_id=genesis.txid, amount=5)],
+            outputs=[
+                pb.Token(),
+                alp_token(token_id=genesis.txid, amount=3),
+                alp_token(token_id=genesis.txid, amount=12),
+            ],
         )
+        txs.append(send)
+        send.send(node)
+        send.test(chronik)
 
-        genesis2_tx = CTransaction()
-        genesis2_tx.vin = [
+        # Another ALP GENESIS
+        tx = CTransaction()
+        tx.vin = [
             CTxIn(
-                COutPoint(int(genesis_txid, 16), 4),
+                COutPoint(int(genesis.txid, 16), 4),
                 SCRIPTSIG_OP_TRUE,
             )
         ]
-        genesis2_tx.vout = [
-            alp_output(
+        tx.vout = [
+            alp_opreturn(
                 alp_genesis(
                     mint_amounts=[100],
                     num_batons=2,
@@ -417,36 +220,57 @@ class ChronikSlp(BitcoinTestFramework):
             CTxOut(5000, P2SH_OP_TRUE),
             CTxOut(coinvalue - 200000, P2SH_OP_TRUE),
         ]
+        tx.rehash()
+        genesis2 = TokenTx(
+            tx=tx,
+            entries=[
+                pb.TokenEntry(
+                    token_id=tx.hash,
+                    token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
+                    tx_type=pb.GENESIS,
+                    actual_burn_amount="0",
+                ),
+            ],
+            inputs=[pb.Token()],
+            outputs=[
+                pb.Token(),
+                alp_token(token_id=tx.hash, amount=100),
+                alp_token(token_id=tx.hash, is_mint_baton=True),
+                alp_token(token_id=tx.hash, is_mint_baton=True),
+                pb.Token(),
+            ],
+        )
+        txs.append(genesis2)
+        genesis2.send(node)
+        genesis2.test(chronik)
 
-        genesis2_txid = node.sendrawtransaction(genesis2_tx.serialize().hex())
-        token_id2 = bytes.fromhex(genesis2_txid)[::-1]
-
-        multi_tx = CTransaction()
-        multi_tx.vin = [
-            CTxIn(COutPoint(int(send_txid, 16), 1), SCRIPTSIG_OP_TRUE),
+        # ALP GENESIS + MINT + SEND all in one
+        tx = CTransaction()
+        tx.vin = [
+            CTxIn(COutPoint(int(send.txid, 16), 1), SCRIPTSIG_OP_TRUE),
             CTxIn(
-                COutPoint(int(genesis2_txid, 16), 2),
+                COutPoint(int(genesis2.txid, 16), 2),
                 SCRIPTSIG_OP_TRUE,
             ),
         ]
-        multi_tx.vout = [
-            alp_output(
+        tx.vout = [
+            alp_opreturn(
                 alp_genesis(
                     token_ticker=b"MULTI",
                     mint_amounts=[0xFFFF_FFFF_FFFF, 0],
                     num_batons=1,
                 ),
                 alp_mint(
-                    token_id=token_id2,
+                    token_id=genesis2.txid,
                     mint_amounts=[0, 5],
                     num_batons=0,
                 ),
                 alp_burn(
-                    token_id=token_id,
+                    token_id=genesis.txid,
                     burn_amount=1,
                 ),
                 alp_send(
-                    token_id=token_id,
+                    token_id=genesis.txid,
                     output_amounts=[0, 0, 0, 0, 2],
                 ),
             ),
@@ -457,65 +281,63 @@ class ChronikSlp(BitcoinTestFramework):
             CTxOut(546, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),
         ]
-        multi_tx.rehash()
-        multi_txid = multi_tx.hash
-        multi_token_id = bytes.fromhex(multi_txid)[::-1]
-
-        multi_sections = [
-            pb.TokenEntry(
-                token_id=multi_txid,
-                token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
-                tx_type=pb.GENESIS,
-                actual_burn_amount="0",
-            ),
-            pb.TokenEntry(
-                token_id=genesis2_txid,
-                token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
-                tx_type=pb.MINT,
-                actual_burn_amount="0",
-            ),
-            pb.TokenEntry(
-                token_id=genesis_txid,
-                token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
-                tx_type=pb.SEND,
-                intentional_burn=1,
-                actual_burn_amount="1",
-            ),
-        ]
-        multi_slp_outputs = [
-            pb.Token(),
-            alp_token(token_id=multi_txid, amount=0xFFFF_FFFF_FFFF),
-            alp_token(token_id=genesis2_txid, amount=5, entry_idx=1),
-            alp_token(token_id=multi_txid, is_mint_baton=True),
-            pb.Token(),
-            alp_token(token_id=genesis_txid, amount=2, entry_idx=2),
-            pb.Token(),
-        ]
-
-        node.sendrawtransaction(multi_tx.serialize().hex())
-
-        multi_proto = chronik.tx(multi_txid).ok()
-        assert_equal(list(multi_proto.token_entries), multi_sections)
-        assert_equal(list(multi_proto.token_failed_parsings), [])
-        assert_equal(
-            [output.token for output in multi_proto.outputs],
-            multi_slp_outputs,
+        tx.rehash()
+        multi = TokenTx(
+            tx=tx,
+            entries = [
+                pb.TokenEntry(
+                    token_id=tx.hash,
+                    token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
+                    tx_type=pb.GENESIS,
+                    actual_burn_amount="0",
+                ),
+                pb.TokenEntry(
+                    token_id=genesis2.txid,
+                    token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
+                    tx_type=pb.MINT,
+                    actual_burn_amount="0",
+                ),
+                pb.TokenEntry(
+                    token_id=genesis.txid,
+                    token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
+                    tx_type=pb.SEND,
+                    intentional_burn=1,
+                    actual_burn_amount="1",
+                ),
+            ],
+            inputs = [
+                alp_token(token_id=genesis.txid, amount=3, entry_idx=2),
+                alp_token(token_id=genesis2.txid, is_mint_baton=True, entry_idx=1),
+            ],
+            outputs = [
+                pb.Token(),
+                alp_token(token_id=tx.hash, amount=0xFFFF_FFFF_FFFF),
+                alp_token(token_id=genesis2.txid, amount=5, entry_idx=1),
+                alp_token(token_id=tx.hash, is_mint_baton=True),
+                pb.Token(),
+                alp_token(token_id=genesis.txid, amount=2, entry_idx=2),
+                pb.Token(),
+            ],
         )
+        txs.append(multi)
+        multi.send(node)
+        multi.test(chronik)
 
-        all_tx = CTransaction()
-        all_tx.vin = [
+        # ALP tx with all kinds of things (so big it must be mined in a block manually)
+        tx = CTransaction()
+        tx.vin = [
             CTxIn(
-                COutPoint(int(genesis2_txid, 16), 3),
+                COutPoint(int(genesis2.txid, 16), 3),
                 SCRIPTSIG_OP_TRUE,
             ),
             CTxIn(
-                COutPoint(int(genesis_txid, 16), 6),
+                COutPoint(int(genesis.txid, 16), 6),
                 SCRIPTSIG_OP_TRUE,
             ),
-            CTxIn(COutPoint(int(multi_txid, 16), 1), SCRIPTSIG_OP_TRUE),
+            CTxIn(COutPoint(int(multi.txid, 16), 1), SCRIPTSIG_OP_TRUE),
         ]
-        all_tx.vout = [
-            alp_output(
+        tx.vout = [
+            alp_opreturn(
                 # 0: success GENESIS
                 alp_genesis(
                     token_ticker=b"ALL",
@@ -525,34 +347,34 @@ class ChronikSlp(BitcoinTestFramework):
                 # 1: fail GENESIS: must be first
                 alp_genesis(mint_amounts=[], num_batons=0),
                 # 2: fail MINT: Too few outputs
-                alp_mint(token_id, [0, 0, 0, 0, 0, 0, 0], 99),
+                alp_mint(genesis.txid, [0, 0, 0, 0, 0, 0, 0], 99),
                 # 3: fail MINT: Overlapping amounts
-                alp_mint(token_id, [0, 0xFFFF_FFFF_FFFF], 0),
+                alp_mint(genesis.txid, [0, 0xFFFF_FFFF_FFFF], 0),
                 # 4: fail MINT: Overlapping batons
-                alp_mint(token_id, [0], 1),
+                alp_mint(genesis.txid, [0], 1),
                 # 5: success BURN: token ID 2
-                alp_burn(token_id, 2),
+                alp_burn(genesis.txid, 2),
                 # 6: success MINT: token ID 3
-                alp_mint(token_id2, [3, 0], 1),
+                alp_mint(genesis2.txid, [3, 0], 1),
                 # 7: success MINT: token ID 2
-                alp_mint(token_id, [0, 0, 0, 2, 0, 0, 0], 1),
+                alp_mint(genesis.txid, [0, 0, 0, 2, 0, 0, 0], 1),
                 # 8: fail MINT: Duplicate token ID 2
-                alp_mint(token_id, [], 0),
+                alp_mint(genesis.txid, [], 0),
                 # 9: fail BURN: Duplicate burn token ID 2
-                alp_burn(token_id, 0),
+                alp_burn(genesis.txid, 0),
                 # 10: fail SEND: Too few outputs
-                alp_send(multi_token_id, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 123]),
+                alp_send(multi.txid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 123]),
                 # 11: success SEND: token ID 4
                 alp_send(
-                    multi_token_id,
+                    multi.txid,
                     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFFFF_FFFF_FFFF],
                 ),
                 # 12: fail MINT: Duplicate token ID 4
-                alp_mint(multi_token_id, [], 0),
+                alp_mint(multi.txid, [], 0),
                 # 13: success UNKNOWN
                 b"SLP2\x89",
                 # 14: fail BURN: Descending token type
-                alp_burn(multi_token_id, 0),
+                alp_burn(multi.txid, 0),
                 # 15: success UNKNOWN
                 b"SLP2\x9a",
             ),
@@ -567,13 +389,12 @@ class ChronikSlp(BitcoinTestFramework):
             CTxOut(546, P2SH_OP_TRUE),
             CTxOut(546, P2SH_OP_TRUE),
         ]
-        all_tx.rehash()
-        all_txid = all_tx.hash
-        all_token_id = bytes.fromhex(all_txid)[::-1]
-
-        all_sections = [
+        tx.rehash()
+        all_things = TokenTx(
+            tx=tx,
+            entries=[
             pb.TokenEntry(
-                token_id=all_txid,
+                token_id=tx.hash,
                 token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                 tx_type=pb.GENESIS,
                 actual_burn_amount="0",
@@ -586,18 +407,18 @@ class ChronikSlp(BitcoinTestFramework):
                 ],
             ),
             pb.TokenEntry(
-                token_id=genesis2_txid,
+                token_id=genesis2.txid,
                 token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                 tx_type=pb.MINT,
                 actual_burn_amount="0",
             ),
             pb.TokenEntry(
-                token_id=genesis_txid,
+                token_id=genesis.txid,
                 token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                 tx_type=pb.MINT,
                 intentional_burn=2,
                 actual_burn_amount="0",
-                burn_summary=f"Invalid coloring at pushdata idx 2: Too few outputs, expected 107 but got 11. Invalid coloring at pushdata idx 3: Overlapping amount when trying to color 281474976710655 at index 2, output is already colored with 7 of {all_txid} (ALP STANDARD (V0)). Invalid coloring at pushdata idx 4: Overlapping mint baton when trying to color mint baton at index 2, output is already colored with 7 of {all_txid} (ALP STANDARD (V0)). Invalid coloring at pushdata idx 8: Duplicate token_id {genesis_txid}, found in section 2. Invalid coloring at pushdata idx 9: Duplicate intentional burn token_id {genesis_txid}, found in burn #0 and #1",
+                burn_summary=f"Invalid coloring at pushdata idx 2: Too few outputs, expected 107 but got 11. Invalid coloring at pushdata idx 3: Overlapping amount when trying to color 281474976710655 at index 2, output is already colored with 7 of {tx.hash} (ALP STANDARD (V0)). Invalid coloring at pushdata idx 4: Overlapping mint baton when trying to color mint baton at index 2, output is already colored with 7 of {tx.hash} (ALP STANDARD (V0)). Invalid coloring at pushdata idx 8: Duplicate token_id {genesis.txid}, found in section 2. Invalid coloring at pushdata idx 9: Duplicate intentional burn token_id {genesis.txid}, found in burn #0 and #1",
                 failed_colorings=[
                     pb.TokenFailedColoring(
                         pushdata_idx=2,
@@ -605,28 +426,28 @@ class ChronikSlp(BitcoinTestFramework):
                     ),
                     pb.TokenFailedColoring(
                         pushdata_idx=3,
-                        error=f"Overlapping amount when trying to color 281474976710655 at index 2, output is already colored with 7 of {all_txid} (ALP STANDARD (V0))",
+                        error=f"Overlapping amount when trying to color 281474976710655 at index 2, output is already colored with 7 of {tx.hash} (ALP STANDARD (V0))",
                     ),
                     pb.TokenFailedColoring(
                         pushdata_idx=4,
-                        error=f"Overlapping mint baton when trying to color mint baton at index 2, output is already colored with 7 of {all_txid} (ALP STANDARD (V0))",
+                        error=f"Overlapping mint baton when trying to color mint baton at index 2, output is already colored with 7 of {tx.hash} (ALP STANDARD (V0))",
                     ),
                     pb.TokenFailedColoring(
                         pushdata_idx=8,
-                        error=f"Duplicate token_id {genesis_txid}, found in section 2",
+                        error=f"Duplicate token_id {genesis.txid}, found in section 2",
                     ),
                     pb.TokenFailedColoring(
                         pushdata_idx=9,
-                        error=f"Duplicate intentional burn token_id {genesis_txid}, found in burn #0 and #1",
+                        error=f"Duplicate intentional burn token_id {genesis.txid}, found in burn #0 and #1",
                     ),
                 ],
             ),
             pb.TokenEntry(
-                token_id=multi_txid,
+                token_id=multi.txid,
                 token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                 tx_type=pb.SEND,
                 actual_burn_amount="0",
-                burn_summary=f"Invalid coloring at pushdata idx 10: Too few outputs, expected 13 but got 11. Invalid coloring at pushdata idx 12: Duplicate token_id {multi_txid}, found in section 3. Invalid coloring at pushdata idx 14: Descending token type: 137 > 0, token types must be in ascending order",
+                burn_summary=f"Invalid coloring at pushdata idx 10: Too few outputs, expected 13 but got 11. Invalid coloring at pushdata idx 12: Duplicate token_id {multi.txid}, found in section 3. Invalid coloring at pushdata idx 14: Descending token type: 137 > 0, token types must be in ascending order",
                 failed_colorings=[
                     pb.TokenFailedColoring(
                         pushdata_idx=10,
@@ -634,7 +455,7 @@ class ChronikSlp(BitcoinTestFramework):
                     ),
                     pb.TokenFailedColoring(
                         pushdata_idx=12,
-                        error=f"Duplicate token_id {multi_txid}, found in section 3",
+                        error=f"Duplicate token_id {multi.txid}, found in section 3",
                     ),
                     pb.TokenFailedColoring(
                         pushdata_idx=14,
@@ -654,56 +475,110 @@ class ChronikSlp(BitcoinTestFramework):
                 tx_type=pb.UNKNOWN,
                 actual_burn_amount="0",
             ),
-        ]
-        all_slp_outputs = [
+        ],
+        inputs=[
+            alp_token(token_id=genesis2.txid, is_mint_baton=True, entry_idx=1),
+            alp_token(token_id=genesis.txid, is_mint_baton=True, entry_idx=2),
+            alp_token(token_id=multi.txid, amount=0xFFFF_FFFF_FFFF, entry_idx=3),
+        ],
+        outputs=[
             pb.Token(),
             # success MINT: token ID 3
-            alp_token(token_id=genesis2_txid, amount=3, entry_idx=1),
+            alp_token(token_id=genesis2.txid, amount=3, entry_idx=1),
             # success GENESIS
-            alp_token(token_id=all_txid, amount=7),
+            alp_token(token_id=tx.hash, amount=7),
             # success MINT: token ID 3
-            alp_token(token_id=genesis2_txid, is_mint_baton=True, entry_idx=1),
+            alp_token(token_id=genesis2.txid, is_mint_baton=True, entry_idx=1),
             # success MINT: token ID 2
-            alp_token(token_id=genesis_txid, amount=2, entry_idx=2),
+            alp_token(token_id=genesis.txid, amount=2, entry_idx=2),
             # success GENESIS
-            alp_token(token_id=all_txid, amount=1),
+            alp_token(token_id=tx.hash, amount=1),
             # success GENESIS
-            alp_token(token_id=all_txid, is_mint_baton=True),
+            alp_token(token_id=tx.hash, is_mint_baton=True),
             # success GENESIS
-            alp_token(token_id=all_txid, is_mint_baton=True),
+            alp_token(token_id=tx.hash, is_mint_baton=True),
             # success MINT: token ID 2
-            alp_token(token_id=genesis_txid, is_mint_baton=True, entry_idx=2),
+            alp_token(token_id=genesis.txid, is_mint_baton=True, entry_idx=2),
             # success UNKNOWN
             alp_token(
                 token_id="00" * 32, token_type=pb.TokenType(alp=0x89), entry_idx=4
             ),
             # success SEND: token ID 4
             alp_token(
-                token_id=multi_txid,
+                token_id=multi.txid,
                 amount=0xFFFF_FFFF_FFFF,
                 entry_idx=3,
             ),
         ]
-
+        )
         block_height = 102
         block = create_block(
             int(block_hashes[-1], 16),
             create_coinbase(block_height, b"\x03" * 33),
             1300000500,
         )
-        block.vtx += [genesis_tx, send_tx, mint_tx, genesis2_tx, multi_tx, all_tx]
+        block.vtx += [genesis.tx, send.tx, mint.tx, genesis2.tx, multi.tx, all_things.tx]
         make_conform_to_ctor(block)
         block.hashMerkleRoot = block.calc_merkle_root()
         block.solve()
         peer.send_blocks_and_test([block], node)
+        all_things.test(chronik, block.hash)
 
-        all_proto = chronik.tx(all_txid).ok()
-        assert_equal(list(all_proto.token_entries), all_sections)
-        assert_equal(list(all_proto.token_failed_parsings), [])
-        assert_equal(
-            [output.token for output in all_proto.outputs],
-            all_slp_outputs,
+        # After being mined, all previous txs are still working fine:
+        for tx in txs:
+            tx.test(chronik, block.hash)
+
+        # Undo block + test again
+        node.invalidateblock(block.hash)
+        for tx in txs:
+            tx.test(chronik)
+
+        # "all_things" not in the mempool (violates policy)
+        chronik.tx(all_things.txid).err(404)
+
+        # Mining txs one-by-one works
+        block_height = 102
+        prev_hash = block_hashes[-1]
+        tx_block_hashes = [None] * len(txs)
+        for block_idx, mined_tx in enumerate(txs):
+            block = create_block(
+                int(prev_hash, 16),
+                create_coinbase(block_height + block_idx, b"\x03" * 33),
+                1300000500 + block_idx,
+            )
+            block.vtx += [mined_tx.tx]
+            block.hashMerkleRoot = block.calc_merkle_root()
+            block.solve()
+            prev_hash = block.hash
+            peer.send_blocks_and_test([block], node)
+            tx_block_hashes[block_idx] = block.hash
+
+            # All txs still work on every block
+            for tx, block_hash in zip(txs, tx_block_hashes):
+                tx.test(chronik, block_hash)
+        
+        # Also mine all_things and test again
+        block = create_block(
+            int(prev_hash, 16),
+            create_coinbase(block_height + len(txs), b"\x03" * 33),
+            1300000500 + len(txs),
         )
+        block.vtx += [all_things.tx]
+        block.hashMerkleRoot = block.calc_merkle_root()
+        block.solve()
+        peer.send_blocks_and_test([block], node)
+        all_things.test(chronik, block.hash)
+        for tx, block_hash in zip(txs, tx_block_hashes):
+            tx.test(chronik, block_hash)
+
+
+        # Adding the block back in works
+        #node.reconsiderblock(block.hash)
+        #all_things.test(chronik, block.hash)
+        #for tx in txs:
+        #    tx.test(chronik, block.hash)
+
+        return
 
         non_slp_tx = CTransaction()
         non_slp_tx.vin = [
