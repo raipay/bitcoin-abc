@@ -269,7 +269,8 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                 false,
                 None,
                 self.avalanche,
-                TxTokenData::from_mempool(self.mempool.tokens(), txid).as_ref(),
+                TxTokenData::from_mempool(self.mempool.tokens(), &entry.tx)
+                    .as_ref(),
             ));
         }
 
@@ -352,8 +353,11 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                         false,
                         None,
                         self.avalanche,
-                        TxTokenData::from_mempool(self.mempool.tokens(), txid)
-                            .as_ref(),
+                        TxTokenData::from_mempool(
+                            self.mempool.tokens(),
+                            &entry.tx,
+                        )
+                        .as_ref(),
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?,

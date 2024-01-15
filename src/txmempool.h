@@ -90,19 +90,6 @@ struct CompareIteratorByRevEntryId {
 class CTxMemPoolEntry;
 using CTxMemPoolEntryRef = RCUPtr<CTxMemPoolEntry>;
 
-/** Iterate txs in reverse-topological order */
-struct CompareIteratorByRevEntryId {
-    template <typename T>
-    bool operator()(const std::reference_wrapper<T> &a,
-                    const std::reference_wrapper<T> &b) const {
-        return a->GetEntryId() > b->GetEntryId();
-    }
-
-    template <typename T> bool operator()(const T &a, const T &b) const {
-        return a->GetEntryId() > b->GetEntryId();
-    }
-};
-
 /** \class CTxMemPoolEntry
  *
  * CTxMemPoolEntry stores data about the corresponding transaction, as well as
