@@ -245,6 +245,7 @@ def main():
 
     # SRCDIR must be set for cdefs.py to find and parse consensus.h
     os.environ["SRCDIR"] = src_dir
+    os.environ["RUST_BACKTRACE"] = "1"
 
     # Parse arguments and pass through unrecognised args
     parser = argparse.ArgumentParser(

@@ -19,7 +19,7 @@ use chronik_db::{
     io::{
         merge, token::TokenWriter, BlockHeight, BlockReader, BlockStatsWriter,
         BlockTxs, BlockWriter, DbBlock, MetadataReader, MetadataWriter,
-        SchemaVersion, SpentByWriter, TxEntry, TxWriter,
+        SchemaVersion, SpentByWriter, TxEntry, TxWriter, TxReader,
     },
     mem::{MemData, MemDataConf, Mempool, MempoolTx},
 };
@@ -30,7 +30,7 @@ use tokio::sync::RwLock;
 use crate::{
     avalanche::Avalanche,
     indexer::ChronikIndexerError::*,
-    query::{QueryBlocks, QueryGroupHistory, QueryGroupUtxos, QueryTxs},
+    query::{QueryBlocks, QueryGroupHistory, QueryGroupUtxos, QueryTxs, QueryBroadcast},
     subs::{BlockMsg, BlockMsgType, Subs},
     subs_group::TxMsgType,
 };
@@ -46,6 +46,8 @@ pub struct ChronikIndexerParams {
     pub wipe_db: bool,
     /// Whether to output Chronik performance statistics into a perf/ folder
     pub enable_perf_stats: bool,
+    /// Reindex the SLP index of the Chronik indexer from the given height.
+    pub slp_reindex_height: i32,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
@@ -58,6 +60,7 @@ pub struct ChronikIndexer {
     avalanche: Avalanche,
     subs: RwLock<Subs>,
     perf_path: Option<PathBuf>,
+    slp_reindex_height: i32,
 }
 
 /// Access to the bitcoind node.
@@ -168,6 +171,7 @@ impl ChronikIndexer {
             avalanche: Avalanche::default(),
             subs: RwLock::new(Subs::new(ScriptGroup)),
             perf_path: params.enable_perf_stats.then_some(perf_path),
+            slp_reindex_height: params.slp_reindex_height,
         })
     }
 
@@ -234,6 +238,9 @@ impl ChronikIndexer {
                 );
             }
         }
+        if self.slp_reindex_height != -1 {
+            self.slp_reindex(bridge, tip_height)?;
+        }
         log!(
             "Chronik completed re-syncing with the node, both are now at \
              block {node_tip_hash} at height {node_height}.\n"
@@ -243,6 +250,7 @@ impl ChronikIndexer {
                 std::fs::File::create(perf_path.join("resync_stats.txt"))?;
             write!(&mut resync_stats, "{:#.3?}", self.mem_data.stats())?;
         }
+        self.slp_reindex_height = -1;
         Ok(())
     }
 
@@ -286,6 +294,62 @@ impl ChronikIndexer {
             self.handle_block_disconnected(block)?;
         }
         Ok(fork_info.height)
+    }
+
+    fn slp_reindex(
+        &self,
+        bridge: &ffi::ChronikBridge,
+        tip_height: BlockHeight,
+    ) -> Result<()> {
+        log!(
+            "Reindexing only SLP index from height {}\n",
+            self.slp_reindex_height
+        );
+        let token_writer = TokenWriter::new(&self.db)?;
+        let tx_reader = TxReader::new(&self.db)?;
+        let mut batch = WriteBatch::default();
+        token_writer.clear(&mut batch)?; // TODO: make clear optional
+        self.db.write_batch(batch)?;
+        for height in self.slp_reindex_height..=tip_height {
+            if ffi::shutdown_requested() {
+                log!("Stopped reindexing SLP index\n");
+                return Ok(());
+            }
+            let db_block = BlockReader::new(&self.db)?
+                .by_height(height)?
+                .ok_or(BlocksBelowMissing {
+                    missing: height,
+                    exists: tip_height,
+                })?;
+            let first_tx_num = tx_reader.first_tx_num_by_block(height)?.ok_or(
+                BlocksBelowMissing {
+                    missing: height,
+                    exists: tip_height,
+                },
+            )?;
+            let block_index = bridge
+                .lookup_block_index(db_block.hash.to_bytes())
+                .map_err(|_| CannotRewindChronik(db_block.hash))?;
+            let ffi_block = bridge.load_block(block_index)?;
+            let ffi_block = expect_unique_ptr("load_block", &ffi_block);
+            let block = self.make_chronik_block(ffi_block, block_index)?;
+            let hash = block.db_block.hash;
+            let mut batch = WriteBatch::default();
+            let index_txs =
+                prepare_indexed_txs(&self.db, first_tx_num, &block.txs)?;
+            token_writer.insert(&mut batch, &index_txs)?;
+            self.db.write_batch(batch)?;
+            log_chronik!(
+                "Block {hash} added to SLP index {height}/{tip_height}\n"
+            );
+            if height % 100 == 0 {
+                log!(
+                    "Synced Chronik SLP index up to block {hash} at height \
+                     {height}/{tip_height}\n"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Add transaction to the indexer's mempool.
@@ -437,6 +501,16 @@ impl ChronikIndexer {
             subs.handle_tx_event(tx, TxMsgType::Finalized);
         }
         Ok(())
+    }
+
+    /// Return [`QueryBroadcast`] to broadcast tx to the network.
+    pub fn broadcast<'a>(&'a self, node: &'a Node) -> QueryBroadcast<'a> {
+        QueryBroadcast {
+            db: &self.db,
+            avalanche: &self.avalanche,
+            mempool: &self.mempool,
+            node,
+        }
     }
 
     /// Return [`QueryBlocks`] to read blocks from the DB.
@@ -599,6 +673,7 @@ mod tests {
             datadir_net: datadir_net.clone(),
             wipe_db: false,
             enable_perf_stats: false,
+            slp_reindex_height: -1,
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
@@ -666,6 +741,7 @@ mod tests {
             datadir_net: dir.path().to_path_buf(),
             wipe_db: false,
             enable_perf_stats: false,
+            slp_reindex_height: -1,
         };
 
         // Setting up DB first time sets the schema version

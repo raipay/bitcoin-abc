@@ -82,6 +82,7 @@ fn try_setup_chronik(
         datadir_net: params.datadir_net.into(),
         wipe_db: params.wipe_db,
         enable_perf_stats: params.enable_perf_stats,
+        slp_reindex_height: -1,
     })?;
     indexer.resync_indexer(bridge_ref)?;
     if chronik_bridge::ffi::shutdown_requested() {

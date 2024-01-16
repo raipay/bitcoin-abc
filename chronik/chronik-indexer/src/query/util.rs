@@ -168,6 +168,7 @@ impl FromStr for HashOrHeight {
 
 /// Helper struct for querying which tx outputs have been spent by DB or mempool
 /// txs.
+#[derive(Debug, Default)]
 pub(crate) struct OutputsSpent<'a> {
     spent_by_mempool: Option<&'a BTreeMap<u32, SpentBy>>,
     spent_by_blocks: Vec<SpentByEntry>,
@@ -232,3 +233,27 @@ impl<'a> OutputsSpent<'a> {
         })
     }
 }
+
+/*
+/// Read the output script at the given index of the given tx.
+pub fn read_output_script(
+    db: &Db,
+    tx_num: TxNum,
+    out_idx: u32,
+) -> Result<Option<Script>> {
+    let block_reader = BlockReader::new(db)?;
+    let tx_reader = TxReader::new(db)?;
+    let Some(tx) = tx_reader.tx_by_tx_num(tx_num)? else {
+        return Ok(None);
+    };
+    let Some(block) = block_reader.by_height(tx.block_height)? else {
+        return Ok(None);
+    };
+    let tx =
+        ffi::load_tx(block.file_num, tx.entry.data_pos, tx.entry.undo_pos)?;
+    let Some(output) = tx.outputs.get(out_idx as usize) else {
+        return Ok(None);
+    };
+    Ok(Some(Script::new(output.script.clone().into())))
+}
+*/
