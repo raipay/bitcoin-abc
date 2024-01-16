@@ -12,6 +12,8 @@ use bitcoinsuite_core::{
     tx::{Tx, TxId},
 };
 use chronik_bridge::{ffi, util::expect_unique_ptr};
+#[cfg(feature = "plugins")]
+use chronik_db::plugins::io::PluginsWriter;
 use chronik_db::{
     db::{Db, WriteBatch},
     groups::{ScriptGroup, ScriptHistoryWriter, ScriptUtxoWriter},
@@ -19,18 +21,25 @@ use chronik_db::{
     io::{
         merge, token::TokenWriter, BlockHeight, BlockReader, BlockStatsWriter,
         BlockTxs, BlockWriter, DbBlock, MetadataReader, MetadataWriter,
-        SchemaVersion, SpentByWriter, TxEntry, TxWriter, TxReader,
+        SchemaVersion, SpentByWriter, TxEntry, TxReader, TxWriter,
     },
     mem::{MemData, MemDataConf, Mempool, MempoolTx},
 };
+#[cfg(feature = "plugins")]
+use chronik_plugin::context::PluginContext;
 use chronik_util::{log, log_chronik};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
+#[cfg(feature = "plugins")]
+use crate::query::plugins::QueryPlugins;
 use crate::{
     avalanche::Avalanche,
     indexer::ChronikIndexerError::*,
-    query::{QueryBlocks, QueryGroupHistory, QueryGroupUtxos, QueryTxs, QueryBroadcast},
+    query::{
+        QueryBlocks, QueryBroadcast, QueryGroupHistory, QueryGroupUtxos,
+        QueryTxs, ScriptUtxoMapper,
+    },
     subs::{BlockMsg, BlockMsgType, Subs},
     subs_group::TxMsgType,
 };
@@ -162,7 +171,7 @@ impl ChronikIndexer {
         log_chronik!("Opening Chronik at {}\n", db_path.to_string_lossy());
         let db = Db::open(&db_path)?;
         verify_schema_version(&db)?;
-        let mempool = Mempool::new(ScriptGroup);
+        let mempool = Mempool::new();
         Ok(ChronikIndexer {
             db,
             mempool,
@@ -179,6 +188,7 @@ impl ChronikIndexer {
     pub fn resync_indexer(
         &mut self,
         bridge: &ffi::ChronikBridge,
+        #[cfg(feature = "plugins")] plugin_ctx: &PluginContext,
     ) -> Result<()> {
         let block_reader = BlockReader::new(&self.db)?;
         let indexer_tip = block_reader.tip()?;
@@ -205,7 +215,13 @@ impl ChronikIndexer {
                 let indexer_tip_index = bridge
                     .lookup_block_index(tip.hash.to_bytes())
                     .map_err(|_| CannotRewindChronik(tip.hash.clone()))?;
-                self.rewind_indexer(bridge, indexer_tip_index, &tip)?
+                self.rewind_indexer(
+                    bridge,
+                    indexer_tip_index,
+                    &tip,
+                    #[cfg(feature = "plugins")]
+                    plugin_ctx,
+                )?
             }
             Some(tip) => tip.height,
             None => {
@@ -227,7 +243,11 @@ impl ChronikIndexer {
             let ffi_block = expect_unique_ptr("load_block", &ffi_block);
             let block = self.make_chronik_block(ffi_block, block_index)?;
             let hash = block.db_block.hash.clone();
-            self.handle_block_connected(block)?;
+            self.handle_block_connected(
+                block,
+                #[cfg(feature = "plugins")]
+                plugin_ctx,
+            )?;
             log_chronik!(
                 "Added block {hash}, height {height}/{tip_height} to Chronik\n"
             );
@@ -259,6 +279,7 @@ impl ChronikIndexer {
         bridge: &ffi::ChronikBridge,
         indexer_tip_index: &ffi::CBlockIndex,
         indexer_db_tip: &DbBlock,
+        #[cfg(feature = "plugins")] plugin_ctx: &PluginContext,
     ) -> Result<BlockHeight> {
         let indexer_height = indexer_db_tip.height;
         let fork_block_index = bridge
@@ -291,7 +312,11 @@ impl ChronikIndexer {
             let ffi_block = bridge.load_block(block_index)?;
             let ffi_block = expect_unique_ptr("load_block", &ffi_block);
             let block = self.make_chronik_block(ffi_block, block_index)?;
-            self.handle_block_disconnected(block)?;
+            self.handle_block_disconnected(
+                block,
+                #[cfg(feature = "plugins")]
+                plugin_ctx,
+            )?;
         }
         Ok(fork_info.height)
     }
@@ -356,11 +381,17 @@ impl ChronikIndexer {
     pub fn handle_tx_added_to_mempool(
         &mut self,
         mempool_tx: MempoolTx,
+        #[cfg(feature = "plugins")] plugin_ctx: &PluginContext,
     ) -> Result<()> {
         self.subs
             .get_mut()
             .handle_tx_event(&mempool_tx.tx, TxMsgType::AddedToMempool);
-        self.mempool.insert(&self.db, mempool_tx)?;
+        self.mempool.insert(
+            &self.db,
+            mempool_tx,
+            #[cfg(feature = "plugins")]
+            plugin_ctx,
+        )?;
         Ok(())
     }
 
@@ -379,6 +410,7 @@ impl ChronikIndexer {
     pub fn handle_block_connected(
         &mut self,
         block: ChronikBlock,
+        #[cfg(feature = "plugins")] plugin_ctx: &PluginContext,
     ) -> Result<()> {
         let height = block.db_block.height;
         let mut batch = WriteBatch::default();
@@ -386,11 +418,13 @@ impl ChronikIndexer {
         let tx_writer = TxWriter::new(&self.db)?;
         let block_stats_writer = BlockStatsWriter::new(&self.db)?;
         let script_history_writer =
-            ScriptHistoryWriter::new(&self.db, self.script_group.clone())?;
+            ScriptHistoryWriter::new(&self.db, &self.script_group)?;
         let script_utxo_writer =
-            ScriptUtxoWriter::new(&self.db, self.script_group.clone())?;
+            ScriptUtxoWriter::new(&self.db, &self.script_group)?;
         let spent_by_writer = SpentByWriter::new(&self.db)?;
         let token_writer = TokenWriter::new(&self.db)?;
+        #[cfg(feature = "plugins")]
+        let plugins_write = PluginsWriter::new(&self.db, plugin_ctx)?;
         block_writer.insert(&mut batch, &block.db_block)?;
         let first_tx_num = tx_writer.insert(
             &mut batch,
@@ -416,7 +450,10 @@ impl ChronikIndexer {
             &index_txs,
             &mut self.mem_data.spent_by,
         )?;
-        token_writer.insert(&mut batch, &index_txs)?;
+        let _processed_token_data =
+            token_writer.insert(&mut batch, &index_txs)?;
+        #[cfg(feature = "plugins")]
+        plugins_write.insert(&mut batch, &index_txs, &_processed_token_data)?;
         self.db.write_batch(batch)?;
         for tx in &block.block_txs.txs {
             self.mempool.remove_mined(&tx.txid)?;
@@ -438,17 +475,20 @@ impl ChronikIndexer {
     pub fn handle_block_disconnected(
         &mut self,
         block: ChronikBlock,
+        #[cfg(feature = "plugins")] plugin_ctx: &PluginContext,
     ) -> Result<()> {
         let mut batch = WriteBatch::default();
         let block_writer = BlockWriter::new(&self.db)?;
         let tx_writer = TxWriter::new(&self.db)?;
         let block_stats_writer = BlockStatsWriter::new(&self.db)?;
         let script_history_writer =
-            ScriptHistoryWriter::new(&self.db, self.script_group.clone())?;
+            ScriptHistoryWriter::new(&self.db, &self.script_group)?;
         let script_utxo_writer =
-            ScriptUtxoWriter::new(&self.db, self.script_group.clone())?;
+            ScriptUtxoWriter::new(&self.db, &self.script_group)?;
         let spent_by_writer = SpentByWriter::new(&self.db)?;
         let token_writer = TokenWriter::new(&self.db)?;
+        #[cfg(feature = "plugins")]
+        let plugins_write = PluginsWriter::new(&self.db, plugin_ctx)?;
         block_writer.delete(&mut batch, &block.db_block)?;
         let first_tx_num = tx_writer.delete(
             &mut batch,
@@ -474,6 +514,8 @@ impl ChronikIndexer {
             &mut self.mem_data.spent_by,
         )?;
         token_writer.delete(&mut batch, &index_txs)?;
+        #[cfg(feature = "plugins")]
+        plugins_write.delete(&mut batch, &index_txs)?;
         self.avalanche.disconnect_block(block.db_block.height)?;
         self.db.write_batch(batch)?;
         let subs = self.subs.get_mut();
@@ -544,13 +586,25 @@ impl ChronikIndexer {
     }
 
     /// Return [`QueryGroupUtxos`] for scripts to query the utxos of scripts.
-    pub fn script_utxos(&self) -> Result<QueryGroupUtxos<'_, ScriptGroup>> {
+    pub fn script_utxos(
+        &self,
+    ) -> Result<QueryGroupUtxos<'_, ScriptUtxoMapper>> {
         Ok(QueryGroupUtxos {
             db: &self.db,
             avalanche: &self.avalanche,
             mempool: &self.mempool,
             mempool_utxos: self.mempool.script_utxos(),
             group: self.script_group.clone(),
+        })
+    }
+
+    /// Return [`QueryGroupUtxos`] for scripts to query the utxos of scripts.
+    #[cfg(feature = "plugins")]
+    pub fn plugins(&self) -> Result<QueryPlugins<'_>> {
+        Ok(QueryPlugins {
+            db: &self.db,
+            avalanche: &self.avalanche,
+            mempool: &self.mempool,
         })
     }
 

@@ -17,29 +17,27 @@ use crate::{
 /// then by TxId, so when accessing them, they are returned in chronological
 /// order.
 #[derive(Debug, Default)]
-pub struct MempoolGroupHistory<G: Group> {
+pub struct MempoolGroupHistory {
     /// (time_first_seen, txid), so we sort by time
     history: HashMap<Vec<u8>, BTreeSet<(i64, TxId)>>,
-    group: G,
 }
 
-impl<G: Group> MempoolGroupHistory<G> {
+impl MempoolGroupHistory {
     /// Create a new [`MempoolGroupHistory`] for the given group.
-    pub fn new(group: G) -> MempoolGroupHistory<G> {
+    pub fn new() -> MempoolGroupHistory {
         MempoolGroupHistory {
             history: HashMap::new(),
-            group,
         }
     }
 
     /// Index the given [`MempoolTx`] by this group.
-    pub fn insert(&mut self, tx: &MempoolTx) {
+    pub fn insert<G: Group>(&mut self, tx: &MempoolTx, group: &G) {
         let query = GroupQuery {
             is_coinbase: false,
             tx: &tx.tx,
         };
-        for member in tx_members_for_group(&self.group, query) {
-            let member_ser: G::MemberSer<'_> = self.group.ser_member(&member);
+        for member in tx_members_for_group(group, query) {
+            let member_ser: G::MemberSer<'_> = group.ser_member(&member);
             if !self.history.contains_key(member_ser.as_ref()) {
                 self.history
                     .insert(member_ser.as_ref().to_vec(), BTreeSet::new());
@@ -53,13 +51,13 @@ impl<G: Group> MempoolGroupHistory<G> {
     }
 
     /// Remove the given [`MempoolTx`] from the history index.
-    pub fn remove(&mut self, tx: &MempoolTx) {
+    pub fn remove<G: Group>(&mut self, tx: &MempoolTx, group: &G) {
         let query = GroupQuery {
             is_coinbase: false,
             tx: &tx.tx,
         };
-        for member in tx_members_for_group(&self.group, query) {
-            let member_ser: G::MemberSer<'_> = self.group.ser_member(&member);
+        for member in tx_members_for_group(group, query) {
+            let member_ser: G::MemberSer<'_> = group.ser_member(&member);
             if let Some(entries) = self.history.get_mut(member_ser.as_ref()) {
                 entries.remove(&(tx.time_first_seen, tx.tx.txid()));
                 if entries.is_empty() {
@@ -91,12 +89,13 @@ mod tests {
 
     #[test]
     fn test_mempool_group_history() -> Result<()> {
-        let mempool =
-            std::cell::RefCell::new(MempoolGroupHistory::new(ValueGroup));
+        let mempool = std::cell::RefCell::new(MempoolGroupHistory::new());
 
-        let add_tx = |tx: &MempoolTx| mempool.borrow_mut().insert(tx);
+        let add_tx =
+            |tx: &MempoolTx| mempool.borrow_mut().insert(tx, &ValueGroup);
 
-        let remove_tx = |tx: &MempoolTx| mempool.borrow_mut().remove(tx);
+        let remove_tx =
+            |tx: &MempoolTx| mempool.borrow_mut().remove(tx, &ValueGroup);
 
         let member_history = |val: i64| -> Option<Vec<(i64, TxId)>> {
             mempool

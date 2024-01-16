@@ -4,7 +4,8 @@
 
 //! Module for [`Group`] and [`GroupQuery`].
 
-use bitcoinsuite_core::tx::Tx;
+use bitcoinsuite_core::tx::{Tx, TxOutput};
+use serde::{Deserialize, Serialize};
 
 use crate::io::{GroupHistoryConf, GroupUtxoConf};
 
@@ -54,6 +55,9 @@ pub trait Group {
     /// Note: For group history, this will be suffixed by a 4-byte page number.
     type MemberSer<'a>: AsRef<[u8]> + 'a;
 
+    /// Payload attached to UTXOs by this group
+    type Payload: Default + for<'a> Deserialize<'a> + Serialize;
+
     /// Find the group's members in the given query's tx's inputs.
     ///
     /// Note: This is allowed to return a member multiple times per query.
@@ -76,6 +80,9 @@ pub trait Group {
 
     /// The [`GroupUtxoConf`] for this group.
     fn utxo_conf() -> GroupUtxoConf;
+
+    /// Extract the payload to be attached to UTXOs of an output.
+    fn output_payload(output: &TxOutput) -> Self::Payload;
 }
 
 /// Helper which returns the `G::Member`s of both inputs and outputs of the

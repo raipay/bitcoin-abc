@@ -13,6 +13,8 @@ pub use rocksdb::WriteBatch;
 use rocksdb::{ColumnFamilyDescriptor, IteratorMode};
 use thiserror::Error;
 
+#[cfg(feature = "plugins")]
+use crate::plugins::io::PluginsWriter;
 use crate::{
     groups::{ScriptHistoryWriter, ScriptUtxoWriter},
     io::{
@@ -38,6 +40,14 @@ pub const CF_LOOKUP_BLK_BY_HASH: &str = "lookup_blk_by_hash";
 pub const CF_LOOKUP_TX_BY_HASH: &str = "lookup_tx_by_hash";
 /// Column family name for db metadata.
 pub const CF_META: &str = "meta";
+/// Column family to store plugin outputs.
+pub const CF_PLUGIN_OUTPUTS: &str = "plugin_outputs";
+/// Column family to store plugin group history.
+pub const CF_PLUGIN_GROUP_HISTORY: &str = "plugin_history";
+/// Column family to store plugin group history num txs.
+pub const CF_PLUGIN_GROUP_HISTORY_NUM_TXS: &str = "plugin_history_num_txs";
+/// Column family to store plugin group UTXOs.
+pub const CF_PLUGIN_GROUP_UTXOS: &str = "plugin_utxos";
 /// Column family to store tx history by script.
 pub const CF_SCRIPT_HISTORY: &str = "script_history";
 /// Column family to store number of txs by script.
@@ -92,6 +102,8 @@ impl Db {
         ScriptUtxoWriter::add_cfs(&mut cfs);
         SpentByWriter::add_cfs(&mut cfs);
         TokenWriter::add_cfs(&mut cfs);
+        #[cfg(feature = "plugins")]
+        PluginsWriter::add_cfs(&mut cfs);
         Self::open_with_cfs(path, cfs)
     }
 

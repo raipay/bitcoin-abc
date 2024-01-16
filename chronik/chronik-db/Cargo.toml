@@ -7,6 +7,10 @@ edition = "2021"
 rust-version.workspace = true
 license = "MIT"
 
+[features]
+default = []
+plugins = ["chronik-plugin"]
+
 [dependencies]
 abc-rust-error = { path = "../abc-rust-error" }
 abc-rust-lint = { path = "../abc-rust-lint" }
@@ -45,6 +49,10 @@ topo_sort = "0.4"
 
 # Key-value database
 rocksdb = { version = "0.21" }
+
+[dependencies.chronik-plugin]
+path = "../chronik-plugin"
+optional = true
 
 [dev-dependencies]
 # Colorful diffs for assertions

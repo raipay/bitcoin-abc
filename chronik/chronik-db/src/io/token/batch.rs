@@ -70,6 +70,8 @@ pub struct ProcessedTokenTxBatch {
     pub db_token_txs: HashMap<TxNum, DbTokenTx>,
     /// Validated token txs in the batch.
     pub valid_txs: HashMap<TxNum, TokenTx>,
+    /// Validated spent tokens in the batch, matches 1-to-1 with `valid_txs`.
+    pub spent_tokens: HashMap<TxNum, Vec<Option<SpentToken>>>,
     /// True if validation of txs was performed, or false if validation was
     /// safely skipped because no tokens are in the DB and the batch contained
     /// no token txs.
@@ -298,6 +300,7 @@ impl<'tx> BatchProcessor<'tx> {
         };
         processed_batch.db_token_txs.insert(tx_num, db_token_tx);
         processed_batch.valid_txs.insert(tx_num, valid_tx);
+        processed_batch.spent_tokens.insert(tx_num, spent_tokens);
 
         Ok(())
     }

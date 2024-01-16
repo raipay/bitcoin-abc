@@ -106,6 +106,28 @@ message ScriptUtxo {
     bool is_final = 10;
     // Token value attached to this UTXO
     Token token = 11;
+    // Data attached to the UTXO by plugins
+    map<string, PluginEntry> plugins = 12;
+}
+
+// UTXO
+message Utxo {
+    // txid and out_idx of the unspent output.
+    OutPoint outpoint = 1;
+    // Block height of the UTXO, or -1 if in mempool.
+    int32 block_height = 2;
+    // Whether the UTXO has been created in a coinbase tx.
+    bool is_coinbase = 3;
+    // Value of the output, in satoshis.
+    int64 value = 5;
+    // Script of the output.
+    bytes script = 6;
+    // Whether the UTXO has been finalized by Avalanche.
+    bool is_final = 10;
+    // Token value attached to this UTXO
+    Token token = 11;
+    // Data attached to the UTXO by plugins
+    map<string, PluginEntry> plugins = 12;
 }
 
 // COutPoint, points to a coin being spent by an input.
@@ -138,6 +160,8 @@ message TxInput {
     uint32 sequence_no = 5;
     // Token value attached to this input
     Token token = 8;
+    // Data attached by plugins to the output spent by this input
+    map<string, PluginEntry> plugins = 9;
 }
 
 // CTxOut, creates a new coin.
@@ -150,6 +174,8 @@ message TxOutput {
     SpentBy spent_by = 4;
     // Token value attached to this output
     Token token = 5;
+    // Data attached to this output by plugins
+    map<string, PluginEntry> plugins = 6;
 }
 
 // Data about a block which a Tx is in.
@@ -306,6 +332,14 @@ message TokenFailedColoring {
     string error = 3;
 }
 
+// Data attached by a plugin to an output
+message PluginEntry {
+    // Groups assigned to this output
+    repeated bytes groups = 1;
+    // Data assigned to the output
+    repeated bytes data = 2;
+}
+
 // Page with txs
 message TxHistoryPage {
     // Txs of the page
@@ -322,6 +356,12 @@ message ScriptUtxos {
     bytes script = 1;
     // UTXOs of the script.
     repeated ScriptUtxo utxos = 2;
+}
+
+// List of UTXOs
+message Utxos {
+    // UTXOs
+    repeated Utxo utxos = 1;
 }
 
 // Broadcast a single tx

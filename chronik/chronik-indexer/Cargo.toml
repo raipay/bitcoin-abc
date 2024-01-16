@@ -7,6 +7,10 @@ edition = "2021"
 rust-version.workspace = true
 license = "MIT"
 
+[features]
+default = []
+plugins = ["chronik-plugin", "chronik-db/plugins"]
+
 [dependencies]
 abc-rust-lint = { path = "../abc-rust-lint" }
 abc-rust-error = { path = "../abc-rust-error" }
@@ -34,6 +38,10 @@ thiserror = "1.0"
 [dependencies.tokio]
 version = "1.25"
 features = ["sync", "rt", "rt-multi-thread", "macros"]
+
+[dependencies.chronik-plugin]
+path = "../chronik-plugin"
+optional = true
 
 [dev-dependencies]
 # Colorful diffs for assertions

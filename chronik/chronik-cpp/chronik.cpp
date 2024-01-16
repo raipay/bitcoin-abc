@@ -44,7 +44,7 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
     }
     return chronik_bridge::setup_chronik(
         {
-            .datadir = gArgs.GetDataDir().u8string(),
+            .datadir = gArgs.GetDataDirBase().u8string(),
             .datadir_net = gArgs.GetDataDirNet().u8string(),
             .hosts = ToRustVec<rust::String>(gArgs.IsArgSet("-chronikbind")
                                                  ? gArgs.GetArgs("-chronikbind")
