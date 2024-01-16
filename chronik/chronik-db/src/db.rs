@@ -196,4 +196,10 @@ impl Db {
         }
         Ok(true)
     }
+
+    /// Drop a column family from RocksDb by column family name
+    pub fn drop_cf(&mut self, name: &str) -> Result<()> {
+        self.db.drop_cf(name).map_err(RocksDb)?;
+        Ok(())
+    }
 }

@@ -6,7 +6,7 @@
 import http.client
 import threading
 import time
-from typing import List, Union
+from typing import List, Optional, Union
 
 import chronik_pb2 as pb
 import websocket
@@ -181,6 +181,9 @@ class ChronikClient:
         self.https = https
 
     def _request_get(self, path: str, pb_type):
+        return self._request("GET", path, None, pb_type)
+
+    def _request(self, method: str, path: str, body: Optional[bytes], pb_type):
         kwargs = {}
         if self.timeout is not None:
             kwargs["timeout"] = self.timeout
@@ -189,7 +192,10 @@ class ChronikClient:
             if self.https
             else http.client.HTTPConnection(self.host, self.port, **kwargs)
         )
-        client.request("GET", path)
+        headers = {}
+        if body is not None:
+            headers["Content-Type"] = self.CONTENT_TYPE
+        client.request(method, path, body, headers)
         response = client.getresponse()
         content_type = response.getheader("Content-Type")
         body = response.read()
@@ -234,6 +240,30 @@ class ChronikClient:
 
     def raw_tx(self, txid: str) -> bytes:
         return self._request_get(f"/raw-tx/{txid}", pb.RawTx)
+
+    def token_info(self, txid: str) -> bytes:
+        return self._request_get(f"/token-info/{txid}", pb.TokenInfo)
+
+    def validate_tx(self, raw_tx: bytes) -> ChronikResponse:
+        return self._request(
+            "POST", "/validate-tx", pb.RawTx(raw_tx=raw_tx).SerializeToString(), pb.Tx
+        )
+
+    def broadcast_tx(self, raw_tx: bytes) -> ChronikResponse:
+        return self._request(
+            "POST",
+            "/broadcast-tx",
+            pb.BroadcastTxRequest(raw_tx=raw_tx).SerializeToString(),
+            pb.BroadcastTxResponse,
+        )
+
+    def broadcast_txs(self, raw_txs: List[bytes]) -> ChronikResponse:
+        return self._request(
+            "POST",
+            "/broadcast-txs",
+            pb.BroadcastTxsRequest(raw_txs=raw_txs).SerializeToString(),
+            pb.BroadcastTxsResponse,
+        )
 
     def script(self, script_type: str, script_payload: str) -> ChronikScriptClient:
         return ChronikScriptClient(self, script_type, script_payload)

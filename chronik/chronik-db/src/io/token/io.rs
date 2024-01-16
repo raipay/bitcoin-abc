@@ -316,6 +316,22 @@ impl<'a> TokenWriter<'a> {
         Ok(())
     }
 
+    /// Wipe all the token data from the index.
+    pub fn clear(&self, batch: &mut WriteBatch) -> Result<()> {
+        batch.delete_range_cf(self.col.cf_token_tx, b"".as_ref(), &[0xff; 16]);
+        batch.delete_range_cf(
+            self.col.cf_token_meta,
+            b"".as_ref(),
+            &[0xff; 16],
+        );
+        batch.delete_range_cf(
+            self.col.cf_genesis_info,
+            b"".as_ref(),
+            &[0xff; 16],
+        );
+        Ok(())
+    }
+
     /// Add the column families used for SLPv2.
     pub(crate) fn add_cfs(columns: &mut Vec<rocksdb::ColumnFamilyDescriptor>) {
         columns.push(rocksdb::ColumnFamilyDescriptor::new(

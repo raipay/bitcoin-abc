@@ -29,6 +29,9 @@ mod ffi_inner {
         pub enable_perf_stats: bool,
         /// Duration between WebSocket pings initiated by Chronik.
         pub ws_ping_interval_secs: u64,
+        /// Reindex the SLP index of the Chronik indexer from the given height,
+        /// and leave the other indexes untouched.
+        pub slp_reindex_height: i32,
     }
 
     extern "Rust" {

@@ -1,55 +1,55 @@
-// Copyright (c) 2024 The Bitcoin developers
-// Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
-//! Module for [`TxTokenData`].
-
 use std::borrow::Cow;
 
 use abc_rust_error::Result;
-use bitcoinsuite_core::{hash::Hashed, tx::{Tx, OutPoint, TxId}};
+use bitcoinsuite_core::{
+    hash::Hashed,
+    tx::{OutPoint, Tx, TxId},
+};
 use bitcoinsuite_slp::{
     color::ColoredTx,
-    structs::{GenesisInfo, Token, TxType, TokenMeta},
+    structs::{GenesisInfo, Token, TokenMeta, TxType},
     token_tx::TokenTx,
     token_type::{AlpTokenType, SlpTokenType, TokenType},
     verify::{SpentToken, VerifyContext},
 };
 use chronik_db::{
     db::Db,
-    io::{token::TokenReader, TxNum, TxReader, BlockHeight, BlockReader},
-    mem::{MempoolTokens, Mempool, MempoolTokensError},
+    io::{token::TokenReader, BlockHeight, BlockReader, TxNum, TxReader},
+    mem::{Mempool, MempoolTokens, MempoolTokensError},
 };
 use chronik_proto::proto;
+use chronik_util::log;
 use thiserror::Error;
 
-use crate::{query::tx_token_data::TxTokenDataError::*, avalanche::Avalanche};
+use crate::{avalanche::Avalanche, query::slp::SlpDbDataError::*};
 
 /// Helper struct to bundle token data coming from the DB or mempool.
-///
-/// We use [`Cow`]s so we can either reference the mempool directly (`Borrowed`) or store the loaded result from the DB (`Owned`).
 #[derive(Debug)]
-pub struct TxTokenData<'m> {
-    /// Token inputs of the token tx.
-    pub inputs: Cow<'m, [Option<SpentToken>]>,
-    /// Verified token data of the tx.
-    pub tx: Cow<'m, TokenTx>,
+pub struct SlpDbData<'a> {
+    /// Token inputs of the token tx
+    pub inputs: Cow<'a, [Option<SpentToken>]>,
+    /// Verified token data of the tx
+    pub tx: Cow<'a, TokenTx>,
 }
 
-/// Errors indicating something went wrong with reading token txs.
+/// Errors indicating something went wrong with reading txs.
 #[derive(Debug, Error, PartialEq)]
-pub enum TxTokenDataError {
-    /// Token num not found.
-    #[error("500: Inconsistent DB: Token num {0} not found")]
-    TokenTxNumDoesntExist(TxNum),
+pub enum SlpDbDataError {
+    /// Transaction not in mempool nor DB.
+    #[error("400: Tx {0} not found in mempool nor DB")]
+    TxNotFound(TxId),
+
+    /// TxInput has no coin.
+    #[error("400: TxInput {0:?} has no coin")]
+    TxInputHasNoCoin(OutPoint),
 
     /// Transaction token inputs couldn't be queried from the DB
     #[error("400: {0}")]
     BadTxInputs(MempoolTokensError),
 
-    /// TxInput has no coin.
-    #[error("400: TxInput {0:?} has no coin")]
-    TxInputHasNoCoin(OutPoint),
+    /// Token num not found.
+    #[error("500: Inconsistent DB: Token num {0} not found")]
+    TokenTxNumDoesntExist(TxNum),
 
     /// Token data not found in mempool but should be there
     #[error("500: Inconsistent DB: TxData for token {0} not in mempool")]
@@ -64,18 +64,21 @@ pub enum TxTokenDataError {
     MissingBlockForHeight(BlockHeight),
 }
 
-impl<'m> TxTokenData<'m> {
+impl<'a> SlpDbData<'a> {
     /// Load token data from the mempool
-    pub fn from_mempool(mempool: &'m MempoolTokens, tx: &Tx) -> Option<Self> {
-        let token_tx = mempool.token_tx(tx.txid_ref());
-        let token_inputs = mempool.tx_token_inputs(tx.txid_ref());
+    pub fn from_mempool(
+        mempool: &'a MempoolTokens,
+        txid: &TxId,
+    ) -> Option<Self> {
+        let token_tx = mempool.token_tx(txid);
+        let token_inputs = mempool.tx_token_inputs(txid);
         if token_tx.is_none() && token_inputs.is_none() {
             return None;
         }
-        Some(TxTokenData {
+        Some(SlpDbData {
             inputs: token_inputs
                 .map(Cow::Borrowed)
-                .unwrap_or(Cow::Owned(vec![None; tx.inputs.len()])),
+                .unwrap_or(Cow::Borrowed(&[])),
             tx: token_tx.map(Cow::Borrowed).unwrap_or_else(|| {
                 let context = VerifyContext {
                     genesis_info: None,
@@ -83,10 +86,7 @@ impl<'m> TxTokenData<'m> {
                     spent_scripts: None,
                     override_has_mint_vault: Some(false),
                 };
-                Cow::Owned(context.verify(ColoredTx {
-                    outputs: vec![None; tx.outputs.len()],
-                    ..Default::default()
-                }))
+                Cow::Owned(context.verify(ColoredTx::default()))
             }),
         })
     }
@@ -111,7 +111,7 @@ impl<'m> TxTokenData<'m> {
             override_has_mint_vault: Some(db_tx_data.has_mint_vault()),
         };
         let verified = context.verify(colored.unwrap_or_default());
-        Ok(Some(TxTokenData {
+        Ok(Some(SlpDbData {
             inputs: Cow::Owned(spent_tokens),
             tx: Cow::Owned(verified),
         }))
@@ -122,7 +122,7 @@ impl<'m> TxTokenData<'m> {
     /// Mint Vault MINT txs.
     pub fn from_unbroadcast_tx(
         db: &Db,
-        mempool: &'m Mempool,
+        mempool: &'a Mempool,
         tx: &Tx,
     ) -> Result<Option<Self>> {
         let colored = ColoredTx::color_tx(tx);
@@ -137,7 +137,7 @@ impl<'m> TxTokenData<'m> {
         let colored = colored.unwrap_or_default();
         let mut spent_scripts = None;
         let mut genesis_info = None;
-        if let Some(first_section) = colored.sections.first() {
+        if let Some(first_section) = colored.sections.get(0) {
             if first_section.is_mint_vault_mint() {
                 let spent_scripts =
                     spent_scripts.insert(Vec::with_capacity(tx.inputs.len()));
@@ -168,7 +168,9 @@ impl<'m> TxTokenData<'m> {
         };
         let verified = context.verify(colored);
 
-        Ok(Some(TxTokenData {
+        log!("verified {} = {:?}", tx.txid(), verified);
+
+        Ok(Some(SlpDbData {
             inputs: Cow::Owned(spent_tokens),
             tx: Cow::Owned(verified),
         }))
@@ -227,16 +229,18 @@ impl<'m> TxTokenData<'m> {
                     Some(TxType::BURN) => proto::TokenTxType::Burn,
                     None => proto::TokenTxType::None,
                 } as _,
-                is_invalid: entry.is_invalid,
+                genesis_info: entry
+                    .genesis_info
+                    .as_ref()
+                    .map(make_genesis_info_proto),
                 group_token_id: entry
                     .group_token_meta
                     .as_ref()
                     .map_or(String::new(), |meta| meta.token_id.to_string()),
-                burn_summary: if entry.is_normal() {
-                    String::new()
-                } else {
-                    entry.burn_summary()
-                },
+                burn_error: entry
+                    .burn_error
+                    .as_ref()
+                    .map_or(String::new(), |burn_error| burn_error.to_string()),
                 failed_colorings: entry
                     .failed_colorings
                     .iter()
@@ -255,8 +259,8 @@ impl<'m> TxTokenData<'m> {
     }
 }
 
-/// Read just the output data of a token tx from the DB
-pub fn read_db_token_output(
+/// Read just the output data of a token tx
+pub fn db_output(
     db: &Db,
     tx_num: TxNum,
     out_idx: u32,
@@ -349,7 +353,7 @@ pub struct TokenInfo {
 }
 
 /// Read token info from the DB or mempool
-pub fn read_token_info(
+pub fn token_info(
     db: &Db,
     mempool: &Mempool,
     avalanche: &Avalanche,
