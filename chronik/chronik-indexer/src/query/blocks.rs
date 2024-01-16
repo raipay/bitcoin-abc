@@ -21,6 +21,8 @@ use chronik_db::{
 use chronik_proto::proto;
 use thiserror::Error;
 
+#[cfg(feature = "plugins")]
+use crate::query::plugins::read_plugin_outputs;
 use crate::{
     avalanche::Avalanche,
     query::{make_tx_proto, HashOrHeight, OutputsSpent, TxTokenData},
@@ -217,6 +219,8 @@ impl<'a> QueryBlocks<'a> {
                 Some(&db_block),
                 self.avalanche,
                 TxTokenData::from_db(self.db, tx_num, &tx)?.as_ref(),
+                #[cfg(feature = "plugins")]
+                &read_plugin_outputs(self.db, self.mempool.plugins(), &tx)?,
             ));
         }
         let total_num_txs = (tx_range.end - tx_range.start) as usize;

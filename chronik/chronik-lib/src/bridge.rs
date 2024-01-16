@@ -22,7 +22,7 @@ use chronik_indexer::{
     pause::Pause,
 };
 #[cfg(feature = "plugins")]
-use chronik_plugin::context::{PluginContext, PluginConfig};
+use chronik_plugin::context::{PluginConfig, PluginContext};
 use chronik_util::{log, log_chronik, mount_loggers, Loggers};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -73,7 +73,7 @@ fn try_setup_chronik(
         .map(|host| parse_socket_addr(host, params.default_port))
         .collect::<Result<Vec<_>>>()?;
     #[cfg(feature = "plugins")]
-    PluginContext::setup(PluginConfig {
+    let plugin_ctx = PluginContext::setup(PluginConfig {
         plugin_dir: std::path::Path::new(&params.datadir).join("plugins"),
     })?;
     log!("Starting Chronik bound to {:?}\n", hosts);
@@ -86,7 +86,11 @@ fn try_setup_chronik(
         enable_perf_stats: params.enable_perf_stats,
         slp_reindex_height: -1,
     })?;
-    indexer.resync_indexer(bridge_ref)?;
+    indexer.resync_indexer(
+        bridge_ref,
+        #[cfg(feature = "plugins")]
+        &plugin_ctx,
+    )?;
     if chronik_bridge::ffi::shutdown_requested() {
         // Don't setup Chronik if the user requested shutdown during resync
         return Ok(());
@@ -122,6 +126,8 @@ fn try_setup_chronik(
         indexer,
         pause,
         runtime,
+        #[cfg(feature = "plugins")]
+        plugin_ctx,
     });
     StartChronikValidationInterface(node_context, chronik);
     Ok(())
@@ -147,6 +153,8 @@ pub struct Chronik {
     // Having this here ensures HTTP server, outstanding requests etc. will get
     // stopped when `Chronik` is dropped.
     runtime: tokio::runtime::Runtime,
+    #[cfg(feature = "plugins")]
+    plugin_ctx: PluginContext,
 }
 
 impl Chronik {
@@ -217,10 +225,14 @@ impl Chronik {
         let mut indexer = self.indexer.blocking_write();
         let tx = chronik_bridge::ffi::bridge_tx(ptx, spent_coins)?;
         let txid = TxId::from(tx.txid);
-        indexer.handle_tx_added_to_mempool(MempoolTx {
-            tx: Tx::from(tx),
-            time_first_seen,
-        })?;
+        indexer.handle_tx_added_to_mempool(
+            MempoolTx {
+                tx: Tx::from(tx),
+                time_first_seen,
+            },
+            #[cfg(feature = "plugins")]
+            &self.plugin_ctx,
+        )?;
         log_chronik!("Chronik: transaction {} added to mempool\n", txid);
         Ok(())
     }
@@ -234,7 +246,11 @@ impl Chronik {
         let block = indexer.make_chronik_block(block, bindex)?;
         let block_hash = block.db_block.hash.clone();
         let num_txs = block.block_txs.txs.len();
-        indexer.handle_block_connected(block)?;
+        indexer.handle_block_connected(
+            block,
+            #[cfg(feature = "plugins")]
+            &self.plugin_ctx,
+        )?;
         log_chronik!(
             "Chronik: block {} connected with {} txs\n",
             block_hash,
@@ -252,7 +268,11 @@ impl Chronik {
         let block = indexer.make_chronik_block(block, bindex)?;
         let block_hash = block.db_block.hash.clone();
         let num_txs = block.block_txs.txs.len();
-        indexer.handle_block_disconnected(block)?;
+        indexer.handle_block_disconnected(
+            block,
+            #[cfg(feature = "plugins")]
+            &self.plugin_ctx,
+        )?;
         log_chronik!(
             "Chronik: block {} disconnected with {} txs\n",
             block_hash,

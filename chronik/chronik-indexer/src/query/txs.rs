@@ -18,6 +18,8 @@ use chronik_db::{
 use chronik_proto::proto;
 use thiserror::Error;
 
+#[cfg(feature = "plugins")]
+use crate::query::plugins::read_plugin_outputs;
 use crate::{
     avalanche::Avalanche,
     query::{
@@ -76,6 +78,8 @@ impl<'a> QueryTxs<'a> {
                 self.avalanche,
                 TxTokenData::from_mempool(self.mempool.tokens(), &tx.tx)
                     .as_ref(),
+                #[cfg(feature = "plugins")]
+                &read_plugin_outputs(self.db, self.mempool.plugins(), &tx.tx)?,
             )),
             None => {
                 let tx_reader = TxReader::new(self.db)?;
@@ -110,6 +114,8 @@ impl<'a> QueryTxs<'a> {
                     Some(&block),
                     self.avalanche,
                     TxTokenData::from_db(self.db, tx_num, &tx)?.as_ref(),
+                    #[cfg(feature = "plugins")]
+                    &read_plugin_outputs(self.db, self.mempool.plugins(), &tx)?,
                 ))
             }
         }

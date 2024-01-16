@@ -65,7 +65,7 @@ struct GroupHistoryColumn<'a> {
 pub struct GroupHistoryWriter<'a, G: Group> {
     col: GroupHistoryColumn<'a>,
     conf: GroupHistoryConf,
-    group: G,
+    group: &'a G,
 }
 
 /// Read pages of grouped txs from the DB.
@@ -197,7 +197,7 @@ impl<'a> GroupHistoryColumn<'a> {
 
 impl<'a, G: Group> GroupHistoryWriter<'a, G> {
     /// Create a new [`GroupHistoryWriter`].
-    pub fn new(db: &'a Db, group: G) -> Result<Self> {
+    pub fn new(db: &'a Db, group: &'a G) -> Result<Self> {
         let conf = G::tx_history_conf();
         let col = GroupHistoryColumn::new(db, &conf)?;
         Ok(GroupHistoryWriter { col, conf, group })
@@ -364,7 +364,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                 is_coinbase: index_tx.is_coinbase,
                 tx: index_tx.tx,
             };
-            for member in tx_members_for_group(&self.group, query) {
+            for member in tx_members_for_group(self.group, query) {
                 let tx_nums = group_tx_nums.entry(member).or_default();
                 if let Some(&last_tx_num) = tx_nums.last() {
                     if last_tx_num == index_tx.tx_num {
@@ -484,7 +484,7 @@ mod tests {
         TxWriter::add_cfs(&mut cfs);
         let db = Db::open_with_cfs(tempdir.path(), cfs)?;
         let tx_writer = TxWriter::new(&db)?;
-        let group_writer = GroupHistoryWriter::new(&db, ValueGroup)?;
+        let group_writer = GroupHistoryWriter::new(&db, &ValueGroup)?;
         let group_reader = GroupHistoryReader::<ValueGroup>::new(&db)?;
         let mem_data = RefCell::new(GroupHistoryMemData::default());
         let txs_mem_data = RefCell::new(TxsMemData::default());

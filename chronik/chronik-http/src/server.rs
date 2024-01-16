@@ -92,6 +92,10 @@ pub enum ChronikServerError {
     /// Block not found in DB
     #[error("404: Block not found: {0}")]
     BlockNotFound(String),
+
+    /// Chronik hasn't been built with the plugin system enabled
+    #[error("400: Plugin system disabled")]
+    PluginSystemDisabled,
 }
 
 use self::ChronikServerError::*;
@@ -187,6 +191,22 @@ impl ChronikServer {
             .route(
                 "/script/:type/:payload/utxos",
                 routing::get(handle_script_utxos),
+            )
+            .route(
+                "/plugin/:plugin_name/:payload/confirmed-txs",
+                routing::get(handle_plugin_confirmed_txs),
+            )
+            .route(
+                "/plugin/:plugin_name/:payload/history",
+                routing::get(handle_plugin_history),
+            )
+            .route(
+                "/plugin/:plugin_name/:payload/unconfirmed-txs",
+                routing::get(handle_plugin_unconfirmed_txs),
+            )
+            .route(
+                "/plugin/:plugin_name/:payload/utxos",
+                routing::get(handle_plugin_utxos),
             )
             .route("/ws", routing::get(handle_ws))
             .route("/pause", routing::get(handle_pause))
@@ -371,6 +391,92 @@ async fn handle_script_utxos(
     Ok(Protobuf(
         handlers::handle_script_utxos(&script_type, &payload, &indexer).await?,
     ))
+}
+
+#[cfg(feature = "plugins")]
+async fn handle_plugin_confirmed_txs(
+    Path((plugin_name, payload)): Path<(String, String)>,
+    Query(query_params): Query<HashMap<String, String>>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_plugin_confirmed_txs(
+            &plugin_name,
+            &payload,
+            &query_params,
+            &indexer,
+        )
+        .await?,
+    ))
+}
+
+#[cfg(not(feature = "plugins"))]
+async fn handle_plugin_confirmed_txs(
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    Err(PluginSystemDisabled.into())
+}
+
+#[cfg(feature = "plugins")]
+async fn handle_plugin_history(
+    Path((script_type, payload)): Path<(String, String)>,
+    Query(query_params): Query<HashMap<String, String>>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_plugin_history(
+            &script_type,
+            &payload,
+            &query_params,
+            &indexer,
+        )
+        .await?,
+    ))
+}
+
+#[cfg(not(feature = "plugins"))]
+async fn handle_plugin_history(
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    Err(PluginSystemDisabled.into())
+}
+
+#[cfg(feature = "plugins")]
+async fn handle_plugin_unconfirmed_txs(
+    Path((script_type, payload)): Path<(String, String)>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_plugin_unconfirmed_txs(
+            &script_type,
+            &payload,
+            &indexer,
+        )
+        .await?,
+    ))
+}
+
+#[cfg(not(feature = "plugins"))]
+async fn handle_plugin_unconfirmed_txs(
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    Err(PluginSystemDisabled.into())
+}
+
+#[cfg(feature = "plugins")]
+async fn handle_plugin_utxos(
+    Path((script_type, payload)): Path<(String, String)>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+) -> Result<Protobuf<proto::Utxos>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_plugin_utxos(&script_type, &payload, &indexer).await?,
+    ))
+}
+
+#[cfg(not(feature = "plugins"))]
+async fn handle_plugin_utxos() -> Result<Protobuf<proto::Utxos>, ReportError> {
+    Err(PluginSystemDisabled.into())
 }
 
 async fn handle_pause(

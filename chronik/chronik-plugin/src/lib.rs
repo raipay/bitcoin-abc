@@ -14,4 +14,6 @@ abc_rust_lint::lint! {
     pub mod token;
     pub mod tx;
     mod util;
+
+    pub use pyo3;
 }

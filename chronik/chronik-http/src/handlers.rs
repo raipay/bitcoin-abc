@@ -8,6 +8,8 @@ use chronik_proto::proto;
 use hyper::Uri;
 use thiserror::Error;
 
+#[cfg(feature = "plugins")]
+use crate::parse::parse_hex;
 use crate::{error::ReportError, parse::parse_script_variant_hex};
 
 /// Errors for HTTP handlers.
@@ -38,7 +40,9 @@ fn get_param<T: FromStr>(
 where
     T::Err: Display,
 {
-    let Some(param) = params.get(param_name) else { return Ok(None) };
+    let Some(param) = params.get(param_name) else {
+        return Ok(None);
+    };
     Ok(Some(param.parse::<T>().map_err(|err| InvalidParam {
         param_name: param_name.to_string(),
         param_value: param.to_string(),
@@ -124,4 +128,74 @@ pub async fn handle_script_utxos(
         script: script.bytecode().to_vec(),
         utxos,
     })
+}
+
+/// Return a page of the confirmed txs of the given script.
+/// Scripts are identified by script_type and payload.
+#[cfg(feature = "plugins")]
+pub async fn handle_plugin_confirmed_txs(
+    plugin_name: &str,
+    payload: &str,
+    query_params: &HashMap<String, String>,
+    indexer: &ChronikIndexer,
+) -> Result<proto::TxHistoryPage> {
+    let plugin = indexer.plugins()?;
+    let payload = parse_hex(payload)?;
+    let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
+    let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
+    plugin.confirmed_txs(
+        plugin_name,
+        &payload,
+        page_num as usize,
+        page_size as usize,
+    )
+}
+
+/// Return a page of the tx history of the given script, in reverse
+/// chronological order, i.e. the latest transaction first and then going back
+/// in time. Scripts are identified by script_type and payload.
+#[cfg(feature = "plugins")]
+pub async fn handle_plugin_history(
+    plugin_name: &str,
+    payload: &str,
+    query_params: &HashMap<String, String>,
+    indexer: &ChronikIndexer,
+) -> Result<proto::TxHistoryPage> {
+    let payload = parse_hex(payload)?;
+    let plugin = indexer.plugins()?;
+    let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
+    let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
+    plugin.rev_history(
+        plugin_name,
+        &payload,
+        page_num as usize,
+        page_size as usize,
+    )
+}
+
+/// Return a page of the confirmed txs of the given script.
+/// Scripts are identified by script_type and payload.
+#[cfg(feature = "plugins")]
+pub async fn handle_plugin_unconfirmed_txs(
+    plugin_name: &str,
+    payload: &str,
+    indexer: &ChronikIndexer,
+) -> Result<proto::TxHistoryPage> {
+    let payload = parse_hex(payload)?;
+    let plugin = indexer.plugins()?;
+    plugin.unconfirmed_txs(plugin_name, &payload)
+}
+
+/// Return the UTXOs of the given script.
+/// Scripts are identified by script_type and payload.
+#[cfg(feature = "plugins")]
+pub async fn handle_plugin_utxos(
+    plugin_name: &str,
+    payload: &str,
+    indexer: &ChronikIndexer,
+) -> Result<proto::Utxos> {
+    let payload = parse_hex(payload)?;
+    let plugin = indexer.plugins()?;
+    let utxos = plugin.utxos(plugin_name, &payload)?;
+    Ok(proto::Utxos { utxos })
 }

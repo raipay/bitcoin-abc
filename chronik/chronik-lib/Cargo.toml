@@ -12,7 +12,8 @@ license = "MIT"
 crate-type = ["staticlib"]
 
 [features]
-plugins = ["chronik-plugin"]
+default = []
+plugins = ["chronik-plugin", "chronik-db/plugins", "chronik-indexer/plugins", "chronik-http/plugins"]
 
 [dependencies]
 abc-rust-lint = { path = "../abc-rust-lint" }

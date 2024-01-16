@@ -2,7 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-use bitcoinsuite_core::script::{compress_script_variant, Script};
+use bitcoinsuite_core::{
+    script::{compress_script_variant, Script},
+    tx::TxOutput,
+};
 use bytes::Bytes;
 
 use crate::{
@@ -16,9 +19,9 @@ use crate::{
 };
 
 /// Index the mempool tx history of scripts
-pub type MempoolScriptHistory = MempoolGroupHistory<ScriptGroup>;
+pub type MempoolScriptHistory = MempoolGroupHistory;
 /// Index the mempool UTXOs of scripts
-pub type MempoolScriptUtxos = MempoolGroupUtxos<ScriptGroup>;
+pub type MempoolScriptUtxos = MempoolGroupUtxos;
 /// Index the tx history of script in the DB
 pub type ScriptHistoryWriter<'a> = GroupHistoryWriter<'a, ScriptGroup>;
 /// Read the tx history of scripts in the DB
@@ -36,6 +39,7 @@ impl Group for ScriptGroup {
     type Iter<'a> = Vec<MemberItem<&'a Script>>;
     type Member<'a> = &'a Script;
     type MemberSer<'a> = Bytes;
+    type Payload = ();
 
     fn input_members<'a>(&self, query: GroupQuery<'a>) -> Self::Iter<'a> {
         if query.is_coinbase {
@@ -81,8 +85,11 @@ impl Group for ScriptGroup {
     fn utxo_conf() -> GroupUtxoConf {
         GroupUtxoConf {
             cf_name: CF_SCRIPT_UTXO,
+            needs_script: false,
         }
     }
+
+    fn output_payload(_output: &TxOutput) -> Self::Payload {}
 }
 
 #[cfg(test)]

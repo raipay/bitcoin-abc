@@ -20,6 +20,7 @@ impl Group for ValueGroup {
     type Iter<'a> = Vec<MemberItem<i64>>;
     type Member<'a> = i64;
     type MemberSer<'a> = [u8; 8];
+    type Payload = ();
 
     fn input_members(&self, query: GroupQuery<'_>) -> Self::Iter<'_> {
         let mut inputs = Vec::new();
@@ -62,8 +63,11 @@ impl Group for ValueGroup {
     fn utxo_conf() -> GroupUtxoConf {
         GroupUtxoConf {
             cf_name: "value_utxo",
+            needs_script: false,
         }
     }
+
+    fn output_payload(_output: &TxOutput) -> Self::Payload {}
 }
 
 /// Serialize the value as array

@@ -10,6 +10,8 @@ use chronik_db::{db::Db, mem::Mempool};
 use chronik_proto::proto;
 use thiserror::Error;
 
+#[cfg(feature = "plugins")]
+use crate::query::plugins::read_plugin_outputs;
 use crate::{
     avalanche::Avalanche,
     indexer::Node,
@@ -57,7 +59,11 @@ impl QueryBroadcast<'_> {
 
             let mut tx_not_found = Vec::new();
             let mut tx_coins_to_uncache = Vec::new();
-            self.node.bridge.lookup_spent_coins(&mut ffi_tx, &mut tx_not_found, &mut tx_coins_to_uncache)?;
+            self.node.bridge.lookup_spent_coins(
+                &mut ffi_tx,
+                &mut tx_not_found,
+                &mut tx_coins_to_uncache,
+            )?;
             coins_to_uncache.extend(tx_coins_to_uncache);
 
             let tx = Tx::from(ffi_tx);
@@ -116,7 +122,11 @@ impl QueryBroadcast<'_> {
         let tx = TxMut::deser(&mut raw_tx.into())?;
         let mut ffi_tx = ffi::Tx::from(tx);
         let mut coins_to_uncache = Vec::new();
-        self.node.bridge.lookup_spent_coins(&mut ffi_tx, &mut vec![], &mut coins_to_uncache)?;
+        self.node.bridge.lookup_spent_coins(
+            &mut ffi_tx,
+            &mut vec![],
+            &mut coins_to_uncache,
+        )?;
         self.node.bridge.uncache_coins(&coins_to_uncache)?;
         let tx = Tx::from(ffi_tx);
         let slp = TxTokenData::from_unbroadcast_tx(self.db, self.mempool, &tx)?;
@@ -128,6 +138,8 @@ impl QueryBroadcast<'_> {
             None,
             self.avalanche,
             slp.as_ref(),
+            #[cfg(feature = "plugins")]
+            &read_plugin_outputs(self.db, self.mempool.plugins(), &tx)?,
         ))
     }
 }

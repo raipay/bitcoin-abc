@@ -28,6 +28,8 @@ use crate::{
 pub struct GroupUtxoConf {
     /// Column family to store the group utxos entries.
     pub cf_name: &'static str,
+    /// Whether we also need to store the script in the UTXO.
+    pub needs_script: bool,
 }
 
 struct GroupUtxoColumn<'a> {
@@ -57,27 +59,22 @@ pub struct UtxoOutpoint {
 
 /// Entry in the UTXO DB for a group.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct UtxoEntry {
+pub struct UtxoEntry<P> {
     /// Outpoint of the UTXO.
     pub outpoint: UtxoOutpoint,
 
     /// Value of the UTXO in satoshis.
-    ///
-    /// This is currently geared towards ScriptGroup, which can fully
-    /// reconstruct the UTXO without reading the full tx from the node
-    /// blockfile, using only the UTXO value.
-    ///
-    /// This may or may not be useful for other groups, but when that time
-    /// arrives, we can make this more generic by e.g. adding a `type
-    /// UtxoPayload: Deserialize + Serialize`.
     pub value: i64,
+
+    /// Extra payload attached to the UTXO for easy access.
+    pub payload: P,
 }
 
 /// Write UTXOs of a group to the DB.
 #[derive(Debug)]
 pub struct GroupUtxoWriter<'a, G: Group> {
     col: GroupUtxoColumn<'a>,
-    group: G,
+    group: &'a G,
 }
 
 /// Read UTXOs of a group from the DB.
@@ -114,7 +111,7 @@ pub enum GroupUtxoError {
     #[error(
         "Duplicate UTXO: {0:?} has been added twice to the member's UTXOs"
     )]
-    DuplicateUtxo(UtxoEntry),
+    DuplicateUtxo(UtxoOutpoint),
 
     /// UTXO already in the DB
     #[error("UTXO doesn't exist: {0:?} is not in the member's UTXOs")]
@@ -132,7 +129,7 @@ impl<'a> GroupUtxoColumn<'a> {
 
 impl<'a, G: Group> GroupUtxoWriter<'a, G> {
     /// Create a new [`GroupUtxoWriter`].
-    pub fn new(db: &'a Db, group: G) -> Result<Self> {
+    pub fn new(db: &'a Db, group: &'a G) -> Result<Self> {
         let conf = G::utxo_conf();
         let col = GroupUtxoColumn::new(db, &conf)?;
         Ok(GroupUtxoWriter { col, group })
@@ -152,7 +149,7 @@ impl<'a, G: Group> GroupUtxoWriter<'a, G> {
         stats.n_total += txs.len();
         let t_start = Instant::now();
         let mut updated_utxos =
-            HashMap::<G::Member<'tx>, Vec<UtxoEntry>>::new();
+            HashMap::<G::Member<'tx>, Vec<UtxoEntry<G::Payload>>>::new();
         for index_tx in txs {
             let query = GroupQuery {
                 is_coinbase: index_tx.is_coinbase,
@@ -207,7 +204,7 @@ impl<'a, G: Group> GroupUtxoWriter<'a, G> {
         stats.n_total += txs.len();
         let t_start = Instant::now();
         let mut updated_utxos =
-            HashMap::<G::Member<'tx>, Vec<UtxoEntry>>::new();
+            HashMap::<G::Member<'tx>, Vec<UtxoEntry<G::Payload>>>::new();
         for index_tx in txs {
             if index_tx.is_coinbase {
                 continue;
@@ -255,17 +252,21 @@ impl<'a, G: Group> GroupUtxoWriter<'a, G> {
         ));
     }
 
-    fn output_utxo(index_tx: &IndexTx<'_>, idx: usize) -> UtxoEntry {
+    fn output_utxo(
+        index_tx: &IndexTx<'_>,
+        idx: usize,
+    ) -> UtxoEntry<G::Payload> {
         UtxoEntry {
             outpoint: UtxoOutpoint {
                 tx_num: index_tx.tx_num,
                 out_idx: idx as u32,
             },
             value: index_tx.tx.outputs[idx].value,
+            payload: G::output_payload(&index_tx.tx.outputs[idx]),
         }
     }
 
-    fn input_utxo(index_tx: &IndexTx<'_>, idx: usize) -> UtxoEntry {
+    fn input_utxo(index_tx: &IndexTx<'_>, idx: usize) -> UtxoEntry<G::Payload> {
         UtxoEntry {
             outpoint: UtxoOutpoint {
                 tx_num: index_tx.input_nums[idx],
@@ -276,17 +277,22 @@ impl<'a, G: Group> GroupUtxoWriter<'a, G> {
                 .as_ref()
                 .map(|coin| coin.output.value)
                 .unwrap_or_default(),
+            payload: index_tx.tx.inputs[idx]
+                .coin
+                .as_ref()
+                .map(|coin| G::output_payload(&coin.output))
+                .unwrap_or_default(),
         }
     }
 
     fn insert_utxo_entry(
-        new_entry: UtxoEntry,
-        entries: &mut Vec<UtxoEntry>,
+        new_entry: UtxoEntry<G::Payload>,
+        entries: &mut Vec<UtxoEntry<G::Payload>>,
     ) -> Result<()> {
         match entries
             .binary_search_by_key(&&new_entry.outpoint, |entry| &entry.outpoint)
         {
-            Ok(_) => return Err(DuplicateUtxo(new_entry).into()),
+            Ok(_) => return Err(DuplicateUtxo(new_entry.outpoint).into()),
             Err(insert_idx) => entries.insert(insert_idx, new_entry),
         }
         Ok(())
@@ -294,7 +300,7 @@ impl<'a, G: Group> GroupUtxoWriter<'a, G> {
 
     fn delete_utxo_entry(
         delete_outpoint: &UtxoOutpoint,
-        entries: &mut Vec<UtxoEntry>,
+        entries: &mut Vec<UtxoEntry<G::Payload>>,
     ) -> Result<()> {
         match entries
             .binary_search_by_key(&delete_outpoint, |entry| &entry.outpoint)
@@ -307,16 +313,18 @@ impl<'a, G: Group> GroupUtxoWriter<'a, G> {
 
     fn get_or_fetch<'u, 'tx>(
         &self,
-        utxos: &'u mut HashMap<G::Member<'tx>, Vec<UtxoEntry>>,
+        utxos: &'u mut HashMap<G::Member<'tx>, Vec<UtxoEntry<G::Payload>>>,
         member: G::Member<'tx>,
-    ) -> Result<&'u mut Vec<UtxoEntry>> {
+    ) -> Result<&'u mut Vec<UtxoEntry<G::Payload>>> {
         match utxos.entry(member) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
                 let member_ser = self.group.ser_member(entry.key());
                 let db_entries =
                     match self.col.db.get(self.col.cf, member_ser.as_ref())? {
-                        Some(data) => db_deserialize::<Vec<UtxoEntry>>(&data)?,
+                        Some(data) => {
+                            db_deserialize::<Vec<UtxoEntry<G::Payload>>>(&data)?
+                        }
                         None => vec![],
                     };
                 Ok(entry.insert(db_entries))
@@ -327,7 +335,7 @@ impl<'a, G: Group> GroupUtxoWriter<'a, G> {
     fn update_write_batch(
         &self,
         batch: &mut WriteBatch,
-        utxos: &HashMap<G::Member<'_>, Vec<UtxoEntry>>,
+        utxos: &HashMap<G::Member<'_>, Vec<UtxoEntry<G::Payload>>>,
     ) -> Result<()> {
         for (member, utxos) in utxos {
             let member_ser = self.group.ser_member(member);
@@ -357,9 +365,14 @@ impl<'a, G: Group> GroupUtxoReader<'a, G> {
     }
 
     /// Query the UTXOs for the given member.
-    pub fn utxos(&self, member: &[u8]) -> Result<Option<Vec<UtxoEntry>>> {
+    pub fn utxos(
+        &self,
+        member: &[u8],
+    ) -> Result<Option<Vec<UtxoEntry<G::Payload>>>> {
         match self.col.db.get(self.col.cf, member)? {
-            Some(entry) => Ok(Some(db_deserialize::<Vec<UtxoEntry>>(&entry)?)),
+            Some(entry) => {
+                Ok(Some(db_deserialize::<Vec<UtxoEntry<G::Payload>>>(&entry)?))
+            }
             None => Ok(None),
         }
     }
@@ -400,7 +413,7 @@ mod tests {
         let tx_writer = TxWriter::new(&db)?;
         let mem_data = RefCell::new(GroupUtxoMemData::default());
         let txs_mem_data = RefCell::new(TxsMemData::default());
-        let group_writer = GroupUtxoWriter::new(&db, ValueGroup)?;
+        let group_writer = GroupUtxoWriter::new(&db, &ValueGroup)?;
         let group_reader = GroupUtxoReader::<ValueGroup>::new(&db)?;
 
         let block_height = RefCell::new(-1);
@@ -451,6 +464,7 @@ mod tests {
         let utxo = |tx_num, out_idx, value| UtxoEntry {
             outpoint: UtxoOutpoint { tx_num, out_idx },
             value,
+            payload: (),
         };
         let read_utxos = |val: i64| group_reader.utxos(&ser_value(val));
 

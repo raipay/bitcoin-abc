@@ -8,8 +8,12 @@ use std::collections::HashMap;
 
 use abc_rust_error::Result;
 use bitcoinsuite_core::tx::{Tx, TxId};
+#[cfg(feature = "plugins")]
+use chronik_plugin::context::PluginContext;
 use thiserror::Error;
 
+#[cfg(feature = "plugins")]
+use crate::plugins::mem::MempoolPlugins;
 use crate::{
     db::Db,
     groups::{MempoolScriptHistory, MempoolScriptUtxos, ScriptGroup},
@@ -26,6 +30,8 @@ pub struct Mempool {
     script_utxos: MempoolScriptUtxos,
     spent_by: MempoolSpentBy,
     tokens: MempoolTokens,
+    #[cfg(feature = "plugins")]
+    plugins: MempoolPlugins,
 }
 
 /// Transaction in the mempool.
@@ -53,25 +59,45 @@ use self::MempoolError::*;
 
 impl Mempool {
     /// Create a new [`Mempool`].
-    pub fn new(script_group: ScriptGroup) -> Self {
+    pub fn new() -> Self {
         Mempool {
             txs: HashMap::new(),
-            script_history: MempoolScriptHistory::new(script_group.clone()),
-            script_utxos: MempoolScriptUtxos::new(script_group),
+            script_history: MempoolScriptHistory::new(),
+            script_utxos: MempoolScriptUtxos::new(),
             spent_by: MempoolSpentBy::default(),
             tokens: MempoolTokens::default(),
+            #[cfg(feature = "plugins")]
+            plugins: MempoolPlugins::default(),
         }
     }
 
     /// Insert tx into the mempool.
-    pub fn insert(&mut self, db: &Db, mempool_tx: MempoolTx) -> Result<()> {
+    pub fn insert(
+        &mut self,
+        db: &Db,
+        mempool_tx: MempoolTx,
+        #[cfg(feature = "plugins")] plugin_ctx: &PluginContext,
+    ) -> Result<()> {
         let txid = mempool_tx.tx.txid();
-        self.script_history.insert(&mempool_tx);
-        self.script_utxos
-            .insert(&mempool_tx, |txid| self.txs.contains_key(txid))?;
+        self.script_history.insert(&mempool_tx, &ScriptGroup);
+        self.script_utxos.insert(
+            &mempool_tx,
+            |txid| self.txs.contains_key(txid),
+            &ScriptGroup,
+        )?;
         self.spent_by.insert(&mempool_tx)?;
         self.tokens
             .insert(db, &mempool_tx, |txid| self.txs.contains_key(txid))?;
+        #[cfg(feature = "plugins")]
+        self.plugins.insert(
+            db,
+            &mempool_tx,
+            |txid| self.txs.contains_key(txid),
+            self.tokens
+                .token_tx(mempool_tx.tx.txid_ref())
+                .zip(self.tokens.tx_token_inputs(mempool_tx.tx.txid_ref())),
+            plugin_ctx,
+        )?;
         if self.txs.insert(txid, mempool_tx).is_some() {
             return Err(DuplicateTx(txid).into());
         }
@@ -84,21 +110,29 @@ impl Mempool {
             Some(mempool_tx) => mempool_tx,
             None => return Err(NoSuchMempoolTx(txid).into()),
         };
-        self.script_history.remove(&mempool_tx);
-        self.script_utxos
-            .remove(&mempool_tx, |txid| self.txs.contains_key(txid))?;
+        self.script_history.remove(&mempool_tx, &ScriptGroup);
+        self.script_utxos.remove(
+            &mempool_tx,
+            |txid| self.txs.contains_key(txid),
+            &ScriptGroup,
+        )?;
         self.spent_by.remove(&mempool_tx)?;
         self.tokens.remove(&txid);
+        #[cfg(feature = "plugins")]
+        self.plugins
+            .remove(&mempool_tx, |txid| self.txs.contains_key(txid))?;
         Ok(mempool_tx)
     }
 
     /// Remove mined tx from the mempool.
     pub fn remove_mined(&mut self, txid: &TxId) -> Result<Option<MempoolTx>> {
         if let Some(mempool_tx) = self.txs.remove(txid) {
-            self.script_history.remove(&mempool_tx);
-            self.script_utxos.remove_mined(&mempool_tx);
+            self.script_history.remove(&mempool_tx, &ScriptGroup);
+            self.script_utxos.remove_mined(&mempool_tx, &ScriptGroup);
             self.spent_by.remove(&mempool_tx)?;
             self.tokens.remove(txid);
+            #[cfg(feature = "plugins")]
+            self.plugins.remove_mined(&mempool_tx);
             return Ok(Some(mempool_tx));
         }
         Ok(None)
@@ -127,5 +161,17 @@ impl Mempool {
     /// Token data of txs in the mempool.
     pub fn tokens(&self) -> &MempoolTokens {
         &self.tokens
+    }
+
+    /// Token data of txs in the mempool.
+    #[cfg(feature = "plugins")]
+    pub fn plugins(&self) -> &MempoolPlugins {
+        &self.plugins
+    }
+}
+
+impl Default for Mempool {
+    fn default() -> Self {
+        Mempool::new()
     }
 }

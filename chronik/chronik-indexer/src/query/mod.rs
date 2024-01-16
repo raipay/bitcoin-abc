@@ -8,6 +8,8 @@ mod blocks;
 mod broadcast;
 mod group_history;
 mod group_utxos;
+#[cfg(feature = "plugins")]
+pub mod plugins;
 mod tx_token_data;
 mod txs;
 mod util;
