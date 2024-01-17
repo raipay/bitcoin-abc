@@ -51,6 +51,8 @@ impl MempoolPlugins {
         let mut plugin_outputs =
             self.fetch_plugin_outputs(&tx.tx, db, &is_mempool_tx)??;
 
+        chronik_plugin::module::load_plugin_module();
+        chronik_plugin::pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| -> Result<()> {
             let result =
                 plugin_ctx.run_plugin_outputs(py, &tx.tx, token_data)?;

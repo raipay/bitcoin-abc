@@ -269,6 +269,8 @@ impl<'a> PluginsWriter<'a> {
             topo_sort.insert_from_slice(tx_num, &tx.input_nums);
         }
 
+        chronik_plugin::module::load_plugin_module();
+        chronik_plugin::pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| -> Result<_> {
             for tx_num in topo_sort.into_nodes() {
                 let tx_num = tx_num?;
