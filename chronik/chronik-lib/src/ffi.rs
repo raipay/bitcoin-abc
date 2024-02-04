@@ -13,6 +13,8 @@ mod ffi_inner {
     /// Params for setting up Chronik
     #[derive(Debug)]
     pub struct SetupParams {
+        /// Where the data of the blockchain is stored, independent on network
+        pub datadir: String,
         /// Where the data of the blockchain is stored, dependent on network
         /// (mainnet, testnet, regtest)
         pub datadir_net: String,

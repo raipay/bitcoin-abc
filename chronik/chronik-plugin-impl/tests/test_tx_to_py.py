@@ -4,7 +4,7 @@
 
 from chronik_plugin.script import Script
 from chronik_plugin.token import GenesisInfo, Token, TokenTxEntry
-from chronik_plugin.tx import OutPoint, Tx, TxInput, TxOutput
+from chronik_plugin.tx import OutPoint, PluginOutputEntry, Tx, TxInput, TxOutput
 from test_framework.util import assert_equal
 
 
@@ -69,12 +69,14 @@ def test_non_token_tx(tx: Tx):
                     token=None,
                 ),
                 sequence=0x12345678,
+                plugin_data=None,
             ),
             TxInput(
                 prev_out=OutPoint(b"\x08" * 32, 22),
                 script=Script(b""),
                 output=None,
                 sequence=0,
+                plugin_data=None,
             ),
         ],
     )
@@ -243,6 +245,15 @@ def test_slp_send_tx(tx: Tx):
         [inpt.output.token for inpt in tx.inputs],
         [
             slp_amount("03" * 32, 1, 20),
+        ],
+    )
+    assert_equal(
+        [inpt.plugin_data for inpt in tx.inputs],
+        [
+            {
+                "plugin1": PluginOutputEntry(groups=[b"a", b"b"], data=[b"c", b"d"]),
+                "plugin2": PluginOutputEntry(groups=[b"e"], data=[b"f"]),
+            }
         ],
     )
     assert_equal(

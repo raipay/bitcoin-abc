@@ -16,6 +16,7 @@ use bitcoinsuite_core::{
 use chronik_db::io::{
     BlockHeight, DbBlock, SpentByEntry, SpentByReader, TxNum, TxReader,
 };
+use chronik_plugin::data::PluginOutput;
 use chronik_proto::proto;
 use thiserror::Error;
 
@@ -45,6 +46,7 @@ pub enum QueryUtilError {
 }
 
 /// Make a [`proto::Tx`].
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn make_tx_proto(
     tx: &Tx,
     outputs_spent: &OutputsSpent<'_>,
@@ -53,6 +55,7 @@ pub(crate) fn make_tx_proto(
     block: Option<&DbBlock>,
     avalanche: &Avalanche,
     token: Option<&TxTokenData<'_>>,
+    plugin_outputs: &BTreeMap<OutPoint, PluginOutput>,
 ) -> proto::Tx {
     proto::Tx {
         txid: tx.txid().to_vec(),
@@ -76,6 +79,24 @@ pub(crate) fn make_tx_proto(
                     sequence_no: input.sequence,
                     token: token
                         .and_then(|token| token.input_token_proto(input_idx)),
+                    plugins: plugin_outputs
+                        .get(&input.prev_out)
+                        .map(|plugin_output| {
+                            plugin_output
+                                .plugins
+                                .iter()
+                                .map(|(plugin_name, entry)| {
+                                    (
+                                        plugin_name.clone(),
+                                        proto::PluginEntry {
+                                            groups: entry.groups.clone(),
+                                            data: entry.data.clone(),
+                                        },
+                                    )
+                                })
+                                .collect::<HashMap<_, _>>()
+                        })
+                        .unwrap_or_default(),
                 }
             })
             .collect(),
@@ -91,6 +112,13 @@ pub(crate) fn make_tx_proto(
                     .map(|spent_by| make_spent_by_proto(&spent_by)),
                 token: token
                     .and_then(|token| token.output_token_proto(output_idx)),
+                plugins: plugin_outputs
+                    .get(&OutPoint {
+                        txid: tx.txid(),
+                        out_idx: output_idx as u32,
+                    })
+                    .map(make_plugins_proto)
+                    .unwrap_or_default(),
             })
             .collect(),
         lock_time: tx.locktime,
@@ -138,6 +166,24 @@ pub(crate) fn make_outpoint_proto(outpoint: &OutPoint) -> proto::OutPoint {
         txid: outpoint.txid.to_vec(),
         out_idx: outpoint.out_idx,
     }
+}
+
+pub(crate) fn make_plugins_proto(
+    plugin_output: &PluginOutput,
+) -> HashMap<String, proto::PluginEntry> {
+    plugin_output
+        .plugins
+        .iter()
+        .map(|(plugin_name, entry)| {
+            (
+                plugin_name.clone(),
+                proto::PluginEntry {
+                    groups: entry.groups.clone(),
+                    data: entry.data.clone(),
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>()
 }
 
 fn make_spent_by_proto(spent_by: &SpentBy) -> proto::SpentBy {

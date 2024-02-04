@@ -4,11 +4,12 @@
 
 //! Module for [`QueryGroupHistory`], to query the tx history of a group.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use abc_rust_error::Result;
 use bitcoinsuite_core::tx::{OutPoint, TxId};
 use bitcoinsuite_slp::verify::SpentToken;
+use chronik_db::plugins::io::{DbOutpoint, PluginsReader};
 use chronik_db::{
     db::Db,
     group::{Group, UtxoData, UtxoDataOutput, UtxoDataValue},
@@ -18,6 +19,7 @@ use chronik_db::{
 use chronik_proto::proto;
 use thiserror::Error;
 
+use crate::query::make_plugins_proto;
 use crate::{
     avalanche::Avalanche,
     query::{
@@ -64,6 +66,8 @@ pub struct UtxoExtra {
     pub is_final: bool,
     /// Token data attached to the UTXO
     pub token: Option<SpentToken>,
+    /// Plugin data attached to the UTXO
+    pub plugins: HashMap<String, proto::PluginEntry>,
 }
 
 /// Helper to turn [`UtxoData`] and [`UtxoExtra`] to a protobuf struct.
@@ -96,6 +100,7 @@ impl UtxoProtobuf for UtxoProtobufValue {
                 .token
                 .as_ref()
                 .map(|token| make_utxo_token_proto(&token.token)),
+            plugins: extra.plugins,
         }
     }
 }
@@ -120,6 +125,7 @@ impl UtxoProtobuf for UtxoProtobufOutput {
                 .token
                 .as_ref()
                 .map(|token| make_utxo_token_proto(&token.token)),
+            plugins: extra.plugins,
         }
     }
 }
@@ -158,6 +164,7 @@ where
     pub fn utxos(&self, member: G::Member<'_>) -> Result<Vec<U::Proto>> {
         let tx_reader = TxReader::new(self.db)?;
         let utxo_reader = GroupUtxoReader::<G>::new(self.db)?;
+        let plugins_reader = PluginsReader::new(self.db)?;
         let member_ser = self.group.ser_member(&member);
 
         // Read UTXO entries from DB and mempool
@@ -194,6 +201,9 @@ where
                 }
             }
 
+            let plugin_output = plugins_reader
+                .plugin_output(&DbOutpoint { tx_num, out_idx })?;
+
             let outpoint = OutPoint { txid, out_idx };
             utxos.push(U::map_proto(
                 db_utxo.data,
@@ -210,6 +220,10 @@ where
                         out_idx,
                         self.is_token_index_enabled,
                     )?,
+                    plugins: plugin_output
+                        .as_ref()
+                        .map(make_plugins_proto)
+                        .unwrap_or_default(),
                 },
             ));
         }
@@ -226,6 +240,8 @@ where
                 .get(mempool_outpoint.out_idx as usize)
                 .ok_or(MempoolTxOutputsOutOfBounds(mempool_outpoint))?;
             let token = self.mempool.tokens().spent_token(&mempool_outpoint)?;
+            let plugins =
+                self.mempool.plugins().plugin_output(&mempool_outpoint);
             utxos.push(U::map_proto(
                 U::UtxoData::from_output(output),
                 UtxoExtra {
@@ -234,6 +250,9 @@ where
                     is_coinbase: false,
                     is_final: false,
                     token,
+                    plugins: plugins
+                        .map(make_plugins_proto)
+                        .unwrap_or_default(),
                 },
             ));
         }

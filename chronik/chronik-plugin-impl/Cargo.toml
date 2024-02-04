@@ -13,6 +13,7 @@ abc-rust-error = { path = "../abc-rust-error" }
 bitcoinsuite-core = { path = "../bitcoinsuite-core" }
 bitcoinsuite-slp = { path = "../bitcoinsuite-slp" }
 
+chronik-plugin-common = { path = "../chronik-plugin-common" }
 chronik-util = { path = "../chronik-util" }
 
 pyo3 = { version = "0.20" }

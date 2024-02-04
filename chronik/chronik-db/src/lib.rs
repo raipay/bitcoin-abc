@@ -15,4 +15,5 @@ abc_rust_lint::lint! {
     pub mod ser;
     #[cfg(test)]
     mod test;
+    pub mod plugins;
 }

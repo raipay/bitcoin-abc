@@ -19,6 +19,7 @@ use chronik_proto::proto;
 use chronik_util::log;
 use thiserror::Error;
 
+use crate::query::plugins::read_plugin_outputs;
 use crate::{
     avalanche::Avalanche,
     query::{make_tx_proto, OutputsSpent, TxTokenData},
@@ -273,6 +274,11 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                 self.avalanche,
                 TxTokenData::from_mempool(self.mempool.tokens(), &entry.tx)
                     .as_ref(),
+                &read_plugin_outputs(
+                    self.db,
+                    self.mempool.plugins(),
+                    &entry.tx,
+                )?,
             ));
         }
 
@@ -360,6 +366,11 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                             &entry.tx,
                         )
                         .as_ref(),
+                        &read_plugin_outputs(
+                            self.db,
+                            self.mempool.plugins(),
+                            &entry.tx,
+                        )?,
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?,
@@ -406,6 +417,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
             Some(&block),
             self.avalanche,
             token.as_ref(),
+            &read_plugin_outputs(self.db, self.mempool.plugins(), &tx)?,
         ))
     }
 }

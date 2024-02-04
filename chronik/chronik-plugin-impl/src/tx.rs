@@ -4,6 +4,8 @@
 
 //! Module for tx related objects such as [`Tx`] for plugins.
 
+use std::collections::BTreeMap;
+
 use bitcoinsuite_core::tx::{OutPoint, Tx, TxInput, TxOutput};
 use bitcoinsuite_slp::{
     empp,
@@ -11,6 +13,7 @@ use bitcoinsuite_slp::{
     token_tx::{TokenTx, TokenTxEntry},
     verify::SpentToken,
 };
+use chronik_plugin_common::data::PluginOutput;
 use pyo3::{
     prelude::*,
     types::{PyDict, PyList},
@@ -25,6 +28,7 @@ pub struct TxModule {
     cls_out_point: PyObject,
     cls_tx_input: PyObject,
     cls_tx_output: PyObject,
+    cls_plugin_output_entry: PyObject,
     token_module: TokenModule,
 }
 
@@ -37,6 +41,9 @@ impl TxModule {
             cls_out_point: tx_module.getattr("OutPoint")?.into(),
             cls_tx_input: tx_module.getattr("TxInput")?.into(),
             cls_tx_output: tx_module.getattr("TxOutput")?.into(),
+            cls_plugin_output_entry: tx_module
+                .getattr("PluginOutputEntry")?
+                .into(),
             token_module: TokenModule::import(py)?,
         })
     }
@@ -46,6 +53,7 @@ impl TxModule {
         &self,
         py: Python<'_>,
         tx: &Tx,
+        plugin_outputs: &BTreeMap<OutPoint, PluginOutput>,
         token_data: Option<(&TokenTx, &[Option<SpentToken>])>,
     ) -> PyResult<PyObject> {
         let py_empp_data = PyList::empty(py);
@@ -84,6 +92,7 @@ impl TxModule {
                     self.bridge_tx_input(
                         py,
                         input,
+                        plugin_outputs.get(&input.prev_out),
                         spent_tokens
                             .and_then(|tokens| tokens[input_idx].as_ref()),
                         &py_entries,
@@ -159,6 +168,7 @@ impl TxModule {
         &self,
         py: Python<'_>,
         input: &TxInput,
+        plugin_output: Option<&PluginOutput>,
         spent_token: Option<&SpentToken>,
         py_token_entries: &[PyObject],
         entries: &[TokenTxEntry],
@@ -189,6 +199,12 @@ impl TxModule {
                 .transpose()?,
         )?;
         kwargs.set_item("sequence", input.sequence)?;
+        kwargs.set_item(
+            "plugin_data",
+            plugin_output
+                .map(|plugin_output| self.bridge_plugin_data(py, plugin_output))
+                .transpose()?,
+        )?;
         self.cls_tx_input.call(py, (), Some(kwargs))
     }
 
@@ -223,5 +239,31 @@ impl TxModule {
                 .transpose()?,
         )?;
         self.cls_tx_output.call(py, (), Some(kwargs))
+    }
+
+    fn bridge_plugin_data<'py>(
+        &self,
+        py: Python<'py>,
+        plugin_output: &PluginOutput,
+    ) -> PyResult<&'py PyDict> {
+        let plugin_data = PyDict::new(py);
+        for (plugin_name, entry) in &plugin_output.plugins {
+            let kwargs = PyDict::new(py);
+            let py_groups = PyList::empty(py);
+            for group in &entry.groups {
+                py_groups.append(to_bytes(py, group))?;
+            }
+            let py_data = PyList::empty(py);
+            for data in &entry.data {
+                py_data.append(to_bytes(py, data))?;
+            }
+            kwargs.set_item("groups", py_groups)?;
+            kwargs.set_item("data", py_data)?;
+            plugin_data.set_item(
+                plugin_name.as_str(),
+                self.cls_plugin_output_entry.call(py, (), Some(kwargs))?,
+            )?;
+        }
+        Ok(plugin_data)
     }
 }

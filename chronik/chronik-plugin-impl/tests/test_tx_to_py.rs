@@ -2,6 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+use std::collections::BTreeMap;
+
 use abc_rust_error::Result;
 use bitcoinsuite_core::{
     hash::ShaRmd160,
@@ -25,6 +27,7 @@ use bitcoinsuite_slp::{
     token_type::{AlpTokenType, SlpTokenType},
     verify::{SpentToken, VerifyContext},
 };
+use chronik_plugin_common::data::{PluginOutput, PluginOutputEntry};
 use chronik_plugin_impl::{
     module::{add_test_framework_to_pythonpath, load_plugin_module},
     tx::TxModule,
@@ -37,6 +40,7 @@ fn make_py_tx(
     txid_num: u8,
     num_outputs: usize,
     op_return_script: Script,
+    spent_plugin_outputs: &[Option<PluginOutput>],
     spent_tokens: &[Option<SpentToken>],
 ) -> PyResult<PyObject> {
     let tx = Tx::with_txid(
@@ -45,10 +49,11 @@ fn make_py_tx(
             version: 0,
             inputs: spent_tokens
                 .iter()
-                .map(|_| TxInput {
+                .enumerate()
+                .map(|(input_idx, _)| TxInput {
                     prev_out: OutPoint {
                         txid: TxId::from([2; 32]),
-                        out_idx: 1,
+                        out_idx: input_idx as u32,
                     },
                     coin: Some(Coin::default()),
                     ..Default::default()
@@ -75,7 +80,25 @@ fn make_py_tx(
         override_has_mint_vault: None,
     };
     let token_tx = context.verify(colored_tx);
-    tx_module.bridge_tx(py, &tx, Some((&token_tx, spent_tokens)))
+    tx_module.bridge_tx(
+        py,
+        &tx,
+        &spent_plugin_outputs
+            .iter()
+            .enumerate()
+            .filter_map(|(input_idx, output)| {
+                let output = output.as_ref()?;
+                Some((
+                    OutPoint {
+                        txid: TxId::from([2; 32]),
+                        out_idx: input_idx as u32,
+                    },
+                    output.clone(),
+                ))
+            })
+            .collect::<BTreeMap<_, _>>(),
+        Some((&token_tx, spent_tokens)),
+    )
 }
 
 #[test]
@@ -138,7 +161,12 @@ fn test_tx_to_py() -> Result<()> {
 
         test_module
             .getattr("test_non_token_tx")?
-            .call1((tx_module.bridge_tx(py, &non_token_tx, None)?,))
+            .call1((tx_module.bridge_tx(
+                py,
+                &non_token_tx,
+                &BTreeMap::new(),
+                None,
+            )?,))
             .map_err(handle_exc)?;
 
         let slp_genesis_tx = make_py_tx(
@@ -161,6 +189,7 @@ fn test_tx_to_py() -> Result<()> {
                 Some(2),
                 1234,
             ),
+            &[],
             &[],
         )?;
         test_module
@@ -189,6 +218,7 @@ fn test_tx_to_py() -> Result<()> {
                 1234,
             ),
             &[],
+            &[],
         )?;
         test_module
             .getattr("test_slp_mint_vault_genesis_tx")?
@@ -206,6 +236,7 @@ fn test_tx_to_py() -> Result<()> {
                 None,
                 1,
             ),
+            &[None],
             &[spent_amount(
                 meta_slp(TOKEN_ID3, SlpTokenType::Nft1Group),
                 1,
@@ -222,6 +253,7 @@ fn test_tx_to_py() -> Result<()> {
             2,
             2,
             mint_opreturn(&TOKEN_ID3, SlpTokenType::Fungible, Some(2), 1234),
+            &[None],
             &[spent_baton(meta_slp(TOKEN_ID3, SlpTokenType::Fungible))],
         )?;
         test_module
@@ -235,6 +267,26 @@ fn test_tx_to_py() -> Result<()> {
             2,
             3,
             send_opreturn(&TOKEN_ID3, SlpTokenType::Fungible, &[5, 6, 7]),
+            &[Some(PluginOutput {
+                plugins: [
+                    (
+                        "plugin1".to_string(),
+                        PluginOutputEntry {
+                            groups: vec![b"a".to_vec(), b"b".to_vec()],
+                            data: vec![b"c".to_vec(), b"d".to_vec()],
+                        },
+                    ),
+                    (
+                        "plugin2".to_string(),
+                        PluginOutputEntry {
+                            groups: vec![b"e".to_vec()],
+                            data: vec![b"f".to_vec()],
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            })],
             &[spent_amount(
                 meta_slp(TOKEN_ID3, SlpTokenType::Fungible),
                 20,
@@ -251,6 +303,7 @@ fn test_tx_to_py() -> Result<()> {
             2,
             0,
             burn_opreturn(&TOKEN_ID3, SlpTokenType::Fungible, 500),
+            &[None],
             &[spent_amount(
                 meta_slp(TOKEN_ID3, SlpTokenType::Fungible),
                 600,
@@ -305,6 +358,7 @@ fn test_tx_to_py() -> Result<()> {
                 ),
                 b"SLP2\x02".as_ref().into(),
             ]),
+            &[None],
             &[
                 spent_baton(meta_alp(TOKEN_ID2)),
                 None,
@@ -348,6 +402,7 @@ fn test_tx_to_py() -> Result<()> {
             1,
             1,
             Script::default(),
+            &[None],
             &[spent_amount(meta_alp(TOKEN_ID2), 200)],
         )?;
         test_module

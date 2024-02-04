@@ -22,6 +22,7 @@ use crate::{
         token::TokenWriter, BlockStatsWriter, BlockWriter, MetadataWriter,
         SpentByWriter, TxWriter,
     },
+    plugins::io::PluginsWriter,
 };
 
 // All column family names used by Chronik should be defined here
@@ -41,6 +42,14 @@ pub const CF_LOOKUP_BLK_BY_HASH: &str = "lookup_blk_by_hash";
 pub const CF_LOOKUP_TX_BY_HASH: &str = "lookup_tx_by_hash";
 /// Column family name for db metadata.
 pub const CF_META: &str = "meta";
+/// Column family to store plugin outputs.
+pub const CF_PLUGIN_OUTPUTS: &str = "plugin_outputs";
+/// Column family to store plugin group history.
+pub const CF_PLUGIN_GROUP_HISTORY: &str = "plugin_history";
+/// Column family to store plugin group history num txs.
+pub const CF_PLUGIN_GROUP_HISTORY_NUM_TXS: &str = "plugin_history_num_txs";
+/// Column family to store plugin group UTXOs.
+pub const CF_PLUGIN_GROUP_UTXOS: &str = "plugin_utxos";
 /// Column family to store tx history by script.
 pub const CF_SCRIPT_HISTORY: &str = "script_history";
 /// Column family to store number of txs by script.
@@ -103,6 +112,7 @@ impl Db {
         TokenWriter::add_cfs(&mut cfs);
         TokenIdHistoryWriter::add_cfs(&mut cfs);
         TokenIdUtxoWriter::add_cfs(&mut cfs);
+        PluginsWriter::add_cfs(&mut cfs);
         Self::open_with_cfs(path, cfs)
     }
 

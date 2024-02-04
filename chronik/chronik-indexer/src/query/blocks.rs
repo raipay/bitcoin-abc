@@ -23,7 +23,10 @@ use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, HashOrHeight, OutputsSpent, TxTokenData},
+    query::{
+        make_tx_proto, read_plugin_outputs, HashOrHeight, OutputsSpent,
+        TxTokenData,
+    },
 };
 
 const MAX_BLOCKS_PAGE_SIZE: usize = 500;
@@ -225,6 +228,7 @@ impl<'a> QueryBlocks<'a> {
                 Some(&db_block),
                 self.avalanche,
                 token.as_ref(),
+                &read_plugin_outputs(self.db, self.mempool.plugins(), &tx)?,
             ));
         }
         let total_num_txs = (tx_range.end - tx_range.start) as usize;

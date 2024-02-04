@@ -7,6 +7,10 @@ edition = "2021"
 rust-version.workspace = true
 license = "MIT"
 
+[features]
+default = []
+plugins = ["chronik-plugin/enabled"]
+
 [dependencies]
 abc-rust-error = { path = "../abc-rust-error" }
 abc-rust-lint = { path = "../abc-rust-lint" }
@@ -14,6 +18,7 @@ abc-rust-lint = { path = "../abc-rust-lint" }
 bitcoinsuite-core = { path = "../bitcoinsuite-core" }
 bitcoinsuite-slp = { path = "../bitcoinsuite-slp" }
 
+chronik-plugin = { path = "../chronik-plugin" }
 chronik-util = { path = "../chronik-util" }
 
 # Map that goes in both directions
@@ -44,7 +49,7 @@ thiserror = "1.0"
 topo_sort = "0.4"
 
 # Key-value database
-rocksdb = { version = "0.21", default-features = false }
+rocksdb = { version = "0.21" }
 
 [dev-dependencies]
 # Colorful diffs for assertions

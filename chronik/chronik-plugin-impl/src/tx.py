@@ -2,10 +2,20 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-from typing import List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 from chronik_plugin.script import Script
 from chronik_plugin.token import Token, TokenTxEntry
+
+
+class PluginOutputEntry(NamedTuple):
+    # Groups assigned to the output
+    groups: List[bytes]
+    # Data assigned to the output
+    data: List[bytes]
+
+
+PluginOutput = Dict[str, PluginOutputEntry]
 
 
 class OutPoint(NamedTuple):
@@ -37,6 +47,9 @@ class TxInput(NamedTuple):
 
     # nSequence of the input
     sequence: int
+
+    # Plugin data from other plugins
+    plugin_data: Optional[PluginOutput]
 
 
 class Tx(NamedTuple):

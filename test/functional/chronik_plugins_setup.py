@@ -5,6 +5,9 @@
 Test the Chronik plugin system gets sets up correctly.
 """
 
+import os
+import os.path
+
 from test_framework.test_framework import BitcoinTestFramework
 
 
@@ -19,6 +22,17 @@ class ChronikPluginsSetup(BitcoinTestFramework):
 
     def run_test(self):
         node = self.nodes[0]
+        # Chronik doesn't even initialize Python if there's no /plugins dir
+        with node.assert_debug_log(
+            [f"Plugin dir {node.datadir}/plugins doesn't exist, skipping"]
+        ):
+            self.restart_node(0, ["-chronik"])
+
+        # Create plugin dir
+        plugins_dir = os.path.join(node.datadir, "plugins")
+        os.mkdir(plugins_dir)
+
+        # Now Chronik initializes Python
         with node.assert_debug_log(["Plugin context initialized Python"]):
             self.restart_node(0, ["-chronik"])
 

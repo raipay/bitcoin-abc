@@ -15,4 +15,6 @@ abc_rust_lint::lint! {
     // Otherwise we use fallback modules
     #[cfg(not(feature = "enabled"))]
     pub mod context;
+
+    pub use chronik_plugin_common::*;
 }

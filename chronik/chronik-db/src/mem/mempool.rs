@@ -8,6 +8,7 @@ use std::{borrow::Cow, collections::HashMap};
 
 use abc_rust_error::Result;
 use bitcoinsuite_core::tx::{Tx, TxId};
+use chronik_plugin::context::PluginContext;
 use thiserror::Error;
 
 use crate::{
@@ -17,6 +18,7 @@ use crate::{
         MempoolTokenIdUtxos, ScriptGroup, TokenIdGroup, TokenIdGroupAux,
     },
     mem::{MempoolSpentBy, MempoolTokens},
+    plugins::mem::MempoolPlugins,
 };
 
 /// Mempool of the indexer. This stores txs from the node again, but having a
@@ -32,6 +34,7 @@ pub struct Mempool {
     token_id_history: MempoolTokenIdHistory,
     token_id_utxos: MempoolTokenIdUtxos,
     is_token_index_enabled: bool,
+    plugins: MempoolPlugins,
 }
 
 /// Result after adding a tx to the mempool
@@ -78,6 +81,7 @@ impl Mempool {
             token_id_history: MempoolTokenIdHistory::new(TokenIdGroup),
             token_id_utxos: MempoolTokenIdUtxos::new(TokenIdGroup),
             is_token_index_enabled: enable_token_index,
+            plugins: MempoolPlugins::default(),
         }
     }
 
@@ -86,6 +90,7 @@ impl Mempool {
         &mut self,
         db: &Db,
         mempool_tx: MempoolTx,
+        plugin_ctx: &PluginContext,
     ) -> Result<MempoolResult<'_>> {
         let txid = mempool_tx.tx.txid();
         self.script_history.insert(&mempool_tx, &());
@@ -110,6 +115,15 @@ impl Mempool {
         } else {
             token_id_aux = TokenIdGroupAux::default();
         }
+        self.plugins.insert(
+            db,
+            &mempool_tx,
+            |txid| self.txs.contains_key(txid),
+            self.tokens
+                .token_tx(mempool_tx.tx.txid_ref())
+                .zip(self.tokens.tx_token_inputs(mempool_tx.tx.txid_ref())),
+            plugin_ctx,
+        )?;
         if self.txs.insert(txid, mempool_tx).is_some() {
             return Err(DuplicateTx(txid).into());
         }
@@ -146,6 +160,8 @@ impl Mempool {
         } else {
             token_id_aux = TokenIdGroupAux::default();
         }
+        self.plugins
+            .remove(&mempool_tx, |txid| self.txs.contains_key(txid))?;
         Ok(MempoolResult {
             mempool_tx: Cow::Owned(mempool_tx),
             token_id_aux,
@@ -165,6 +181,7 @@ impl Mempool {
                 self.token_id_utxos.remove_mined(&mempool_tx, &token_id_aux);
                 self.tokens.remove(txid);
             }
+            self.plugins.remove_mined(&mempool_tx);
             return Ok(Some(mempool_tx));
         }
         Ok(None)
@@ -203,5 +220,10 @@ impl Mempool {
     /// Tx history of UTXOs by token ID in the mempool.
     pub fn token_id_utxos(&self) -> &MempoolTokenIdUtxos {
         &self.token_id_utxos
+    }
+
+    /// Token data of txs in the mempool.
+    pub fn plugins(&self) -> &MempoolPlugins {
+        &self.plugins
     }
 }

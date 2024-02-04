@@ -21,7 +21,7 @@ use chronik_indexer::{
     indexer::{ChronikIndexer, ChronikIndexerParams, Node},
     pause::Pause,
 };
-use chronik_plugin::context::PluginContext;
+use chronik_plugin::{config::PluginConfig, context::PluginContext};
 use chronik_util::{log, log_chronik, mount_loggers, Loggers};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -71,7 +71,9 @@ fn try_setup_chronik(
         .into_iter()
         .map(|host| parse_socket_addr(host, params.default_port))
         .collect::<Result<Vec<_>>>()?;
-    PluginContext::setup()?;
+    let plugin_ctx = Arc::new(PluginContext::setup(PluginConfig {
+        plugin_dir: std::path::Path::new(&params.datadir).join("plugins"),
+    })?);
     log!("Starting Chronik bound to {:?}\n", hosts);
     let bridge = chronik_bridge::ffi::make_bridge(config, node_context);
     let bridge_ref = expect_unique_ptr("make_bridge", &bridge);
@@ -81,6 +83,7 @@ fn try_setup_chronik(
         wipe_db: params.wipe_db,
         enable_token_index: params.enable_token_index,
         enable_perf_stats: params.enable_perf_stats,
+        plugin_ctx: Arc::clone(&plugin_ctx),
     })?;
     indexer.resync_indexer(bridge_ref)?;
     if chronik_bridge::ffi::shutdown_requested() {

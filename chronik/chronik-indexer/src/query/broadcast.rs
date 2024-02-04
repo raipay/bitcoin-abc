@@ -2,7 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+use std::collections::BTreeMap;
+
 use abc_rust_error::Result;
+use bitcoinsuite_core::tx::OutPoint;
 use bitcoinsuite_core::{
     error::DataError,
     ser::BitcoinSer,
@@ -11,6 +14,7 @@ use bitcoinsuite_core::{
 use bytes::Bytes;
 use chronik_bridge::ffi;
 use chronik_db::{db::Db, mem::Mempool};
+use chronik_plugin::context::PluginContext;
 use chronik_proto::proto;
 use thiserror::Error;
 
@@ -33,6 +37,8 @@ pub struct QueryBroadcast<'a> {
     pub node: &'a Node,
     /// Whether the SLP/ALP token index is enabled
     pub is_token_index_enabled: bool,
+    /// Plugin context
+    pub plugin_ctx: &'a PluginContext,
 }
 
 /// Errors indicating something went wrong with reading txs.
@@ -151,6 +157,35 @@ impl QueryBroadcast<'_> {
         } else {
             None
         };
+        let plugin_outputs = {
+            let token_data = token
+                .as_ref()
+                .map(|token| (token.tx.as_ref(), token.inputs.as_ref()));
+            let plugin_outputs = self.mempool.plugins().fetch_plugin_outputs(
+                &tx,
+                self.db,
+                |txid| self.mempool.tx(txid).is_some(),
+            )??;
+            self.plugin_ctx.with_py(|py| -> Result<_> {
+                let result = self.plugin_ctx.run_plugin_outputs(
+                    py,
+                    &tx,
+                    &plugin_outputs,
+                    token_data,
+                )?;
+                let mut plugin_outputs = BTreeMap::new();
+                for (output_idx, plugin_output) in result.outputs {
+                    plugin_outputs.insert(
+                        OutPoint {
+                            txid: tx.txid(),
+                            out_idx: output_idx as u32,
+                        },
+                        plugin_output,
+                    );
+                }
+                Ok(plugin_outputs)
+            })?
+        };
         Ok(make_tx_proto(
             &tx,
             &OutputsSpent::default(),
@@ -159,6 +194,7 @@ impl QueryBroadcast<'_> {
             None,
             self.avalanche,
             token.as_ref(),
+            &plugin_outputs,
         ))
     }
 }

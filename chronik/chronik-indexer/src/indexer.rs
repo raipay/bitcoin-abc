@@ -4,7 +4,7 @@
 
 //! Module containing [`ChronikIndexer`] to index blocks and txs.
 
-use std::{io::Write, path::PathBuf};
+use std::{io::Write, path::PathBuf, sync::Arc};
 
 use abc_rust_error::{Result, WrapErr};
 use bitcoinsuite_core::{
@@ -20,13 +20,17 @@ use chronik_db::{
     },
     index_tx::prepare_indexed_txs,
     io::{
-        merge, token::TokenWriter, BlockHeight, BlockReader, BlockStatsWriter,
-        BlockTxs, BlockWriter, DbBlock, GroupHistoryMemData, GroupUtxoMemData,
-        MetadataReader, MetadataWriter, SchemaVersion, SpentByWriter, TxEntry,
-        TxReader, TxWriter,
+        merge,
+        token::{ProcessedTokenTxBatch, TokenWriter},
+        BlockHeight, BlockReader, BlockStatsWriter, BlockTxs, BlockWriter,
+        DbBlock, GroupHistoryMemData, GroupUtxoMemData, MetadataReader,
+        MetadataWriter, SchemaVersion, SpentByWriter, TxEntry, TxReader,
+        TxWriter,
     },
     mem::{MemData, MemDataConf, Mempool, MempoolTx},
+    plugins::io::PluginsWriter,
 };
+use chronik_plugin::context::PluginContext;
 use chronik_util::{log, log_chronik};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -36,7 +40,7 @@ use crate::{
     indexer::ChronikIndexerError::*,
     query::{
         QueryBlocks, QueryBroadcast, QueryGroupHistory, QueryGroupUtxos,
-        QueryTxs, UtxoProtobufOutput, UtxoProtobufValue,
+        QueryPlugins, QueryTxs, UtxoProtobufOutput, UtxoProtobufValue,
     },
     subs::{BlockMsg, BlockMsgType, Subs},
     subs_group::TxMsgType,
@@ -55,6 +59,8 @@ pub struct ChronikIndexerParams {
     pub enable_token_index: bool,
     /// Whether to output Chronik performance statistics into a perf/ folder
     pub enable_perf_stats: bool,
+    /// Plugin context
+    pub plugin_ctx: Arc<PluginContext>,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
@@ -68,6 +74,7 @@ pub struct ChronikIndexer {
     subs: RwLock<Subs>,
     perf_path: Option<PathBuf>,
     is_token_index_enabled: bool,
+    plugin_ctx: Arc<PluginContext>,
 }
 
 /// Access to the bitcoind node.
@@ -189,6 +196,7 @@ impl ChronikIndexer {
             subs: RwLock::new(Subs::new(ScriptGroup)),
             perf_path: params.enable_perf_stats.then_some(perf_path),
             is_token_index_enabled: params.enable_token_index,
+            plugin_ctx: params.plugin_ctx,
         })
     }
 
@@ -314,7 +322,9 @@ impl ChronikIndexer {
         &mut self,
         mempool_tx: MempoolTx,
     ) -> Result<()> {
-        let result = self.mempool.insert(&self.db, mempool_tx)?;
+        let result =
+            self.mempool
+                .insert(&self.db, mempool_tx, &self.plugin_ctx)?;
         self.subs.get_mut().handle_tx_event(
             &result.mempool_tx.tx,
             TxMsgType::AddedToMempool,
@@ -356,6 +366,7 @@ impl ChronikIndexer {
             TokenIdHistoryWriter::new(&self.db, TokenIdGroup)?;
         let token_id_utxo_writer =
             TokenIdUtxoWriter::new(&self.db, TokenIdGroup)?;
+        let plugins_write = PluginsWriter::new(&self.db, &self.plugin_ctx)?;
         block_writer.insert(&mut batch, &block.db_block)?;
         let first_tx_num = tx_writer.insert(
             &mut batch,
@@ -384,8 +395,9 @@ impl ChronikIndexer {
             &mut self.mem_data.spent_by,
         )?;
         let token_id_aux;
+        let processed_token_batch;
         if self.is_token_index_enabled {
-            let processed_token_batch =
+            processed_token_batch =
                 token_writer.insert(&mut batch, &index_txs)?;
             token_id_aux =
                 TokenIdGroupAux::from_batch(&index_txs, &processed_token_batch);
@@ -402,8 +414,10 @@ impl ChronikIndexer {
                 &mut GroupUtxoMemData::default(),
             )?;
         } else {
+            processed_token_batch = ProcessedTokenTxBatch::default();
             token_id_aux = TokenIdGroupAux::default();
         }
+        plugins_write.insert(&mut batch, &index_txs, &processed_token_batch)?;
         self.db.write_batch(batch)?;
         for tx in &block.block_txs.txs {
             self.mempool.remove_mined(&tx.txid)?;
@@ -440,6 +454,7 @@ impl ChronikIndexer {
             TokenIdHistoryWriter::new(&self.db, TokenIdGroup)?;
         let token_id_utxo_writer =
             TokenIdUtxoWriter::new(&self.db, TokenIdGroup)?;
+        let plugins_write = PluginsWriter::new(&self.db, &self.plugin_ctx)?;
         block_writer.delete(&mut batch, &block.db_block)?;
         let first_tx_num = tx_writer.delete(
             &mut batch,
@@ -482,6 +497,7 @@ impl ChronikIndexer {
             )?;
             token_writer.delete(&mut batch, &index_txs)?;
         }
+        plugins_write.delete(&mut batch, &index_txs)?;
         self.avalanche.disconnect_block(block.db_block.height)?;
         self.db.write_batch(batch)?;
         let subs = self.subs.get_mut();
@@ -530,6 +546,7 @@ impl ChronikIndexer {
             mempool: &self.mempool,
             node,
             is_token_index_enabled: self.is_token_index_enabled,
+            plugin_ctx: &self.plugin_ctx,
         }
     }
 
@@ -607,6 +624,16 @@ impl ChronikIndexer {
             utxo_mapper: UtxoProtobufOutput,
             is_token_index_enabled: self.is_token_index_enabled,
         }
+    }
+
+    /// Return [`QueryGroupUtxos`] for scripts to query the utxos of scripts.
+    pub fn plugins(&self) -> Result<QueryPlugins<'_>> {
+        Ok(QueryPlugins {
+            db: &self.db,
+            avalanche: &self.avalanche,
+            mempool: &self.mempool,
+            is_token_index_enabled: self.is_token_index_enabled,
+        })
     }
 
     /// Subscribers, behind read/write lock
@@ -757,6 +784,7 @@ mod tests {
             wipe_db: false,
             enable_token_index: false,
             enable_perf_stats: false,
+            plugin_ctx: Default::default(),
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
@@ -825,6 +853,7 @@ mod tests {
             wipe_db: false,
             enable_token_index: false,
             enable_perf_stats: false,
+            plugin_ctx: Default::default(),
         };
 
         // Setting up DB first time sets the schema version
