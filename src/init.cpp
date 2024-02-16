@@ -433,6 +433,7 @@ void SetupServerArgs(NodeContext &node) {
         "-replayprotectionactivationtime",
         "-enableminerfund",
         "-chronikallowpause",
+        "-chronikscripthistoryexpectednumitems",
         // GUI args. These will be overwritten by SetupUIArgs for the GUI
         "-allowselfsignedrootcertificates",
         "-choosedatadir",
@@ -653,6 +654,11 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg("-chronikperfstats",
                    "Output some performance statistics (e.g. num cache hits, "
                    "seconds spent) into a <datadir>/perf folder. (default: 0)",
+                   ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikscripthistorybloomfilter",
+                   strprintf("Whether to enable a bloom filter to speed up "
+                             "script history (default: %u)",
+                             chronik::DEFAULT_SCRIPT_HISTORY_BLOOM_IS_ENABLED),
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
 #endif
     argsman.AddArg(

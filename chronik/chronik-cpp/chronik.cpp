@@ -57,6 +57,17 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
                 params.NetworkIDString() == CBaseChainParams::REGTEST
                     ? uint64_t(count_seconds(WS_PING_INTERVAL_REGTEST))
                     : uint64_t(count_seconds(WS_PING_INTERVAL_DEFAULT)),
+            .script_history =
+                {
+                    .is_bloom_enabled = gArgs.GetBoolArg(
+                        "-chronikscripthistorybloomfilter",
+                        DEFAULT_SCRIPT_HISTORY_BLOOM_IS_ENABLED),
+                    .false_positive_rate =
+                        DEFAULT_SCRIPT_HISTORY_BLOOM_FALSE_POSITIVE_RATE,
+                    .expected_num_items = (size_t)gArgs.GetIntArg(
+                        "-chronikscripthistoryexpectednumitems",
+                        DEFAULT_SCRIPT_HISTORY_BLOOM_EXPECTED_NUM_ITEMS),
+                },
         },
         config, node);
 }

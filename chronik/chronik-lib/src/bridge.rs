@@ -13,7 +13,7 @@ use std::{
 use abc_rust_error::Result;
 use bitcoinsuite_core::tx::{Tx, TxId};
 use chronik_bridge::{ffi::init_error, util::expect_unique_ptr};
-use chronik_db::mem::MempoolTx;
+use chronik_db::{io::GroupHistorySettings, mem::MempoolTx};
 use chronik_http::server::{
     ChronikServer, ChronikServerParams, ChronikSettings,
 };
@@ -81,6 +81,11 @@ fn try_setup_chronik(
         wipe_db: params.wipe_db,
         enable_token_index: params.enable_token_index,
         enable_perf_stats: params.enable_perf_stats,
+        script_history: GroupHistorySettings {
+            is_bloom_filter_enabled: params.script_history.is_bloom_enabled,
+            false_positive_rate: params.script_history.false_positive_rate,
+            expected_num_items: params.script_history.expected_num_items,
+        },
     })?;
     indexer.resync_indexer(bridge_ref)?;
     if chronik_bridge::ffi::shutdown_requested() {
@@ -202,6 +207,13 @@ impl Chronik {
     pub fn handle_block_finalized(&self, bindex: &ffi::CBlockIndex) {
         self.block_if_paused();
         ok_or_abort_node("handle_block_finalized", self.finalize_block(bindex));
+    }
+
+    /// Shutdown Chronik gracefully
+    pub fn shutdown(&self) {
+        if let Err(err) = self.indexer.blocking_write().shutdown() {
+            log!("*** CHRONIK ERROR: Shutdown had an error: {err}\n");
+        }
     }
 
     fn add_tx_to_mempool(

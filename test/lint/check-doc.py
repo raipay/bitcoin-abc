@@ -48,6 +48,7 @@ SET_FALSE_POSITIVE_UNDOCUMENTED = {
     "-automaticunparking",
     "-avalanchepreconsensus",
     "-chronikallowpause",
+    "-chronikscripthistoryexpectednumitems",
     "-dbcrashratio",
     "-enableminerfund",
     "-forcecompactdb",
