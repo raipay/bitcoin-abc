@@ -10,6 +10,7 @@ use std::{
 use abc_rust_error::Result;
 use chronik_util::{log, log_chronik};
 use lru::LruCache;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rocksdb::WriteBatch;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -564,9 +565,10 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         stats.t_group += t_group.elapsed().as_secs_f64();
 
         let t_ser_members = Instant::now();
+        let group = &self.group;
         let ser_members = grouped_txs
-            .keys()
-            .map(|key| self.group.ser_member(key))
+            .par_iter()
+            .map(|(key, _)| group.ser_member(key))
             .collect::<Vec<_>>();
         stats.t_ser_members += t_ser_members.elapsed().as_secs_f64();
 
