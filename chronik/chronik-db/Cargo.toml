@@ -24,6 +24,8 @@ bytes = "1.4"
 
 bloomfilter = "1.0"
 
+dashmap = { version = "5.5", features = ["rayon"] }
+
 # En-/decode byte strings from/to hex
 hex = "0.4"
 
