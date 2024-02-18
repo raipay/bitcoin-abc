@@ -164,6 +164,8 @@ pub struct GroupHistoryStats {
     pub t_fetch: f64,
     /// Time [s] for counting the set bits in the bloom filter at startup.
     pub t_init_num_bits: f64,
+    /// TIme [s] for adding all the calls to WriteBatch
+    pub t_make_batch: f64,
 }
 
 /// Error indicating that something went wrong with writing group history data.
@@ -431,6 +433,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
     ) -> Result<()> {
         let t_start = Instant::now();
         let fetched = self.fetch_members_num_txs(txs, aux, mem_data)?;
+        let t_make_batch = Instant::now();
         for ((mut new_tx_nums, member_ser), (mut num_txs, bloom_result)) in
             fetched
                 .grouped_txs
@@ -468,6 +471,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                 page_num += 1;
             }
         }
+        mem_data.stats.t_make_batch += t_make_batch.elapsed().as_secs_f64();
         mem_data.stats.t_total += t_start.elapsed().as_secs_f64();
         Ok(())
     }
