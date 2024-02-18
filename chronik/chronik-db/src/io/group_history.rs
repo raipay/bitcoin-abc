@@ -3,8 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 use std::{
-    collections::BTreeMap, marker::PhantomData, num::NonZeroUsize,
-    time::Instant,
+    collections::BTreeMap, marker::PhantomData, num::NonZeroUsize, sync::atomic::{self, AtomicUsize}, time::Instant
 };
 
 use abc_rust_error::Result;
@@ -575,21 +574,27 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         stats.n_total += grouped_txs.len();
 
         let t_bloom = Instant::now();
-        let mut members_num_txs = Vec::with_capacity(ser_members.len());
-        for member_ser in &ser_members {
-            if cache.check_bloom_filter(member_ser.as_ref()) {
-                stats.n_bloom_hits += 1;
-                if let Some(entry) = cache.get_num_txs_cache(member_ser) {
-                    stats.n_num_txs_cache_hit += 1;
-                    members_num_txs.push((entry, BloomResult::HitCached));
+        let n_bloom_hits = AtomicUsize::new(0);
+        let n_cache_hits = AtomicUsize::new(0);
+        let mut members_num_txs = ser_members
+            .par_iter()
+            .map(|member_ser| {
+                if cache.check_bloom_filter(member_ser.as_ref()) {
+                    n_bloom_hits.fetch_add(1, atomic::Ordering::Relaxed);
+                    if let Some(entry) = cache.get_num_txs_cache(member_ser) {
+                        n_cache_hits.fetch_add(1, atomic::Ordering::Relaxed);
+                        (entry, BloomResult::HitCached)
+                    } else {
+                        (0, BloomResult::Hit)
+                    }
                 } else {
-                    members_num_txs.push((0, BloomResult::Hit));
+                    (0, BloomResult::NoHit)
                 }
-            } else {
-                members_num_txs.push((0, BloomResult::NoHit));
-            }
-        }
+            })
+            .collect::<Vec<_>>();
         stats.t_bloom += t_bloom.elapsed().as_secs_f64();
+        stats.n_bloom_hits += n_bloom_hits.load(atomic::Ordering::SeqCst);
+        stats.n_num_txs_cache_hit += n_cache_hits.load(atomic::Ordering::SeqCst);
 
         let t_fetch = Instant::now();
         let num_txs_keys = ser_members.iter().zip(&members_num_txs).filter_map(
