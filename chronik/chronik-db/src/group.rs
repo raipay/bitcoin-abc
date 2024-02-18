@@ -57,7 +57,7 @@ pub trait Group: Send + Sync {
     type MemberSer<'a>: AsRef<[u8]> + Send + Sync + 'a;
 
     /// Auxillary data when grouping members
-    type Aux: Send + Sync;
+    type Aux;
 
     /// Data attached to a UTXO for this group.
     type UtxoData: UtxoData;

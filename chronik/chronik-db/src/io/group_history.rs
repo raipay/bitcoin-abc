@@ -3,15 +3,11 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 use std::{
-    marker::PhantomData,
-    num::NonZeroUsize,
-    sync::atomic::{self, AtomicUsize},
-    time::Instant,
+    collections::BTreeMap, marker::PhantomData, num::NonZeroUsize, sync::atomic::{self, AtomicUsize}, time::Instant
 };
 
 use abc_rust_error::Result;
 use chronik_util::{log, log_chronik};
-use dashmap::DashMap;
 use lru::LruCache;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rocksdb::WriteBatch;
@@ -225,7 +221,7 @@ enum BloomResult {
 
 struct FetchedNumTxs<'tx, G: Group> {
     members_num_txs: Vec<(NumTxs, BloomResult)>,
-    grouped_txs: DashMap<G::Member<'tx>, Vec<TxNum>>,
+    grouped_txs: BTreeMap<G::Member<'tx>, Vec<TxNum>>,
     ser_members: Vec<G::MemberSer<'tx>>,
 }
 
@@ -438,10 +434,10 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         let t_start = Instant::now();
         let fetched = self.fetch_members_num_txs(txs, aux, mem_data)?;
         let t_make_batch = Instant::now();
-        for (((_, mut new_tx_nums), member_ser), (mut num_txs, bloom_result)) in
+        for ((mut new_tx_nums, member_ser), (mut num_txs, bloom_result)) in
             fetched
                 .grouped_txs
-                .into_iter()
+                .into_values()
                 .zip(fetched.ser_members)
                 .zip(fetched.members_num_txs)
         {
@@ -500,12 +496,11 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         mem_data.cache.bloom = None;
 
         let fetched = self.fetch_members_num_txs(txs, aux, mem_data)?;
-        for (((_, mut removed_tx_nums), member_ser), (mut num_txs, _)) in
-            fetched
-                .grouped_txs
-                .into_iter()
-                .zip(fetched.ser_members)
-                .zip(fetched.members_num_txs)
+        for ((mut removed_tx_nums, member_ser), (mut num_txs, _)) in fetched
+            .grouped_txs
+            .into_values()
+            .zip(fetched.ser_members)
+            .zip(fetched.members_num_txs)
         {
             let mut num_remaining_removes = removed_tx_nums.len();
             let mut page_num = num_txs / self.conf.page_size;
@@ -572,7 +567,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         let group = &self.group;
         let ser_members = grouped_txs
             .par_iter()
-            .map(|item| group.ser_member(item.key()))
+            .map(|(key, _)| group.ser_member(key))
             .collect::<Vec<_>>();
         stats.t_ser_members += t_ser_members.elapsed().as_secs_f64();
 
@@ -599,8 +594,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             .collect::<Vec<_>>();
         stats.t_bloom += t_bloom.elapsed().as_secs_f64();
         stats.n_bloom_hits += n_bloom_hits.load(atomic::Ordering::SeqCst);
-        stats.n_num_txs_cache_hit +=
-            n_cache_hits.load(atomic::Ordering::SeqCst);
+        stats.n_num_txs_cache_hit += n_cache_hits.load(atomic::Ordering::SeqCst);
 
         let t_fetch = Instant::now();
         let num_txs_keys = ser_members.iter().zip(&members_num_txs).filter_map(
@@ -644,16 +638,15 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         &self,
         txs: &'tx [IndexTx<'tx>],
         aux: &G::Aux,
-    ) -> DashMap<G::Member<'tx>, Vec<TxNum>> {
-        let group_tx_nums = DashMap::<G::Member<'tx>, Vec<TxNum>>::new();
-        let group = &self.group;
-        txs.par_iter().for_each(|index_tx| {
+    ) -> BTreeMap<G::Member<'tx>, Vec<TxNum>> {
+        let mut group_tx_nums = BTreeMap::<G::Member<'tx>, Vec<TxNum>>::new();
+        for index_tx in txs {
             let query = GroupQuery {
                 is_coinbase: index_tx.is_coinbase,
                 tx: index_tx.tx,
             };
-            for member in tx_members_for_group(group, query, aux) {
-                let mut tx_nums = group_tx_nums.entry(member).or_default();
+            for member in tx_members_for_group(&self.group, query, aux) {
+                let tx_nums = group_tx_nums.entry(member).or_default();
                 if let Some(&last_tx_num) = tx_nums.last() {
                     if last_tx_num == index_tx.tx_num {
                         continue;
@@ -661,7 +654,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                 }
                 tx_nums.push(index_tx.tx_num);
             }
-        });
+        }
         group_tx_nums
     }
 
