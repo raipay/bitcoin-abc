@@ -43,17 +43,16 @@ CalculateDogecoinNextWorkRequired(const CBlockIndex *pindexLast,
                                   int64_t nFirstBlockTime,
                                   const Consensus::Params &params) {
     int nHeight = pindexLast->nHeight + 1;
-    const int64_t retargetTimespan = params.nPowTargetTimespan;
+    const int64_t retargetTimespan =
+        nHeight < 145000 ? params.nPowTargetTimespan : 60;
     const int64_t nActualTimespan =
         pindexLast->GetBlockTime() - nFirstBlockTime;
     int64_t nModulatedTimespan = nActualTimespan;
     int64_t nMaxTimespan;
     int64_t nMinTimespan;
 
-    if (/*params.fDigishieldDifficultyCalculation*/ false) // DigiShield
-                                                           // implementation -
-                                                           // thanks to RealSolid
-                                                           // & WDC for this code
+    if (nHeight >= 145000) // DigiShield implementation - thanks to RealSolid &
+                           // WDC for this code
     {
         // amplitude filter - thanks to daft27 for this code
         nModulatedTimespan =
@@ -99,25 +98,33 @@ CalculateDogecoinNextWorkRequired(const CBlockIndex *pindexLast,
 uint32_t GetNextEDAWorkRequired(const CBlockIndex *pindexPrev,
                                 const CBlockHeader *pblock,
                                 const Consensus::Params &params) {
-    // Only change once per difficulty adjustment interval
     uint32_t nHeight = pindexPrev->nHeight + 1;
-    if (nHeight % params.DifficultyAdjustmentInterval() == 0) {
-        // Go back by what we want to be 14 days worth of blocks
-        //assert(nHeight >= params.DifficultyAdjustmentInterval());
-        //uint32_t nHeightFirst = nHeight - params.DifficultyAdjustmentInterval();
-        //const CBlockIndex *pindexFirst = pindexPrev->GetAncestor(nHeightFirst);
-        //assert(pindexFirst);
 
-        // Litecoin: This fixes an issue where a 51% attack can change difficulty at will.
-        // Go back the full period unless it's the first retarget after genesis. Code courtesy of Art Forz
-        int blockstogoback = params.DifficultyAdjustmentInterval()-1;
-        if ((pindexPrev->nHeight+1) != params.DifficultyAdjustmentInterval())
-            blockstogoback = params.DifficultyAdjustmentInterval();
+    int64_t nDifficultyAdjustmentInterval =
+        params.DifficultyAdjustmentInterval();
+    if (nHeight >= params.dogecoinDigishieldHeight) {
+        nDifficultyAdjustmentInterval = 1;
+    }
+
+    // Only change once per difficulty adjustment interval
+    if (nHeight % nDifficultyAdjustmentInterval == 0) {
+        // Go back by what we want to be 14 days worth of blocks
+        // assert(nHeight >= nDifficultyAdjustmentInterval);
+        // uint32_t nHeightFirst = nHeight - nDifficultyAdjustmentInterval;
+        // const CBlockIndex *pindexFirst =
+        // pindexPrev->GetAncestor(nHeightFirst); assert(pindexFirst);
+
+        // Litecoin: This fixes an issue where a 51% attack can change
+        // difficulty at will. Go back the full period unless it's the first
+        // retarget after genesis. Code courtesy of Art Forz
+        int blockstogoback = nDifficultyAdjustmentInterval - 1;
+        if ((pindexPrev->nHeight + 1) != nDifficultyAdjustmentInterval)
+            blockstogoback = nDifficultyAdjustmentInterval;
 
         // Go back by what we want to be 14 days worth of blocks
         int nHeightFirst = pindexPrev->nHeight - blockstogoback;
         assert(nHeightFirst >= 0);
-        const CBlockIndex* pindexFirst = pindexPrev->GetAncestor(nHeightFirst);
+        const CBlockIndex *pindexFirst = pindexPrev->GetAncestor(nHeightFirst);
         assert(pindexFirst);
 
         return CalculateDogecoinNextWorkRequired(

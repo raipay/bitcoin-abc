@@ -23,6 +23,11 @@ uint32_t GetNextEDAWorkRequired(const CBlockIndex *pindexPrev,
                                 const CBlockHeader *pblock,
                                 const Consensus::Params &params);
 
+unsigned int
+CalculateDogecoinNextWorkRequired(const CBlockIndex *pindexLast,
+                                  int64_t nFirstBlockTime,
+                                  const Consensus::Params &params);
+
 /**
  * Return false if the proof-of-work requirement specified by new_target is not
  * possible, given the proof-of-work on the prior block as specified by

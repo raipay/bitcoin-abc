@@ -64,6 +64,8 @@ struct Params {
     /** Unix time used for MTP activation of 15 May 2024 12:00:00 UTC upgrade */
     int leeKuanYewActivationTime;
 
+    int dogecoinDigishieldHeight;
+
     /** Enable or disable the miner fund by default */
     bool enableMinerFund;
 

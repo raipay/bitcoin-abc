@@ -1172,7 +1172,7 @@ Amount static GetDogecoinBlockSubsidy(int nHeight, const Consensus::Params& cons
 {
     int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
 
-    if (!false /*consensusParams.fSimplifiedRewards*/ )
+    if (nHeight < consensusParams.dogecoinDigishieldHeight)
     {
         // Old-style rewards derived from the previous block hash
         const std::string cseed_str = prevHash.ToString().substr(7, 7);

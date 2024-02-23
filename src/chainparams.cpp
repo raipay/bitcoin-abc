@@ -158,6 +158,8 @@ public:
         // May 15, 2024 12:00:00 UTC protocol upgrade
         consensus.leeKuanYewActivationTime = 1715774400;
 
+        consensus.dogecoinDigishieldHeight = 0x7fffffff;
+
         /**
          * The message start string is designed to be unlikely to occur in
          * normal data. The characters are rarely used upper ASCII, not valid as
@@ -310,6 +312,8 @@ public:
         // May 15, 2024 12:00:00 UTC protocol upgrade
         consensus.leeKuanYewActivationTime = 1715774400;
 
+        consensus.dogecoinDigishieldHeight = 0x7fffffff;
+
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
         diskMagic[2] = 0x09;
@@ -443,6 +447,8 @@ public:
 
         // May 15, 2024 12:00:00 UTC protocol upgrade
         consensus.leeKuanYewActivationTime = 1715774400;
+
+        consensus.dogecoinDigishieldHeight = 0x7fffffff;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;
@@ -578,6 +584,8 @@ public:
         // May 15, 2024 12:00:00 UTC protocol upgrade
         consensus.leeKuanYewActivationTime = 0x7fffffff;
 
+        consensus.dogecoinDigishieldHeight = 145000;
+
         /**
          * The message start string is designed to be unlikely to occur in
          * normal data. The characters are rarely used upper ASCII, not valid as
@@ -632,7 +640,7 @@ public:
         m_is_test_chain = false;
         m_is_mockable_chain = false;
 
-        checkpointData = CheckpointData(CBaseChainParams::MAIN);
+        checkpointData = CheckpointData(CBaseChainParams::DOGECOIN);
 
         m_assumeutxo_data = MapAssumeutxo{
             // TODO to be specified in a future patch.

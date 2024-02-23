@@ -15,6 +15,22 @@
 
 BOOST_FIXTURE_TEST_SUITE(eda_tests, BasicTestingSetup)
 
+BOOST_AUTO_TEST_CASE(get_next_work_digishield) {
+    DummyConfig config(CBaseChainParams::DOGECOIN);
+    const Consensus::Params &params = config.GetChainParams().GetConsensus();
+
+    CBlockIndex pindexLast;
+    int64_t nLastRetargetTime = 1395094427;
+
+    // First hard-fork at 145,000, which applies to block 145,001 onwards
+    pindexLast.nHeight = 145000;
+    pindexLast.nTime = 1395094679;
+    pindexLast.nBits = 0x1b499dfd;
+    BOOST_CHECK_EQUAL(CalculateDogecoinNextWorkRequired(
+                          &pindexLast, nLastRetargetTime, params),
+                      0x1b671062);
+}
+
 /* Test calculation of next difficulty target with no constraints applying */
 BOOST_AUTO_TEST_CASE(get_next_work) {
     DummyConfig config(CBaseChainParams::MAIN);
