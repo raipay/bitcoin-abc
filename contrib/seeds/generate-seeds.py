@@ -140,6 +140,9 @@ def main():
     g.write('\n')
     with open(os.path.join(indir, 'nodes_test.txt'), 'r', encoding="utf8") as f:
         process_nodes(g, f, 'pnSeed6_test', 18333)
+    g.write('\n')
+    with open(os.path.join(indir, 'nodes_dogecoin.txt'), 'r', encoding="utf8") as f:
+        process_nodes(g, f, 'pnSeed6_dogecoin', 22556)
     g.write('#endif // BITCOIN_CHAINPARAMSSEEDS_H\n')
 
 

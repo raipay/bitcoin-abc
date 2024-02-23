@@ -6,7 +6,7 @@
 
 #include <arith_uint256.h>
 #include <chain.h>
-#include <consensus/params.h>
+#include <logging.h>
 
 /**
  * Do difficulty adjustement Satoshi's way.
@@ -38,6 +38,60 @@ uint32_t CalculateNextWorkRequired(const CBlockIndex *pindexPrev,
     return bnNew.GetCompact();
 }
 
+unsigned int
+CalculateDogecoinNextWorkRequired(const CBlockIndex *pindexLast,
+                                  int64_t nFirstBlockTime,
+                                  const Consensus::Params &params) {
+    int nHeight = pindexLast->nHeight + 1;
+    const int64_t retargetTimespan = params.nPowTargetTimespan;
+    const int64_t nActualTimespan =
+        pindexLast->GetBlockTime() - nFirstBlockTime;
+    int64_t nModulatedTimespan = nActualTimespan;
+    int64_t nMaxTimespan;
+    int64_t nMinTimespan;
+
+    if (/*params.fDigishieldDifficultyCalculation*/ false) // DigiShield
+                                                           // implementation -
+                                                           // thanks to RealSolid
+                                                           // & WDC for this code
+    {
+        // amplitude filter - thanks to daft27 for this code
+        nModulatedTimespan =
+            retargetTimespan + (nModulatedTimespan - retargetTimespan) / 8;
+
+        nMinTimespan = retargetTimespan - (retargetTimespan / 4);
+        nMaxTimespan = retargetTimespan + (retargetTimespan / 2);
+    } else if (nHeight > 10000) {
+        nMinTimespan = retargetTimespan / 4;
+        nMaxTimespan = retargetTimespan * 4;
+    } else if (nHeight > 5000) {
+        nMinTimespan = retargetTimespan / 8;
+        nMaxTimespan = retargetTimespan * 4;
+    } else {
+        nMinTimespan = retargetTimespan / 16;
+        nMaxTimespan = retargetTimespan * 4;
+    }
+
+    // Limit adjustment step
+    if (nModulatedTimespan < nMinTimespan)
+        nModulatedTimespan = nMinTimespan;
+    else if (nModulatedTimespan > nMaxTimespan)
+        nModulatedTimespan = nMaxTimespan;
+
+    // Retarget
+    const arith_uint256 bnPowLimit = UintToArith256(params.powLimit);
+    arith_uint256 bnNew;
+    arith_uint256 bnOld;
+    bnNew.SetCompact(pindexLast->nBits);
+    bnOld = bnNew;
+    bnNew *= nModulatedTimespan;
+    bnNew /= retargetTimespan;
+
+    if (bnNew > bnPowLimit) bnNew = bnPowLimit;
+
+    return bnNew.GetCompact();
+}
+
 /**
  * Compute the next required proof of work using the legacy Bitcoin difficulty
  * adjustment + Emergency Difficulty Adjustment (EDA).
@@ -49,13 +103,25 @@ uint32_t GetNextEDAWorkRequired(const CBlockIndex *pindexPrev,
     uint32_t nHeight = pindexPrev->nHeight + 1;
     if (nHeight % params.DifficultyAdjustmentInterval() == 0) {
         // Go back by what we want to be 14 days worth of blocks
-        assert(nHeight >= params.DifficultyAdjustmentInterval());
-        uint32_t nHeightFirst = nHeight - params.DifficultyAdjustmentInterval();
-        const CBlockIndex *pindexFirst = pindexPrev->GetAncestor(nHeightFirst);
+        //assert(nHeight >= params.DifficultyAdjustmentInterval());
+        //uint32_t nHeightFirst = nHeight - params.DifficultyAdjustmentInterval();
+        //const CBlockIndex *pindexFirst = pindexPrev->GetAncestor(nHeightFirst);
+        //assert(pindexFirst);
+
+        // Litecoin: This fixes an issue where a 51% attack can change difficulty at will.
+        // Go back the full period unless it's the first retarget after genesis. Code courtesy of Art Forz
+        int blockstogoback = params.DifficultyAdjustmentInterval()-1;
+        if ((pindexPrev->nHeight+1) != params.DifficultyAdjustmentInterval())
+            blockstogoback = params.DifficultyAdjustmentInterval();
+
+        // Go back by what we want to be 14 days worth of blocks
+        int nHeightFirst = pindexPrev->nHeight - blockstogoback;
+        assert(nHeightFirst >= 0);
+        const CBlockIndex* pindexFirst = pindexPrev->GetAncestor(nHeightFirst);
         assert(pindexFirst);
 
-        return CalculateNextWorkRequired(pindexPrev,
-                                         pindexFirst->GetBlockTime(), params);
+        return CalculateDogecoinNextWorkRequired(
+            pindexPrev, pindexFirst->GetBlockTime(), params);
     }
 
     const uint32_t nProofOfWorkLimit =
@@ -87,15 +153,17 @@ uint32_t GetNextEDAWorkRequired(const CBlockIndex *pindexPrev,
         return nProofOfWorkLimit;
     }
 
+    return pindexPrev->nBits;
+
     // If producing the last 6 blocks took less than 12h, we keep the same
     // difficulty.
-    const CBlockIndex *pindex6 = pindexPrev->GetAncestor(nHeight - 7);
+    /*const CBlockIndex *pindex6 = pindexPrev->GetAncestor(nHeight - 7);
     assert(pindex6);
     int64_t mtp6blocks =
         pindexPrev->GetMedianTimePast() - pindex6->GetMedianTimePast();
     if (mtp6blocks < 12 * 3600) {
         return nBits;
-    }
+    }*/
 
     // If producing the last 6 blocks took more than 12h, increase the
     // difficulty target by 1/4 (which reduces the difficulty by 20%).

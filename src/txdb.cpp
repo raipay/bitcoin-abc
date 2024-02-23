@@ -348,8 +348,8 @@ bool CBlockTreeDB::LoadBlockIndexGuts(
         pindexNew->nStatus = diskindex.nStatus;
         pindexNew->nTx = diskindex.nTx;
 
-        if (!CheckProofOfWork(pindexNew->GetBlockHash(), pindexNew->nBits,
-                              params)) {
+        if (!CheckProofOfWork(pindexNew->GetBlockHeader().GetPoWHash(),
+                              pindexNew->nBits, params)) {
             return error("%s: CheckProofOfWork failed: %s", __func__,
                          pindexNew->ToString());
         }

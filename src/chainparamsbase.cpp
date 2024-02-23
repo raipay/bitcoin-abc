@@ -13,6 +13,7 @@
 const std::string CBaseChainParams::MAIN = "main";
 const std::string CBaseChainParams::TESTNET = "test";
 const std::string CBaseChainParams::REGTEST = "regtest";
+const std::string CBaseChainParams::DOGECOIN = "dogecoin";
 
 void SetupChainParamsBaseOptions(ArgsManager &argsman) {
     argsman.AddArg(
@@ -28,6 +29,8 @@ void SetupChainParamsBaseOptions(ArgsManager &argsman) {
         ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
         OptionsCategory::CHAINPARAMS);
     argsman.AddArg("-testnet", "Use the test chain. Equivalent to -chain=test.",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::CHAINPARAMS);
+    argsman.AddArg("-dogecoin", "Use the Dogecoin chain. Equivalent to -chain=dogecoin.",
                    ArgsManager::ALLOW_ANY, OptionsCategory::CHAINPARAMS);
 }
 
@@ -59,6 +62,12 @@ CreateBaseChainParams(const std::string &chain) {
         return std::make_unique<CBaseChainParams>("regtest", /*rpc_port=*/18443,
                                                   18445,
                                                   /*chronik_port=*/18442);
+    }
+
+    if (chain == CBaseChainParams::DOGECOIN) {
+        return std::make_unique<CBaseChainParams>("dogecoin", /*rpc_port=*/22555,
+                                                  22556,
+                                                  /*chronik_port=*/22554);
     }
 
     throw std::runtime_error(

@@ -70,6 +70,22 @@ CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits,
 }
 
 /**
+ * Build the genesis block for dogecoin.
+ */
+static CBlock CreateDogecoinGenesisBlock(uint32_t nTime, uint32_t nNonce,
+                                         uint32_t nBits, int32_t nVersion,
+                                         const Amount genesisReward) {
+    const char *pszTimestamp = "Nintondo";
+    const CScript genesisOutputScript =
+        CScript() << ParseHex("040184710fa689ad5023690c80f3a49c8f13f8d45b8c857f"
+                              "bcbc8bc4a8e4d3eb4b10f4d4604fa08dce601aaf0f470216"
+                              "fe1b51850b4acf21b179c45070ac7b03a9")
+                  << OP_CHECKSIG;
+    return CreateGenesisBlock(pszTimestamp, genesisOutputScript, nTime, nNonce,
+                              nBits, nVersion, genesisReward);
+}
+
+/**
  * Main network
  */
 class CMainParams : public CChainParams {
@@ -489,6 +505,155 @@ public:
     }
 };
 
+/**
+ * Dogecoin network
+ */
+class CDogecoinParams : public CChainParams {
+public:
+    CDogecoinParams() {
+        strNetworkID = CBaseChainParams::MAIN;
+        consensus.nSubsidyHalvingInterval = 100000;
+        consensus.BIP16Height = 0;
+        consensus.BIP34Height = 1034383;
+        consensus.BIP34Hash =
+            BlockHash::fromHex("0x80d1364201e5df97e696c03bdd24dc885e8617b9de51e"
+                               "453c10a4f629b1e797a");
+        // 34cd2cbba4ba366f47e5aa0db5f02c19eba2adf679ceb6653ac003bdc9a0ef1f
+        consensus.BIP65Height = 3464751;
+        // 80d1364201e5df97e696c03bdd24dc885e8617b9de51e453c10a4f629b1e797a
+        consensus.BIP66Height = 1034383;
+        // ??
+        consensus.CSVHeight = 1034383; // TODO: fill this out
+        consensus.powLimit = uint256S("0x00000fffffffffffffffffffffffffffffffff"
+                                      "ffffffffffffffffffffffffff");
+        consensus.nPowTargetTimespan = 4 * 60 * 60;
+        consensus.nPowTargetSpacing = 60;
+        consensus.fPowAllowMinDifficultyBlocks = false;
+        consensus.fPowNoRetargeting = false;
+
+        // two days
+        consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
+
+        // The miner fund is enabled by default on mainnet.
+        consensus.enableMinerFund = true;
+
+        // The staking rewards are enabled by default on mainnet.
+        consensus.enableStakingRewards = true;
+
+        // The best chain should have at least this much work.
+        consensus.nMinimumChainWork =
+            uint256S("0x0000000000000000000000000000000000000000000000000000000000000000");
+            // uint256S("0x0000000000000000000000000000000000000000000007dc8ab65fc32f953c4a"); // 4,303,965
+
+        // By default assume that the signatures in ancestors of this block are
+        // valid.
+        consensus.defaultAssumeValid =
+            BlockHash::fromHex("0xed7d266dcbd8bb8af80f9ccb8deb3e18f9cc3f6972912"
+                               "680feeb37b090f8cee0"); // 4,303,965
+
+        // August 1, 2017 hard fork
+        consensus.uahfHeight = 0x7fffffff;
+
+        // November 13, 2017 hard fork
+        consensus.daaHeight = 0x7fffffff;
+
+        // November 15, 2018 hard fork
+        consensus.magneticAnomalyHeight = 0x7fffffff;
+
+        // November 15, 2019 protocol upgrade
+        consensus.gravitonHeight = 0x7fffffff;
+
+        // May 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.phononHeight = 0x7fffffff;
+
+        // Nov 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.axionHeight = 0x7fffffff;
+
+        // May 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.wellingtonHeight = 0x7fffffff;
+
+        // Nov 15, 2023 12:00:00 UTC protocol upgrade
+        consensus.cowperthwaiteHeight = 0x7fffffff;
+
+        // May 15, 2024 12:00:00 UTC protocol upgrade
+        consensus.leeKuanYewActivationTime = 0x7fffffff;
+
+        /**
+         * The message start string is designed to be unlikely to occur in
+         * normal data. The characters are rarely used upper ASCII, not valid as
+         * UTF-8, and produce a large 32-bit integer with any alignment.
+         */
+        diskMagic[0] = 0xc0;
+        diskMagic[1] = 0xc0;
+        diskMagic[2] = 0xc0;
+        diskMagic[3] = 0xc0;
+        netMagic[0] = 0xc0;
+        netMagic[1] = 0xc0;
+        netMagic[2] = 0xc0;
+        netMagic[3] = 0xc0;
+        nDefaultPort = 22556;
+        nPruneAfterHeight = 100000;
+        m_assumed_blockchain_size =
+            ChainParamsConstants::MAINNET_ASSUMED_BLOCKCHAIN_SIZE;
+        m_assumed_chain_state_size =
+            ChainParamsConstants::MAINNET_ASSUMED_CHAINSTATE_SIZE;
+
+        genesis = CreateDogecoinGenesisBlock(1386325540, 99943, 0x1e0ffff0, 1,
+                                             88 * COIN);
+        consensus.hashGenesisBlock = genesis.GetHash();
+        assert(consensus.hashGenesisBlock ==
+               uint256S("0x1a91e3dace36e2be3bf030a65679fe821aa1d6ef92e7c9902eb3"
+                        "18182c355691"));
+        assert(genesis.hashMerkleRoot ==
+               uint256S("0x5b2a3f53f605d62c53e62932dac6925e3d74afa5a4b459745c36"
+                        "d42d0ed26a69"));
+
+        // Note that of those which support the service bits prefix, most only
+        // support a subset of possible options. This is fine at runtime as
+        // we'll fall back to using them as an addrfetch if they don't support
+        // the service bits we want, but we should get them updated to support
+        // all service bits wanted by any release ASAP to avoid it where
+        // possible.
+        vSeeds.emplace_back("seed.multidoge.org");
+        vSeeds.emplace_back("seed2.multidoge.org");
+
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 30);
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 22);
+        base58Prefixes[SECRET_KEY] = std::vector<uint8_t>(1, 158);
+        base58Prefixes[EXT_PUBLIC_KEY] = {0x02, 0xfa, 0xca, 0xfd};
+        base58Prefixes[EXT_SECRET_KEY] = {0x02, 0xfa, 0xc3, 0x98};
+        cashaddrPrefix = "doge";
+
+        vFixedSeeds = std::vector<SeedSpec6>(std::begin(pnSeed6_dogecoin),
+                                             std::end(pnSeed6_dogecoin));
+
+        fDefaultConsistencyChecks = false;
+        fRequireStandard = true;
+        m_is_test_chain = false;
+        m_is_mockable_chain = false;
+
+        checkpointData = CheckpointData(CBaseChainParams::MAIN);
+
+        m_assumeutxo_data = MapAssumeutxo{
+            // TODO to be specified in a future patch.
+        };
+
+        chainTxData = ChainTxData{
+            // Data as of block
+            // ed7d266dcbd8bb8af80f9ccb8deb3e18f9cc3f6972912680feeb37b090f8cee0
+            // (height 4303965).
+            // Tx estimate based on average between 2021-07-01 (3793538) and
+            // 2022-07-01 (4288126)
+            1657646310, // * UNIX timestamp of last checkpoint block
+            86433645, // * total number of transactions between genesis and last
+                      // checkpoint
+            //   (the tx=... number in the SetBestChain debug.log lines)
+            0.29 // * estimated number of transactions per second after
+                 // checkpoint
+        };
+    }
+};
+
 static std::unique_ptr<CChainParams> globalChainParams;
 
 const CChainParams &Params() {
@@ -507,6 +672,10 @@ std::unique_ptr<CChainParams> CreateChainParams(const std::string &chain) {
 
     if (chain == CBaseChainParams::REGTEST) {
         return std::make_unique<CRegTestParams>();
+    }
+
+    if (chain == CBaseChainParams::DOGECOIN) {
+        return std::make_unique<CDogecoinParams>();
     }
 
     throw std::runtime_error(

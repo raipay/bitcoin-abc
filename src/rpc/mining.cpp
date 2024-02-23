@@ -143,7 +143,7 @@ static bool GenerateBlock(const Config &config, ChainstateManager &chainman,
 
     while (max_tries > 0 &&
            block.nNonce < std::numeric_limits<uint32_t>::max() &&
-           !CheckProofOfWork(block.GetHash(), block.nBits, params) &&
+           !CheckProofOfWork(block.GetPoWHash(), block.nBits, params) &&
            !ShutdownRequested()) {
         ++block.nNonce;
         --max_tries;

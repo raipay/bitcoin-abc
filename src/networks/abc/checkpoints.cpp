@@ -134,6 +134,54 @@ static CCheckpointData regTestCheckpointData = {
                                "36012afca590b1a11466e2206")},
     }};
 
+static CCheckpointData dogecoinCheckpointData = {
+    .mapCheckpoints = {
+        {0, BlockHash::fromHex("0x1a91e3dace36e2be3bf030a65679fe821aa1d6ef92e7c"
+                               "9902eb318182c355691")},
+        {104679, BlockHash::fromHex("0x35eb87ae90d44b98898fec8c39577b76cb1eb08e"
+                                    "1261cfc10706c8ce9a1d01cf")},
+        {145000, BlockHash::fromHex("0xcc47cae70d7c5c92828d3214a266331dde59087d"
+                                    "4a39071fa76ddfff9b7bde72")},
+        {371337, BlockHash::fromHex("0x60323982f9c5ff1b5a954eac9dc1269352835f47"
+                                    "c2c5222691d80f0d50dcf053")},
+        {450000, BlockHash::fromHex("0xd279277f8f846a224d776450aa04da3cf978991a"
+                                    "182c6f3075db4c48b173bbd7")},
+        {771275, BlockHash::fromHex("0x1b7d789ed82cbdc640952e7e7a54966c6488a32e"
+                                    "aad54fc39dff83f310dbaaed")},
+        {1000000, BlockHash::fromHex("0x6aae55bea74235f0c80bd066349d4440c31f2d0"
+                                     "f27d54265ecd484d8c1d11b47")},
+        {1250000, BlockHash::fromHex("0x00c7a442055c1a990e11eea5371ca5c1c02a067"
+                                     "7b33cc88ec728c45edc4ec060")},
+        {1500000, BlockHash::fromHex("0xf1d32d6920de7b617d51e74bdf4e58adccaa582"
+                                     "ffdc8657464454f16a952fca6")},
+        {1750000, BlockHash::fromHex("0x5c8e7327984f0d6f59447d89d143e5f6eafc524"
+                                     "c82ad95d176c5cec082ae2001")},
+        {2000000, BlockHash::fromHex("0x9914f0e82e39bbf21950792e8816620d71b9965"
+                                     "bdbbc14e72a95e3ab9618fea8")},
+        {2031142, BlockHash::fromHex("0x893297d89afb7599a3c571ca31a3b80e8353f4c"
+                                     "f39872400ad0f57d26c4c5d42")},
+        {2250000, BlockHash::fromHex("0x0a87a8d4e40dca52763f93812a288741806380c"
+                                     "d569537039ee927045c6bc338")},
+        {2510150, BlockHash::fromHex("0x77e3f4a4bcb4a2c15e8015525e3d15b466f6c02"
+                                     "2f6ca82698f329edef7d9777e")},
+        {2750000, BlockHash::fromHex("0xd4f8abb835930d3c4f92ca718aaa09bef545076"
+                                     "bd872354e0b2b85deefacf2e3")},
+        {3000000, BlockHash::fromHex("0x195a83b091fb3ee7ecb56f2e63d01709293f57f"
+                                     "971ccf373d93890c8dc1033db")},
+        {3250000, BlockHash::fromHex("0x7f3e28bf9e309c4b57a4b70aa64d3b2ea5250ae"
+                                     "797af84976ddc420d49684034")},
+        {3500000, BlockHash::fromHex("0xeaa303b93c1c64d2b3a2cdcf6ccf21b10cc3662"
+                                     "6965cc2619661e8e1879abdfb")},
+        {3606083, BlockHash::fromHex("0x954c7c66dee51f0a3fb1edb26200b735f5275fe"
+                                     "54d9505c76ebd2bcabac36f1e")},
+        {3854173, BlockHash::fromHex("0xe4b4ecda4c022406c502a247c0525480268ce7a"
+                                     "bbbef632796e8ca1646425e75")},
+        {3963597, BlockHash::fromHex("0x2b6927cfaa5e82353d45f02be8aadd3bfd165ec"
+                                     "e5ce24b9bfa4db20432befb5d")},
+        {4303965, BlockHash::fromHex("0xed7d266dcbd8bb8af80f9ccb8deb3e18f9cc3f6"
+                                     "972912680feeb37b090f8cee0")},
+    }};
+
 const CCheckpointData &CheckpointData(const std::string &chain) {
     if (chain == CBaseChainParams::MAIN) {
         return mainNetCheckpointData;
@@ -143,6 +191,9 @@ const CCheckpointData &CheckpointData(const std::string &chain) {
     }
     if (chain == CBaseChainParams::REGTEST) {
         return regTestCheckpointData;
+    }
+    if (chain == CBaseChainParams::DOGECOIN) {
+        return dogecoinCheckpointData;
     }
 
     throw std::runtime_error(

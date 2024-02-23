@@ -29,7 +29,7 @@ static const int BLOCK_MAXBYTES_MAXSIGCHECKS_RATIO = 141;
  * Coinbase transaction outputs can only be spent after this number of new
  * blocks (network rule).
  */
-static const int COINBASE_MATURITY = 100;
+static const int COINBASE_MATURITY = 30;
 /** Coinbase scripts have their own script size limit. */
 static const int MAX_COINBASE_SCRIPTSIG_SIZE = 100;
 

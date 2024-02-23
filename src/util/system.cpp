@@ -13,6 +13,8 @@
 #include <util/string.h>
 #include <util/translation.h>
 
+#include <logging.h>
+
 #include <univalue.h>
 
 #include <fstream>
@@ -278,7 +280,7 @@ const std::list<SectionInfo> ArgsManager::GetUnrecognizedSections() const {
     // Section names to be recognized in the config file.
     static const std::set<std::string> available_sections{
         CBaseChainParams::REGTEST, CBaseChainParams::TESTNET,
-        CBaseChainParams::MAIN};
+        CBaseChainParams::MAIN, CBaseChainParams::DOGECOIN};
 
     LOCK(cs_args);
     std::list<SectionInfo> unrecognized = m_config_sections;
@@ -1134,17 +1136,25 @@ std::string ArgsManager::GetChainName() const {
 
     const bool fRegTest = get_net("-regtest");
     const bool fTestNet = get_net("-testnet");
+    const bool fDogecoin = get_net("-dogecoin");
     const bool is_chain_arg_set = IsArgSet("-chain");
 
-    if (int(is_chain_arg_set) + int(fRegTest) + int(fTestNet) > 1) {
-        throw std::runtime_error("Invalid combination of -regtest, -testnet "
-                                 "and -chain. Can use at most one.");
+    if (int(is_chain_arg_set) + int(fRegTest) + int(fTestNet) + int(fDogecoin) >
+        1) {
+        throw std::runtime_error(
+            strprintf("Invalid combination of -regtest, -testnet, "
+                      "and -chain. Can use at most one. fRegTest = %d, "
+                      "fTestNet = %d, fDogecoin = %d, is_chain_arg_set = %d",
+                      fRegTest, fTestNet, fDogecoin, is_chain_arg_set));
     }
     if (fRegTest) {
         return CBaseChainParams::REGTEST;
     }
     if (fTestNet) {
         return CBaseChainParams::TESTNET;
+    }
+    if (fDogecoin) {
+        return CBaseChainParams::DOGECOIN;
     }
     return GetArg("-chain", CBaseChainParams::MAIN);
 }

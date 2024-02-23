@@ -417,11 +417,13 @@ void SetupServerArgs(NodeContext &node) {
         CreateBaseChainParams(CBaseChainParams::TESTNET);
     const auto regtestBaseParams =
         CreateBaseChainParams(CBaseChainParams::REGTEST);
+    const auto dogecoinBaseParams = CreateBaseChainParams(CBaseChainParams::DOGECOIN);
     const auto defaultChainParams = CreateChainParams(CBaseChainParams::MAIN);
     const auto testnetChainParams =
         CreateChainParams(CBaseChainParams::TESTNET);
     const auto regtestChainParams =
         CreateChainParams(CBaseChainParams::REGTEST);
+    const auto dogecoinChainParams = CreateChainParams(CBaseChainParams::DOGECOIN);
 
     // Hidden Options
     std::vector<std::string> hidden_args = {
@@ -637,10 +639,10 @@ void SetupServerArgs(NodeContext &node) {
             "HTTP/Protobuf connections to access the index. Unlike the "
             "JSON-RPC, it's ok to have this publicly exposed on the internet. "
             "This option can be specified multiple times (default: %s; default "
-            "port: %u, testnet: %u, regtest: %u)",
+            "port: %u, testnet: %u, regtest: %u, dogecoin: %u)",
             Join(chronik::DEFAULT_BINDS, ", "),
             defaultBaseParams->ChronikPort(), testnetBaseParams->ChronikPort(),
-            regtestBaseParams->ChronikPort()),
+            regtestBaseParams->ChronikPort(), dogecoinBaseParams->ChronikPort()),
         ArgsManager::ALLOW_STRING | ArgsManager::NETWORK_ONLY,
         OptionsCategory::CHRONIK);
     argsman.AddArg("-chroniktokenindex",
@@ -1220,10 +1222,11 @@ void SetupServerArgs(NodeContext &node) {
         ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::RPC);
     argsman.AddArg("-rpcport=<port>",
                    strprintf("Listen for JSON-RPC connections on <port> "
-                             "(default: %u, testnet: %u, regtest: %u)",
+                             "(default: %u, testnet: %u, regtest: %u, dogecoin: %u)",
                              defaultBaseParams->RPCPort(),
                              testnetBaseParams->RPCPort(),
-                             regtestBaseParams->RPCPort()),
+                             regtestBaseParams->RPCPort(),
+                             dogecoinBaseParams->RPCPort()),
                    ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
                    OptionsCategory::RPC);
     argsman.AddArg(

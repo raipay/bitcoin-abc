@@ -50,6 +50,8 @@ public:
 
     BlockHash GetHash() const;
 
+    BlockHash GetPoWHash() const;
+
     NodeSeconds Time() const {
         return NodeSeconds{std::chrono::seconds{nTime}};
     }

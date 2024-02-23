@@ -7,9 +7,17 @@
 
 #include <hash.h>
 #include <tinyformat.h>
+#include <crypto/scrypt.h>
+#include <hash.h>
 
 BlockHash CBlockHeader::GetHash() const {
     return BlockHash(SerializeHash(*this));
+}
+
+BlockHash CBlockHeader::GetPoWHash() const {
+    uint256 thash;
+    scrypt_1024_1_1_256((const char *)(&nVersion), (char *)(&thash));
+    return BlockHash(thash);
 }
 
 std::string CBlock::ToString() const {

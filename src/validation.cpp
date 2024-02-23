@@ -6,6 +6,9 @@
 
 #include <validation.h>
 
+#include <boost/random/uniform_int.hpp>
+#include <boost/random/mersenne_twister.hpp>
+
 #include <arith_uint256.h>
 #include <avalanche/avalanche.h>
 #include <avalanche/processor.h>
@@ -1158,6 +1161,37 @@ Amount GetBlockSubsidy(int nHeight, const Consensus::Params &consensusParams) {
     return ((nSubsidy / SATOSHI) >> halvings) * SATOSHI;
 }
 
+int static generateMTRandom(unsigned int s, int range)
+{
+    boost::mt19937 gen(s);
+    boost::uniform_int<> dist(1, range);
+    return dist(gen);
+}
+
+Amount static GetDogecoinBlockSubsidy(int nHeight, const Consensus::Params& consensusParams, uint256 prevHash)
+{
+    int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
+
+    if (!false /*consensusParams.fSimplifiedRewards*/ )
+    {
+        // Old-style rewards derived from the previous block hash
+        const std::string cseed_str = prevHash.ToString().substr(7, 7);
+        const char* cseed = cseed_str.c_str();
+        char* endp = NULL;
+        long seed = strtol(cseed, &endp, 16);
+        int64_t maxReward = (1000000 >> halvings) - 1;
+        int rand = generateMTRandom(seed, maxReward);
+
+        return (1 + rand) * COIN;
+    } else if (nHeight < (6 * consensusParams.nSubsidyHalvingInterval)) {
+        // New-style constant rewards for each halving interval
+        return ((500000 * COIN / SATOSHI) >> halvings) * SATOSHI;
+    } else {
+        // Constant inflation
+        return 10000 * COIN;
+    }
+}
+
 CoinsViews::CoinsViews(std::string ldb_name, size_t cache_size_bytes,
                        bool in_memory, bool should_wipe)
     : m_dbview(gArgs.GetDataDirNet() / ldb_name, cache_size_bytes, in_memory,
@@ -2105,7 +2139,7 @@ bool Chainstate::ConnectBlock(const CBlock &block, BlockValidationState &state,
              nTimeConnect * MICRO, nTimeConnect * MILLI / nBlocksTotal);
 
     const Amount blockReward =
-        nFees + GetBlockSubsidy(pindex->nHeight, consensusParams);
+        nFees + GetDogecoinBlockSubsidy(pindex->nHeight, consensusParams, pindex->pprev->GetBlockHash());
     if (block.vtx[0]->GetValueOut() > blockReward) {
         LogPrintf("ERROR: ConnectBlock(): coinbase pays too much (actual=%d vs "
                   "limit=%d)\n",
@@ -2631,7 +2665,7 @@ bool Chainstate::ConnectTip(const Config &config, BlockValidationState &state,
 
             const Amount blockReward =
                 blockFees +
-                GetBlockSubsidy(pindexNew->nHeight, consensusParams);
+                GetDogecoinBlockSubsidy(pindexNew->nHeight, consensusParams, pindexNew->pprev->GetBlockHash());
 
             std::vector<std::unique_ptr<ParkingPolicy>> parkingPolicies;
             parkingPolicies.emplace_back(std::make_unique<MinerFundPolicy>(
@@ -3795,7 +3829,7 @@ static bool CheckBlockHeader(const CBlockHeader &block,
                              BlockValidationOptions validationOptions) {
     // Check proof of work matches claimed amount
     if (validationOptions.shouldValidatePoW() &&
-        !CheckProofOfWork(block.GetHash(), block.nBits, params)) {
+        !CheckProofOfWork(block.GetPoWHash(), block.nBits, params)) {
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER,
                              "high-hash", "proof of work failed");
     }
@@ -3893,11 +3927,11 @@ bool CheckBlock(const CBlock &block, BlockValidationState &state,
 
 bool HasValidProofOfWork(const std::vector<CBlockHeader> &headers,
                          const Consensus::Params &consensusParams) {
-    return std::all_of(headers.cbegin(), headers.cend(),
-                       [&](const auto &header) {
-                           return CheckProofOfWork(
-                               header.GetHash(), header.nBits, consensusParams);
-                       });
+    return std::all_of(
+        headers.cbegin(), headers.cend(), [&](const auto &header) {
+            return CheckProofOfWork(header.GetPoWHash(), header.nBits,
+                                    consensusParams);
+        });
 }
 
 arith_uint256 CalculateHeadersWork(const std::vector<CBlockHeader> &headers) {
@@ -3933,6 +3967,8 @@ static bool ContextualCheckBlockHeader(const CChainParams &params,
     // Check proof of work
     if (block.nBits != GetNextWorkRequired(pindexPrev, &block, params)) {
         LogPrintf("bad bits after height: %d\n", pindexPrev->nHeight);
+        LogPrintf("actual bits: %x\n", block.nBits);
+        LogPrintf("expected bits: %x\n", GetNextWorkRequired(pindexPrev, &block, params));
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER,
                              "bad-diffbits", "incorrect proof of work");
     }

@@ -6,6 +6,7 @@
 
 #include <consensus/amount.h>
 
+#include <chainparamsbase.h>
 #include <currencyunit.h>
 #include <univalue.h>
 #include <util/system.h>
@@ -14,8 +15,12 @@
 
 static const Currency BCHA{COIN, SATOSHI, 8, "BCHA"};
 static const Currency XEC{100 * SATOSHI, SATOSHI, 2, "XEC"};
+static const Currency DOGE{COIN, SATOSHI, 8, "DOGE"};
 
 const Currency &Currency::get() {
+    if (gArgs.GetChainName() == CBaseChainParams::DOGECOIN) {
+        return DOGE;
+    }
     return gArgs.GetBoolArg("-ecash", DEFAULT_ECASH) ? XEC : BCHA;
 }
 
