@@ -654,6 +654,11 @@ void SetupServerArgs(NodeContext &node) {
                    "Output some performance statistics (e.g. num cache hits, "
                    "seconds spent) into a <datadir>/perf folder. (default: 0)",
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikscripthistorycuckoofilter",
+                   strprintf("Whether to enable a cuckoo filter to speed up "
+                             "script history (default: %u)",
+                             chronik::DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED),
+                   ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
 #endif
     argsman.AddArg(
         "-blockfilterindex=<type>",

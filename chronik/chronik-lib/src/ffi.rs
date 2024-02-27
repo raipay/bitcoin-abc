@@ -31,6 +31,17 @@ mod ffi_inner {
         pub enable_perf_stats: bool,
         /// Duration between WebSocket pings initiated by Chronik.
         pub ws_ping_interval_secs: u64,
+        /// Settings for indexing script history
+        pub script_history: GroupHistoryParams,
+    }
+
+    /// Configure how to index group history
+    #[derive(Debug)]
+    pub struct GroupHistoryParams {
+        /// Whether to enable the cuckoo filter optimization
+        pub is_cuckoo_enabled: bool,
+        /// FP rate of the cuckoo filter
+        pub false_positive_rate_per1000: i32,
     }
 
     extern "Rust" {
@@ -55,6 +66,7 @@ mod ffi_inner {
             bindex: &CBlockIndex,
         );
         fn handle_block_finalized(&self, bindex: &CBlockIndex);
+        fn shutdown(&self);
     }
 
     unsafe extern "C++" {

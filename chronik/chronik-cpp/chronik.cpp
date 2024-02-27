@@ -57,6 +57,14 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
                 params.NetworkIDString() == CBaseChainParams::REGTEST
                     ? uint64_t(count_seconds(WS_PING_INTERVAL_REGTEST))
                     : uint64_t(count_seconds(WS_PING_INTERVAL_DEFAULT)),
+            .script_history =
+                {
+                    .is_cuckoo_enabled = gArgs.GetBoolArg(
+                        "-chronikscripthistorycuckoofilter",
+                        DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED),
+                    .false_positive_rate_per1000 =
+                        DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1000,
+                },
         },
         config, node);
 }

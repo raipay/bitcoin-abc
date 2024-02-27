@@ -5,7 +5,11 @@
 use std::{collections::BTreeMap, marker::PhantomData, time::Instant};
 
 use abc_rust_error::Result;
+use chronik_util::{log, log_chronik};
+use rand::{CryptoRng, RngCore, SeedableRng};
 use rocksdb::WriteBatch;
+use scalable_cuckoo_filter::ScalableCuckooFilterBuilder;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -13,9 +17,10 @@ use crate::{
     group::{tx_members_for_group, Group, GroupQuery},
     index_tx::IndexTx,
     io::{
-        group_history::GroupHistoryError::*, merge::catch_merge_errors, TxNum,
+        group_history::GroupHistoryError::*, merge::catch_merge_errors,
+        BlockHeight, BlockReader, TxNum,
     },
-    ser::{db_deserialize_vec, db_serialize_vec},
+    ser::{db_deserialize, db_deserialize_vec, db_serialize, db_serialize_vec},
 };
 
 /// Represent page numbers with 32-bit unsigned integers.
@@ -24,8 +29,16 @@ type PageNum = u32;
 /// Note: This implies that scripts can at most have 2^32 txs.
 type NumTxs = u32;
 
+type CuckooFilter<T> = scalable_cuckoo_filter::ScalableCuckooFilter<
+    T,
+    scalable_cuckoo_filter::DefaultHasher,
+    StdRngDefault,
+>;
+
 const CONCAT: u8 = b'C';
 const TRIM: u8 = b'T';
+
+const KEY_CACHE_CUCKOO: &[u8] = b"cuckoo";
 
 /// Configuration for group history reader/writers.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -34,6 +47,9 @@ pub struct GroupHistoryConf {
     pub cf_page_name: &'static str,
     /// Column family to store the last page num of the group history.
     pub cf_num_txs_name: &'static str,
+    /// Column family to store serialized cache data (e.g. cuckoo filter) of the
+    /// group history.
+    pub cf_cache_name: &'static str,
     /// Page size for each member of the group.
     pub page_size: NumTxs,
 }
@@ -42,6 +58,7 @@ struct GroupHistoryColumn<'a> {
     db: &'a Db,
     cf_page: &'a CF,
     cf_num_txs: &'a CF,
+    cf_cache: &'a CF,
 }
 
 /// Write txs grouped and paginated to the DB.
@@ -61,6 +78,19 @@ struct GroupHistoryColumn<'a> {
 /// also between pages, such that the entire tx history of a member can be
 /// iterated by going through pages 0..N and going through all of the txs of
 /// each page.
+///
+/// Optionally, there is also a cuckoo filter speeding up indexing significantly
+/// letting us know if a member is definitely not in the DB, and we can
+/// assume the number of txs for this member is 0. This is a very common case
+/// (most scripts are used only a few times, and one of them must be the first),
+/// and in this case it allows us to skip reading from the DB completely and
+/// just issue a merge_cf call right away.
+///
+/// We store the cuckoo filter at shutdown and load it at init. We have to make
+/// 100% sure the cuckoo filter is valid and up-to-date with the rest of the DB,
+/// because otherwise we don't have the guarantee that a script isn't in the DB
+/// if it's not in the cuckoo filter. If that were to fail, we could insert the
+/// history entry on the wrong page, causing all sorts of problems.
 #[derive(Debug)]
 pub struct GroupHistoryWriter<'a, G: Group> {
     col: GroupHistoryColumn<'a>,
@@ -76,11 +106,33 @@ pub struct GroupHistoryReader<'a, G: Group> {
     phantom: PhantomData<G>,
 }
 
+/// Settings for group history, e.g. whether to use a cuckoo filter or LRU cache
+#[derive(Clone, Debug, Default)]
+pub struct GroupHistorySettings {
+    /// Whether to use a cuckoo filter to determine if a member has any history
+    pub is_cuckoo_filter_enabled: bool,
+    /// Cuckoo filter false positive rate per mille
+    pub false_positive_rate_per1000: i32,
+}
+
 /// In-memory data for the tx history.
 #[derive(Debug, Default)]
 pub struct GroupHistoryMemData {
     /// Stats about cache hits, num requests etc.
     pub stats: GroupHistoryStats,
+    /// In-memory data to speed up indexing, e.g. LRU caches or cuckoo filters
+    pub cache: GroupHistoryCache,
+}
+
+/// In-memory data to speed up indexing, e.g. LRU caches or cuckoo filters
+#[derive(Default)]
+pub struct GroupHistoryCache {
+    cuckoo: Option<GroupHistoryCuckooFilter>,
+}
+
+struct GroupHistoryCuckooFilter {
+    cuckoo_filter: CuckooFilter<[u8]>,
+    false_positive_rate_per1000: i32,
 }
 
 /// Stats about cache hits, num requests etc.
@@ -88,14 +140,26 @@ pub struct GroupHistoryMemData {
 pub struct GroupHistoryStats {
     /// Total number of members updated.
     pub n_total: usize,
+    /// Num of total hits of the bloom filter
+    pub n_cuckoo_hits: usize,
+    /// Num of hits that turned out to be false positives
+    pub n_cuckoo_false_positives: usize,
+    /// Size of the bloom filter data in bytes
+    pub n_cuckoo_num_bytes: usize,
+    /// Number of entries fetched from the DB
+    pub n_fetched: usize,
     /// Time [s] for insert/delete.
     pub t_total: f64,
     /// Time [s] for grouping txs.
     pub t_group: f64,
     /// Time [s] for serializing members.
     pub t_ser_members: f64,
+    /// Time [s] for checking the cuckoo filter.
+    pub t_cuckoo: f64,
     /// Time [s] for fetching existing tx data.
     pub t_fetch: f64,
+    /// Time [s] for counting the set bits in the bloom filter at startup.
+    pub t_init_num_bits: f64,
 }
 
 /// Error indicating that something went wrong with writing group history data.
@@ -111,12 +175,98 @@ pub enum GroupHistoryError {
         hex::encode(.1),
     )]
     UnknownOperandPrefix(u8, Vec<u8>),
+
+    /// Mismached cuckoo filter settings: configured <> DB
+    #[error(
+        "Mismached cuckoo settings: configured fpr {:.1}%, DB has {:.1}%",
+        *.configured_fp_rate as f64 / 10.0,
+        *.db_fp_rate as f64 / 10.0,
+    )]
+    MismatchedCuckooFilterSettings {
+        /// Configured FP rate
+        configured_fp_rate: i32,
+        /// FP rate in the DB
+        db_fp_rate: i32,
+    },
+
+    /// Mismatched cuckoo filter block height: DB <> cuckoo filter
+    #[error(
+        "Inconsistent group history cuckoo filter block height: DB is at \
+         {db_height} but cuckoo filter is for {cuckoo_height}, consider wiping \
+         the cuckoo filter or -chronikreindex to restore"
+    )]
+    MismatchedCuckooFilterHeight {
+        /// Block height of the DB (BlockWriter)
+        db_height: BlockHeight,
+        /// Block height in the existing cuckoo filter
+        cuckoo_height: BlockHeight,
+    },
+}
+
+enum CuckooResult {
+    Hit,
+    NoHit,
 }
 
 struct FetchedNumTxs<'tx, G: Group> {
-    members_num_txs: Vec<NumTxs>,
+    members_num_txs: Vec<(NumTxs, CuckooResult)>,
     grouped_txs: BTreeMap<G::Member<'tx>, Vec<TxNum>>,
     ser_members: Vec<G::MemberSer<'tx>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerCuckooFilter {
+    block_height: BlockHeight,
+    false_positive_rate_per1000: i32,
+    cuckoo: CuckooFilter<[u8]>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StdRngDefault(rand_chacha::ChaCha12Rng);
+
+impl RngCore for StdRngDefault {
+    #[inline(always)]
+    fn next_u32(&mut self) -> u32 {
+        self.0.next_u32()
+    }
+
+    #[inline(always)]
+    fn next_u64(&mut self) -> u64 {
+        self.0.next_u64()
+    }
+
+    #[inline(always)]
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.0.fill_bytes(dest);
+    }
+
+    #[inline(always)]
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.0.try_fill_bytes(dest)
+    }
+}
+
+impl SeedableRng for StdRngDefault {
+    // Fix to 256 bits. Changing this is a breaking change!
+    type Seed = [u8; 32];
+
+    #[inline(always)]
+    fn from_seed(seed: Self::Seed) -> Self {
+        StdRngDefault(rand_chacha::ChaCha12Rng::from_seed(seed))
+    }
+
+    #[inline(always)]
+    fn from_rng<R: RngCore>(rng: R) -> Result<Self, rand::Error> {
+        rand_chacha::ChaCha12Rng::from_rng(rng).map(StdRngDefault)
+    }
+}
+
+impl CryptoRng for StdRngDefault {}
+
+impl Default for StdRngDefault {
+    fn default() -> Self {
+        Self(rand_chacha::ChaCha12Rng::from_seed([0; 32]))
+    }
 }
 
 pub(crate) fn bytes_to_num_txs(bytes: &[u8]) -> Result<NumTxs> {
@@ -174,10 +324,12 @@ impl<'a> GroupHistoryColumn<'a> {
     fn new(db: &'a Db, conf: &GroupHistoryConf) -> Result<Self> {
         let cf_page = db.cf(conf.cf_page_name)?;
         let cf_num_txs = db.cf(conf.cf_num_txs_name)?;
+        let cf_cache = db.cf(conf.cf_cache_name)?;
         Ok(GroupHistoryColumn {
             db,
             cf_page,
             cf_num_txs,
+            cf_cache,
         })
     }
 
@@ -203,6 +355,89 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         Ok(GroupHistoryWriter { col, conf, group })
     }
 
+    /// Load cache data from the DB to `mem_data` at startup.
+    /// For the bloom filter, this is important to get right otherwise we will
+    /// get false negatives and a garbled history.
+    pub fn init(&self, mem_data: &mut GroupHistoryMemData) -> Result<()> {
+        let block_height = BlockReader::new(self.col.db)?.height()?;
+        if let Some(ser_cuckoo_filter) =
+            self.col.db.get(self.col.cf_cache, KEY_CACHE_CUCKOO)?
+        {
+            let cuckoo_filter =
+                db_deserialize::<SerCuckooFilter>(&ser_cuckoo_filter)?;
+            if let Some(configured) = &mem_data.cache.cuckoo {
+                if configured.false_positive_rate_per1000
+                    != cuckoo_filter.false_positive_rate_per1000
+                {
+                    return Err(MismatchedCuckooFilterSettings {
+                        configured_fp_rate: configured
+                            .false_positive_rate_per1000,
+                        db_fp_rate: cuckoo_filter.false_positive_rate_per1000,
+                    }
+                    .into());
+                }
+                if cuckoo_filter.block_height != block_height {
+                    return Err(MismatchedCuckooFilterHeight {
+                        db_height: block_height,
+                        cuckoo_height: cuckoo_filter.block_height,
+                    }
+                    .into());
+                }
+                log_chronik!(
+                    "Loaded cuckoo filter for {:?}, with {} bits capacity\n",
+                    self.conf.cf_page_name,
+                    cuckoo_filter.cuckoo.bits(),
+                );
+                mem_data.cache.cuckoo = Some(GroupHistoryCuckooFilter {
+                    cuckoo_filter: cuckoo_filter.cuckoo,
+                    false_positive_rate_per1000: cuckoo_filter
+                        .false_positive_rate_per1000,
+                });
+            } else {
+                log!(
+                    "Chronik: Ignoring existing bloom filter in DB (for block \
+                     height {}, {} available bits, {:.1}% fpr); will be wiped at shutdown\n",
+                    cuckoo_filter.block_height,
+                    cuckoo_filter.cuckoo.bits(),
+                    cuckoo_filter.false_positive_rate_per1000 as f64 / 10.0,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Write cache data to the DB data at shutdown so we can restore it later.
+    pub fn shutdown(&self, mem_data: &mut GroupHistoryMemData) -> Result<()> {
+        let block_height = BlockReader::new(self.col.db)?.height()?;
+        let mut batch = WriteBatch::default();
+        if let Some(cuckoo) = mem_data.cache.cuckoo.take() {
+            let cuckoo_filter = SerCuckooFilter {
+                block_height,
+                false_positive_rate_per1000: cuckoo.false_positive_rate_per1000,
+                cuckoo: cuckoo.cuckoo_filter,
+            };
+            let ser_cuckoo_filter = db_serialize(&cuckoo_filter)?;
+            batch.put_cf(
+                self.col.cf_cache,
+                KEY_CACHE_CUCKOO,
+                &ser_cuckoo_filter,
+            );
+        } else {
+            let bloom = self.col.db.get(self.col.cf_cache, KEY_CACHE_CUCKOO)?;
+            if bloom.is_some() {
+                log!(
+                    "Chronik: Deleting existing cuckoo filter for {:?}\n",
+                    self.conf.cf_page_name,
+                );
+            }
+            // Important: delete bloom filter from DB if unset to prevent false
+            // negatives
+            batch.delete_cf(self.col.cf_cache, KEY_CACHE_CUCKOO);
+        }
+        self.col.db.write_batch(batch)?;
+        Ok(())
+    }
+
     /// Group the txs, then insert them to into each member of the group.
     pub fn insert(
         &self,
@@ -213,11 +448,12 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
     ) -> Result<()> {
         let t_start = Instant::now();
         let fetched = self.fetch_members_num_txs(txs, aux, mem_data)?;
-        for ((mut new_tx_nums, member_ser), mut num_txs) in fetched
-            .grouped_txs
-            .into_values()
-            .zip(fetched.ser_members)
-            .zip(fetched.members_num_txs)
+        for ((mut new_tx_nums, member_ser), (mut num_txs, bloom_result)) in
+            fetched
+                .grouped_txs
+                .into_values()
+                .zip(fetched.ser_members)
+                .zip(fetched.members_num_txs)
         {
             let mut page_num = num_txs / self.conf.page_size;
             let mut last_page_num_txs = num_txs % self.conf.page_size;
@@ -239,6 +475,12 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                         member_ser.as_ref(),
                         num_txs.to_be_bytes(),
                     );
+                    if matches!(bloom_result, CuckooResult::NoHit) {
+                        // Cuckoo filter previously returned "not in DB", now we have to add it to the set
+                        mem_data
+                            .cache
+                            .add_to_cuckoo_filter(member_ser.as_ref());
+                    }
                     break;
                 }
                 last_page_num_txs = 0;
@@ -258,8 +500,9 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         mem_data: &mut GroupHistoryMemData,
     ) -> Result<()> {
         let t_start = Instant::now();
+
         let fetched = self.fetch_members_num_txs(txs, aux, mem_data)?;
-        for ((mut removed_tx_nums, member_ser), mut num_txs) in fetched
+        for ((mut removed_tx_nums, member_ser), (mut num_txs, _)) in fetched
             .grouped_txs
             .into_values()
             .zip(fetched.ser_members)
@@ -301,6 +544,9 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                             self.col.cf_num_txs,
                             member_ser.as_ref(),
                         );
+                        mem_data
+                            .cache
+                            .remove_from_cuckoo_filter(member_ser.as_ref());
                     }
                     break;
                 }
@@ -311,6 +557,10 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             }
         }
         mem_data.stats.t_total += t_start.elapsed().as_secs_f64();
+        if let Some(cuckoo) = &mem_data.cache.cuckoo {
+            mem_data.stats.n_cuckoo_num_bytes =
+                cuckoo.cuckoo_filter.bits().div_ceil(8) as usize;
+        }
         Ok(())
     }
 
@@ -320,7 +570,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         aux: &G::Aux,
         mem_data: &mut GroupHistoryMemData,
     ) -> Result<FetchedNumTxs<'tx, G>> {
-        let GroupHistoryMemData { stats } = mem_data;
+        let GroupHistoryMemData { stats, cache } = mem_data;
         let t_group = Instant::now();
         let grouped_txs = self.group_txs(txs, aux);
         stats.t_group += t_group.elapsed().as_secs_f64();
@@ -334,19 +584,45 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
 
         stats.n_total += grouped_txs.len();
 
+        let t_cuckoo = Instant::now();
+        let mut members_num_txs = Vec::with_capacity(ser_members.len());
+        for member_ser in &ser_members {
+            if cache.check_cuckoo_filter(member_ser.as_ref()) {
+                stats.n_cuckoo_hits += 1;
+                members_num_txs.push((0, CuckooResult::Hit));
+            } else {
+                members_num_txs.push((0, CuckooResult::NoHit));
+            }
+        }
+        stats.t_cuckoo += t_cuckoo.elapsed().as_secs_f64();
+
         let t_fetch = Instant::now();
-        let num_txs_keys =
-            ser_members.iter().map(|member_ser| member_ser.as_ref());
+        let num_txs_keys = ser_members.iter().zip(&members_num_txs).filter_map(
+            |(member_ser, (_, bloom_result))| match bloom_result {
+                CuckooResult::Hit => Some(member_ser.as_ref()),
+                CuckooResult::NoHit => None,
+            },
+        );
         let fetched_num_txs =
             self.col
                 .db
                 .multi_get(self.col.cf_num_txs, num_txs_keys, true)?;
-        let mut members_num_txs = Vec::with_capacity(fetched_num_txs.len());
-        for db_num_txs in fetched_num_txs {
-            members_num_txs.push(match db_num_txs {
-                Some(db_num_txs) => bytes_to_num_txs(&db_num_txs)?,
-                None => 0,
-            });
+        stats.n_fetched += fetched_num_txs.len();
+        for ((member_num_txs, _), db_num_txs) in members_num_txs
+            .iter_mut()
+            .filter(|(_, bloom_result)| {
+                matches!(bloom_result, CuckooResult::Hit)
+            })
+            .zip(fetched_num_txs)
+        {
+            match db_num_txs {
+                Some(db_num_txs) => {
+                    *member_num_txs = bytes_to_num_txs(&db_num_txs)?;
+                }
+                None => {
+                    stats.n_cuckoo_false_positives += 1;
+                }
+            }
         }
         stats.t_fetch += t_fetch.elapsed().as_secs_f64();
 
@@ -402,12 +678,75 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             conf.cf_num_txs_name,
             rocksdb::Options::default(),
         ));
+        columns.push(rocksdb::ColumnFamilyDescriptor::new(
+            conf.cf_cache_name,
+            rocksdb::Options::default(),
+        ));
+    }
+}
+
+impl GroupHistoryMemData {
+    /// Create a new [`GroupHistoryMemData`] using the given
+    /// [`GroupHistorySettings`].
+    pub fn new(settings: GroupHistorySettings) -> Self {
+        let mut stats = GroupHistoryStats::default();
+        let cache = match settings.is_cuckoo_filter_enabled {
+            false => GroupHistoryCache { cuckoo: None },
+            true => GroupHistoryCache {
+                cuckoo: Some({
+                    let cuckoo_filter = ScalableCuckooFilterBuilder::new()
+                        .rng(StdRngDefault::from_seed([0; 32]))
+                        .false_positive_probability(
+                            settings.false_positive_rate_per1000 as f64
+                                / 1000.0,
+                        )
+                        .initial_capacity(100_000)
+                        .finish();
+                    stats.n_cuckoo_num_bytes =
+                        cuckoo_filter.bits().div_ceil(8) as usize;
+                    GroupHistoryCuckooFilter {
+                        cuckoo_filter,
+                        false_positive_rate_per1000: settings
+                            .false_positive_rate_per1000,
+                    }
+                }),
+            },
+        };
+        GroupHistoryMemData { cache, stats }
+    }
+}
+
+impl GroupHistoryCache {
+    fn check_cuckoo_filter(&self, member_ser: &[u8]) -> bool {
+        if let Some(cuckoo) = &self.cuckoo {
+            cuckoo.cuckoo_filter.contains(member_ser)
+        } else {
+            true
+        }
+    }
+
+    fn add_to_cuckoo_filter(&mut self, member_ser: &[u8]) {
+        if let Some(cuckoo) = &mut self.cuckoo {
+            cuckoo.cuckoo_filter.insert(member_ser);
+        }
+    }
+
+    fn remove_from_cuckoo_filter(&mut self, member_ser: &[u8]) {
+        if let Some(cuckoo) = &mut self.cuckoo {
+            cuckoo.cuckoo_filter.remove(member_ser);
+        }
     }
 }
 
 impl std::fmt::Debug for GroupHistoryColumn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "GroupHistoryColumn {{ .. }}")
+    }
+}
+
+impl std::fmt::Debug for GroupHistoryCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GroupHistoryCache {{ .. }}")
     }
 }
 

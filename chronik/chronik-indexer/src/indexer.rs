@@ -21,9 +21,9 @@ use chronik_db::{
     index_tx::prepare_indexed_txs,
     io::{
         merge, token::TokenWriter, BlockHeight, BlockReader, BlockStatsWriter,
-        BlockTxs, BlockWriter, DbBlock, GroupHistoryMemData, GroupUtxoMemData,
-        MetadataReader, MetadataWriter, SchemaVersion, SpentByWriter, TxEntry,
-        TxReader, TxWriter,
+        BlockTxs, BlockWriter, DbBlock, GroupHistoryMemData,
+        GroupHistorySettings, GroupUtxoMemData, MetadataReader, MetadataWriter,
+        SchemaVersion, SpentByWriter, TxEntry, TxReader, TxWriter,
     },
     mem::{MemData, MemDataConf, Mempool, MempoolTx},
 };
@@ -42,7 +42,7 @@ use crate::{
     subs_group::TxMsgType,
 };
 
-const CURRENT_INDEXER_VERSION: SchemaVersion = 10;
+const CURRENT_INDEXER_VERSION: SchemaVersion = 11;
 
 /// Params for setting up a [`ChronikIndexer`] instance.
 #[derive(Clone)]
@@ -55,6 +55,8 @@ pub struct ChronikIndexerParams {
     pub enable_token_index: bool,
     /// Whether to output Chronik performance statistics into a perf/ folder
     pub enable_perf_stats: bool,
+    /// Tune script history indexing
+    pub script_history: GroupHistorySettings,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
@@ -180,10 +182,16 @@ impl ChronikIndexer {
         verify_schema_version(&db)?;
         verify_enable_token_index(&db, params.enable_token_index)?;
         let mempool = Mempool::new(ScriptGroup, params.enable_token_index);
+
+        let mut mem_data = MemData::new(MemDataConf {
+            script_history: params.script_history,
+        });
+        let script_history_writer = ScriptHistoryWriter::new(&db, ScriptGroup)?;
+        script_history_writer.init(&mut mem_data.script_history)?;
         Ok(ChronikIndexer {
             db,
             mempool,
-            mem_data: MemData::new(MemDataConf {}),
+            mem_data,
             script_group: ScriptGroup,
             avalanche: Avalanche::default(),
             subs: RwLock::new(Subs::new(ScriptGroup)),
@@ -533,6 +541,14 @@ impl ChronikIndexer {
         }
     }
 
+    /// Shut down the indexer, i.e. store any pending mem data to disk.
+    pub fn shutdown(&mut self) -> Result<()> {
+        let script_history_writer =
+            ScriptHistoryWriter::new(&self.db, ScriptGroup)?;
+        script_history_writer.shutdown(&mut self.mem_data.script_history)?;
+        Ok(())
+    }
+
     /// Return [`QueryBlocks`] to read blocks from the DB.
     pub fn blocks<'a>(&'a self, node: &'a Node) -> QueryBlocks<'a> {
         QueryBlocks {
@@ -790,6 +806,7 @@ mod tests {
             wipe_db: false,
             enable_token_index: false,
             enable_perf_stats: false,
+            script_history: Default::default(),
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
@@ -858,6 +875,7 @@ mod tests {
             wipe_db: false,
             enable_token_index: false,
             enable_perf_stats: false,
+            script_history: Default::default(),
         };
 
         // Setting up DB first time sets the schema version

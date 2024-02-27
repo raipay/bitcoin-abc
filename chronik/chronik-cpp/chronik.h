@@ -17,6 +17,10 @@ namespace chronik {
 
 static const std::vector<std::string> DEFAULT_BINDS = {"127.0.0.1", "::1"};
 
+static const bool DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED = true;
+static const int32_t DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1000 =
+    10;
+
 // Registers Chronik indexer as ValidationInterface, listens to HTTP queries
 bool Start(const Config &config, const node::NodeContext &node, bool fWipe);
 
