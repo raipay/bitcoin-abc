@@ -679,6 +679,24 @@ void SetupServerArgs(NodeContext &node) {
                              "script history (default: %u)",
                              chronik::DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED),
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg(
+        "-chronikscripthistoryfprate",
+        strprintf(
+            "False positive rate (per 1000) of the cuckoo filter to speed up "
+            "script history (default: %u)",
+            chronik::DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1000),
+        ArgsManager::ALLOW_ANY, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikscripthistorycachesize",
+                   strprintf("Size in bytes of the cache for script history to "
+                             "speed up indexing (default: %u)",
+                             chronik::DEFAULT_SCRIPT_HISTORY_CACHE_SIZE),
+                   ArgsManager::ALLOW_ANY, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikscripthistoryparfilter",
+                   "Whether to query the cuckoo filter in parallel if enabled (default: 0)",
+                   ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikscripthistoryparserialize",
+                   "Whether to compress scripts in parallel (default: 0)",
+                   ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
 #endif
     argsman.AddArg(
         "-blockfilterindex=<type>",

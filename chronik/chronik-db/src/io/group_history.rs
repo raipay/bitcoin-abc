@@ -7,6 +7,9 @@ use std::{collections::BTreeMap, marker::PhantomData, time::Instant};
 use abc_rust_error::Result;
 use chronik_util::{log, log_chronik};
 use rand::{CryptoRng, RngCore, SeedableRng};
+use rayon::iter::{
+    IntoParallelRefIterator, ParallelIterator,
+};
 use rocksdb::WriteBatch;
 use scalable_cuckoo_filter::ScalableCuckooFilterBuilder;
 use serde::{Deserialize, Serialize};
@@ -115,6 +118,10 @@ pub struct GroupHistorySettings {
     pub false_positive_rate_per1000: i32,
     /// Size in bytes of the cache to speed up indexing, set to 0 to disable
     pub cache_size: usize,
+    /// Enable parallel cuckoo filter
+    pub enable_par_filter: bool,
+    /// Enable parallel serialize
+    pub enable_par_serialize: bool,
 }
 
 /// In-memory data for the tx history.
@@ -130,6 +137,10 @@ pub struct GroupHistoryMemData {
 #[derive(Default)]
 pub struct GroupHistoryCache {
     cuckoo: Option<GroupHistoryCuckooFilter>,
+    /// Enable parallel cuckoo filter
+    enable_par_filter: bool,
+    /// Enable parallel serialize
+    enable_par_serialize: bool,
 }
 
 struct GroupHistoryCuckooFilter {
@@ -205,6 +216,7 @@ pub enum GroupHistoryError {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum CuckooResult {
     Hit,
     NoHit,
@@ -578,27 +590,59 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         stats.t_group += t_group.elapsed().as_secs_f64();
 
         let t_ser_members = Instant::now();
-        let ser_members = grouped_txs
-            .keys()
-            .map(|key| self.group.ser_member(key))
-            .collect::<Vec<_>>();
+        let ser_members =
+            if cache.enable_par_serialize && grouped_txs.len() > 2000 {
+                let group = &self.group;
+                grouped_txs
+                    .par_iter()
+                    .map(|(key, _)| group.ser_member(key))
+                    .collect::<Vec<_>>()
+            } else {
+                grouped_txs
+                    .keys()
+                    .map(|key| self.group.ser_member(key))
+                    .collect::<Vec<_>>()
+            };
         stats.t_ser_members += t_ser_members.elapsed().as_secs_f64();
 
         stats.n_total += grouped_txs.len();
 
         let t_cuckoo = Instant::now();
-        let mut members_num_txs = Vec::with_capacity(ser_members.len());
-        for member_ser in &ser_members {
-            if cache.check_cuckoo_filter(member_ser.as_ref()) {
-                stats.n_cuckoo_hits += 1;
-                members_num_txs.push((0, CuckooResult::Hit));
+        let mut members_num_txs = if cache.has_cuckoo_filter() {
+            if cache.enable_par_filter && ser_members.len() > 250 {
+                ser_members
+                    .par_iter()
+                    .map(|member_ser| {
+                        if cache.check_cuckoo_filter(member_ser.as_ref()) {
+                            (0, CuckooResult::Hit)
+                        } else {
+                            (0, CuckooResult::NoHit)
+                        }
+                    })
+                    .collect::<Vec<_>>()
             } else {
-                members_num_txs.push((0, CuckooResult::NoHit));
+                ser_members
+                    .iter()
+                    .map(|member_ser| {
+                        if cache.check_cuckoo_filter(member_ser.as_ref()) {
+                            (0, CuckooResult::Hit)
+                        } else {
+                            (0, CuckooResult::NoHit)
+                        }
+                    })
+                    .collect::<Vec<_>>()
             }
-        }
+        } else {
+            vec![(0, CuckooResult::Hit); ser_members.len()]
+        };
         stats.t_cuckoo += t_cuckoo.elapsed().as_secs_f64();
+        stats.n_cuckoo_hits += members_num_txs
+            .iter()
+            .filter(|&&(_, result)| result == CuckooResult::Hit)
+            .count();
 
         let t_fetch = Instant::now();
+        // Set of keys that are maybe in the DB
         let num_txs_keys = ser_members.iter().zip(&members_num_txs).filter_map(
             |(member_ser, (_, bloom_result))| match bloom_result {
                 CuckooResult::Hit => Some(member_ser.as_ref()),
@@ -701,33 +745,38 @@ impl GroupHistoryMemData {
     /// [`GroupHistorySettings`].
     pub fn new(settings: &GroupHistorySettings) -> Self {
         let mut stats = GroupHistoryStats::default();
-        let cache = match settings.is_cuckoo_filter_enabled {
-            false => GroupHistoryCache { cuckoo: None },
-            true => GroupHistoryCache {
-                cuckoo: Some({
-                    let cuckoo_filter = ScalableCuckooFilterBuilder::new()
-                        .rng(StdRngDefault::from_seed([0; 32]))
-                        .false_positive_probability(
-                            settings.false_positive_rate_per1000 as f64
-                                / 1000.0,
-                        )
-                        .initial_capacity(100_000)
-                        .finish();
-                    stats.n_cuckoo_num_bytes =
-                        cuckoo_filter.bits().div_ceil(8) as usize;
-                    GroupHistoryCuckooFilter {
-                        cuckoo_filter,
-                        false_positive_rate_per1000: settings
-                            .false_positive_rate_per1000,
-                    }
-                }),
-            },
+        let mut cache = GroupHistoryCache {
+            cuckoo: None,
+            enable_par_filter: settings.enable_par_filter,
+            enable_par_serialize: settings.enable_par_serialize,
         };
+        if settings.is_cuckoo_filter_enabled {
+            cache.cuckoo = Some({
+                let cuckoo_filter = ScalableCuckooFilterBuilder::new()
+                    .rng(StdRngDefault::from_seed([0; 32]))
+                    .false_positive_probability(
+                        settings.false_positive_rate_per1000 as f64 / 1000.0,
+                    )
+                    .initial_capacity(100_000)
+                    .finish();
+                stats.n_cuckoo_num_bytes =
+                    cuckoo_filter.bits().div_ceil(8) as usize;
+                GroupHistoryCuckooFilter {
+                    cuckoo_filter,
+                    false_positive_rate_per1000: settings
+                        .false_positive_rate_per1000,
+                }
+            });
+        }
         GroupHistoryMemData { cache, stats }
     }
 }
 
 impl GroupHistoryCache {
+    fn has_cuckoo_filter(&self) -> bool {
+        self.cuckoo.is_some()
+    }
+
     fn check_cuckoo_filter(&self, member_ser: &[u8]) -> bool {
         if let Some(cuckoo) = &self.cuckoo {
             cuckoo.cuckoo_filter.contains(member_ser)
@@ -834,7 +883,10 @@ mod tests {
         abc_rust_error::install();
         let tempdir = tempdir::TempDir::new("chronik-db--group_history")?;
         let mut cfs = Vec::new();
-        GroupHistoryWriter::<ValueGroup>::add_cfs(&mut cfs, &Default::default());
+        GroupHistoryWriter::<ValueGroup>::add_cfs(
+            &mut cfs,
+            &Default::default(),
+        );
         TxWriter::add_cfs(&mut cfs);
         let db = Db::open_with_cfs(tempdir.path(), cfs)?;
         let tx_writer = TxWriter::new(&db)?;

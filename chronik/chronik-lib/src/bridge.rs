@@ -88,6 +88,8 @@ fn try_setup_chronik(
                 .script_history
                 .false_positive_rate_per1000,
             cache_size: params.script_history.cache_size,
+            enable_par_filter: params.script_history.enable_par_filter,
+            enable_par_serialize: params.script_history.enable_par_serialize,
         },
     })?;
     indexer.resync_indexer(bridge_ref)?;

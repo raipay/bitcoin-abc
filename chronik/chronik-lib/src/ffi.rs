@@ -55,6 +55,10 @@ mod ffi_inner {
         pub false_positive_rate_per1000: i32,
         /// Cache size in bytes to speed up syncing
         pub cache_size: usize,
+        /// Enable parallel cuckoo filter
+        pub enable_par_filter: bool,
+        /// Enable parallel serialize
+        pub enable_par_serialize: bool,
     }
 
     extern "Rust" {

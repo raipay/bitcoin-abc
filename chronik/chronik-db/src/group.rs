@@ -34,7 +34,7 @@ pub struct MemberItem<M> {
 /// A member is one instance in a group and can be anything in a tx, e.g. the
 /// input and output scripts, the SLP token ID, a SWaP signal, a smart contract
 /// etc.
-pub trait Group {
+pub trait Group: Send + Sync {
     /// Iterator over the members found for a given [`GroupQuery`].
     type Iter<'a>: IntoIterator<Item = MemberItem<Self::Member<'a>>> + 'a;
 
@@ -42,7 +42,7 @@ pub trait Group {
     ///
     /// We use a HashMap and a BTreeMap to group txs, so it must implement
     /// [`std::hash::Hash`] and [`Ord`].
-    type Member<'a>: std::hash::Hash + Eq + Ord;
+    type Member<'a>: std::hash::Hash + Eq + Ord + Send + Sync;
 
     /// Serialized member, this is what will be used as key in the DB.
     /// Normally, this will be a [`Vec<u8>`] or an [`u8`] array or slice.
@@ -54,10 +54,10 @@ pub trait Group {
     /// time we compare/hash elements for grouping.
     ///
     /// Note: For group history, this will be suffixed by a 4-byte page number.
-    type MemberSer: AsRef<[u8]>;
+    type MemberSer: AsRef<[u8]> + Send + Sync;
 
     /// Auxillary data when grouping members
-    type Aux;
+    type Aux: Send + Sync;
 
     /// Data attached to a UTXO for this group.
     type UtxoData: UtxoData;
