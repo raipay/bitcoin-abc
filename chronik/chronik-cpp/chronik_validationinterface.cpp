@@ -23,7 +23,10 @@ public:
 
     void Register() { RegisterValidationInterface(this); }
 
-    void Unregister() { UnregisterValidationInterface(this); }
+    void Shutdown() {
+        UnregisterValidationInterface(this);
+        m_chronik->shutdown();
+    }
 
 private:
     rust::Box<chronik_bridge::Chronik> m_chronik;
@@ -76,7 +79,7 @@ void StartChronikValidationInterface(
 
 void StopChronikValidationInterface() {
     if (g_chronik_validation_interface) {
-        g_chronik_validation_interface->Unregister();
+        g_chronik_validation_interface->Shutdown();
         // Reset so the Box is dropped and all handles are released.
         g_chronik_validation_interface.reset();
     }

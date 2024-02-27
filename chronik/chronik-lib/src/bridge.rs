@@ -13,7 +13,7 @@ use std::{
 use abc_rust_error::Result;
 use bitcoinsuite_core::tx::{Tx, TxId};
 use chronik_bridge::{ffi::init_error, util::expect_unique_ptr};
-use chronik_db::{index_tx::TxNumCacheSettings, mem::MempoolTx};
+use chronik_db::{index_tx::TxNumCacheSettings, io::GroupHistorySettings, mem::MempoolTx};
 use chronik_http::server::{
     ChronikServer, ChronikServerParams, ChronikSettings,
 };
@@ -81,6 +81,12 @@ fn try_setup_chronik(
         tx_num_cache: TxNumCacheSettings {
             bucket_size: params.tx_num_cache.bucket_size,
             num_buckets: params.tx_num_cache.num_buckets,
+        },
+        script_history: GroupHistorySettings {
+            is_cuckoo_filter_enabled: params.script_history.is_cuckoo_enabled,
+            false_positive_rate_per1000: params
+                .script_history
+                .false_positive_rate_per1000,
         },
     })?;
     indexer.resync_indexer(bridge_ref)?;
@@ -207,6 +213,13 @@ impl Chronik {
         self.block_if_paused();
         self.node
             .ok_or_abort("handle_block_finalized", self.finalize_block(bindex));
+    }
+
+    /// Shutdown Chronik gracefully
+    pub fn shutdown(&self) {
+        if let Err(err) = self.indexer.blocking_write().shutdown() {
+            log!("*** CHRONIK ERROR: Shutdown had an error: {err}\n");
+        }
     }
 
     fn add_tx_to_mempool(

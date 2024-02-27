@@ -33,6 +33,8 @@ mod ffi_inner {
         pub ws_ping_interval_secs: u64,
         /// Tuning settings for the TxNumCache.
         pub tx_num_cache: TxNumCacheSettings,
+        /// Settings for indexing script history
+        pub script_history: GroupHistoryParams,
     }
 
     /// Settings for tuning the TxNumCache.
@@ -42,6 +44,15 @@ mod ffi_inner {
         pub num_buckets: usize,
         /// How many txs are cached in each bucket
         pub bucket_size: usize,
+    }
+
+    /// Configure how to index group history
+    #[derive(Debug)]
+    pub struct GroupHistoryParams {
+        /// Whether to enable the cuckoo filter optimization
+        pub is_cuckoo_enabled: bool,
+        /// FP rate of the cuckoo filter
+        pub false_positive_rate_per1000: i32,
     }
 
     extern "Rust" {
@@ -66,6 +77,7 @@ mod ffi_inner {
             bindex: &CBlockIndex,
         );
         fn handle_block_finalized(&self, bindex: &CBlockIndex);
+        fn shutdown(&self);
     }
 
     unsafe extern "C++" {

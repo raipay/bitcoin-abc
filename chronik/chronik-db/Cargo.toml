@@ -22,6 +22,9 @@ bimap = "0.6"
 # Efficient byte strings, with ref counted substrings
 bytes = "1.4"
 
+# A variant of a Cuckoo Filter whose size automatically scales as necessary
+scalable_cuckoo_filter = { version = "0.2", features = ["serde_support"] }
+
 # En-/decode byte strings from/to hex
 hex = "0.4"
 
@@ -43,8 +46,11 @@ thiserror = "1.0"
 # Sort topologically
 topo_sort = "0.4"
 
+rand = { version = "0.8", features = ["serde1"] }
+rand_chacha = { version = "0.3", features = ["serde1"] }
+
 # Key-value database
-rocksdb = { version = "0.21", default-features = false }
+rocksdb = { version = "0.21" }
 
 [dev-dependencies]
 # Colorful diffs for assertions

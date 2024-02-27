@@ -66,6 +66,14 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
                         "-chroniktxnumcachebucketsize",
                         DEFAULT_TX_NUM_CACHE_BUCKET_SIZE),
                 },
+            .script_history =
+                {
+                    .is_cuckoo_enabled = gArgs.GetBoolArg(
+                        "-chronikscripthistorycuckoofilter",
+                        DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED),
+                    .false_positive_rate_per1000 =
+                        DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1000,
+                },
         },
         config, node);
 }

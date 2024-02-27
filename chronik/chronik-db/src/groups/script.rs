@@ -9,7 +9,10 @@ use bitcoinsuite_core::{
 use bytes::Bytes;
 
 use crate::{
-    db::{CF_SCRIPT_HISTORY, CF_SCRIPT_HISTORY_NUM_TXS, CF_SCRIPT_UTXO},
+    db::{
+        CF_SCRIPT_HISTORY, CF_SCRIPT_HISTORY_CACHE, CF_SCRIPT_HISTORY_NUM_TXS,
+        CF_SCRIPT_UTXO,
+    },
     group::{Group, GroupQuery, MemberItem, UtxoDataValue},
     io::{
         GroupHistoryConf, GroupHistoryReader, GroupHistoryWriter,
@@ -105,6 +108,7 @@ impl Group for ScriptGroup {
         GroupHistoryConf {
             cf_page_name: CF_SCRIPT_HISTORY,
             cf_num_txs_name: CF_SCRIPT_HISTORY_NUM_TXS,
+            cf_cache_name: CF_SCRIPT_HISTORY_CACHE,
             page_size: 1000,
         }
     }

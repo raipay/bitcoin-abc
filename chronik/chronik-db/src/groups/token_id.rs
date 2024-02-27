@@ -10,7 +10,8 @@ use bitcoinsuite_slp::token_id::TokenId;
 
 use crate::{
     db::{
-        Db, CF_TOKEN_ID_HISTORY, CF_TOKEN_ID_HISTORY_NUM_TXS, CF_TOKEN_ID_UTXO,
+        Db, CF_TOKEN_ID_HISTORY, CF_TOKEN_ID_HISTORY_CACHE,
+        CF_TOKEN_ID_HISTORY_NUM_TXS, CF_TOKEN_ID_UTXO,
     },
     group::{Group, GroupQuery, MemberItem, UtxoDataOutput},
     index_tx::IndexTx,
@@ -107,6 +108,7 @@ impl Group for TokenIdGroup {
         GroupHistoryConf {
             cf_page_name: CF_TOKEN_ID_HISTORY,
             cf_num_txs_name: CF_TOKEN_ID_HISTORY_NUM_TXS,
+            cf_cache_name: CF_TOKEN_ID_HISTORY_CACHE,
             page_size: 1000,
         }
     }

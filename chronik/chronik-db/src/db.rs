@@ -45,12 +45,16 @@ pub const CF_META: &str = "meta";
 pub const CF_SCRIPT_HISTORY: &str = "script_history";
 /// Column family to store number of txs by script.
 pub const CF_SCRIPT_HISTORY_NUM_TXS: &str = "script_history_num_txs";
+/// Column family to store cache data for the script history
+pub const CF_SCRIPT_HISTORY_CACHE: &str = "script_history_cache";
 /// Column family for utxos by script.
 pub const CF_SCRIPT_UTXO: &str = "script_utxo";
 /// Column family to store tx history by token ID.
 pub const CF_TOKEN_ID_HISTORY: &str = "token_id_history";
 /// Column family to store number of txs by token ID.
 pub const CF_TOKEN_ID_HISTORY_NUM_TXS: &str = "token_id_history_num_txs";
+/// Column family to store cache data for token ID history
+pub const CF_TOKEN_ID_HISTORY_CACHE: &str = "token_id_history_cache";
 /// Column family for utxos by token ID.
 pub const CF_TOKEN_ID_UTXO: &str = "token_id_utxo";
 /// Column family to store which outputs have been spent by which tx inputs.

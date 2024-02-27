@@ -27,6 +27,10 @@ static const size_t DEFAULT_TX_NUM_CACHE_BUCKETS = 10;
 // of memory.
 static const size_t DEFAULT_TX_NUM_CACHE_BUCKET_SIZE = 100'000;
 
+static const bool DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED = true;
+static const int32_t DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1000 =
+    10;
+
 // Registers Chronik indexer as ValidationInterface, listens to HTTP queries
 bool Start(const Config &config, const node::NodeContext &node, bool fWipe);
 

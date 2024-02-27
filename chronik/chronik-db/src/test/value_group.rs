@@ -65,6 +65,7 @@ impl Group for ValueGroup {
         GroupHistoryConf {
             cf_page_name: "value_history",
             cf_num_txs_name: "value_history_num_txs",
+            cf_cache_name: "value_history_cache",
             page_size: 4,
         }
     }

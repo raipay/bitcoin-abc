@@ -23,9 +23,9 @@ use chronik_db::{
     },
     io::{
         merge, token::TokenWriter, BlockHeight, BlockReader, BlockStatsWriter,
-        BlockTxs, BlockWriter, DbBlock, GroupHistoryMemData, GroupUtxoMemData,
-        MetadataReader, MetadataWriter, SchemaVersion, SpentByWriter, TxEntry,
-        TxReader, TxWriter,
+        BlockTxs, BlockWriter, DbBlock, GroupHistoryMemData,
+        GroupHistorySettings, GroupUtxoMemData, MetadataReader, MetadataWriter,
+        SchemaVersion, SpentByWriter, TxEntry, TxReader, TxWriter,
     },
     mem::{MemData, MemDataConf, Mempool, MempoolTx},
 };
@@ -60,6 +60,8 @@ pub struct ChronikIndexerParams {
     pub enable_perf_stats: bool,
     /// Settings for tuning TxNumCache.
     pub tx_num_cache: TxNumCacheSettings,
+    /// Tune script history indexing
+    pub script_history: GroupHistorySettings,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
@@ -188,12 +190,17 @@ impl ChronikIndexer {
         upgrade_db_if_needed(&db, schema_version, params.enable_token_index)?;
 
         let mempool = Mempool::new(ScriptGroup, params.enable_token_index);
+
+        let mut mem_data = MemData::new(MemDataConf {
+            tx_num_cache: params.tx_num_cache,
+            script_history: params.script_history,
+        });
+        let script_history_writer = ScriptHistoryWriter::new(&db, ScriptGroup)?;
+        script_history_writer.init(&mut mem_data.script_history)?;
         Ok(ChronikIndexer {
             db,
             mempool,
-            mem_data: MemData::new(MemDataConf {
-                tx_num_cache: params.tx_num_cache,
-            }),
+            mem_data,
             script_group: ScriptGroup,
             avalanche: Avalanche::default(),
             subs: RwLock::new(Subs::new(ScriptGroup)),
@@ -558,6 +565,14 @@ impl ChronikIndexer {
         }
     }
 
+    /// Shut down the indexer, i.e. store any pending mem data to disk.
+    pub fn shutdown(&mut self) -> Result<()> {
+        let script_history_writer =
+            ScriptHistoryWriter::new(&self.db, ScriptGroup)?;
+        script_history_writer.shutdown(&mut self.mem_data.script_history)?;
+        Ok(())
+    }
+
     /// Return [`QueryBlocks`] to read blocks from the DB.
     pub fn blocks<'a>(&'a self, node: &'a Node) -> QueryBlocks<'a> {
         QueryBlocks {
@@ -853,6 +868,7 @@ mod tests {
             enable_token_index: false,
             enable_perf_stats: false,
             tx_num_cache: Default::default(),
+            script_history: Default::default(),
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
@@ -922,6 +938,7 @@ mod tests {
             enable_token_index: false,
             enable_perf_stats: false,
             tx_num_cache: Default::default(),
+            script_history: Default::default(),
         };
 
         // Setting up DB first time sets the schema version
