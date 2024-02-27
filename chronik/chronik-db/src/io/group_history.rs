@@ -113,6 +113,8 @@ pub struct GroupHistorySettings {
     pub is_cuckoo_filter_enabled: bool,
     /// Cuckoo filter false positive rate per mille
     pub false_positive_rate_per1000: i32,
+    /// Size in bytes of the cache to speed up indexing, set to 0 to disable
+    pub cache_size: usize,
 }
 
 /// In-memory data for the tx history.
@@ -657,7 +659,10 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         group_tx_nums
     }
 
-    pub(crate) fn add_cfs(columns: &mut Vec<rocksdb::ColumnFamilyDescriptor>) {
+    pub(crate) fn add_cfs(
+        columns: &mut Vec<rocksdb::ColumnFamilyDescriptor>,
+        settings: &GroupHistorySettings,
+    ) {
         let conf = G::tx_history_conf();
         let mut page_options = rocksdb::Options::default();
         let merge_op_name = format!("{}::merge_op_concat", conf.cf_page_name);
@@ -674,6 +679,12 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             conf.cf_page_name,
             page_options,
         ));
+        let mut num_txs_options = rocksdb::Options::default();
+        if settings.cache_size > 0 {
+            num_txs_options.set_row_cache(&rocksdb::Cache::new_lru_cache(
+                settings.cache_size,
+            ));
+        }
         columns.push(rocksdb::ColumnFamilyDescriptor::new(
             conf.cf_num_txs_name,
             rocksdb::Options::default(),
@@ -688,7 +699,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
 impl GroupHistoryMemData {
     /// Create a new [`GroupHistoryMemData`] using the given
     /// [`GroupHistorySettings`].
-    pub fn new(settings: GroupHistorySettings) -> Self {
+    pub fn new(settings: &GroupHistorySettings) -> Self {
         let mut stats = GroupHistoryStats::default();
         let cache = match settings.is_cuckoo_filter_enabled {
             false => GroupHistoryCache { cuckoo: None },
@@ -823,7 +834,7 @@ mod tests {
         abc_rust_error::install();
         let tempdir = tempdir::TempDir::new("chronik-db--group_history")?;
         let mut cfs = Vec::new();
-        GroupHistoryWriter::<ValueGroup>::add_cfs(&mut cfs);
+        GroupHistoryWriter::<ValueGroup>::add_cfs(&mut cfs, &Default::default());
         TxWriter::add_cfs(&mut cfs);
         let db = Db::open_with_cfs(tempdir.path(), cfs)?;
         let tx_writer = TxWriter::new(&db)?;

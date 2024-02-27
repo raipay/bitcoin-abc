@@ -184,17 +184,18 @@ impl ChronikIndexer {
         }
 
         log_chronik!("Opening Chronik at {}\n", db_path.to_string_lossy());
-        let db = Db::open(&db_path)?;
+        let mem_conf = MemDataConf {
+            tx_num_cache: params.tx_num_cache,
+            script_history: params.script_history,
+        };
+        let db = Db::open(&db_path, &mem_conf)?;
         let schema_version = verify_schema_version(&db)?;
         verify_enable_token_index(&db, params.enable_token_index)?;
         upgrade_db_if_needed(&db, schema_version, params.enable_token_index)?;
 
         let mempool = Mempool::new(ScriptGroup, params.enable_token_index);
 
-        let mut mem_data = MemData::new(MemDataConf {
-            tx_num_cache: params.tx_num_cache,
-            script_history: params.script_history,
-        });
+        let mut mem_data = MemData::new(&mem_conf);
         let script_history_writer = ScriptHistoryWriter::new(&db, ScriptGroup)?;
         script_history_writer.init(&mut mem_data.script_history)?;
         Ok(ChronikIndexer {
@@ -944,7 +945,7 @@ mod tests {
         // Setting up DB first time sets the schema version
         ChronikIndexer::setup(params.clone())?;
         {
-            let db = Db::open(&chronik_path)?;
+            let db = Db::open(&chronik_path, &Default::default())?;
             assert_eq!(
                 MetadataReader::new(&db)?.schema_version()?,
                 Some(CURRENT_INDEXER_VERSION)
@@ -955,7 +956,7 @@ mod tests {
 
         // Override DB schema version to 0
         {
-            let db = Db::open(&chronik_path)?;
+            let db = Db::open(&chronik_path, &Default::default())?;
             let mut batch = WriteBatch::default();
             MetadataWriter::new(&db)?.update_schema_version(&mut batch, 0)?;
             db.write_batch(batch)?;
@@ -970,7 +971,7 @@ mod tests {
 
         // Override DB schema version to CURRENT_INDEXER_VERSION + 1
         {
-            let db = Db::open(&chronik_path)?;
+            let db = Db::open(&chronik_path, &Default::default())?;
             let mut batch = WriteBatch::default();
             MetadataWriter::new(&db)?.update_schema_version(
                 &mut batch,
@@ -988,7 +989,7 @@ mod tests {
 
         // Corrupt schema version
         {
-            let db = Db::open(&chronik_path)?;
+            let db = Db::open(&chronik_path, &Default::default())?;
             let cf_meta = db.cf(CF_META)?;
             let mut batch = WriteBatch::default();
             batch.put_cf(cf_meta, b"SCHEMA_VERSION", [0xff]);
@@ -1012,7 +1013,7 @@ mod tests {
         };
         {
             // new db with obscure field in meta
-            let db = Db::open(&new_chronik_path)?;
+            let db = Db::open(&new_chronik_path, &Default::default())?;
             let mut batch = WriteBatch::default();
             batch.put_cf(db.cf(CF_META)?, b"FOO", b"BAR");
             db.write_batch(batch)?;

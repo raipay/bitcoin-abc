@@ -53,6 +53,8 @@ mod ffi_inner {
         pub is_cuckoo_enabled: bool,
         /// FP rate of the cuckoo filter
         pub false_positive_rate_per1000: i32,
+        /// Cache size in bytes to speed up syncing
+        pub cache_size: usize,
     }
 
     extern "Rust" {

@@ -22,6 +22,7 @@ use crate::{
         token::TokenWriter, BlockStatsWriter, BlockWriter, MetadataWriter,
         SpentByWriter, TxWriter,
     },
+    mem::MemDataConf,
 };
 
 // All column family names used by Chronik should be defined here
@@ -95,17 +96,20 @@ use self::DbError::*;
 impl Db {
     /// Opens the database under the specified path.
     /// Creates the database file and necessary column families if necessary.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn open(
+        path: impl AsRef<Path>,
+        mem_conf: &MemDataConf,
+    ) -> Result<Self> {
         let mut cfs = Vec::new();
         BlockWriter::add_cfs(&mut cfs);
         BlockStatsWriter::add_cfs(&mut cfs);
         MetadataWriter::add_cfs(&mut cfs);
         TxWriter::add_cfs(&mut cfs);
-        ScriptHistoryWriter::add_cfs(&mut cfs);
+        ScriptHistoryWriter::add_cfs(&mut cfs, &mem_conf.script_history);
         ScriptUtxoWriter::add_cfs(&mut cfs);
         SpentByWriter::add_cfs(&mut cfs);
         TokenWriter::add_cfs(&mut cfs);
-        TokenIdHistoryWriter::add_cfs(&mut cfs);
+        TokenIdHistoryWriter::add_cfs(&mut cfs, &Default::default());
         TokenIdUtxoWriter::add_cfs(&mut cfs);
         Self::open_with_cfs(path, cfs)
     }

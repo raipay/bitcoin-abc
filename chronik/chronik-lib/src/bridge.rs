@@ -87,6 +87,7 @@ fn try_setup_chronik(
             false_positive_rate_per1000: params
                 .script_history
                 .false_positive_rate_per1000,
+            cache_size: params.script_history.cache_size,
         },
     })?;
     indexer.resync_indexer(bridge_ref)?;

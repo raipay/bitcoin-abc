@@ -73,6 +73,9 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
                         DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED),
                     .false_positive_rate_per1000 =
                         DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1000,
+                    .cache_size = (size_t)gArgs.GetIntArg(
+                        "-chronikscripthistorycachesize",
+                        DEFAULT_SCRIPT_HISTORY_CACHE_SIZE),
                 },
         },
         config, node);

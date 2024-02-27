@@ -329,7 +329,7 @@ mod tests {
         abc_rust_error::install();
 
         let tempdir = tempdir::TempDir::new("chronik-db--blocks")?;
-        let db = Db::open(tempdir.path())?;
+        let db = Db::open(tempdir.path(), &Default::default())?;
         let writer = BlockWriter::new(&db)?;
         let blocks = BlockReader::new(&db)?;
         {

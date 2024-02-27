@@ -553,7 +553,7 @@ mod tests {
     fn test_insert_txs() -> Result<()> {
         abc_rust_error::install();
         let tempdir = tempdir::TempDir::new("chronik-db--txs")?;
-        let db = Db::open(tempdir.path())?;
+        let db = Db::open(tempdir.path(), &Default::default())?;
         let tx_writer = TxWriter::new(&db)?;
         let tx_reader = TxReader::new(&db)?;
         let mut mem_data = TxsMemData::default();

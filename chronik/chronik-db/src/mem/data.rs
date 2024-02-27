@@ -38,7 +38,7 @@ pub struct StatsData {
 }
 
 /// Config for in-memory data for Chronik.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct MemDataConf {
     /// Settings for tuning TxNumCache.
     pub tx_num_cache: TxNumCacheSettings,
@@ -48,11 +48,11 @@ pub struct MemDataConf {
 
 impl MemData {
     /// Create a new [`MemData`] from the given configuration.
-    pub fn new(conf: MemDataConf) -> Self {
+    pub fn new(conf: &MemDataConf) -> Self {
         MemData {
             txs: TxsMemData::default(),
-            tx_num_cache: TxNumCache::new(conf.tx_num_cache),
-            script_history: GroupHistoryMemData::new(conf.script_history),
+            tx_num_cache: TxNumCache::new(conf.tx_num_cache.clone()),
+            script_history: GroupHistoryMemData::new(&conf.script_history),
             script_utxos: GroupUtxoMemData::default(),
             spent_by: SpentByMemData::default(),
         }

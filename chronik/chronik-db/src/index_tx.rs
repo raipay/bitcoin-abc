@@ -241,7 +241,7 @@ mod tests {
     fn test_prepare_indexed_txs() -> Result<()> {
         abc_rust_error::install();
         let tempdir = tempdir::TempDir::new("chronik-db--indexed_txs")?;
-        let db = Db::open(tempdir.path())?;
+        let db = Db::open(tempdir.path(), &Default::default())?;
         let tx_writer = TxWriter::new(&db)?;
         let mut txs_mem_data = TxsMemData::default();
         let mut batch = WriteBatch::default();
