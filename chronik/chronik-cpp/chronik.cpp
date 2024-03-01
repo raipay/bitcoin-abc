@@ -77,6 +77,8 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
                     .cache_size = (size_t)gArgs.GetIntArg(
                         "-chronikscripthistorycachesize",
                         DEFAULT_SCRIPT_HISTORY_CACHE_SIZE),
+                    .cache_variant = gArgs.GetArg(
+                        "-chronikscripthistorycachevariant", "none"),
                     .enable_par_filter = gArgs.GetBoolArg(
                         "-chronikscripthistoryparfilter", false),
                     .enable_par_serialize = gArgs.GetBoolArg(

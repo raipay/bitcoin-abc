@@ -2,14 +2,14 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-use std::{collections::BTreeMap, marker::PhantomData, time::Instant};
+use std::{collections::BTreeMap, marker::PhantomData, num::NonZeroUsize, time::Instant};
 
 use abc_rust_error::Result;
 use chronik_util::{log, log_chronik};
+use lru::LruCache;
+use quick_cache::unsync::Cache as QuickCache;
 use rand::{CryptoRng, RngCore, SeedableRng};
-use rayon::iter::{
-    IntoParallelRefIterator, ParallelIterator,
-};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rocksdb::WriteBatch;
 use scalable_cuckoo_filter::ScalableCuckooFilterBuilder;
 use serde::{Deserialize, Serialize};
@@ -116,6 +116,8 @@ pub struct GroupHistorySettings {
     pub is_cuckoo_filter_enabled: bool,
     /// Cuckoo filter false positive rate per mille
     pub false_positive_rate_per1000: i32,
+    /// "none", "quick_cache", "lru", "rocksdb"
+    pub cache_variant: String,
     /// Size in bytes of the cache to speed up indexing, set to 0 to disable
     pub cache_size: usize,
     /// Enable parallel cuckoo filter
@@ -137,6 +139,8 @@ pub struct GroupHistoryMemData {
 #[derive(Default)]
 pub struct GroupHistoryCache {
     cuckoo: Option<GroupHistoryCuckooFilter>,
+    quick_cache: Option<QuickCache<Box<[u8]>, NumTxs>>,
+    lru_cache: Option<LruCache<Box<[u8]>, NumTxs>>,
     /// Enable parallel cuckoo filter
     enable_par_filter: bool,
     /// Enable parallel serialize
@@ -159,6 +163,8 @@ pub struct GroupHistoryStats {
     pub n_cuckoo_false_positives: usize,
     /// Size of the bloom filter data in bytes
     pub n_cuckoo_num_bytes: usize,
+    /// Number of cache hits for the member's number of txs.
+    pub n_num_txs_cache_hit: usize,
     /// Number of entries fetched from the DB
     pub n_fetched: usize,
     /// Time [s] for insert/delete.
@@ -219,6 +225,7 @@ pub enum GroupHistoryError {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CuckooResult {
     Hit,
+    HitCached,
     NoHit,
 }
 
@@ -495,6 +502,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                             .cache
                             .add_to_cuckoo_filter(member_ser.as_ref());
                     }
+                    mem_data.cache.put_num_txs_cache(&member_ser, num_txs);
                     break;
                 }
                 last_page_num_txs = 0;
@@ -562,6 +570,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                             .cache
                             .remove_from_cuckoo_filter(member_ser.as_ref());
                     }
+                    mem_data.cache.put_num_txs_cache(member_ser, num_txs);
                     break;
                 }
                 if page_num > 0 {
@@ -614,7 +623,13 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                     .par_iter()
                     .map(|member_ser| {
                         if cache.check_cuckoo_filter(member_ser.as_ref()) {
-                            (0, CuckooResult::Hit)
+                            if let Some(entry) =
+                                cache.get_num_txs_cache(member_ser)
+                            {
+                                (entry, CuckooResult::HitCached)
+                            } else {
+                                (0, CuckooResult::Hit)
+                            }
                         } else {
                             (0, CuckooResult::NoHit)
                         }
@@ -625,7 +640,13 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                     .iter()
                     .map(|member_ser| {
                         if cache.check_cuckoo_filter(member_ser.as_ref()) {
-                            (0, CuckooResult::Hit)
+                            if let Some(entry) =
+                                cache.get_num_txs_cache(member_ser)
+                            {
+                                (entry, CuckooResult::HitCached)
+                            } else {
+                                (0, CuckooResult::Hit)
+                            }
                         } else {
                             (0, CuckooResult::NoHit)
                         }
@@ -640,12 +661,17 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             .iter()
             .filter(|&&(_, result)| result == CuckooResult::Hit)
             .count();
+        stats.n_num_txs_cache_hit += members_num_txs
+            .iter()
+            .filter(|&&(_, result)| result == CuckooResult::HitCached)
+            .count();
 
         let t_fetch = Instant::now();
         // Set of keys that are maybe in the DB
         let num_txs_keys = ser_members.iter().zip(&members_num_txs).filter_map(
             |(member_ser, (_, bloom_result))| match bloom_result {
                 CuckooResult::Hit => Some(member_ser.as_ref()),
+                CuckooResult::HitCached => None,
                 CuckooResult::NoHit => None,
             },
         );
@@ -724,7 +750,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             page_options,
         ));
         let mut num_txs_options = rocksdb::Options::default();
-        if settings.cache_size > 0 {
+        if settings.cache_variant == "rocksdb" && settings.cache_size > 0 {
             num_txs_options.set_row_cache(&rocksdb::Cache::new_lru_cache(
                 settings.cache_size,
             ));
@@ -747,6 +773,8 @@ impl GroupHistoryMemData {
         let mut stats = GroupHistoryStats::default();
         let mut cache = GroupHistoryCache {
             cuckoo: None,
+            quick_cache: None,
+            lru_cache: None,
             enable_par_filter: settings.enable_par_filter,
             enable_par_serialize: settings.enable_par_serialize,
         };
@@ -767,6 +795,11 @@ impl GroupHistoryMemData {
                         .false_positive_rate_per1000,
                 }
             });
+        }
+        if settings.cache_variant == "quick_cache" {
+            cache.quick_cache = Some(QuickCache::new(settings.cache_size));
+        } else if settings.cache_variant == "lru" {
+            cache.lru_cache = NonZeroUsize::new(settings.cache_size).map(LruCache::new);
         }
         GroupHistoryMemData { cache, stats }
     }
@@ -794,6 +827,33 @@ impl GroupHistoryCache {
     fn remove_from_cuckoo_filter(&mut self, member_ser: &[u8]) {
         if let Some(cuckoo) = &mut self.cuckoo {
             cuckoo.cuckoo_filter.remove(member_ser);
+        }
+    }
+
+    fn get_num_txs_cache(
+        &self,
+        member_ser: impl AsRef<[u8]>,
+    ) -> Option<NumTxs> {
+        // we can use peek here because put_num_txs_cache will be called later
+        // anyway, updating the LRU position
+        if let Some(cache) = &self.quick_cache {
+            cache.peek(member_ser.as_ref()).copied()
+        } else if let Some(cache) = &self.lru_cache {
+            cache.peek(member_ser.as_ref()).copied()
+        } else {
+            None
+        }
+    }
+
+    fn put_num_txs_cache(
+        &mut self,
+        member_ser: impl AsRef<[u8]>,
+        num_txs: NumTxs,
+    ) {
+        if let Some(cache) = &mut self.quick_cache {
+            cache.insert(member_ser.as_ref().into(), num_txs);
+        } else if let Some(cache) = &mut self.lru_cache {
+            cache.put(member_ser.as_ref().into(), num_txs);
         }
     }
 }
