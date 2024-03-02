@@ -11,7 +11,7 @@ use abc_rust_error::Result;
 use chronik_util::{log, log_chronik};
 use lru::LruCache;
 use quick_cache::unsync::Cache as QuickCache;
-use rand::{CryptoRng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rocksdb::WriteBatch;
 use scalable_cuckoo_filter::ScalableCuckooFilterBuilder;
@@ -37,8 +37,8 @@ type NumTxs = u32;
 
 type CuckooFilter<T> = scalable_cuckoo_filter::ScalableCuckooFilter<
     T,
-    scalable_cuckoo_filter::DefaultHasher,
-    StdRngDefault,
+    seahash::SeaHasher,
+    GroupHistoryRng,
 >;
 
 const CONCAT: u8 = b'C';
@@ -256,10 +256,9 @@ struct SerCuckooFilter {
     cuckoo: CuckooFilter<[u8]>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct StdRngDefault(rand_chacha::ChaCha12Rng);
+struct GroupHistoryRng(rand::rngs::SmallRng);
 
-impl RngCore for StdRngDefault {
+impl RngCore for GroupHistoryRng {
     #[inline(always)]
     fn next_u32(&mut self) -> u32 {
         self.0.next_u32()
@@ -281,26 +280,24 @@ impl RngCore for StdRngDefault {
     }
 }
 
-impl SeedableRng for StdRngDefault {
+impl SeedableRng for GroupHistoryRng {
     // Fix to 256 bits. Changing this is a breaking change!
     type Seed = [u8; 32];
 
     #[inline(always)]
     fn from_seed(seed: Self::Seed) -> Self {
-        StdRngDefault(rand_chacha::ChaCha12Rng::from_seed(seed))
+        GroupHistoryRng(rand::rngs::SmallRng::from_seed(seed))
     }
 
     #[inline(always)]
     fn from_rng<R: RngCore>(rng: R) -> Result<Self, rand::Error> {
-        rand_chacha::ChaCha12Rng::from_rng(rng).map(StdRngDefault)
+        rand::rngs::SmallRng::from_rng(rng).map(GroupHistoryRng)
     }
 }
 
-impl CryptoRng for StdRngDefault {}
-
-impl Default for StdRngDefault {
+impl Default for GroupHistoryRng {
     fn default() -> Self {
-        Self(rand_chacha::ChaCha12Rng::from_seed([0; 32]))
+        Self(rand::rngs::SmallRng::from_seed([0; 32]))
     }
 }
 
@@ -798,7 +795,8 @@ impl<G: Group> GroupHistoryMemData<G> {
         if settings.is_cuckoo_filter_enabled {
             cache.cuckoo = Some({
                 let cuckoo_filter = ScalableCuckooFilterBuilder::new()
-                    .rng(StdRngDefault::from_seed([0; 32]))
+                    .rng(GroupHistoryRng::from_seed([0; 32]))
+                    .hasher(seahash::SeaHasher::new())
                     .false_positive_probability(
                         settings.false_positive_rate_per1000 as f64 / 1000.0,
                     )
