@@ -37,7 +37,7 @@ pub type TokenIdUtxoWriter<'a> = GroupUtxoWriter<'a, TokenIdGroup>;
 pub type TokenIdUtxoReader<'a> = GroupUtxoReader<'a, TokenIdGroup>;
 
 /// Group txs by token ID.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TokenIdGroup;
 
 type MaybeTokenIds = Vec<Option<TokenId>>;

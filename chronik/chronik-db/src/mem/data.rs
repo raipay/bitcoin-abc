@@ -3,9 +3,12 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 use crate::{
+    groups::ScriptGroup,
     index_tx::{TxNumCache, TxNumCacheSettings},
     io::{
-        GroupHistoryMemData, GroupHistorySettings, GroupHistoryStats, GroupUtxoMemData, GroupUtxoStats, SpentByMemData, SpentByStats, TxsMemData, TxsStats
+        GroupHistoryMemData, GroupHistorySettings, GroupHistoryStats,
+        GroupUtxoMemData, GroupUtxoStats, SpentByMemData, SpentByStats,
+        TxsMemData, TxsStats,
     },
 };
 
@@ -17,7 +20,7 @@ pub struct MemData {
     /// In-memory TxNumCache.
     pub tx_num_cache: TxNumCache,
     /// In-memory data for indexing script tx history.
-    pub script_history: GroupHistoryMemData,
+    pub script_history: GroupHistoryMemData<ScriptGroup>,
     /// In-memory data for indexing script UTXOs.
     pub script_utxos: GroupUtxoMemData,
     /// In-memory data for indexing spent-by data.

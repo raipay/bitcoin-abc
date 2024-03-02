@@ -2,7 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-use std::{collections::BTreeMap, marker::PhantomData, num::NonZeroUsize, time::Instant};
+use std::{
+    collections::BTreeMap, marker::PhantomData, num::NonZeroUsize,
+    time::Instant,
+};
 
 use abc_rust_error::Result;
 use chronik_util::{log, log_chronik};
@@ -128,23 +131,34 @@ pub struct GroupHistorySettings {
 
 /// In-memory data for the tx history.
 #[derive(Debug, Default)]
-pub struct GroupHistoryMemData {
+pub struct GroupHistoryMemData<G: Group> {
     /// Stats about cache hits, num requests etc.
     pub stats: GroupHistoryStats,
     /// In-memory data to speed up indexing, e.g. LRU caches or cuckoo filters
-    pub cache: GroupHistoryCache,
+    pub cache: GroupHistoryCache<G>,
 }
 
 /// In-memory data to speed up indexing, e.g. LRU caches or cuckoo filters
-#[derive(Default)]
-pub struct GroupHistoryCache {
+pub struct GroupHistoryCache<G: Group> {
     cuckoo: Option<GroupHistoryCuckooFilter>,
-    quick_cache: Option<QuickCache<Box<[u8]>, NumTxs>>,
-    lru_cache: Option<LruCache<Box<[u8]>, NumTxs>>,
+    quick_cache: Option<QuickCache<G::MemberSer, NumTxs>>,
+    lru_cache: Option<LruCache<G::MemberSer, NumTxs>>,
     /// Enable parallel cuckoo filter
     enable_par_filter: bool,
     /// Enable parallel serialize
     enable_par_serialize: bool,
+}
+
+impl<G: Group> Default for GroupHistoryCache<G> {
+    fn default() -> Self {
+        Self {
+            cuckoo: Default::default(),
+            quick_cache: None,
+            lru_cache: None,
+            enable_par_filter: Default::default(),
+            enable_par_serialize: Default::default(),
+        }
+    }
 }
 
 struct GroupHistoryCuckooFilter {
@@ -379,7 +393,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
     /// Load cache data from the DB to `mem_data` at startup.
     /// For the bloom filter, this is important to get right otherwise we will
     /// get false negatives and a garbled history.
-    pub fn init(&self, mem_data: &mut GroupHistoryMemData) -> Result<()> {
+    pub fn init(&self, mem_data: &mut GroupHistoryMemData<G>) -> Result<()> {
         let block_height = BlockReader::new(self.col.db)?.height()?;
         if let Some(ser_cuckoo_filter) =
             self.col.db.get(self.col.cf_cache, KEY_CACHE_CUCKOO)?
@@ -428,7 +442,10 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
     }
 
     /// Write cache data to the DB data at shutdown so we can restore it later.
-    pub fn shutdown(&self, mem_data: &mut GroupHistoryMemData) -> Result<()> {
+    pub fn shutdown(
+        &self,
+        mem_data: &mut GroupHistoryMemData<G>,
+    ) -> Result<()> {
         let block_height = BlockReader::new(self.col.db)?.height()?;
         let mut batch = WriteBatch::default();
         if let Some(cuckoo) = mem_data.cache.cuckoo.take() {
@@ -465,7 +482,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         batch: &mut WriteBatch,
         txs: &[IndexTx<'_>],
         aux: &G::Aux,
-        mem_data: &mut GroupHistoryMemData,
+        mem_data: &mut GroupHistoryMemData<G>,
     ) -> Result<()> {
         let t_start = Instant::now();
         let fetched = self.fetch_members_num_txs(txs, aux, mem_data)?;
@@ -502,7 +519,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                             .cache
                             .add_to_cuckoo_filter(member_ser.as_ref());
                     }
-                    mem_data.cache.put_num_txs_cache(&member_ser, num_txs);
+                    mem_data.cache.put_num_txs_cache(member_ser, num_txs);
                     break;
                 }
                 last_page_num_txs = 0;
@@ -519,7 +536,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         batch: &mut WriteBatch,
         txs: &[IndexTx<'_>],
         aux: &G::Aux,
-        mem_data: &mut GroupHistoryMemData,
+        mem_data: &mut GroupHistoryMemData<G>,
     ) -> Result<()> {
         let t_start = Instant::now();
 
@@ -591,7 +608,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         &self,
         txs: &'tx [IndexTx<'tx>],
         aux: &G::Aux,
-        mem_data: &mut GroupHistoryMemData,
+        mem_data: &mut GroupHistoryMemData<G>,
     ) -> Result<FetchedNumTxs<'tx, G>> {
         let GroupHistoryMemData { stats, cache } = mem_data;
         let t_group = Instant::now();
@@ -766,7 +783,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
     }
 }
 
-impl GroupHistoryMemData {
+impl<G: Group> GroupHistoryMemData<G> {
     /// Create a new [`GroupHistoryMemData`] using the given
     /// [`GroupHistorySettings`].
     pub fn new(settings: &GroupHistorySettings) -> Self {
@@ -799,13 +816,14 @@ impl GroupHistoryMemData {
         if settings.cache_variant == "quick_cache" {
             cache.quick_cache = Some(QuickCache::new(settings.cache_size));
         } else if settings.cache_variant == "lru" {
-            cache.lru_cache = NonZeroUsize::new(settings.cache_size).map(LruCache::new);
+            cache.lru_cache =
+                NonZeroUsize::new(settings.cache_size).map(LruCache::new);
         }
         GroupHistoryMemData { cache, stats }
     }
 }
 
-impl GroupHistoryCache {
+impl<G: Group> GroupHistoryCache<G> {
     fn has_cuckoo_filter(&self) -> bool {
         self.cuckoo.is_some()
     }
@@ -830,30 +848,23 @@ impl GroupHistoryCache {
         }
     }
 
-    fn get_num_txs_cache(
-        &self,
-        member_ser: impl AsRef<[u8]>,
-    ) -> Option<NumTxs> {
+    fn get_num_txs_cache(&self, member_ser: &G::MemberSer) -> Option<NumTxs> {
         // we can use peek here because put_num_txs_cache will be called later
         // anyway, updating the LRU position
         if let Some(cache) = &self.quick_cache {
-            cache.peek(member_ser.as_ref()).copied()
+            cache.peek(member_ser).copied()
         } else if let Some(cache) = &self.lru_cache {
-            cache.peek(member_ser.as_ref()).copied()
+            cache.peek(member_ser).copied()
         } else {
             None
         }
     }
 
-    fn put_num_txs_cache(
-        &mut self,
-        member_ser: impl AsRef<[u8]>,
-        num_txs: NumTxs,
-    ) {
+    fn put_num_txs_cache(&mut self, member_ser: G::MemberSer, num_txs: NumTxs) {
         if let Some(cache) = &mut self.quick_cache {
-            cache.insert(member_ser.as_ref().into(), num_txs);
+            cache.insert(member_ser, num_txs);
         } else if let Some(cache) = &mut self.lru_cache {
-            cache.put(member_ser.as_ref().into(), num_txs);
+            cache.put(member_ser, num_txs);
         }
     }
 }
@@ -864,7 +875,7 @@ impl std::fmt::Debug for GroupHistoryColumn<'_> {
     }
 }
 
-impl std::fmt::Debug for GroupHistoryCache {
+impl<G: Group> std::fmt::Debug for GroupHistoryCache<G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "GroupHistoryCache {{ .. }}")
     }

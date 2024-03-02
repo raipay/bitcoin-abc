@@ -4,6 +4,8 @@
 
 //! Module for [`Group`] and [`GroupQuery`].
 
+use std::hash::Hash;
+
 use bitcoinsuite_core::tx::{Tx, TxOutput};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
@@ -54,7 +56,7 @@ pub trait Group: Send + Sync {
     /// time we compare/hash elements for grouping.
     ///
     /// Note: For group history, this will be suffixed by a 4-byte page number.
-    type MemberSer: AsRef<[u8]> + Send + Sync;
+    type MemberSer: AsRef<[u8]> + Clone + Eq + Hash + Send + Sync;
 
     /// Auxillary data when grouping members
     type Aux: Send + Sync;
