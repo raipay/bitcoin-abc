@@ -71,9 +71,9 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
                     .is_cuckoo_enabled = gArgs.GetBoolArg(
                         "-chronikscripthistorycuckoofilter",
                         DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED),
-                    .false_positive_rate_per1000 = (int32_t)gArgs.GetIntArg(
+                    .false_positive_rate_per1m = (int32_t)gArgs.GetIntArg(
                         "-chronikscripthistoryfprate",
-                        DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1000),
+                        DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1M),
                     .cache_size = (size_t)gArgs.GetIntArg(
                         "-chronikscripthistorycachesize",
                         DEFAULT_SCRIPT_HISTORY_CACHE_SIZE),
