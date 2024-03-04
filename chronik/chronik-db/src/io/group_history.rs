@@ -118,7 +118,7 @@ pub struct GroupHistorySettings {
     /// Whether to use a cuckoo filter to determine if a member has any history
     pub is_cuckoo_filter_enabled: bool,
     /// Cuckoo filter false positive rate per mille
-    pub false_positive_rate_per1000: i32,
+    pub false_positive_rate_per1m: i32,
     /// "none", "quick_cache", "lru", "rocksdb"
     pub cache_variant: String,
     /// Size in bytes of the cache to speed up indexing, set to 0 to disable
@@ -163,7 +163,7 @@ impl<G: Group> Default for GroupHistoryCache<G> {
 
 struct GroupHistoryCuckooFilter {
     cuckoo_filter: CuckooFilter<[u8]>,
-    false_positive_rate_per1000: i32,
+    false_positive_rate_per1m: i32,
 }
 
 /// Stats about cache hits, num requests etc.
@@ -252,7 +252,7 @@ struct FetchedNumTxs<'tx, G: Group> {
 #[derive(Serialize, Deserialize)]
 struct SerCuckooFilter {
     block_height: BlockHeight,
-    false_positive_rate_per1000: i32,
+    false_positive_rate_per1m: i32,
     cuckoo: CuckooFilter<[u8]>,
 }
 
@@ -398,13 +398,13 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             let cuckoo_filter =
                 db_deserialize::<SerCuckooFilter>(&ser_cuckoo_filter)?;
             if let Some(configured) = &mem_data.cache.cuckoo {
-                if configured.false_positive_rate_per1000
-                    != cuckoo_filter.false_positive_rate_per1000
+                if configured.false_positive_rate_per1m
+                    != cuckoo_filter.false_positive_rate_per1m
                 {
                     return Err(MismatchedCuckooFilterSettings {
                         configured_fp_rate: configured
-                            .false_positive_rate_per1000,
-                        db_fp_rate: cuckoo_filter.false_positive_rate_per1000,
+                            .false_positive_rate_per1m,
+                        db_fp_rate: cuckoo_filter.false_positive_rate_per1m,
                     }
                     .into());
                 }
@@ -422,8 +422,8 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                 );
                 mem_data.cache.cuckoo = Some(GroupHistoryCuckooFilter {
                     cuckoo_filter: cuckoo_filter.cuckoo,
-                    false_positive_rate_per1000: cuckoo_filter
-                        .false_positive_rate_per1000,
+                    false_positive_rate_per1m: cuckoo_filter
+                        .false_positive_rate_per1m,
                 });
             } else {
                 log!(
@@ -431,7 +431,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                      height {}, {} available bits, {:.1}% fpr); will be wiped at shutdown\n",
                     cuckoo_filter.block_height,
                     cuckoo_filter.cuckoo.bits(),
-                    cuckoo_filter.false_positive_rate_per1000 as f64 / 10.0,
+                    cuckoo_filter.false_positive_rate_per1m as f64 / 10.0,
                 );
             }
         }
@@ -448,7 +448,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         if let Some(cuckoo) = mem_data.cache.cuckoo.take() {
             let cuckoo_filter = SerCuckooFilter {
                 block_height,
-                false_positive_rate_per1000: cuckoo.false_positive_rate_per1000,
+                false_positive_rate_per1m: cuckoo.false_positive_rate_per1m,
                 cuckoo: cuckoo.cuckoo_filter,
             };
             let ser_cuckoo_filter = db_serialize(&cuckoo_filter)?;
@@ -524,6 +524,10 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
             }
         }
         mem_data.stats.t_total += t_start.elapsed().as_secs_f64();
+        if let Some(cuckoo) = &mem_data.cache.cuckoo {
+            mem_data.stats.n_cuckoo_num_bytes =
+                cuckoo.cuckoo_filter.bits().div_ceil(8) as usize;
+        }
         Ok(())
     }
 
@@ -798,7 +802,7 @@ impl<G: Group> GroupHistoryMemData<G> {
                     .rng(GroupHistoryRng::from_seed([0; 32]))
                     .hasher(seahash::SeaHasher::new())
                     .false_positive_probability(
-                        settings.false_positive_rate_per1000 as f64 / 1000.0,
+                        settings.false_positive_rate_per1m as f64 / 1000000.0,
                     )
                     .initial_capacity(100_000)
                     .finish();
@@ -806,8 +810,8 @@ impl<G: Group> GroupHistoryMemData<G> {
                     cuckoo_filter.bits().div_ceil(8) as usize;
                 GroupHistoryCuckooFilter {
                     cuckoo_filter,
-                    false_positive_rate_per1000: settings
-                        .false_positive_rate_per1000,
+                    false_positive_rate_per1m: settings
+                        .false_positive_rate_per1m,
                 }
             });
         }

@@ -682,9 +682,9 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg(
         "-chronikscripthistoryfprate",
         strprintf(
-            "False positive rate (per 1000) of the cuckoo filter to speed up "
+            "False positive rate (per 1M) of the cuckoo filter to speed up "
             "script history (default: %u)",
-            chronik::DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1000),
+            chronik::DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1M),
         ArgsManager::ALLOW_ANY, OptionsCategory::CHRONIK);
     argsman.AddArg("-chronikscripthistorycachesize",
                    strprintf("Size of the cache for script history to "
