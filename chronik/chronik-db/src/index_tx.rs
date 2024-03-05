@@ -174,10 +174,14 @@ impl TxNumCache {
         let mut front = self.buckets.front_mut().unwrap();
         for tx in index_txs {
             if front.len() >= self.bucket_size {
+                let mut new_bucket;
                 if self.buckets.len() >= self.depth_blocks {
-                    self.buckets.pop_back();
+                    new_bucket = self.buckets.pop_back().unwrap();
+                    new_bucket.clear();
+                } else {
+                    new_bucket = HashMap::with_capacity(self.bucket_size);
                 }
-                self.buckets.push_front(HashMap::with_capacity(self.bucket_size));
+                self.buckets.push_front(new_bucket);
                 front = self.buckets.front_mut().unwrap();
             }
             front.insert(tx.tx.txid(), tx.tx_num);
