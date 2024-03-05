@@ -31,6 +31,8 @@ mod ffi_inner {
         pub enable_perf_stats: bool,
         /// How many blocks deep the tx num cache goes
         pub tx_num_cache_depth: usize,
+        /// How many blocks deep the tx num cache goes
+        pub tx_num_cache_bucket_size: usize,
         /// Duration between WebSocket pings initiated by Chronik.
         pub ws_ping_interval_secs: u64,
     }

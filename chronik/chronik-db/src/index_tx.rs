@@ -148,7 +148,7 @@ pub fn prepare_indexed_txs_cached<'a>(
         .collect::<Result<Vec<_>>>()?;
     match update_mode {
         PrepareUpdateMode::Add => cache.add_to_cache(&index_txs),
-        PrepareUpdateMode::Delete => cache.pop_latest(),
+        PrepareUpdateMode::Delete => cache.remove_from_cache(&index_txs),
         PrepareUpdateMode::Read => {}
     }
     Ok(index_txs)
@@ -174,6 +174,9 @@ impl TxNumCache {
         let mut front = self.buckets.front_mut().unwrap();
         for tx in index_txs {
             if front.len() >= self.bucket_size {
+                if self.buckets.len() >= self.depth_blocks {
+                    self.buckets.pop_back();
+                }
                 self.buckets.push_front(HashMap::with_capacity(self.bucket_size));
                 front = self.buckets.front_mut().unwrap();
             }
@@ -195,7 +198,7 @@ impl TxNumCache {
     }
 
     fn get(&self, txid: &TxId) -> Option<u64> {
-        for block in &self.last_blocks {
+        for block in &self.buckets {
             if let Some(&tx_num) = block.get(txid) {
                 return Some(tx_num);
             }

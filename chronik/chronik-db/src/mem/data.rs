@@ -43,6 +43,8 @@ pub struct StatsData {
 pub struct MemDataConf {
     /// How many blocks deep the tx num cache goes.
     pub tx_num_cache_depth: usize,
+    /// How big each tx num cache bucket can get.
+    pub tx_num_cache_bucket_size: usize,
 }
 
 impl MemData {
@@ -50,7 +52,10 @@ impl MemData {
     pub fn new(conf: MemDataConf) -> Self {
         MemData {
             txs: TxsMemData::default(),
-            tx_num_cache: TxNumCache::new(conf.tx_num_cache_depth),
+            tx_num_cache: TxNumCache::new(
+                conf.tx_num_cache_depth,
+                conf.tx_num_cache_bucket_size,
+            ),
             script_history: GroupHistoryMemData::default(),
             script_utxos: GroupUtxoMemData::default(),
             spent_by: SpentByMemData::default(),

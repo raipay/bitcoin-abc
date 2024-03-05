@@ -58,6 +58,8 @@ pub struct ChronikIndexerParams {
     pub enable_perf_stats: bool,
     /// How many blocks deep the tx num cache goes
     pub tx_num_cache_depth: usize,
+    /// How many blocks deep the tx num cache goes
+    pub tx_num_cache_bucket_size: usize,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
@@ -191,6 +193,7 @@ impl ChronikIndexer {
             mempool,
             mem_data: MemData::new(MemDataConf {
                 tx_num_cache_depth: params.tx_num_cache_depth,
+                tx_num_cache_bucket_size: params.tx_num_cache_bucket_size,
             }),
             script_group: ScriptGroup,
             avalanche: Avalanche::default(),
@@ -851,6 +854,7 @@ mod tests {
             enable_token_index: false,
             enable_perf_stats: false,
             tx_num_cache_depth: 0,
+            tx_num_cache_bucket_size: 0,
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
@@ -920,6 +924,7 @@ mod tests {
             enable_token_index: false,
             enable_perf_stats: false,
             tx_num_cache_depth: 0,
+            tx_num_cache_bucket_size: 0,
         };
 
         // Setting up DB first time sets the schema version

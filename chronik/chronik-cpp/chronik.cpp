@@ -55,6 +55,8 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
             .enable_perf_stats = gArgs.GetBoolArg("-chronikperfstats", false),
             .tx_num_cache_depth = (size_t)gArgs.GetIntArg(
                 "-chroniktxnumcachedepth", DEFAULT_TX_NUM_CACHE_DEPTH),
+            .tx_num_cache_bucket_size = (size_t)gArgs.GetIntArg(
+                "-chroniktxnumcachebucketsize", 10000),
             .ws_ping_interval_secs =
                 params.NetworkIDString() == CBaseChainParams::REGTEST
                     ? uint64_t(count_seconds(WS_PING_INTERVAL_REGTEST))

@@ -79,6 +79,7 @@ fn try_setup_chronik(
         enable_token_index: params.enable_token_index,
         enable_perf_stats: params.enable_perf_stats,
         tx_num_cache_depth: params.tx_num_cache_depth,
+        tx_num_cache_bucket_size: params.tx_num_cache_bucket_size,
     })?;
     indexer.resync_indexer(bridge_ref)?;
     if bridge.shutdown_requested() {
