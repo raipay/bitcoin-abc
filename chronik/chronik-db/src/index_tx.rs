@@ -37,7 +37,8 @@ pub struct IndexTx<'a> {
 #[derive(Debug, Default)]
 pub struct TxNumCache {
     depth_blocks: usize,
-    last_blocks: VecDeque<HashMap<TxId, TxNum>>,
+    bucket_size: usize,
+    buckets: VecDeque<HashMap<TxId, TxNum>>,
 }
 
 /// Error indicating something went wrong with a [`IndexTx`].
@@ -155,10 +156,11 @@ pub fn prepare_indexed_txs_cached<'a>(
 
 impl TxNumCache {
     /// Create a cache for tx nums caching the latest `depth_blocks` txs.
-    pub fn new(depth_blocks: usize) -> TxNumCache {
+    pub fn new(depth_blocks: usize, bucket_size: usize) -> TxNumCache {
         TxNumCache {
             depth_blocks,
-            last_blocks: VecDeque::with_capacity(depth_blocks),
+            bucket_size,
+            buckets: VecDeque::with_capacity(depth_blocks),
         }
     }
 
@@ -166,18 +168,30 @@ impl TxNumCache {
         if self.depth_blocks == 0 {
             return;
         }
-        if self.last_blocks.len() >= self.depth_blocks {
-            self.last_blocks.pop_back();
+        if self.buckets.is_empty() {
+            self.buckets.push_front(HashMap::with_capacity(self.bucket_size));
         }
-        let latest_block = index_txs
-            .iter()
-            .map(|tx| (tx.tx.txid(), tx.tx_num))
-            .collect::<HashMap<_, _>>();
-        self.last_blocks.push_front(latest_block);
+        let mut front = self.buckets.front_mut().unwrap();
+        for tx in index_txs {
+            if front.len() >= self.bucket_size {
+                self.buckets.push_front(HashMap::with_capacity(self.bucket_size));
+                front = self.buckets.front_mut().unwrap();
+            }
+            front.insert(tx.tx.txid(), tx.tx_num);
+        }
     }
 
-    fn pop_latest(&mut self) {
-        self.last_blocks.pop_front();
+    fn remove_from_cache(&mut self, index_txs: &[IndexTx<'_>]) {
+        if self.depth_blocks == 0 || self.buckets.is_empty() {
+            return;
+        }
+        let mut front = self.buckets.front_mut().unwrap();
+        for tx in index_txs.iter().rev() {
+            if front.remove(tx.tx.txid_ref()).is_none() {
+                self.buckets.pop_front();
+                front = self.buckets.front_mut().unwrap();
+            }
+        }
     }
 
     fn get(&self, txid: &TxId) -> Option<u64> {

@@ -658,6 +658,9 @@ void SetupServerArgs(NodeContext &node) {
             "(default: %d)",
             chronik::DEFAULT_TX_NUM_CACHE_DEPTH),
         ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chroniktxnumcachebucketsize",
+                   strprintf("Num of txs in each bucket for the tx num cache"),
+                   ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
     argsman.AddArg("-chronikperfstats",
                    "Output some performance statistics (e.g. num cache hits, "
                    "seconds spent) into a <datadir>/perf folder. (default: 0)",
