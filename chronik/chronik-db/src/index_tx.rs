@@ -4,7 +4,10 @@
 
 //! Module for [`IndexTx`] and [`prepare_indexed_txs`].
 
-use std::collections::{hash_map::Entry, BTreeSet, HashMap, VecDeque};
+use std::{
+    collections::{hash_map::Entry, BTreeSet, HashMap, VecDeque},
+    hash::BuildHasherDefault,
+};
 
 use abc_rust_error::Result;
 use bitcoinsuite_core::tx::{OutPoint, Tx, TxId};
@@ -15,6 +18,8 @@ use crate::{
     index_tx::IndexTxError::*,
     io::{TxNum, TxReader},
 };
+
+type SeaHashBuilder = BuildHasherDefault<seahash::SeaHasher>;
 
 /// Tx in a block to be added to the index, with prepared data to guide
 /// indexing.
@@ -38,7 +43,7 @@ pub struct IndexTx<'a> {
 pub struct TxNumCache {
     depth_blocks: usize,
     bucket_size: usize,
-    buckets: VecDeque<HashMap<TxId, TxNum>>,
+    buckets: VecDeque<HashMap<TxId, TxNum, SeaHashBuilder>>,
 }
 
 /// Error indicating something went wrong with a [`IndexTx`].
@@ -164,12 +169,19 @@ impl TxNumCache {
         }
     }
 
+    fn make_bucket(&self) -> HashMap<TxId, TxNum, SeaHashBuilder> {
+        HashMap::with_capacity_and_hasher(
+            self.bucket_size,
+            Default::default(),
+        )
+    }
+
     fn add_to_cache(&mut self, index_txs: &[IndexTx<'_>]) {
         if self.depth_blocks == 0 {
             return;
         }
         if self.buckets.is_empty() {
-            self.buckets.push_front(HashMap::with_capacity(self.bucket_size));
+            self.buckets.push_front(self.make_bucket());
         }
         let mut front = self.buckets.front_mut().unwrap();
         for tx in index_txs {
@@ -179,7 +191,7 @@ impl TxNumCache {
                     new_bucket = self.buckets.pop_back().unwrap();
                     new_bucket.clear();
                 } else {
-                    new_bucket = HashMap::with_capacity(self.bucket_size);
+                    new_bucket = self.make_bucket();
                 }
                 self.buckets.push_front(new_bucket);
                 front = self.buckets.front_mut().unwrap();
