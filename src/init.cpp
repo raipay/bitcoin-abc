@@ -650,6 +650,14 @@ void SetupServerArgs(NodeContext &node) {
                    "Reindex the Chronik indexer from genesis, but leave the "
                    "other indexes untouched",
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg(
+        "-chroniktxnumcachedepth",
+        strprintf(
+            "Depth of the tx num cache in blocks. Caution against setting this "
+            "too high, it will slow indexing down. 100 seems to be optimal. "
+            "(default: %d)",
+            chronik::DEFAULT_TX_NUM_CACHE_DEPTH),
+        ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
     argsman.AddArg("-chronikperfstats",
                    "Output some performance statistics (e.g. num cache hits, "
                    "seconds spent) into a <datadir>/perf folder. (default: 0)",

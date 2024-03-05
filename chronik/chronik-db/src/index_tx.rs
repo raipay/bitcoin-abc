@@ -4,14 +4,15 @@
 
 //! Module for [`IndexTx`] and [`prepare_indexed_txs`].
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{hash_map::Entry, BTreeSet, HashMap, VecDeque};
 
 use abc_rust_error::Result;
-use bitcoinsuite_core::tx::{OutPoint, Tx};
+use bitcoinsuite_core::tx::{OutPoint, Tx, TxId};
 use thiserror::Error;
 
 use crate::{
     db::Db,
+    index_tx::IndexTxError::*,
     io::{TxNum, TxReader},
 };
 
@@ -32,6 +33,13 @@ pub struct IndexTx<'a> {
     pub input_nums: Vec<TxNum>,
 }
 
+/// Cache for tx nums, stores the latest `depth_blocks` blocks of txids
+#[derive(Debug, Default)]
+pub struct TxNumCache {
+    depth_blocks: usize,
+    last_blocks: VecDeque<HashMap<TxId, TxNum>>,
+}
+
 /// Error indicating something went wrong with a [`IndexTx`].
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum IndexTxError {
@@ -41,14 +49,45 @@ pub enum IndexTxError {
     UnknownInputSpent(OutPoint),
 }
 
-use self::IndexTxError::*;
+/// Mode [`prepare_indexed_txs_cached`] is used for, to ensure the cache is
+/// updated correctly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrepareUpdateMode {
+    /// Txs are being added to the DB
+    Add,
+    /// Txs are being removed from the DB
+    Delete,
+    /// Txs are only read from the DB
+    Read,
+}
 
 /// Prepare txs of a block which is about to be added/removed from the DB with
 /// some additional data, either coming from the DB or from within the block.
+/// This function works like [`prepare_indexed_txs_cached`] but with the cache
+/// disabled.
 pub fn prepare_indexed_txs<'a>(
     db: &Db,
     first_tx_num: TxNum,
     txs: &'a [Tx],
+) -> Result<Vec<IndexTx<'a>>> {
+    prepare_indexed_txs_cached(
+        db,
+        first_tx_num,
+        txs,
+        &mut TxNumCache::default(),
+        PrepareUpdateMode::Read,
+    )
+}
+
+/// Prepare txs of a block which is about to be added/removed from the DB with
+/// some additional data, either coming from the DB or from within the block.
+/// Uses the provided [`TxNumCache`], and puts the new TxNums into it.
+pub fn prepare_indexed_txs_cached<'a>(
+    db: &Db,
+    first_tx_num: TxNum,
+    txs: &'a [Tx],
+    cache: &mut TxNumCache,
+    update_mode: PrepareUpdateMode,
 ) -> Result<Vec<IndexTx<'a>>> {
     let mut tx_nums_by_txid = HashMap::with_capacity(txs.len());
     for (tx_idx, tx) in txs.iter().enumerate() {
@@ -57,7 +96,13 @@ pub fn prepare_indexed_txs<'a>(
     let mut db_txids = BTreeSet::new();
     for tx in txs {
         for tx_input in &tx.inputs {
-            if !tx_nums_by_txid.contains_key(&&tx_input.prev_out.txid) {
+            if let Entry::Vacant(entry) =
+                tx_nums_by_txid.entry(&tx_input.prev_out.txid)
+            {
+                if let Some(tx_num) = cache.get(&tx_input.prev_out.txid) {
+                    entry.insert(tx_num);
+                    continue;
+                }
                 db_txids.insert(&tx_input.prev_out.txid);
             }
         }
@@ -65,7 +110,8 @@ pub fn prepare_indexed_txs<'a>(
     let tx_reader = TxReader::new(db)?;
     let db_tx_nums = tx_reader.tx_nums_by_txids(db_txids.iter().copied())?;
     let db_txids = db_txids.into_iter().collect::<Vec<_>>();
-    txs.iter()
+    let index_txs = txs
+        .iter()
         .enumerate()
         .map(|(tx_idx, tx)| {
             let tx_num = first_tx_num + tx_idx as TxNum;
@@ -98,7 +144,50 @@ pub fn prepare_indexed_txs<'a>(
                 input_nums,
             })
         })
-        .collect::<Result<Vec<_>>>()
+        .collect::<Result<Vec<_>>>()?;
+    match update_mode {
+        PrepareUpdateMode::Add => cache.add_to_cache(&index_txs),
+        PrepareUpdateMode::Delete => cache.pop_latest(),
+        PrepareUpdateMode::Read => {}
+    }
+    Ok(index_txs)
+}
+
+impl TxNumCache {
+    /// Create a cache for tx nums caching the latest `depth_blocks` txs.
+    pub fn new(depth_blocks: usize) -> TxNumCache {
+        TxNumCache {
+            depth_blocks,
+            last_blocks: VecDeque::with_capacity(depth_blocks),
+        }
+    }
+
+    fn add_to_cache(&mut self, index_txs: &[IndexTx<'_>]) {
+        if self.depth_blocks == 0 {
+            return;
+        }
+        if self.last_blocks.len() >= self.depth_blocks {
+            self.last_blocks.pop_back();
+        }
+        let latest_block = index_txs
+            .iter()
+            .map(|tx| (tx.tx.txid(), tx.tx_num))
+            .collect::<HashMap<_, _>>();
+        self.last_blocks.push_front(latest_block);
+    }
+
+    fn pop_latest(&mut self) {
+        self.last_blocks.pop_front();
+    }
+
+    fn get(&self, txid: &TxId) -> Option<u64> {
+        for block in &self.last_blocks {
+            if let Some(&tx_num) = block.get(txid) {
+                return Some(tx_num);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]

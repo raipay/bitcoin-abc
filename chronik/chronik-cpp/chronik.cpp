@@ -53,6 +53,8 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
             .enable_token_index = gArgs.GetBoolArg("-chroniktokenindex", true),
             .is_pause_allowed = is_pause_allowed,
             .enable_perf_stats = gArgs.GetBoolArg("-chronikperfstats", false),
+            .tx_num_cache_depth = (size_t)gArgs.GetIntArg(
+                "-chroniktxnumcachedepth", DEFAULT_TX_NUM_CACHE_DEPTH),
             .ws_ping_interval_secs =
                 params.NetworkIDString() == CBaseChainParams::REGTEST
                     ? uint64_t(count_seconds(WS_PING_INTERVAL_REGTEST))
