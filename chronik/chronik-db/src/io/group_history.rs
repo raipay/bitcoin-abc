@@ -3,7 +3,10 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 use std::{
-    collections::BTreeMap, marker::PhantomData, num::NonZeroUsize,
+    collections::{BTreeMap, HashMap, VecDeque},
+    hash::Hash,
+    marker::PhantomData,
+    num::NonZeroUsize,
     time::Instant,
 };
 
@@ -143,6 +146,7 @@ pub struct GroupHistoryCache<G: Group> {
     cuckoo: Option<GroupHistoryCuckooFilter>,
     quick_cache: Option<QuickCache<G::MemberSer, NumTxs>>,
     lru_cache: Option<LruCache<G::MemberSer, NumTxs>>,
+    belt_cache: Option<BeltCache<G::MemberSer>>,
     /// Enable parallel cuckoo filter
     enable_par_filter: bool,
     /// Enable parallel serialize
@@ -155,10 +159,17 @@ impl<G: Group> Default for GroupHistoryCache<G> {
             cuckoo: Default::default(),
             quick_cache: None,
             lru_cache: None,
+            belt_cache: None,
             enable_par_filter: Default::default(),
             enable_par_serialize: Default::default(),
         }
     }
+}
+
+struct BeltCache<T> {
+    num_buckets: usize,
+    bucket_size: usize,
+    belt: VecDeque<HashMap<T, NumTxs>>,
 }
 
 struct GroupHistoryCuckooFilter {
@@ -793,6 +804,7 @@ impl<G: Group> GroupHistoryMemData<G> {
             cuckoo: None,
             quick_cache: None,
             lru_cache: None,
+            belt_cache: None,
             enable_par_filter: settings.enable_par_filter,
             enable_par_serialize: settings.enable_par_serialize,
         };
@@ -820,6 +832,12 @@ impl<G: Group> GroupHistoryMemData<G> {
         } else if settings.cache_variant == "lru" {
             cache.lru_cache =
                 NonZeroUsize::new(settings.cache_size).map(LruCache::new);
+        } else if settings.cache_variant == "belt" {
+            cache.belt_cache = Some(BeltCache {
+                num_buckets: 10,
+                bucket_size: settings.cache_size,
+                belt: VecDeque::with_capacity(10),
+            });
         }
         GroupHistoryMemData { cache, stats }
     }
@@ -857,6 +875,8 @@ impl<G: Group> GroupHistoryCache<G> {
             cache.peek(member_ser).copied()
         } else if let Some(cache) = &self.lru_cache {
             cache.peek(member_ser).copied()
+        } else if let Some(cache) = &self.belt_cache {
+            cache.get(member_ser)
         } else {
             None
         }
@@ -867,7 +887,48 @@ impl<G: Group> GroupHistoryCache<G> {
             cache.insert(member_ser, num_txs);
         } else if let Some(cache) = &mut self.lru_cache {
             cache.put(member_ser, num_txs);
+        } else if let Some(cache) = &mut self.belt_cache {
+            cache.put(member_ser, num_txs);
         }
+    }
+}
+
+impl<T: Hash + Eq> BeltCache<T> {
+    fn make_bucket(&self) -> HashMap<T, NumTxs> {
+        HashMap::with_capacity(self.bucket_size)
+    }
+
+    /// Put the num of txs onto the belt.
+    /// Note that if an member got moved into a later bucket and a new num txs gets put onto the belt, there will be two inconsistent values on the belt, however, since buckets are ordered (front = latest), `get` will always return the latest value, therefore the behavior remains correct.
+    fn put(&mut self, key: T, value: NumTxs) {
+        if self.num_buckets == 0 {
+            return;
+        }
+        if self.belt.is_empty() {
+            self.belt.push_front(self.make_bucket());
+        }
+        let mut front = self.belt.front_mut().unwrap();
+        if front.len() >= self.bucket_size {
+            let mut new_bucket;
+            if self.belt.len() >= self.num_buckets {
+                new_bucket = self.belt.pop_back().unwrap();
+                new_bucket.clear();
+            } else {
+                new_bucket = self.make_bucket();
+            }
+            self.belt.push_front(new_bucket);
+            front = self.belt.front_mut().unwrap();
+        }
+        front.insert(key, value);
+    }
+
+    fn get(&self, key: &T) -> Option<NumTxs> {
+        for bucket in &self.belt {
+            if let Some(&num_txs) = bucket.get(key) {
+                return Some(num_txs);
+            }
+        }
+        None
     }
 }
 
