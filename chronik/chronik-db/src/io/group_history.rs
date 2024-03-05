@@ -202,6 +202,8 @@ pub struct GroupHistoryStats {
     pub t_cuckoo: f64,
     /// Time [s] for fetching existing tx data.
     pub t_fetch: f64,
+    /// Time [s] for writing the data to the DB and cache.
+    pub t_write: f64,
     /// Time [s] for counting the set bits in the bloom filter at startup.
     pub t_init_num_bits: f64,
 }
@@ -494,6 +496,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
     ) -> Result<()> {
         let t_start = Instant::now();
         let fetched = self.fetch_members_num_txs(txs, aux, mem_data)?;
+        let t_write = Instant::now();
         for ((mut new_tx_nums, member_ser), (mut num_txs, bloom_result)) in
             fetched
                 .grouped_txs
@@ -534,6 +537,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                 page_num += 1;
             }
         }
+        mem_data.stats.t_write += t_write.elapsed().as_secs_f64();
         mem_data.stats.t_total += t_start.elapsed().as_secs_f64();
         if let Some(cuckoo) = &mem_data.cache.cuckoo {
             mem_data.stats.n_cuckoo_num_bytes =
@@ -553,6 +557,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         let t_start = Instant::now();
 
         let fetched = self.fetch_members_num_txs(txs, aux, mem_data)?;
+        let t_write = Instant::now();
         for ((mut removed_tx_nums, member_ser), (mut num_txs, _)) in fetched
             .grouped_txs
             .into_values()
@@ -608,6 +613,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                 }
             }
         }
+        mem_data.stats.t_write += t_write.elapsed().as_secs_f64();
         mem_data.stats.t_total += t_start.elapsed().as_secs_f64();
         if let Some(cuckoo) = &mem_data.cache.cuckoo {
             mem_data.stats.n_cuckoo_num_bytes =
