@@ -51,9 +51,13 @@ mod ffi_inner {
     pub struct GroupHistoryParams {
         /// Whether to enable the cuckoo filter optimization
         pub is_cuckoo_enabled: bool,
-        /// FP rate of the cuckoo filter
+        /// Whether to enable the bloom filter optimization
+        pub is_bloom_enabled: bool,
+        /// FP rate of the bloom/cuckoo filter
         pub false_positive_rate_per1m: i32,
-        /// Cache size in bytes to speed up syncing
+        /// Expected number of items in the filter
+        pub expected_num_items: usize,
+        /// Cache size to speed up syncing
         pub cache_size: usize,
         /// "none", "quick_cache", "lru", "rocksdb"
         pub cache_variant: String,

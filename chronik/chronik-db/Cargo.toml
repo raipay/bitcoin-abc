@@ -19,6 +19,8 @@ chronik-util = { path = "../chronik-util" }
 # Map that goes in both directions
 bimap = "0.6"
 
+bloomfilter = "1.0"
+
 # Efficient byte strings, with ref counted substrings
 bytes = "1.4"
 

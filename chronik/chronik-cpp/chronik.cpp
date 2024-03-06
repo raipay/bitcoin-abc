@@ -71,9 +71,13 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
                     .is_cuckoo_enabled = gArgs.GetBoolArg(
                         "-chronikscripthistorycuckoofilter",
                         DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED),
+                    .is_bloom_enabled = gArgs.GetBoolArg(
+                        "-chronikscripthistorybloomfilter", false),
                     .false_positive_rate_per1m = (int32_t)gArgs.GetIntArg(
                         "-chronikscripthistoryfprate",
                         DEFAULT_SCRIPT_HISTORY_CUCKOO_FALSE_POSITIVE_RATE_PER1M),
+                    .expected_num_items = (size_t)gArgs.GetIntArg(
+                        "-chronikscripthistorynumexpecteditems", 0),
                     .cache_size = (size_t)gArgs.GetIntArg(
                         "-chronikscripthistorycachesize",
                         DEFAULT_SCRIPT_HISTORY_CACHE_SIZE),

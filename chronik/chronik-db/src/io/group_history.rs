@@ -120,8 +120,12 @@ pub struct GroupHistoryReader<'a, G: Group> {
 pub struct GroupHistorySettings {
     /// Whether to use a cuckoo filter to determine if a member has any history
     pub is_cuckoo_filter_enabled: bool,
+    /// Whether to use a bloom filter to determine if a member has any history
+    pub is_bloom_filter_enabled: bool,
     /// Cuckoo filter false positive rate per mille
     pub false_positive_rate_per1m: i32,
+    /// Expected number of total distinct members of the group
+    pub expected_num_items: usize,
     /// "none", "quick_cache", "lru", "rocksdb"
     pub cache_variant: String,
     /// Size in bytes of the cache to speed up indexing, set to 0 to disable
@@ -144,6 +148,7 @@ pub struct GroupHistoryMemData<G: Group> {
 /// In-memory data to speed up indexing, e.g. LRU caches or cuckoo filters
 pub struct GroupHistoryCache<G: Group> {
     cuckoo: Option<GroupHistoryCuckooFilter>,
+    bloom: Option<GroupHistoryBloomFilter>,
     quick_cache: Option<QuickCache<G::MemberSer, NumTxs>>,
     lru_cache: Option<LruCache<G::MemberSer, NumTxs>>,
     belt_cache: Option<BeltCache<G::MemberSer>>,
@@ -156,7 +161,8 @@ pub struct GroupHistoryCache<G: Group> {
 impl<G: Group> Default for GroupHistoryCache<G> {
     fn default() -> Self {
         Self {
-            cuckoo: Default::default(),
+            cuckoo: None,
+            bloom: None,
             quick_cache: None,
             lru_cache: None,
             belt_cache: None,
@@ -177,17 +183,25 @@ struct GroupHistoryCuckooFilter {
     false_positive_rate_per1m: i32,
 }
 
+struct GroupHistoryBloomFilter {
+    bloom_filter: bloomfilter::Bloom<[u8]>,
+    #[allow(dead_code)]
+    false_positive_rate_per1m: i32,
+    #[allow(dead_code)]
+    expected_num_items: usize,
+}
+
 /// Stats about cache hits, num requests etc.
 #[derive(Clone, Debug, Default)]
 pub struct GroupHistoryStats {
     /// Total number of members updated.
     pub n_total: usize,
     /// Num of total hits of the bloom filter
-    pub n_cuckoo_hits: usize,
+    pub n_filter_hits: usize,
     /// Num of hits that turned out to be false positives
-    pub n_cuckoo_false_positives: usize,
+    pub n_filter_false_positives: usize,
     /// Size of the bloom filter data in bytes
-    pub n_cuckoo_num_bytes: usize,
+    pub n_filter_num_bytes: usize,
     /// Number of cache hits for the member's number of txs.
     pub n_num_txs_cache_hit: usize,
     /// Number of entries fetched from the DB
@@ -250,14 +264,14 @@ pub enum GroupHistoryError {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum CuckooResult {
+enum FilterResult {
     Hit,
     HitCached,
     NoHit,
 }
 
 struct FetchedNumTxs<'tx, G: Group> {
-    members_num_txs: Vec<(NumTxs, CuckooResult)>,
+    members_num_txs: Vec<(NumTxs, FilterResult)>,
     grouped_txs: BTreeMap<G::Member<'tx>, Vec<TxNum>>,
     ser_members: Vec<G::MemberSer>,
 }
@@ -524,11 +538,9 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                         member_ser.as_ref(),
                         num_txs.to_be_bytes(),
                     );
-                    if matches!(bloom_result, CuckooResult::NoHit) {
-                        // Cuckoo filter previously returned "not in DB", now we have to add it to the set
-                        mem_data
-                            .cache
-                            .add_to_cuckoo_filter(member_ser.as_ref());
+                    if matches!(bloom_result, FilterResult::NoHit) {
+                        // Filter previously returned "not in DB", now we have to add it to the set
+                        mem_data.cache.add_to_filter(member_ser.as_ref());
                     }
                     mem_data.cache.put_num_txs_cache(member_ser, num_txs);
                     break;
@@ -540,7 +552,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         mem_data.stats.t_write += t_write.elapsed().as_secs_f64();
         mem_data.stats.t_total += t_start.elapsed().as_secs_f64();
         if let Some(cuckoo) = &mem_data.cache.cuckoo {
-            mem_data.stats.n_cuckoo_num_bytes =
+            mem_data.stats.n_filter_num_bytes =
                 cuckoo.cuckoo_filter.bits().div_ceil(8) as usize;
         }
         Ok(())
@@ -555,6 +567,15 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         mem_data: &mut GroupHistoryMemData<G>,
     ) -> Result<()> {
         let t_start = Instant::now();
+
+        // On reorg, wipe bloom filter. This is because we cannot ever remove
+        // elements from a (normal) bloom filter. In practice, the main
+        // benefit for the bloom filter is during IBD, where no reorgs occur.
+        // If tx volume picks up and reorgs wiping the bloom filter becomes a
+        // problem, we can introduce checkpointing such that recent
+        // bloom filters can be recovered. With the addition of Avalanche, the
+        // deepest reorg depth should only ever be 1.
+        mem_data.cache.bloom = None;
 
         let fetched = self.fetch_members_num_txs(txs, aux, mem_data)?;
         let t_write = Instant::now();
@@ -600,9 +621,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                             self.col.cf_num_txs,
                             member_ser.as_ref(),
                         );
-                        mem_data
-                            .cache
-                            .remove_from_cuckoo_filter(member_ser.as_ref());
+                        mem_data.cache.remove_from_filter(member_ser.as_ref());
                     }
                     mem_data.cache.put_num_txs_cache(member_ser, num_txs);
                     break;
@@ -616,7 +635,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         mem_data.stats.t_write += t_write.elapsed().as_secs_f64();
         mem_data.stats.t_total += t_start.elapsed().as_secs_f64();
         if let Some(cuckoo) = &mem_data.cache.cuckoo {
-            mem_data.stats.n_cuckoo_num_bytes =
+            mem_data.stats.n_filter_num_bytes =
                 cuckoo.cuckoo_filter.bits().div_ceil(8) as usize;
         }
         Ok(())
@@ -657,16 +676,16 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                 ser_members
                     .par_iter()
                     .map(|member_ser| {
-                        if cache.check_cuckoo_filter(member_ser.as_ref()) {
+                        if cache.check_filter(member_ser.as_ref()) {
                             if let Some(entry) =
                                 cache.get_num_txs_cache(member_ser)
                             {
-                                (entry, CuckooResult::HitCached)
+                                (entry, FilterResult::HitCached)
                             } else {
-                                (0, CuckooResult::Hit)
+                                (0, FilterResult::Hit)
                             }
                         } else {
-                            (0, CuckooResult::NoHit)
+                            (0, FilterResult::NoHit)
                         }
                     })
                     .collect::<Vec<_>>()
@@ -674,40 +693,40 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                 ser_members
                     .iter()
                     .map(|member_ser| {
-                        if cache.check_cuckoo_filter(member_ser.as_ref()) {
+                        if cache.check_filter(member_ser.as_ref()) {
                             if let Some(entry) =
                                 cache.get_num_txs_cache(member_ser)
                             {
-                                (entry, CuckooResult::HitCached)
+                                (entry, FilterResult::HitCached)
                             } else {
-                                (0, CuckooResult::Hit)
+                                (0, FilterResult::Hit)
                             }
                         } else {
-                            (0, CuckooResult::NoHit)
+                            (0, FilterResult::NoHit)
                         }
                     })
                     .collect::<Vec<_>>()
             }
         } else {
-            vec![(0, CuckooResult::Hit); ser_members.len()]
+            vec![(0, FilterResult::Hit); ser_members.len()]
         };
         stats.t_cuckoo += t_cuckoo.elapsed().as_secs_f64();
-        stats.n_cuckoo_hits += members_num_txs
+        stats.n_filter_hits += members_num_txs
             .iter()
-            .filter(|&&(_, result)| result == CuckooResult::Hit)
+            .filter(|&&(_, result)| result == FilterResult::Hit)
             .count();
         stats.n_num_txs_cache_hit += members_num_txs
             .iter()
-            .filter(|&&(_, result)| result == CuckooResult::HitCached)
+            .filter(|&&(_, result)| result == FilterResult::HitCached)
             .count();
 
         let t_fetch = Instant::now();
         // Set of keys that are maybe in the DB
         let num_txs_keys = ser_members.iter().zip(&members_num_txs).filter_map(
             |(member_ser, (_, bloom_result))| match bloom_result {
-                CuckooResult::Hit => Some(member_ser.as_ref()),
-                CuckooResult::HitCached => None,
-                CuckooResult::NoHit => None,
+                FilterResult::Hit => Some(member_ser.as_ref()),
+                FilterResult::HitCached => None,
+                FilterResult::NoHit => None,
             },
         );
         let fetched_num_txs =
@@ -718,7 +737,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
         for ((member_num_txs, _), db_num_txs) in members_num_txs
             .iter_mut()
             .filter(|(_, bloom_result)| {
-                matches!(bloom_result, CuckooResult::Hit)
+                matches!(bloom_result, FilterResult::Hit)
             })
             .zip(fetched_num_txs)
         {
@@ -727,7 +746,7 @@ impl<'a, G: Group> GroupHistoryWriter<'a, G> {
                     *member_num_txs = bytes_to_num_txs(&db_num_txs)?;
                 }
                 None => {
-                    stats.n_cuckoo_false_positives += 1;
+                    stats.n_filter_false_positives += 1;
                 }
             }
         }
@@ -808,6 +827,7 @@ impl<G: Group> GroupHistoryMemData<G> {
         let mut stats = GroupHistoryStats::default();
         let mut cache = GroupHistoryCache {
             cuckoo: None,
+            bloom: None,
             quick_cache: None,
             lru_cache: None,
             belt_cache: None,
@@ -824,12 +844,27 @@ impl<G: Group> GroupHistoryMemData<G> {
                     )
                     .initial_capacity(100_000)
                     .finish();
-                stats.n_cuckoo_num_bytes =
+                stats.n_filter_num_bytes =
                     cuckoo_filter.bits().div_ceil(8) as usize;
                 GroupHistoryCuckooFilter {
                     cuckoo_filter,
                     false_positive_rate_per1m: settings
                         .false_positive_rate_per1m,
+                }
+            });
+        }
+        if settings.is_bloom_filter_enabled {
+            cache.bloom = Some({
+                let bloom_filter = bloomfilter::Bloom::new_for_fp_rate(
+                    settings.expected_num_items,
+                    settings.false_positive_rate_per1m as f64 / 1000000.0,
+                );
+                stats.n_filter_num_bytes =
+                    (bloom_filter.number_of_bits() as usize + 7) / 8;
+                GroupHistoryBloomFilter {
+                    bloom_filter,
+                    false_positive_rate_per1m: settings.false_positive_rate_per1m,
+                    expected_num_items: settings.expected_num_items,
                 }
             });
         }
@@ -854,24 +889,29 @@ impl<G: Group> GroupHistoryCache<G> {
         self.cuckoo.is_some()
     }
 
-    fn check_cuckoo_filter(&self, member_ser: &[u8]) -> bool {
+    fn check_filter(&self, member_ser: &[u8]) -> bool {
         if let Some(cuckoo) = &self.cuckoo {
             cuckoo.cuckoo_filter.contains(member_ser)
+        } else if let Some(bloom) = &self.bloom {
+            bloom.bloom_filter.check(member_ser)
         } else {
             true
         }
     }
 
-    fn add_to_cuckoo_filter(&mut self, member_ser: &[u8]) {
+    fn add_to_filter(&mut self, member_ser: &[u8]) {
         if let Some(cuckoo) = &mut self.cuckoo {
             cuckoo.cuckoo_filter.insert(member_ser);
+        } else if let Some(bloom) = &mut self.bloom {
+            bloom.bloom_filter.set(member_ser);
         }
     }
 
-    fn remove_from_cuckoo_filter(&mut self, member_ser: &[u8]) {
+    fn remove_from_filter(&mut self, member_ser: &[u8]) {
         if let Some(cuckoo) = &mut self.cuckoo {
             cuckoo.cuckoo_filter.remove(member_ser);
         }
+        // Bloom has no remove
     }
 
     fn get_num_txs_cache(&self, member_ser: &G::MemberSer) -> Option<NumTxs> {
