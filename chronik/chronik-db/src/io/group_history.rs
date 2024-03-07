@@ -4,7 +4,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    hash::Hash,
+    hash::{DefaultHasher, Hash},
     marker::PhantomData,
     num::NonZeroUsize,
     time::Instant,
@@ -118,10 +118,10 @@ pub struct GroupHistoryReader<'a, G: Group> {
 /// Settings for group history, e.g. whether to use a cuckoo filter or LRU cache
 #[derive(Clone, Debug, Default)]
 pub struct GroupHistorySettings {
-    /// Whether to use a cuckoo filter to determine if a member has any history
+    /// Whether to use a cuckoo filter to determine if a member has any history, ignored
     pub is_cuckoo_filter_enabled: bool,
-    /// Whether to use a bloom filter to determine if a member has any history
-    pub is_bloom_filter_enabled: bool,
+    /// Which filter to use
+    pub filter_variant: String,
     /// Cuckoo filter false positive rate per mille
     pub false_positive_rate_per1m: i32,
     /// Expected number of total distinct members of the group
@@ -149,6 +149,7 @@ pub struct GroupHistoryMemData<G: Group> {
 pub struct GroupHistoryCache<G: Group> {
     cuckoo: Option<GroupHistoryCuckooFilter>,
     bloom: Option<GroupHistoryBloomFilter>,
+    cuckoo2: Option<GroupHistoryCuckoo2Filter>,
     quick_cache: Option<QuickCache<G::MemberSer, NumTxs>>,
     lru_cache: Option<LruCache<G::MemberSer, NumTxs>>,
     belt_cache: Option<BeltCache<G::MemberSer>>,
@@ -163,6 +164,7 @@ impl<G: Group> Default for GroupHistoryCache<G> {
         Self {
             cuckoo: None,
             bloom: None,
+            cuckoo2: None,
             quick_cache: None,
             lru_cache: None,
             belt_cache: None,
@@ -181,6 +183,14 @@ struct BeltCache<T> {
 struct GroupHistoryCuckooFilter {
     cuckoo_filter: CuckooFilter<[u8]>,
     false_positive_rate_per1m: i32,
+}
+
+struct GroupHistoryCuckoo2Filter {
+    cuckoo_filter: cuckoofilter::CuckooFilter<DefaultHasher>,
+    #[allow(dead_code)]
+    false_positive_rate_per1m: i32,
+    #[allow(dead_code)]
+    expected_num_items: usize,
 }
 
 struct GroupHistoryBloomFilter {
@@ -828,13 +838,14 @@ impl<G: Group> GroupHistoryMemData<G> {
         let mut cache = GroupHistoryCache {
             cuckoo: None,
             bloom: None,
+            cuckoo2: None,
             quick_cache: None,
             lru_cache: None,
             belt_cache: None,
             enable_par_filter: settings.enable_par_filter,
             enable_par_serialize: settings.enable_par_serialize,
         };
-        if settings.is_cuckoo_filter_enabled {
+        if settings.filter_variant == "cuckoo" {
             cache.cuckoo = Some({
                 let cuckoo_filter = ScalableCuckooFilterBuilder::new()
                     .rng(GroupHistoryRng::from_seed([0; 32]))
@@ -853,7 +864,7 @@ impl<G: Group> GroupHistoryMemData<G> {
                 }
             });
         }
-        if settings.is_bloom_filter_enabled {
+        if settings.filter_variant == "bloom" {
             cache.bloom = Some({
                 let bloom_filter = bloomfilter::Bloom::new_for_fp_rate(
                     settings.expected_num_items,
@@ -863,7 +874,22 @@ impl<G: Group> GroupHistoryMemData<G> {
                     (bloom_filter.number_of_bits() as usize + 7) / 8;
                 GroupHistoryBloomFilter {
                     bloom_filter,
-                    false_positive_rate_per1m: settings.false_positive_rate_per1m,
+                    false_positive_rate_per1m: settings
+                        .false_positive_rate_per1m,
+                    expected_num_items: settings.expected_num_items,
+                }
+            });
+        }
+        if settings.filter_variant == "cuckoo2" {
+            cache.cuckoo2 = Some({
+                let cuckoo_filter = cuckoofilter::CuckooFilter::with_capacity(
+                    settings.expected_num_items,
+                );
+                stats.n_filter_num_bytes = cuckoo_filter.memory_usage();
+                GroupHistoryCuckoo2Filter {
+                    cuckoo_filter,
+                    false_positive_rate_per1m: settings
+                        .false_positive_rate_per1m,
                     expected_num_items: settings.expected_num_items,
                 }
             });
@@ -886,7 +912,7 @@ impl<G: Group> GroupHistoryMemData<G> {
 
 impl<G: Group> GroupHistoryCache<G> {
     fn has_cuckoo_filter(&self) -> bool {
-        self.cuckoo.is_some()
+        self.cuckoo.is_some() || self.bloom.is_some() || self.cuckoo2.is_some()
     }
 
     fn check_filter(&self, member_ser: &[u8]) -> bool {
@@ -894,6 +920,8 @@ impl<G: Group> GroupHistoryCache<G> {
             cuckoo.cuckoo_filter.contains(member_ser)
         } else if let Some(bloom) = &self.bloom {
             bloom.bloom_filter.check(member_ser)
+        } else if let Some(cuckoo) = &self.cuckoo2 {
+            cuckoo.cuckoo_filter.contains(member_ser)
         } else {
             true
         }
@@ -904,12 +932,17 @@ impl<G: Group> GroupHistoryCache<G> {
             cuckoo.cuckoo_filter.insert(member_ser);
         } else if let Some(bloom) = &mut self.bloom {
             bloom.bloom_filter.set(member_ser);
+        } else if let Some(cuckoo) = &mut self.cuckoo2 {
+            // Ignore "full" error
+            let _ = cuckoo.cuckoo_filter.add(member_ser);
         }
     }
 
     fn remove_from_filter(&mut self, member_ser: &[u8]) {
         if let Some(cuckoo) = &mut self.cuckoo {
             cuckoo.cuckoo_filter.remove(member_ser);
+        } else if let Some(cuckoo) = &mut self.cuckoo2 {
+            cuckoo.cuckoo_filter.delete(member_ser);
         }
         // Bloom has no remove
     }

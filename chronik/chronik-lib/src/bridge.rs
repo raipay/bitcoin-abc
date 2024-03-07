@@ -84,7 +84,7 @@ fn try_setup_chronik(
         },
         script_history: GroupHistorySettings {
             is_cuckoo_filter_enabled: params.script_history.is_cuckoo_enabled,
-            is_bloom_filter_enabled: params.script_history.is_bloom_enabled,
+            filter_variant: params.script_history.filter_variant,
             false_positive_rate_per1m: params
                 .script_history
                 .false_positive_rate_per1m,

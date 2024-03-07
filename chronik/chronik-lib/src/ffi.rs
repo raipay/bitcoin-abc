@@ -49,10 +49,10 @@ mod ffi_inner {
     /// Configure how to index group history
     #[derive(Debug)]
     pub struct GroupHistoryParams {
-        /// Whether to enable the cuckoo filter optimization
+        /// Whether to enable the cuckoo filter optimization, ignored
         pub is_cuckoo_enabled: bool,
-        /// Whether to enable the bloom filter optimization
-        pub is_bloom_enabled: bool,
+        /// Which filter optimization to enable
+        pub filter_variant: String,
         /// FP rate of the bloom/cuckoo filter
         pub false_positive_rate_per1m: i32,
         /// Expected number of items in the filter

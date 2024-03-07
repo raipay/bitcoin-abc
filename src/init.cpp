@@ -679,11 +679,9 @@ void SetupServerArgs(NodeContext &node) {
                              "script history (default: %u)",
                              chronik::DEFAULT_SCRIPT_HISTORY_CUCKOO_IS_ENABLED),
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
-    argsman.AddArg("-chronikscripthistorybloomfilter",
-                   strprintf("Whether to enable a cuckoo filter to speed up "
-                             "script history (default: %u)",
-                             false),
-                   ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chronikscripthistoryfiltervariant",
+                   "Which filter optimization to use",
+                   ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
     argsman.AddArg(
         "-chronikscripthistoryfprate",
         strprintf(
