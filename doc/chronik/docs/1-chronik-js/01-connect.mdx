@@ -1,0 +1,25 @@
+---
+sidebar_position: 2
+---
+
+# Connect
+Connect to a Chronik node via `chronik-client`.
+
+Import `ChronikClientNode` (soon to become `ChronikClient`) and provide it the Chronik URL in the constructor:
+
+```tsx
+import { ChronikClientNode } from 'chronik-client';
+const chronik = new ChronikClientNode("https://chronik.pay2stay.com/xec");
+```
+
+## Try it out!
+You can try it out in this React component:
+
+```jsx live
+function DemoConnect() {
+  return <Json fn={async () => {
+    const chronik = new ChronikClientNode("https://chronik.pay2stay.com/xec");
+    return await chronik.blockchainInfo();
+  }} />;
+}
+```

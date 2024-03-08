@@ -245,7 +245,7 @@
             "include": [
                 "(\\.md$)"
             ],
-            "exclude": "(^contrib/gitian-builder/)"
+            "exclude": "(^contrib/gitian-builder/|^doc/chronik/)"
         },
         "lint-python-mypy": {
             "type": "lint-python-mypy",
