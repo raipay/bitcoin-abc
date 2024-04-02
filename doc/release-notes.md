@@ -11,3 +11,11 @@ This release includes the following features and fixes:
  - `bitcoin-seeder` was not working properly since version 0.28.2 and has been
    fixed. While crawling for peers appropriately, it would have fail to mark any
    peer as good due to a bug.
+
+Network upgrade
+---------------
+
+At the MTP time of `1715774400` (May 15, 2024 12:00:00 UTC), the following
+changes will become activated:
+ - Bump automatic replay protection to the next upgrade, timestamp `1731672000`
+   (November 15, 2024 12:00:00 UTC).
