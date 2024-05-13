@@ -15,6 +15,7 @@
 #include <timedata.h>
 #include <undo.h>
 #include <util/translation.h>
+#include <util/time.h>
 #include <validation.h>
 #include <validationinterface.h>
 
@@ -484,7 +485,7 @@ NngRpcServer::GetBlockSlice(flatbuffers::FlatBufferBuilder &fbb,
     CAutoFile file(node::OpenBlockFile(filePos, true), SER_DISK, CLIENT_VERSION);
     std::vector<uint8_t> data(request->num_bytes());
     try {
-        file.read((char *)data.data(), request->num_bytes());
+        file.read(MakeWritableByteSpan(data));
     } catch (const std::exception &e) {
         return NngRpcErrorCode::INVALID_BLOCK_SLICE;
     }
@@ -500,7 +501,7 @@ NngRpcServer::GetUndoSlice(flatbuffers::FlatBufferBuilder &fbb,
     CAutoFile file(node::OpenUndoFile(filePos, true), SER_DISK, CLIENT_VERSION);
     std::vector<uint8_t> data(request->num_bytes());
     try {
-        file.read((char *)data.data(), request->num_bytes());
+        file.read(MakeWritableByteSpan(data));
     } catch (const std::exception &e) {
         return NngRpcErrorCode::INVALID_BLOCK_SLICE;
     }
@@ -514,20 +515,20 @@ NngRpcServer::GetMempool(flatbuffers::FlatBufferBuilder &fbb,
                          const NngInterface::GetMempoolRequest *request) {
     LOCK(m_node.mempool->cs);
     std::vector<flatbuffers::Offset<NngInterface::MempoolTx>> txs_fbs;
-    for (const CTxMemPoolEntry &entry : m_node.mempool->mapTx) {
+    for (const RCUPtr<CTxMemPoolEntry> &entry : m_node.mempool->mapTx) {
         std::map<COutPoint, Coin> spent_coins_map;
-        for (const CTxIn &input : entry.GetSharedTx()->vin) {
+        for (const CTxIn &input : entry->GetSharedTx()->vin) {
             spent_coins_map[input.prevout] = Coin();
         }
         node::FindCoins(m_node, spent_coins_map);
         std::vector<Coin> spent_coin;
         spent_coin.reserve(spent_coins_map.size());
-        for (const CTxIn &input : entry.GetSharedTx()->vin) {
+        for (const CTxIn &input : entry->GetSharedTx()->vin) {
             spent_coin.push_back(spent_coins_map[input.prevout]);
         }
         txs_fbs.push_back(NngInterface::CreateMempoolTx(
-            fbb, CreateFbsTxMempool(fbb, entry.GetSharedTx(), spent_coin),
-            entry.GetTime().count()));
+            fbb, CreateFbsTxMempool(fbb, entry->GetSharedTx(), spent_coin),
+            entry->GetTime().count()));
     }
     fbb.Finish(
         NngInterface::CreateGetMempoolResponse(fbb, fbb.CreateVector(txs_fbs)));
@@ -588,7 +589,7 @@ private:
         fbb.Finish(NngInterface::CreateTransactionAddedToMempool(
             fbb, NngInterface::CreateMempoolTx(
                      fbb, CreateFbsTxMempool(fbb, ptx, *spent_coins),
-                     GetAdjustedTime())));
+                     TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime()))));
         BroadcastMessage(MSG_MEMPOOLTXADD, fbb);
     }
 
