@@ -27,13 +27,13 @@
 #include <string>
 #include <vector>
 
-void initialize() {
+void initialize_key() {
     static const ECCVerifyHandle ecc_verify_handle;
     ECC_Start();
     SelectParams(CBaseChainParams::REGTEST);
 }
 
-void test_one_input(const std::vector<uint8_t> &buffer) {
+FUZZ_TARGET_INIT(key, initialize_key) {
     const CKey key = [&] {
         CKey k;
         k.Set(buffer.begin(), buffer.end(), true);
@@ -157,13 +157,13 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
 
         TxoutType which_type_tx_pubkey;
         const bool is_standard_tx_pubkey =
-            IsStandard(tx_pubkey_script, which_type_tx_pubkey);
+            IsStandard(tx_pubkey_script, std::nullopt, which_type_tx_pubkey);
         assert(is_standard_tx_pubkey);
         assert(which_type_tx_pubkey == TxoutType::PUBKEY);
 
         TxoutType which_type_tx_multisig;
-        const bool is_standard_tx_multisig =
-            IsStandard(tx_multisig_script, which_type_tx_multisig);
+        const bool is_standard_tx_multisig = IsStandard(
+            tx_multisig_script, std::nullopt, which_type_tx_multisig);
         assert(is_standard_tx_multisig);
         assert(which_type_tx_multisig == TxoutType::MULTISIG);
 

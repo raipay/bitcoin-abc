@@ -18,48 +18,50 @@
 #include <cstdint>
 #include <memory>
 
-static const char DB_COIN = 'C';
-static const char DB_COINS = 'c';
-static const char DB_BLOCK_FILES = 'f';
-static const char DB_BLOCK_INDEX = 'b';
+static constexpr uint8_t DB_COIN{'C'};
+static constexpr uint8_t DB_COINS{'c'};
+static constexpr uint8_t DB_BLOCK_FILES{'f'};
+static constexpr uint8_t DB_BLOCK_INDEX{'b'};
 
-static const char DB_BEST_BLOCK = 'B';
-static const char DB_HEAD_BLOCKS = 'H';
-static const char DB_FLAG = 'F';
-static const char DB_REINDEX_FLAG = 'R';
-static const char DB_LAST_BLOCK = 'l';
+static constexpr uint8_t DB_BEST_BLOCK{'B'};
+static constexpr uint8_t DB_HEAD_BLOCKS{'H'};
+static constexpr uint8_t DB_FLAG{'F'};
+static constexpr uint8_t DB_REINDEX_FLAG{'R'};
+static constexpr uint8_t DB_LAST_BLOCK{'l'};
 
 // Keys used in previous version that might still be found in the DB:
 static constexpr uint8_t DB_TXINDEX_BLOCK{'T'};
 //               uint8_t DB_TXINDEX{'t'}
 
-std::optional<bilingual_str> CheckLegacyTxindex(CBlockTreeDB &block_tree_db) {
+util::Result<void> CheckLegacyTxindex(CBlockTreeDB &block_tree_db) {
     CBlockLocator ignored{};
     if (block_tree_db.Read(DB_TXINDEX_BLOCK, ignored)) {
-        return _("The -txindex upgrade started by a previous version can not "
-                 "be completed. Restart with the previous version or run a "
-                 "full -reindex.");
+        return util::Error{
+            _("The -txindex upgrade started by a previous version can not "
+              "be completed. Restart with the previous version or run a "
+              "full -reindex.")};
     }
     bool txindex_legacy_flag{false};
     block_tree_db.ReadFlag("txindex", txindex_legacy_flag);
     if (txindex_legacy_flag) {
         // Disable legacy txindex and warn once about occupied disk space
         if (!block_tree_db.WriteFlag("txindex", false)) {
-            return Untranslated(
-                "Failed to write block index db flag 'txindex'='0'");
+            return util::Error{Untranslated(
+                "Failed to write block index db flag 'txindex'='0'")};
         }
-        return _("The block index db contains a legacy 'txindex'. To clear the "
-                 "occupied disk space, run a full -reindex, otherwise ignore "
-                 "this error. This error message will not be displayed again.");
+        return util::Error{
+            _("The block index db contains a legacy 'txindex'. To clear the "
+              "occupied disk space, run a full -reindex, otherwise ignore "
+              "this error. This error message will not be displayed again.")};
     }
-    return std::nullopt;
+    return {};
 }
 
 namespace {
 
 struct CoinEntry {
     COutPoint *outpoint;
-    char key;
+    uint8_t key;
     explicit CoinEntry(const COutPoint *ptr)
         : outpoint(const_cast<COutPoint *>(ptr)), key(DB_COIN) {}
 
@@ -72,22 +74,20 @@ struct CoinEntry {
 };
 } // namespace
 
-CCoinsViewDB::CCoinsViewDB(fs::path ldb_path, size_t nCacheSize, bool fMemory,
-                           bool fWipe)
-    : m_db(std::make_unique<CDBWrapper>(ldb_path, nCacheSize, fMemory, fWipe,
-                                        true)),
-      m_ldb_path(ldb_path), m_is_memory(fMemory) {}
+CCoinsViewDB::CCoinsViewDB(DBParams db_params, CoinsViewOptions options)
+    : m_db_params{std::move(db_params)}, m_options{std::move(options)},
+      m_db{std::make_unique<CDBWrapper>(m_db_params)} {}
 
 void CCoinsViewDB::ResizeCache(size_t new_cache_size) {
     // We can't do this operation with an in-memory DB since we'll lose all the
     // coins upon reset.
-    if (!m_is_memory) {
+    if (!m_db_params.memory_only) {
         // Have to do a reset first to get the original `m_db` state to release
         // its filesystem lock.
         m_db.reset();
-        m_db = std::make_unique<CDBWrapper>(m_ldb_path, new_cache_size,
-                                            m_is_memory, /*fWipe*/ false,
-                                            /*obfuscate*/ true);
+        m_db_params.cache_bytes = new_cache_size;
+        m_db_params.wipe_data = false;
+        m_db = std::make_unique<CDBWrapper>(m_db_params);
     }
 }
 
@@ -119,9 +119,6 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) {
     CDBBatch batch(*m_db);
     size_t count = 0;
     size_t changed = 0;
-    size_t batch_size =
-        (size_t)gArgs.GetIntArg("-dbbatchsize", DEFAULT_DB_BATCH_SIZE);
-    int crash_simulate = gArgs.GetIntArg("-dbcrashratio", 0);
     assert(!hashBlock.IsNull());
 
     BlockHash old_tip = GetBestBlock();
@@ -154,14 +151,14 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) {
         count++;
         CCoinsMap::iterator itOld = it++;
         mapCoins.erase(itOld);
-        if (batch.SizeEstimate() > batch_size) {
+        if (batch.SizeEstimate() > m_options.batch_write_bytes) {
             LogPrint(BCLog::COINDB, "Writing partial batch of %.2f MiB\n",
                      batch.SizeEstimate() * (1.0 / 1048576.0));
             m_db->WriteBatch(batch);
             batch.Clear();
-            if (crash_simulate) {
+            if (m_options.simulate_crash_ratio) {
                 static FastRandomContext rng;
-                if (rng.randrange(crash_simulate) == 0) {
+                if (rng.randrange(m_options.simulate_crash_ratio) == 0) {
                     LogPrintf("Simulating a crash. Goodbye.\n");
                     _Exit(0);
                 }
@@ -184,12 +181,8 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) {
 }
 
 size_t CCoinsViewDB::EstimateSize() const {
-    return m_db->EstimateSize(DB_COIN, char(DB_COIN + 1));
+    return m_db->EstimateSize(DB_COIN, uint8_t(DB_COIN + 1));
 }
-
-CBlockTreeDB::CBlockTreeDB(size_t nCacheSize, bool fMemory, bool fWipe)
-    : CDBWrapper(gArgs.GetDataDirNet() / "blocks" / "index", nCacheSize,
-                 fMemory, fWipe) {}
 
 bool CBlockTreeDB::ReadBlockFileInfo(int nFile, CBlockFileInfo &info) {
     return Read(std::make_pair(DB_BLOCK_FILES, nFile), info);
@@ -197,7 +190,7 @@ bool CBlockTreeDB::ReadBlockFileInfo(int nFile, CBlockFileInfo &info) {
 
 bool CBlockTreeDB::WriteReindexing(bool fReindexing) {
     if (fReindexing) {
-        return Write(DB_REINDEX_FLAG, '1');
+        return Write(DB_REINDEX_FLAG, uint8_t{'1'});
     } else {
         return Erase(DB_REINDEX_FLAG);
     }
@@ -285,15 +278,16 @@ bool CBlockTreeDB::WriteBatchSync(
 }
 
 bool CBlockTreeDB::WriteFlag(const std::string &name, bool fValue) {
-    return Write(std::make_pair(DB_FLAG, name), fValue ? '1' : '0');
+    return Write(std::make_pair(DB_FLAG, name),
+                 fValue ? uint8_t{'1'} : uint8_t{'0'});
 }
 
 bool CBlockTreeDB::ReadFlag(const std::string &name, bool &fValue) {
-    char ch;
+    uint8_t ch;
     if (!Read(std::make_pair(DB_FLAG, name), ch)) {
         return false;
     }
-    fValue = ch == '1';
+    fValue = ch == uint8_t{'1'};
     return true;
 }
 
@@ -321,7 +315,7 @@ bool CBlockTreeDB::LoadBlockIndexGuts(
         if (ShutdownRequested()) {
             return false;
         }
-        std::pair<char, uint256> key;
+        std::pair<uint8_t, uint256> key;
         if (!pcursor->GetKey(key) || key.first != DB_BLOCK_INDEX) {
             break;
         }
@@ -332,7 +326,8 @@ bool CBlockTreeDB::LoadBlockIndexGuts(
         }
 
         // Construct block index object
-        CBlockIndex *pindexNew = insertBlockIndex(diskindex.GetBlockHash());
+        CBlockIndex *pindexNew =
+            insertBlockIndex(diskindex.ConstructBlockHash());
         pindexNew->pprev = insertBlockIndex(diskindex.hashPrev);
         pindexNew->nHeight = diskindex.nHeight;
         pindexNew->nFile = diskindex.nFile;

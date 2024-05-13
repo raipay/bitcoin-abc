@@ -9,7 +9,6 @@ use bitcoinsuite_core::{
     ser::BitcoinSer,
     tx::{Tx, TxId},
 };
-use chronik_bridge::ffi;
 use chronik_db::{
     db::Db,
     io::{BlockReader, SpentByReader, TxReader},
@@ -20,7 +19,11 @@ use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, OutputsSpent},
+    indexer::Node,
+    query::{
+        make_genesis_info_proto, make_token_type_proto, make_tx_proto,
+        read_token_info, OutputsSpent, QueryTxError::*, TxTokenData,
+    },
 };
 
 /// Struct for querying txs from the db/mempool.
@@ -32,6 +35,10 @@ pub struct QueryTxs<'a> {
     pub avalanche: &'a Avalanche,
     /// Mempool
     pub mempool: &'a Mempool,
+    /// Access to bitcoind to read txs
+    pub node: &'a Node,
+    /// Whether the SLP/ALP token index is enabled
+    pub is_token_index_enabled: bool,
 }
 
 /// Errors indicating something went wrong with reading txs.
@@ -41,6 +48,10 @@ pub enum QueryTxError {
     #[error("404: Transaction {0} not found in the index")]
     TxNotFound(TxId),
 
+    /// Token not found in mempool nor DB.
+    #[error("404: Token {0} not found in the index")]
+    TokenNotFound(TxId),
+
     /// Transaction in DB without block
     #[error("500: Inconsistent DB: {0} has no block")]
     DbTxHasNoBlock(TxId),
@@ -49,8 +60,6 @@ pub enum QueryTxError {
     #[error("500: Reading {0} failed")]
     ReadFailure(TxId),
 }
-
-use self::QueryTxError::*;
 
 impl<'a> QueryTxs<'a> {
     /// Query a tx by txid from the mempool or DB.
@@ -65,6 +74,8 @@ impl<'a> QueryTxs<'a> {
                 false,
                 None,
                 self.avalanche,
+                TxTokenData::from_mempool(self.mempool.tokens(), &tx.tx)
+                    .as_ref(),
             )),
             None => {
                 let tx_reader = TxReader::new(self.db)?;
@@ -77,25 +88,36 @@ impl<'a> QueryTxs<'a> {
                 let block = block_reader
                     .by_height(block_tx.block_height)?
                     .ok_or(DbTxHasNoBlock(txid))?;
-                let tx = ffi::load_tx(
-                    block.file_num,
-                    tx_entry.data_pos,
-                    tx_entry.undo_pos,
-                )
-                .wrap_err(ReadFailure(txid))?;
+                let tx = Tx::from(
+                    self.node
+                        .bridge
+                        .load_tx(
+                            block.file_num,
+                            tx_entry.data_pos,
+                            tx_entry.undo_pos,
+                        )
+                        .wrap_err(ReadFailure(txid))?,
+                );
                 let outputs_spent = OutputsSpent::query(
                     &spent_by_reader,
                     &tx_reader,
                     self.mempool.spent_by().outputs_spent(&txid),
                     tx_num,
                 )?;
+                let token = TxTokenData::from_db(
+                    self.db,
+                    tx_num,
+                    &tx,
+                    self.is_token_index_enabled,
+                )?;
                 Ok(make_tx_proto(
-                    &Tx::from(tx),
+                    &tx,
                     &outputs_spent,
                     tx_entry.time_first_seen,
                     tx_entry.is_coinbase,
                     Some(&block),
                     self.avalanche,
+                    token.as_ref(),
                 ))
             }
         }
@@ -116,10 +138,33 @@ impl<'a> QueryTxs<'a> {
                 let block = block_reader
                     .by_height(block_tx.block_height)?
                     .ok_or(DbTxHasNoBlock(*txid))?;
-                ffi::load_raw_tx(block.file_num, block_tx.entry.data_pos)
+                self.node
+                    .bridge
+                    .load_raw_tx(block.file_num, block_tx.entry.data_pos)
                     .wrap_err(ReadFailure(*txid))?
             }
         };
         Ok(proto::RawTx { raw_tx })
+    }
+
+    /// Get token info of the token by token ID.
+    pub fn token_info(&self, token_id_txid: &TxId) -> Result<proto::TokenInfo> {
+        let token_info = read_token_info(
+            self.db,
+            self.mempool,
+            self.avalanche,
+            token_id_txid,
+        )?
+        .ok_or(TokenNotFound(*token_id_txid))?;
+        let meta = &token_info.meta;
+        Ok(proto::TokenInfo {
+            token_id: meta.token_id.to_string(),
+            token_type: Some(make_token_type_proto(meta.token_type)),
+            genesis_info: Some(make_genesis_info_proto(
+                &token_info.genesis_info,
+            )),
+            block: token_info.block,
+            time_first_seen: token_info.time_first_seen,
+        })
     }
 }

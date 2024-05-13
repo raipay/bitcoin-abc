@@ -29,10 +29,18 @@ module.exports = {
         [
             '76a914ce8c8cf69a922a607e8e03e27ec014fbc24882e088ac',
             {
-                miner: 'Hathor-MM',
-                // While Hathor-MM block coinbase scripts do contain "mm",
-                // this is judged insufficient to uniquely identify
+                miner: 'anon e0',
+                // This miner does tend to have 'mm' in the same position at the coinbase
+                // However we are not sure what this means, so ID only by the same receiving addr
                 coinbaseHexFragment: null,
+            },
+        ],
+        [
+            '76a9141c2a7324dc6b7a2fd5d1e385f49f98bbef0e318b88ac',
+            {
+                miner: 'Hathor-MM',
+                // Alt receiving addr for Hathor-MM
+                coinbaseHexFragment: '48617468', // Hath
             },
         ],
         [
@@ -82,6 +90,27 @@ module.exports = {
             {
                 miner: 'solopool.org',
                 coinbaseHexFragment: '736f6c6f706f6f6c2e6f7267', // ascii solopool.org
+            },
+        ],
+        [
+            '41047fa64f6874fb7213776b24c40bc915451b57ef7f17ad7b982561f99f7cdc7010d141b856a092ee169c5405323895e1962c6b0d7c101120d360164c9e4b3997bdac',
+            {
+                miner: 'p2p-spb',
+                coinbaseHexFragment: '7370622e78797a', // ascii spb.xyz
+            },
+        ],
+        [
+            '76a91478b7743efa732c16c1b956f19fd5ec623e71981388ac',
+            {
+                miner: 'Cminors-Pools',
+                coinbaseHexFragment: '436d696e6f72732d506f6f6c73', // ascii Cminors-Pools
+            },
+        ],
+        [
+            '76a914c5c9fb1bef0c5c6a0df37a4bf41e186b6980c43b88ac',
+            {
+                miner: 'AnandrajSingh Pool',
+                coinbaseHexFragment: '416e616e6472616a53696e676820506f6f6c', // ascii AnandrajSingh Pool
             },
         ],
     ],

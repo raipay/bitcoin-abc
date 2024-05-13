@@ -5,16 +5,19 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import { navitems } from '../../data/navitems';
-import { NavbarOuter, NavbarCtn, EnvVarMessage } from './styles';
+import { socials } from '../../data/socials';
+import { NavbarOuter, NavbarCtn, EnvVarMessage, SocialCtn } from './styles';
 import AnnouncementBar from '/components/announcement-bar';
+import { useApiData } from './getNavbarData';
 
 export default function Navbar({ announcementbar }) {
-    const [priceLinkText, setPriceLinkText] = useState('Buy XEC');
     const [mobileMenu, setMobileMenu] = useState(false);
     const [selectedDropDownMenu, setSelectedDropDownMenu] = useState(-1);
     const [windowWidth, setWindowWidth] = useState('');
     const [windowHeight, setWindowHeight] = useState(0);
     const [navBackground, setNavBackground] = useState(false);
+    const mobileBreakPoint = 920;
+    const { priceLinkText } = useApiData();
 
     const handleResize = () => {
         setWindowWidth(window.innerWidth);
@@ -24,17 +27,6 @@ export default function Navbar({ announcementbar }) {
         setWindowHeight(window.scrollY);
     };
 
-    const getPrice = () => {
-        const api =
-            'https://api.coingecko.com/api/v3/simple/price?ids=ecash&vs_currencies=usd';
-        fetch(api)
-            .then(response => response.json())
-            .then(data =>
-                setPriceLinkText('1 XEC = $' + data.ecash.usd.toFixed(6)),
-            )
-            .catch(err => console.log(err));
-    };
-
     useEffect(() => {
         // set the window width so logic for mobile or desktop menus is applied correctly
         setWindowWidth(window.innerWidth);
@@ -42,8 +34,6 @@ export default function Navbar({ announcementbar }) {
         window.addEventListener('resize', handleResize);
         // add event listerner for scroll so we can change the nav background on scroll
         window.addEventListener('scroll', handleScroll);
-        // get XEC price
-        getPrice();
         // remove the event listeners after mount to avoid memory leak
         return () => {
             window.removeEventListener('resize', handleResize);
@@ -64,7 +54,7 @@ export default function Navbar({ announcementbar }) {
         <NavbarOuter navBackground={navBackground}>
             <AnnouncementBar navBackground={navBackground} href="/upgrade">
                 <span>
-                    <span>The network upgrade has activated!</span>
+                    <span>Prepare for the eCash network upgrade!</span>
                     <span>Click here for more details</span>
                 </span>
             </AnnouncementBar>
@@ -75,7 +65,7 @@ export default function Navbar({ announcementbar }) {
                 </EnvVarMessage>
             )}
             {!process.env.NEXT_PUBLIC_WEGLOT_API_KEY && (
-                <EnvVarMessage>
+                <EnvVarMessage style={{ top: '14px' }}>
                     Translations are disabled, set the env
                     NEXT_PUBLIC_WEGLOT_API_KEY to fix
                 </EnvVarMessage>
@@ -108,9 +98,9 @@ export default function Navbar({ announcementbar }) {
                                 ) : (
                                     <>
                                         <div
-                                            className="nav_item"
+                                            className="nav_item dropdown_indicator"
                                             onClick={
-                                                windowWidth < 920
+                                                windowWidth < mobileBreakPoint
                                                     ? () =>
                                                           setSelectedDropDownMenu(
                                                               selectedDropDownMenu ===
@@ -127,7 +117,8 @@ export default function Navbar({ announcementbar }) {
                                             className="nav_dropdown_ctn"
                                             style={
                                                 selectedDropDownMenu ===
-                                                    index && windowWidth < 920
+                                                    index &&
+                                                windowWidth < mobileBreakPoint
                                                     ? { display: 'flex' }
                                                     : null
                                             }
@@ -180,6 +171,24 @@ export default function Navbar({ announcementbar }) {
                                 )}
                             </div>
                         ))}
+                        {windowWidth < mobileBreakPoint && (
+                            <SocialCtn>
+                                {socials.map(social => (
+                                    <Link
+                                        href={social.link}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        key={social.name}
+                                    >
+                                        <Image
+                                            src={`/images/${social.name}.svg`}
+                                            alt={social.name}
+                                            fill
+                                        />
+                                    </Link>
+                                ))}
+                            </SocialCtn>
+                        )}
                     </nav>
                     <Link href="/get-ecash" className="pricelink_ctn">
                         <div className="righttop"></div>

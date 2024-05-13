@@ -29,15 +29,15 @@ import re
 import shutil
 import sys
 import threading
-import urllib
+import urllib.parse
+import urllib.request
 from typing import Dict, Union
 
 from . import bitcoin, networks
 from .address import Address
-from .constants import WHITELISTED_PREFIXES
 from .i18n import _
 from .printerror import print_error
-from .util import bfh, bh2u, do_in_main_thread, format_satoshis_plain
+from .util import bfh, do_in_main_thread, format_satoshis_plain
 
 
 class ExplorerUrlParts(enum.Enum):
@@ -160,7 +160,7 @@ def create_URI(addr, amount, message, *, op_return=None, op_return_raw=None, net
     if message:
         query.append(f"message={urllib.parse.quote(message)}")
     if op_return:
-        query.append(f"op_return={str(op_return)}")
+        query.append(f"op_return={urllib.parse.quote(str(op_return))}")
     if op_return_raw:
         query.append(f"op_return_raw={str(op_return_raw)}")
     p = urllib.parse.ParseResult(
@@ -187,7 +187,7 @@ def urldecode(url):
 def parseable_schemes(net=None) -> tuple:
     if net is None:
         net = networks.net
-    return tuple(WHITELISTED_PREFIXES)
+    return (net.CASHADDR_PREFIX,)
 
 
 class ExtraParametersInURIWarning(RuntimeWarning):
@@ -211,7 +211,7 @@ class BadURIParameter(ValueError):
     """Raised if:
         - 'amount' is not numeric,
         - 'address' is invalid
-        - 'time' or 'exp' are not ints
+        - 'op_return_raw' is not a hex string
 
     args[0] is the bad argument name e.g. 'amount'
     args[1] is the underlying Exception that was raised (if any, may be missing)."""
@@ -243,7 +243,7 @@ def parse_URI(uri, on_pr=None, *, net=None, strict=False, on_exc=None):
     if ":" not in uri:
         # Test it's valid
         Address.from_string(uri, net=net)
-        return {"address": uri}
+        return {"addresses": [uri]}
 
     u = urllib.parse.urlparse(uri)
     # The scheme always comes back in lower case
@@ -262,53 +262,47 @@ def parse_URI(uri, on_pr=None, *, net=None, strict=False, on_exc=None):
         pq = urllib.parse.parse_qs(u.query, keep_blank_values=True)
 
     for k, v in pq.items():
-        if len(v) != 1:
+        if len(v) != 1 and k not in ["addr", "amount"]:
             raise DuplicateKeyInURIError(_("Duplicate key in URI"), k)
 
-    out = {k: v[0] for k, v in pq.items()}
+    out = {k: v[0] for k, v in pq.items() if k not in ("addr", "amount")}
+
+    addresses = []
     if address:
-        # validate
+        addresses.append(address)
+    # There are maybe more addresses in the URI provided with the addr param
+    addresses += pq.get("addr", [])
+    # validate all addresses
+    for addr in addresses:
         try:
-            Address.from_string(address, net=net)
+            Address.from_string(addr, net=net)
         except Exception as e:
             raise BadURIParameter("address", e) from e
-        out["address"] = address
+    if addresses:
+        out["addresses"] = addresses
 
-    if "amount" in out:
+    amounts = pq.get("amount", [])
+    if len(addresses) != 1 and len(amounts) != len(addresses):
+        raise BadURIParameter(
+            "mismatching number of addresses and amounts in multi outputs URI"
+        )
+    if len(addresses) == 1 and len(amounts) > 1:
+        raise BadURIParameter("Single output URI must have 0 or 1 amount")
+
+    if amounts:
+        out["amounts"] = []
+    for am in amounts:
         try:
-            am = out["amount"]
             m = re.match(r"([0-9.]+)X([0-9]{2})", am)
             if m:
                 k = int(m.group(2)) - 2
                 amount = decimal.Decimal(m.group(1)) * int(pow(10, k))
             else:
                 amount = decimal.Decimal(am) * int(bitcoin.CASH)
-            out["amount"] = int(amount)
+            out["amounts"].append(int(amount))
         except (ValueError, decimal.InvalidOperation, TypeError) as e:
             raise BadURIParameter("amount", e) from e
 
-    if strict and "memo" in out and "message" in out:
-        # these two args are equivalent and cannot both appear together
-        raise DuplicateKeyInURIError(_("Duplicate key in URI"), "memo", "message")
-    elif "message" in out:
-        out["memo"] = out["message"]
-    elif "memo" in out:
-        out["message"] = out["memo"]
-    if "time" in out:
-        try:
-            out["time"] = int(out["time"])
-        except ValueError as e:
-            raise BadURIParameter("time", e) from e
-    if "exp" in out:
-        try:
-            out["exp"] = int(out["exp"])
-        except ValueError as e:
-            raise BadURIParameter("exp", e) from e
-    if "sig" in out:
-        try:
-            out["sig"] = bh2u(bitcoin.base_decode(out["sig"], None, base=58))
-        except Exception as e:
-            raise BadURIParameter("sig", e) from e
     if "op_return_raw" in out and "op_return" in out:
         if strict:
             # these two args cannot both appear together
@@ -324,22 +318,13 @@ def parse_URI(uri, on_pr=None, *, net=None, strict=False, on_exc=None):
         except Exception as e:
             raise BadURIParameter("op_return_raw", e) from e
 
-    r = out.get("r")
-    sig = out.get("sig")
-    name = out.get("name")
-    is_pr = bool(r or (name and sig))
-
-    if on_pr and is_pr:
+    if on_pr and "r" in out:
 
         def get_payment_request_thread():
             from . import paymentrequest as pr
 
             try:
-                if name and sig:
-                    s = pr.serialize_request(out).SerializeToString()
-                    request = pr.PaymentRequest(s)
-                else:
-                    request = pr.get_payment_request(r)
+                request = pr.get_payment_request(out["r"])
             except Exception:
                 """May happen if the values in the request are such
                 that they cannot be serialized to a protobuf."""
@@ -360,17 +345,12 @@ def parse_URI(uri, on_pr=None, *, net=None, strict=False, on_exc=None):
     if strict:
         accept_keys = {
             "r",
-            "sig",
-            "name",
-            "address",
-            "amount",
+            "addresses",
+            "amounts",
             "label",
             "message",
-            "memo",
             "op_return",
             "op_return_raw",
-            "time",
-            "exp",
         }
         extra_keys = set(out.keys()) - accept_keys
         if extra_keys:

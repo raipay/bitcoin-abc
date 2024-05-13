@@ -10,9 +10,14 @@
 #include <consensus/amount.h>
 #include <core_memusage.h>
 #include <indirectmap.h>
+#include <kernel/cs_main.h>
+#include <kernel/mempool_entry.h>
+#include <kernel/mempool_options.h>
 #include <policy/packages.h>
 #include <primitives/transaction.h>
+#include <radix.h>
 #include <sync.h>
+#include <uint256radixkey.h>
 #include <util/hasher.h>
 
 #include <boost/multi_index/hashed_index.hpp>
@@ -29,12 +34,9 @@
 #include <utility>
 #include <vector>
 
-class CBlockIndex;
 class CChain;
 class Chainstate;
 class Config;
-
-extern RecursiveMutex cs_main;
 
 /**
  * Fake height value used in Coins to signify they are only in the memory
@@ -42,123 +44,12 @@ extern RecursiveMutex cs_main;
  */
 static const uint32_t MEMPOOL_HEIGHT = 0x7FFFFFFF;
 
-struct LockPoints {
-    // Will be set to the blockchain height and median time past values that
-    // would be necessary to satisfy all relative locktime constraints (BIP68)
-    // of this tx given our view of block chain history
-    int height{0};
-    int64_t time{0};
-    // As long as the current chain descends from the highest height block
-    // containing one of the inputs used in the calculation, then the cached
-    // values are still valid even after a reorg.
-    CBlockIndex *maxInputBlock{nullptr};
-};
-
-/**
- * Test whether the LockPoints height and time are still valid on the current
- * chain.
- */
-bool TestLockPointValidity(const CChain &active_chain, const LockPoints &lp)
-    EXCLUSIVE_LOCKS_REQUIRED(cs_main);
-
-struct CompareIteratorById {
-    // SFINAE for T where T is either a pointer type (e.g., a txiter) or a
-    // reference_wrapper<T> (e.g. a wrapped CTxMemPoolEntry&)
-    template <typename T>
-    bool operator()(const std::reference_wrapper<T> &a,
-                    const std::reference_wrapper<T> &b) const {
-        return a.get().GetTx().GetId() < b.get().GetTx().GetId();
-    }
-    template <typename T> bool operator()(const T &a, const T &b) const {
-        return a->GetTx().GetId() < b->GetTx().GetId();
-    }
-};
-
-/** \class CTxMemPoolEntry
- *
- * CTxMemPoolEntry stores data about the corresponding transaction, as well as
- * data about all in-mempool transactions that depend on the transaction
- * ("descendant" transactions).
- */
-
-class CTxMemPoolEntry {
-public:
-    typedef std::reference_wrapper<const CTxMemPoolEntry> CTxMemPoolEntryRef;
-    // two aliases, should the types ever diverge
-    typedef std::set<CTxMemPoolEntryRef, CompareIteratorById> Parents;
-    typedef std::set<CTxMemPoolEntryRef, CompareIteratorById> Children;
-
-private:
-    //! Unique identifier -- used for topological sorting
-    uint64_t entryId = 0;
-
-    const CTransactionRef tx;
-    mutable Parents m_parents;
-    mutable Children m_children;
-    //! Cached to avoid expensive parent-transaction lookups
-    const Amount nFee;
-    //! ... and avoid recomputing tx size
-    const size_t nTxSize;
-    //! ... and total memory usage
-    const size_t nUsageSize;
-    //! Local time when entering the mempool
-    const int64_t nTime;
-    //! Chain height when entering the mempool
-    const unsigned int entryHeight;
-    //! keep track of transactions that spend a coinbase
-    const bool spendsCoinbase;
-    //! Total sigChecks
-    const int64_t sigChecks;
-    //! Used for determining the priority of the transaction for mining in a
-    //! block
-    Amount feeDelta{Amount::zero()};
-    //! Track the height and time at which tx was final
-    LockPoints lockPoints;
-
-public:
-    CTxMemPoolEntry(const CTransactionRef &_tx, const Amount fee, int64_t time,
-                    unsigned int entry_height, bool spends_coinbase,
-                    int64_t sigchecks, LockPoints lp);
-
-    uint64_t GetEntryId() const { return entryId; }
-    //! This should only be set by addUnchecked() before entry insertion into
-    //! mempool
-    void SetEntryId(uint64_t eid) { entryId = eid; }
-
-    const CTransaction &GetTx() const { return *this->tx; }
-    CTransactionRef GetSharedTx() const { return this->tx; }
-    Amount GetFee() const { return nFee; }
-    size_t GetTxSize() const { return nTxSize; }
-    size_t GetTxVirtualSize() const;
-
-    std::chrono::seconds GetTime() const { return std::chrono::seconds{nTime}; }
-    unsigned int GetHeight() const { return entryHeight; }
-    int64_t GetSigChecks() const { return sigChecks; }
-    Amount GetModifiedFee() const { return nFee + feeDelta; }
-    CFeeRate GetModifiedFeeRate() const {
-        return CFeeRate(GetModifiedFee(), GetTxVirtualSize());
-    }
-    size_t DynamicMemoryUsage() const { return nUsageSize; }
-    const LockPoints &GetLockPoints() const { return lockPoints; }
-
-    // Updates the fee delta used for mining priority score
-    void UpdateFeeDelta(Amount feeDelta);
-    // Update the LockPoints after a reorg
-    void UpdateLockPoints(const LockPoints &lp);
-
-    bool GetSpendsCoinbase() const { return spendsCoinbase; }
-
-    const Parents &GetMemPoolParentsConst() const { return m_parents; }
-    const Children &GetMemPoolChildrenConst() const { return m_children; }
-    Parents &GetMemPoolParents() const { return m_parents; }
-    Children &GetMemPoolChildren() const { return m_children; }
-};
-
 // extracts a transaction id from CTxMemPoolEntry or CTransactionRef
 struct mempoolentry_txid {
     typedef TxId result_type;
-    result_type operator()(const CTxMemPoolEntry &entry) const {
-        return entry.GetTx().GetId();
+
+    result_type operator()(const CTxMemPoolEntryRef &entry) const {
+        return entry->GetTx().GetId();
     }
 
     result_type operator()(const CTransactionRef &tx) const {
@@ -166,17 +57,28 @@ struct mempoolentry_txid {
     }
 };
 
+/**
+ * Radix tree adapter for storing a CTxMemPoolEntry as a tree element.
+ */
+struct MemPoolEntryRadixTreeAdapter {
+    Uint256RadixKey getId(const CTxMemPoolEntry &entry) const {
+        return entry.GetSharedTx()->GetId();
+    }
+};
+
 // used by the entry_time index
 struct CompareTxMemPoolEntryByEntryTime {
-    bool operator()(const CTxMemPoolEntry &a, const CTxMemPoolEntry &b) const {
-        return a.GetTime() < b.GetTime();
+    bool operator()(const CTxMemPoolEntryRef &a,
+                    const CTxMemPoolEntryRef &b) const {
+        return a->GetTime() < b->GetTime();
     }
 };
 
 // used by the entry_id index
 struct CompareTxMemPoolEntryByEntryId {
-    bool operator()(const CTxMemPoolEntry &a, const CTxMemPoolEntry &b) const {
-        return a.GetEntryId() < b.GetEntryId();
+    bool operator()(const CTxMemPoolEntryRef &a,
+                    const CTxMemPoolEntryRef &b) const {
+        return a->GetEntryId() < b->GetEntryId();
     }
 };
 
@@ -187,6 +89,7 @@ struct CompareTxMemPoolEntryByEntryId {
  *  This is used by the block assembler (mining).
  */
 struct CompareTxMemPoolEntryByModifiedFeeRate {
+    // Used in tests
     bool operator()(const CTxMemPoolEntry &a, const CTxMemPoolEntry &b) const {
         const CFeeRate frA = a.GetModifiedFeeRate();
         const CFeeRate frB = b.GetModifiedFeeRate();
@@ -205,6 +108,11 @@ struct CompareTxMemPoolEntryByModifiedFeeRate {
         // If nothing else, sort by txid (this should never happen as entryID is
         // expected to be unique).
         return a.GetSharedTx()->GetId() < b.GetSharedTx()->GetId();
+    }
+
+    bool operator()(const CTxMemPoolEntryRef &a,
+                    const CTxMemPoolEntryRef &b) const {
+        return operator()(*a, *b);
     }
 };
 
@@ -248,9 +156,11 @@ enum class MemPoolRemovalReason {
     BLOCK,
     //! Removed for conflict with in-block transaction
     CONFLICT,
-    //! Removed for replacement
-    REPLACED
+    //! Removed by avalanche vote
+    AVALANCHE,
 };
+
+const std::string RemovalReasonToString(const MemPoolRemovalReason &r) noexcept;
 
 /**
  * CTxMemPool stores valid-according-to-the-current-best-chain transactions that
@@ -323,7 +233,7 @@ private:
 
     void trackPackageRemoved(const CFeeRate &rate) EXCLUSIVE_LOCKS_REQUIRED(cs);
 
-    bool m_is_loaded GUARDED_BY(cs){false};
+    bool m_load_tried GUARDED_BY(cs){false};
 
     //! Used by addUnchecked to generate ever-increasing
     //! CTxMemPoolEntry::entryId's
@@ -334,25 +244,26 @@ public:
     static const int ROLLING_FEE_HALFLIFE = 60 * 60 * 12;
 
     typedef boost::multi_index_container<
-        CTxMemPoolEntry, boost::multi_index::indexed_by<
-                             // indexed by txid
-                             boost::multi_index::hashed_unique<
-                                 mempoolentry_txid, SaltedTxIdHasher>,
-                             // sorted by fee rate
-                             boost::multi_index::ordered_non_unique<
-                                 boost::multi_index::tag<modified_feerate>,
-                                 boost::multi_index::identity<CTxMemPoolEntry>,
-                                 CompareTxMemPoolEntryByModifiedFeeRate>,
-                             // sorted by entry time
-                             boost::multi_index::ordered_non_unique<
-                                 boost::multi_index::tag<entry_time>,
-                                 boost::multi_index::identity<CTxMemPoolEntry>,
-                                 CompareTxMemPoolEntryByEntryTime>,
-                             // sorted topologically (insertion order)
-                             boost::multi_index::ordered_unique<
-                                 boost::multi_index::tag<entry_id>,
-                                 boost::multi_index::identity<CTxMemPoolEntry>,
-                                 CompareTxMemPoolEntryByEntryId>>>
+        CTxMemPoolEntryRef,
+        boost::multi_index::indexed_by<
+            // indexed by txid
+            boost::multi_index::hashed_unique<mempoolentry_txid,
+                                              SaltedTxIdHasher>,
+            // sorted by fee rate
+            boost::multi_index::ordered_non_unique<
+                boost::multi_index::tag<modified_feerate>,
+                boost::multi_index::identity<CTxMemPoolEntryRef>,
+                CompareTxMemPoolEntryByModifiedFeeRate>,
+            // sorted by entry time
+            boost::multi_index::ordered_non_unique<
+                boost::multi_index::tag<entry_time>,
+                boost::multi_index::identity<CTxMemPoolEntryRef>,
+                CompareTxMemPoolEntryByEntryTime>,
+            // sorted topologically (insertion order)
+            boost::multi_index::ordered_unique<
+                boost::multi_index::tag<entry_id>,
+                boost::multi_index::identity<CTxMemPoolEntryRef>,
+                CompareTxMemPoolEntryByEntryId>>>
         indexed_transaction_set;
 
     /**
@@ -387,6 +298,9 @@ public:
 
     using txiter = indexed_transaction_set::nth_index<0>::type::const_iterator;
     typedef std::set<txiter, CompareIteratorById> setEntries;
+    typedef std::set<txiter, CompareIteratorByRevEntryId> setRevTopoEntries;
+
+    RadixTree<CTxMemPoolEntry, MemPoolEntryRadixTreeAdapter> finalizedTxs;
 
 private:
     void UpdateParent(txiter entry, txiter parent, bool add)
@@ -414,16 +328,23 @@ public:
     indirectmap<COutPoint, const CTransaction *> mapNextTx GUARDED_BY(cs);
     std::map<TxId, Amount> mapDeltas GUARDED_BY(cs);
 
+    using Options = kernel::MemPoolOptions;
+
+    const int64_t m_max_size_bytes;
+    const std::chrono::seconds m_expiry;
+    const CFeeRate m_min_relay_feerate;
+    const CFeeRate m_dust_relay_feerate;
+    const bool m_permit_bare_multisig;
+    const std::optional<unsigned> m_max_datacarrier_bytes;
+    const bool m_require_standard;
+
     /**
      * Create a new CTxMemPool.
      * Sanity checks will be off by default for performance, because otherwise
      * accepting transactions becomes O(N^2) where N is the number of
      * transactions in the pool.
-     *
-     * @param[in] check_ratio is the ratio used to determine how often sanity
-     *     checks will run.
      */
-    CTxMemPool(int check_ratio = 0);
+    CTxMemPool(const Options &opts);
     ~CTxMemPool();
 
     /**
@@ -437,13 +358,14 @@ public:
 
     // addUnchecked must update state for all parents of a given transaction,
     // updating child links as necessary.
-    void addUnchecked(const CTxMemPoolEntry &entry)
+    void addUnchecked(CTxMemPoolEntryRef entry)
         EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
 
     void removeRecursive(const CTransaction &tx, MemPoolRemovalReason reason)
         EXCLUSIVE_LOCKS_REQUIRED(cs);
     void removeConflicts(const CTransaction &tx) EXCLUSIVE_LOCKS_REQUIRED(cs);
-    void removeForBlock(const std::vector<CTransactionRef> &vtx)
+    void updateFeeForBlock() EXCLUSIVE_LOCKS_REQUIRED(cs);
+    void removeForFinalizedBlock(const std::vector<CTransactionRef> &vtx)
         EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     void clear();
@@ -498,36 +420,9 @@ public:
      * or look up parents from m_parents. Must be true for entries not in the
      * mempool
      */
-    bool CalculateMemPoolAncestors(const CTxMemPoolEntry &entry,
+    bool CalculateMemPoolAncestors(const CTxMemPoolEntryRef &entry,
                                    setEntries &setAncestors,
                                    bool fSearchForParents = true) const
-        EXCLUSIVE_LOCKS_REQUIRED(cs);
-
-    /**
-     * Calculate all in-mempool ancestors of a set of transactions not already
-     * in the mempool and check ancestor and descendant limits. Heuristics are
-     * used to estimate the ancestor and descendant count of all entries if the
-     * package were to be added to the mempool.  The limits are applied to the
-     * union of all package transactions. For example, if the package has 3
-     * transactions and limitAncestorCount = 50, the union of all 3 sets of
-     * ancestors (including the transactions themselves) must be <= 47.
-     * @param[in]       package                 Transaction package being
-     *     evaluated for acceptance to mempool. The transactions need not be
-     *     direct ancestors/descendants of each other.
-     * @param[in]       limitAncestorCount      Max number of txns including
-     *     ancestors.
-     * @param[in]       limitAncestorSize       Max size including ancestors.
-     * @param[in]       limitDescendantCount    Max number of txns including
-     *     descendants.
-     * @param[in]       limitDescendantSize     Max size including descendants.
-     * @param[out]      errString               Populated with error reason if
-     *     a limit is hit.
-     */
-    bool CheckPackageLimits(const Package &package, uint64_t limitAncestorCount,
-                            uint64_t limitAncestorSize,
-                            uint64_t limitDescendantCount,
-                            uint64_t limitDescendantSize,
-                            std::string &errString) const
         EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /**
@@ -540,11 +435,9 @@ public:
 
     /**
      * The minimum fee to get into the mempool, which may itself not be enough
-     * for larger-sized transactions. The incrementalRelayFee policy variable is
-     * used to bound the time it takes the fee rate to go back down all the way
-     * to 0. When the feerate would otherwise be half of this, it is set to 0
-     * instead.
+     * for larger-sized transactions.
      */
+    CFeeRate GetMinFee() const { return GetMinFee(m_max_size_bytes); }
     CFeeRate GetMinFee(size_t sizelimit) const;
 
     /**
@@ -566,15 +459,20 @@ public:
     /**
      * Reduce the size of the mempool by expiring and then trimming the mempool.
      */
-    void LimitSize(CCoinsViewCache &coins_cache, size_t limit,
-                   std::chrono::seconds age)
+    void LimitSize(CCoinsViewCache &coins_cache)
         EXCLUSIVE_LOCKS_REQUIRED(cs, ::cs_main);
 
-    /** @returns true if the mempool is fully loaded */
-    bool IsLoaded() const;
+    /**
+     * @returns true if we've made an attempt to load the mempool regardless of
+     *          whether the attempt was successful or not
+     */
+    bool GetLoadTried() const;
 
-    /** Sets the current loaded state */
-    void SetIsLoaded(bool loaded);
+    /**
+     * Set whether or not we've made an attempt to load the mempool (regardless
+     * of whether the attempt was successful or not)
+     */
+    void SetLoadTried(bool load_tried);
 
     unsigned long size() const {
         LOCK(cs);
@@ -594,6 +492,16 @@ public:
     bool exists(const TxId &txid) const {
         LOCK(cs);
         return mapTx.count(txid) != 0;
+    }
+
+    bool setAvalancheFinalized(const CTxMemPoolEntryRef &tx)
+        EXCLUSIVE_LOCKS_REQUIRED(cs) {
+        return finalizedTxs.insert(tx);
+    }
+
+    bool isAvalancheFinalized(const TxId &txid) const {
+        LOCK(cs);
+        return finalizedTxs.get(txid) != nullptr;
     }
 
     CTransactionRef get(const TxId &txid) const;
@@ -700,152 +608,6 @@ public:
      * Only used for package validation.
      */
     void PackageAddTransaction(const CTransactionRef &tx);
-};
-
-/**
- * DisconnectedBlockTransactions
- *
- * During the reorg, it's desirable to re-add previously confirmed transactions
- * to the mempool, so that anything not re-confirmed in the new chain is
- * available to be mined. However, it's more efficient to wait until the reorg
- * is complete and process all still-unconfirmed transactions at that time,
- * since we expect most confirmed transactions to (typically) still be
- * confirmed in the new chain, and re-accepting to the memory pool is expensive
- * (and therefore better to not do in the middle of reorg-processing).
- * Instead, store the disconnected transactions (in order!) as we go, remove any
- * that are included in blocks in the new chain, and then process the remaining
- * still-unconfirmed transactions at the end.
- *
- * It also enables efficient reprocessing of current mempool entries, useful
- * when (de)activating forks that result in in-mempool transactions becoming
- * invalid
- */
-// multi_index tag names
-struct txid_index {};
-struct insertion_order {};
-
-class DisconnectedBlockTransactions {
-private:
-    typedef boost::multi_index_container<
-        CTransactionRef, boost::multi_index::indexed_by<
-                             // hashed by txid
-                             boost::multi_index::hashed_unique<
-                                 boost::multi_index::tag<txid_index>,
-                                 mempoolentry_txid, SaltedTxIdHasher>,
-                             // sorted by order in the blockchain
-                             boost::multi_index::sequenced<
-                                 boost::multi_index::tag<insertion_order>>>>
-        indexed_disconnected_transactions;
-
-    indexed_disconnected_transactions queuedTx;
-    uint64_t cachedInnerUsage = 0;
-
-    struct TxInfo {
-        const std::chrono::seconds time;
-        const Amount feeDelta;
-        const unsigned height;
-        TxInfo(const std::chrono::seconds &time_, Amount feeDelta_,
-               unsigned height_) noexcept
-            : time(time_), feeDelta(feeDelta_), height(height_) {}
-    };
-
-    using TxInfoMap = std::unordered_map<TxId, TxInfo, SaltedTxIdHasher>;
-    /// populated by importMempool(); the original tx entry times and feeDeltas
-    TxInfoMap txInfo;
-
-    void addTransaction(const CTransactionRef &tx) {
-        queuedTx.insert(tx);
-        cachedInnerUsage += RecursiveDynamicUsage(tx);
-    }
-
-    /// @returns a pointer into the txInfo map if tx->GetId() exists in the map,
-    /// or nullptr otherwise. Note that the returned pointer is only valid for
-    /// as long as its underlying map node is valid.
-    const TxInfo *getTxInfo(const CTransactionRef &tx) const;
-
-public:
-    // It's almost certainly a logic bug if we don't clear out queuedTx before
-    // destruction, as we add to it while disconnecting blocks, and then we
-    // need to re-process remaining transactions to ensure mempool consistency.
-    // For now, assert() that we've emptied out this object on destruction.
-    // This assert() can always be removed if the reorg-processing code were
-    // to be refactored such that this assumption is no longer true (for
-    // instance if there was some other way we cleaned up the mempool after a
-    // reorg, besides draining this object).
-    ~DisconnectedBlockTransactions() { assert(queuedTx.empty()); }
-
-    // Estimate the overhead of queuedTx to be 6 pointers + an allocation, as
-    // no exact formula for boost::multi_index_contained is implemented.
-    size_t DynamicMemoryUsage() const {
-        return memusage::MallocUsage(sizeof(CTransactionRef) +
-                                     6 * sizeof(void *)) *
-                   queuedTx.size() +
-               memusage::DynamicUsage(txInfo) + cachedInnerUsage;
-    }
-
-    const indexed_disconnected_transactions &GetQueuedTx() const {
-        return queuedTx;
-    }
-
-    // Import mempool entries in topological order into queuedTx and clear the
-    // mempool. Caller should call updateMempoolForReorg to reprocess these
-    // transactions
-    void importMempool(CTxMemPool &pool) EXCLUSIVE_LOCKS_REQUIRED(pool.cs);
-
-    // Add entries for a block while reconstructing the topological ordering so
-    // they can be added back to the mempool simply.
-    void addForBlock(const std::vector<CTransactionRef> &vtx, CTxMemPool &pool)
-        EXCLUSIVE_LOCKS_REQUIRED(pool.cs);
-
-    // Remove entries based on txid_index, and update memory usage.
-    void removeForBlock(const std::vector<CTransactionRef> &vtx) {
-        // Short-circuit in the common case of a block being added to the tip
-        if (queuedTx.empty()) {
-            return;
-        }
-        for (auto const &tx : vtx) {
-            auto it = queuedTx.find(tx->GetId());
-            if (it != queuedTx.end()) {
-                cachedInnerUsage -= RecursiveDynamicUsage(*it);
-                queuedTx.erase(it);
-                txInfo.erase(tx->GetId());
-            }
-        }
-    }
-
-    // Remove an entry by insertion_order index, and update memory usage.
-    void removeEntry(indexed_disconnected_transactions::index<
-                     insertion_order>::type::iterator entry) {
-        cachedInnerUsage -= RecursiveDynamicUsage(*entry);
-        txInfo.erase((*entry)->GetId());
-        queuedTx.get<insertion_order>().erase(entry);
-    }
-
-    bool isEmpty() const { return queuedTx.empty(); }
-
-    void clear() {
-        cachedInnerUsage = 0;
-        queuedTx.clear();
-        txInfo.clear();
-    }
-
-    /**
-     * Make mempool consistent after a reorg, by re-adding or recursively
-     * erasing disconnected block transactions from the mempool, and also
-     * removing any other transactions from the mempool that are no longer valid
-     * given the new tip/height.
-     *
-     * Note: we assume that disconnectpool only contains transactions that are
-     * NOT confirmed in the current chain nor already in the mempool (otherwise,
-     * in-mempool descendants of such transactions would be removed).
-     *
-     * Passing fAddToMempool=false will skip trying to add the transactions
-     * back, and instead just erase from the mempool as needed.
-     */
-    void updateMempoolForReorg(const Config &config,
-                               Chainstate &active_chainstate,
-                               bool fAddToMempool, CTxMemPool &pool)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main, pool.cs);
 };
 
 #endif // BITCOIN_TXMEMPOOL_H

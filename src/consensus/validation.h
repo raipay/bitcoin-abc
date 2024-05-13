@@ -18,11 +18,6 @@ enum class TxValidationResult {
     TX_RESULT_UNSET = 0,
     //! invalid by consensus rules
     TX_CONSENSUS,
-    /**
-     * Invalid by a recent change to consensus rules.
-     * Currently unused as there are no such consensus rule changes.
-     */
-    TX_RECENT_CONSENSUS_CHANGE,
     //! inputs failed policy rules
     TX_INPUTS_NOT_STANDARD,
     //! otherwise didn't meet our local policy rules
@@ -32,12 +27,17 @@ enum class TxValidationResult {
     //! transaction spends a coinbase too early, or violates locktime/sequence
     //! locks
     TX_PREMATURE_SPEND,
+    /** Tx already in mempool or in the chain. */
+    TX_DUPLICATE,
     /**
-     * Tx already in mempool or conflicts with a tx in the chain
-     * Currently this is only used if the transaction already exists in the
-     * mempool or on chain.
+     * Tx conflicts with another mempool tx, i.e. spends the same coin.
      */
     TX_CONFLICT,
+    /**
+     * This tx outputs are already spent in the mempool. This should never
+     * happen and is a symptom of a mempool bug/corruption.
+     */
+    TX_CHILD_BEFORE_PARENT,
     //! violated mempool's fee/size/descendant/etc limits
     TX_MEMPOOL_POLICY,
     //! this node does not have a mempool so can't validate the transaction
@@ -55,14 +55,6 @@ enum class BlockValidationResult {
     BLOCK_RESULT_UNSET = 0,
     //! invalid by consensus rules (excluding any below reasons)
     BLOCK_CONSENSUS,
-    /**
-     * Invalid by a change to consensus rules more recent than SegWit.
-     * Currently unused as there are no such consensus rule changes, and any
-     * download sources realistically need to support SegWit in order to provide
-     * useful data, so differentiating between always-invalid and
-     * invalid-by-pre-SegWit-soft-fork is uninteresting.
-     */
-    BLOCK_RECENT_CONSENSUS_CHANGE,
     //! this block was cached as being invalid and we didn't store the reason
     //! why
     BLOCK_CACHED_INVALID,
@@ -78,8 +70,8 @@ enum class BlockValidationResult {
     BLOCK_TIME_FUTURE,
     //! the block failed to meet one of our checkpoints
     BLOCK_CHECKPOINT,
-    //! block finalization problems
-    BLOCK_FINALIZATION,
+    //! the block header may be on a too-little-work chain
+    BLOCK_HEADER_LOW_WORK
 };
 
 /**

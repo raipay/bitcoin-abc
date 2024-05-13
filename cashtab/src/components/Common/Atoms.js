@@ -1,3 +1,7 @@
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 import styled from 'styled-components';
 import { Link } from 'react-router-dom';
 
@@ -24,69 +28,11 @@ export const TxLink = styled.a`
     color: ${props => props.theme.primary};
 `;
 
-export const SidePaddingCtn = styled.div`
-    padding: 0px 30px;
-    @media (max-width: 768px) {
-        padding: 0px 15px;
-    }
-`;
-
-export const FormLabel = styled.label`
-    font-size: 16px;
-    margin-bottom: 5px;
-    text-align: left;
-    width: 100%;
-    display: inline-block;
-    color: ${props => props.theme.contrast};
-`;
-
-export const WalletInfoCtn = styled.div`
-    background: ${props => props.theme.walletInfoContainer};
-    width: 100%;
-    padding: 12px 20px;
-`;
-
-export const BalanceHeaderFiatWrap = styled.div`
-    color: ${props => props.theme.contrast};
-    width: 100%;
-    font-size: 16px;
-    @media (max-width: 768px) {
-        font-size: 16px;
-    }
-`;
-
-export const BalanceHeaderWrap = styled.div`
-    color: ${props => props.theme.contrast};
-    width: 100%;
-    font-size: 28px;
-    margin-bottom: 0px;
-    font-weight: bold;
-    line-height: 1.4em;
-    @media (max-width: 768px) {
-        font-size: 24px;
-    }
-`;
-
-export const ZeroBalanceHeader = styled.div`
-    color: ${props => props.theme.contrast};
-    width: 100%;
-    font-size: 14px;
-    margin-bottom: 5px;
-`;
-
 export const TokenParamLabel = styled.span`
     font-weight: bold;
 `;
 
-export const MessageVerificationParamLabel = styled.span`
-    font-weight: bold;
-`;
-
 export const AlertMsg = styled.p`
-    color: ${props => props.theme.forms.error} !important;
-`;
-
-export const MsgBytesizeError = styled.p`
     color: ${props => props.theme.forms.error} !important;
 `;
 
@@ -107,4 +53,40 @@ export const StyledLink = styled(Link)`
     position: relative;
     border: solid 1px silver;
     border-radius: 10px;
+`;
+
+export const SwitchLabel = styled.div`
+    text-align: left;
+    color: ${props => props.theme.contrast};
+    font-size: 18px;
+    word-break: break-all;
+`;
+
+export const Alert = styled.div`
+    background-color: #fff2f0;
+    border-radius: 12px;
+    color: red;
+    padding: 12px;
+`;
+export const Info = styled.div`
+    background-color: #fff2f0;
+    border-radius: 12px;
+    color: ${props => props.theme.eCashBlue};
+    padding: 12px;
+`;
+export const BlockNotification = styled.div`
+    display: flex;
+    flex-direction: column;
+`;
+export const BlockNotificationLink = styled.a`
+    display: flex;
+    justify-content: flex-start;
+    width: 100%;
+    color: ${props => props.theme.walletBackground};
+    text-decoration: none;
+`;
+export const BlockNotificationDesc = styled.div`
+    display: flex;
+    justify-content: flex-start;
+    width: 100%;
 `;

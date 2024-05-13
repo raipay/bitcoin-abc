@@ -4,7 +4,9 @@ $(package)_download_path=https://download.qt.io/official_releases/qt/5.15/$($(pa
 $(package)_suffix=everywhere-opensource-src-$($(package)_version).tar.xz
 $(package)_file_name=qtbase-$($(package)_suffix)
 $(package)_sha256_hash=0c42c799aa7c89e479a07c451bf5a301e291266ba789e81afc18f95049524edc
+ifneq ($(openssl_packages_),)
 $(package)_dependencies=openssl
+endif
 $(package)_linux_dependencies=freetype fontconfig libxcb libxkbcommon libxcb_util libxcb_util_render libxcb_util_keysyms libxcb_util_image libxcb_util_wm
 $(package)_qt_libs=corelib network widgets gui plugins testlib
 $(package)_linguist_tools = lrelease lupdate lconvert
@@ -32,6 +34,7 @@ $(package)_extra_sources  = $($(package)_qttranslations_file_name)
 $(package)_extra_sources += $($(package)_qttools_file_name)
 
 define $(package)_set_vars
+$(package)_config_env = QT_MAC_SDK_NO_VERSION_CHECK=1
 $(package)_config_opts_release = -release
 $(package)_config_opts_release += -silent
 $(package)_config_opts_debug = -debug
@@ -53,12 +56,16 @@ $(package)_config_opts += -no-iconv
 $(package)_config_opts += -no-kms
 $(package)_config_opts += -no-linuxfb
 $(package)_config_opts += -no-libjpeg
+$(package)_config_opts += -no-libproxy
 $(package)_config_opts += -no-libudev
+$(package)_config_opts += -no-mimetype-database
 $(package)_config_opts += -no-mtdev
 $(package)_config_opts += -no-opengl
 $(package)_config_opts += -no-openvg
 $(package)_config_opts += -no-reduce-relocations
 $(package)_config_opts += -no-schannel
+$(package)_config_opts += -no-sctp
+$(package)_config_opts += -no-securetransport
 $(package)_config_opts += -no-sql-db2
 $(package)_config_opts += -no-sql-ibase
 $(package)_config_opts += -no-sql-oci
@@ -68,13 +75,18 @@ $(package)_config_opts += -no-sql-odbc
 $(package)_config_opts += -no-sql-psql
 $(package)_config_opts += -no-sql-sqlite
 $(package)_config_opts += -no-sql-sqlite2
+$(package)_config_opts += -no-system-proxies
 $(package)_config_opts += -no-use-gold-linker
 $(package)_config_opts += -no-zstd
 $(package)_config_opts += -nomake examples
 $(package)_config_opts += -nomake tests
 $(package)_config_opts += -nomake tools
 $(package)_config_opts += -opensource
+ifneq ($(openssl_packages_),)
 $(package)_config_opts += -openssl-linked
+else
+$(package)_config_opts += -no-openssl
+endif
 $(package)_config_opts += -pkg-config
 $(package)_config_opts += -prefix $(host_prefix)
 $(package)_config_opts += -qt-libpng
@@ -90,15 +102,18 @@ $(package)_config_opts += -no-feature-concurrent
 $(package)_config_opts += -no-feature-dial
 $(package)_config_opts += -no-feature-fontcombobox
 $(package)_config_opts += -no-feature-ftp
+$(package)_config_opts += -no-feature-http
 $(package)_config_opts += -no-feature-image_heuristic_mask
 $(package)_config_opts += -no-feature-keysequenceedit
 $(package)_config_opts += -no-feature-lcdnumber
+$(package)_config_opts += -no-feature-networkdiskcache
 $(package)_config_opts += -no-feature-pdf
 $(package)_config_opts += -no-feature-printdialog
 $(package)_config_opts += -no-feature-printer
 $(package)_config_opts += -no-feature-printpreviewdialog
 $(package)_config_opts += -no-feature-printpreviewwidget
 $(package)_config_opts += -no-feature-sessionmanager
+$(package)_config_opts += -no-feature-socks5
 $(package)_config_opts += -no-feature-sql
 $(package)_config_opts += -no-feature-sqlmodel
 $(package)_config_opts += -no-feature-statemachine
@@ -143,7 +158,6 @@ $(package)_config_opts_linux += -system-freetype
 $(package)_config_opts_linux += -fontconfig
 $(package)_config_opts_linux += -no-feature-vulkan
 $(package)_config_opts_linux += -dbus-runtime
-$(package)_config_opts_linux += OPENSSL_LIBS="-lssl -lcrypto -lpthread"
 $(package)_config_opts_linux += -platform linux-g++ -xplatform bitcoin-linux-g++
 $(package)_config_opts_mingw32 = -no-dbus
 $(package)_config_opts_mingw32 += -no-freetype
@@ -153,7 +167,11 @@ $(package)_config_opts_mingw32 += "QMAKE_CXXFLAGS = '$($(package)_cflags) $($(pa
 $(package)_config_opts_mingw32 += "QMAKE_LFLAGS = '$($(package)_ldflags)'"
 $(package)_config_opts_mingw32 += -device-option CROSS_COMPILE="$(host)-"
 $(package)_config_opts_mingw32 += -pch
+
+ifneq ($(openssl_packages_),)
+$(package)_config_opts_linux += OPENSSL_LIBS="-lssl -lcrypto -lpthread"
 $(package)_config_opts_mingw32 += OPENSSL_LIBS="-lssl -lcrypto -lws2_32"
+endif
 endef
 
 define $(package)_fetch_cmds
@@ -219,9 +237,6 @@ define $(package)_preprocess_cmds
 endef
 
 define $(package)_config_cmds
-  export PKG_CONFIG_SYSROOT_DIR=/ && \
-  export PKG_CONFIG_LIBDIR=$(host_prefix)/lib/pkgconfig && \
-  export QT_MAC_SDK_NO_VERSION_CHECK=1 && \
   cd qtbase && \
   ./configure -top-level $($(package)_config_opts)
 endef

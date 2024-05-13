@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #
 # Electron Cash - a lightweight Bitcoin Cash client
 # CashFusion - an advanced coin anonymizer
@@ -56,7 +55,7 @@ from electrumabc_gui.qt.util import (
     WaitingDialog,
     WindowModalDialog,
 )
-from electrumabc_gui.qt.utils import PortValidator, UserPortValidator
+from electrumabc_gui.qt.utils.validators import PortValidator, UserPortValidator
 
 from .conf import Conf, Global
 from .fusion import can_fuse_from, can_fuse_to
@@ -88,7 +87,7 @@ image_red_exclamation = None
 def get_icon_fusion_logo():
     global icon_fusion_logo
     if icon_fusion_logo is None:
-        icon_fusion_logo = QIcon(str(heredir / "Cash Fusion Logo - No Text.svg"))
+        icon_fusion_logo = QIcon(str(heredir / "cash_fusion_logo_no_text.svg"))
     return icon_fusion_logo
 
 
@@ -96,7 +95,7 @@ def get_icon_fusion_logo_gray():
     global icon_fusion_logo_gray
     if icon_fusion_logo_gray is None:
         icon_fusion_logo_gray = QIcon(
-            str(heredir / "Cash Fusion Logo - No Text Gray.svg")
+            str(heredir / "cash_fusion_logo_no_text_gray.svg")
         )
     return icon_fusion_logo_gray
 
@@ -1149,7 +1148,6 @@ class FusionButton(StatusBarButton):
                 timeout=20000,
                 onClick=onClick,
                 onRightClick=onClick,
-                dark_mode=ColorScheme.dark_scheme,
             )
         else:
             KillPopupLabel(name)

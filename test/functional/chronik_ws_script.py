@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2023 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -20,7 +19,7 @@ from test_framework.p2p import P2PDataStore
 from test_framework.script import OP_EQUAL, OP_HASH160, CScript, hash160
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
-from test_framework.util import assert_equal
+from test_framework.util import assert_equal, chronik_sub_script
 
 QUORUM_NODE_COUNT = 16
 
@@ -95,9 +94,9 @@ class ChronikWsScriptTest(BitcoinTestFramework):
         ws1 = chronik.ws()
         ws2 = chronik.ws()
         # Subscribe to 2 scripts on ws1 and 1 on ws2
-        ws1.sub_script("p2sh", send_script_hashes[1])
-        ws1.sub_script("p2sh", send_script_hashes[2])
-        ws2.sub_script("p2sh", send_script_hashes[2])
+        chronik_sub_script(ws1, node, "p2sh", send_script_hashes[1])
+        chronik_sub_script(ws1, node, "p2sh", send_script_hashes[2])
+        chronik_sub_script(ws2, node, "p2sh", send_script_hashes[2])
 
         # Send the tx, will send updates to ws1 and ws2
         txid = node.sendrawtransaction(tx.serialize().hex())
@@ -111,13 +110,11 @@ class ChronikWsScriptTest(BitcoinTestFramework):
                 txid=bytes.fromhex(txid)[::-1],
             )
         )
-        # ws1 receives the tx msg twice, as it contains both scripts
-        assert_equal(ws1.recv(), expected_msg)
         assert_equal(ws1.recv(), expected_msg)
         assert_equal(ws2.recv(), expected_msg)
 
         # Unsubscribe ws1 from the other script ws2 is subscribed to
-        ws1.sub_script("p2sh", send_script_hashes[2], is_unsub=True)
+        chronik_sub_script(ws1, node, "p2sh", send_script_hashes[2], is_unsub=True)
 
         # tx2 is only sent to ws2
         tx2 = CTransaction()
@@ -216,6 +213,18 @@ class ChronikWsScriptTest(BitcoinTestFramework):
         self.wait_until(lambda: has_finalized_tip(tip))
         check_tx_msgs(ws1, pb.TX_FINALIZED, sorted([txid, tx3_conflict.hash]))
         check_tx_msgs(ws2, pb.TX_FINALIZED, sorted([txid, txid2]))
+
+        # Invalid subscription, payload too short
+        ws1.sub_script("p2pkh", b"abc")
+        # Chronik responds with an error message
+        assert_equal(
+            ws1.recv(),
+            pb.WsMsg(
+                error=pb.Error(
+                    msg="400: Invalid payload for P2PKH: Invalid length, expected 20 bytes but got 3 bytes"
+                ),
+            ),
+        )
 
         ws1.close()
         ws2.close()

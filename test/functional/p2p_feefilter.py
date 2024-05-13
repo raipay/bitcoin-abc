@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2016-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -91,10 +90,6 @@ class FeeFilterTest(BitcoinTestFramework):
         node1 = self.nodes[1]
         node0 = self.nodes[0]
         miniwallet = MiniWallet(node1)
-        # Add enough mature utxos to the wallet, so that all txs spend
-        # confirmed coins
-        self.generate(miniwallet, 5)
-        self.generate(node1, 100)
 
         conn = self.nodes[0].add_p2p_connection(TestP2PConn())
 

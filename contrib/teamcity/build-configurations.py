@@ -194,6 +194,10 @@ class BuildConfiguration:
                 else []
             )
 
+            docker_build_args = []
+            for arg in docker_config.get("build_args", []):
+                docker_build_args.extend(["--build-arg", arg])
+
             tag_name = "-".join([self.name, self.project_commit])
 
             # Docker build
@@ -201,7 +205,10 @@ class BuildConfiguration:
                 {
                     "bin": "docker",
                     "args": (
-                        ["build"] + dockerfile_args + ["-t", tag_name, str(context)]
+                        ["build"]
+                        + dockerfile_args
+                        + docker_build_args
+                        + ["-t", tag_name, str(context)]
                     ),
                 }
             )
@@ -479,6 +486,22 @@ class UserBuild:
                         shutil.copytree(match, dest.joinpath(match.name))
                     except FileExistsError:
                         pass
+
+        # Delete the .lock and .walletlock files, if any. This makes sure the CI
+        # can close the artifact archive.
+        for lock_path in self.artifact_dir.glob("**/.lock"):
+            lock_path.unlink()
+        for lock_path in self.artifact_dir.glob("**/.walletlock"):
+            lock_path.unlink()
+
+        # Set RW permissions to the artifact files/dirs
+        os.chmod(self.artifact_dir, 0o777)
+        for root, dirs, files in os.walk(self.artifact_dir):
+            for dirname in dirs:
+                os.chmod(os.path.join(root, dirname), 0o777)
+            for filename in files:
+                filepath = os.path.join(root, filename)
+                os.chmod(filepath, os.stat(filepath).st_mode | 0o666)
 
     def print_line_to_logs(self, line):
         # Always print to the full log

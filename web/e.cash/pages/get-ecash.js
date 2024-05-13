@@ -11,6 +11,7 @@ import coinupdown from '/public/animations/coin-up-down.json';
 import coinflip from '/public/animations/exchanges-coin-flip.json';
 import services from '/public/animations/services.json';
 import mining from '/public/animations/mining.json';
+import staking from '/public/animations/staking.json';
 import {
     DescriptionBox,
     ImgCtn,
@@ -19,8 +20,8 @@ import {
     Tile,
     TileImgCtn,
     BlankTile,
-    MiningSectionCtn,
-    MiningImg,
+    ImageTextCtn,
+    SectionImg,
     SwapZoneCtn,
 } from '/styles/pages/get-ecash.js';
 import AnimateImage from '/components/animate-image';
@@ -37,22 +38,26 @@ function TileSection({ title, items, children }) {
                     if (item === '') {
                         return <BlankTile key={index}></BlankTile>;
                     } else {
-                        const logoSrc = Array.isArray(item.logo)
-                            ? item.logo[0]
-                            : item.logo;
+                        const logoSrc = Array.isArray(item.attributes.logo.data)
+                            ? item.attributes.logo.data[0].attributes
+                            : item.attributes.logo.data.attributes;
                         return (
                             <Tile
-                                href={item.url}
+                                href={item.attributes.url}
                                 target="_blank"
                                 rel="noreferrer"
                                 key={index}
                             >
                                 <TileImgCtn>
                                     <Image
-                                        src={`https://api.scorecard.cash${logoSrc.url}`}
+                                        src={
+                                            process.env
+                                                .NEXT_PUBLIC_STRAPI_SCORECARD_URL +
+                                            logoSrc.url
+                                        }
                                         fill
                                         sizes="12vw"
-                                        alt={item.name}
+                                        alt={item.attributes.name}
                                     />
                                 </TileImgCtn>
                             </Tile>
@@ -123,7 +128,7 @@ function GetEcash(props) {
                     </ImgCtn>
                 </DescriptionBox>
                 <TileSection title="Services" items={props.services} />
-                <MiningSectionCtn>
+                <ImageTextCtn>
                     <div>
                         <H3 text="Mining" id="mining" />
                         <p>
@@ -137,10 +142,28 @@ function GetEcash(props) {
                             color="accent"
                         />
                     </div>
-                    <MiningImg height="500px">
+                    <SectionImg height="500px">
                         <AnimateImage image={mining} reverse />
-                    </MiningImg>
-                </MiningSectionCtn>
+                    </SectionImg>
+                </ImageTextCtn>
+                <ImageTextCtn rightimage="true">
+                    <div>
+                        <H3 text="Staking" id="staking" />
+                        <p>
+                            Stakers power eCash&apos;s Avalanche consensus
+                            system, and earn staking rewards in return.
+                        </p>
+                        <Button
+                            text="Stake eCash"
+                            link="/staking"
+                            corner="bottomRight"
+                            color="accent"
+                        />
+                    </div>
+                    <SectionImg height="500px">
+                        <AnimateImage image={staking} reverse />
+                    </SectionImg>
+                </ImageTextCtn>
             </Container>
             <Script
                 src="https://swapzone.io/script/exchange-widget.js"

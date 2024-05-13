@@ -1,7 +1,7 @@
 # Maintainer: Josh Ellithorpe <quest@mac.com>
 
 pkgname=bitcoin-abc-qt
-pkgver=0.28.4
+pkgver=0.29.4
 pkgrel=0
 pkgdesc="Bitcoin ABC with bitcoind, bitcoin-cli, bitcoin-tx, bitcoin-seeder and bitcoin-qt"
 arch=('i686' 'x86_64')
@@ -33,6 +33,7 @@ build() {
     -DCLIENT_VERSION_IS_RELEASE=ON \
     -DENABLE_REDUCE_EXPORTS=ON \
     -DENABLE_STATIC_LIBSTDCXX=ON \
+    -DUSE_LINKER= \
     -DCMAKE_INSTALL_PREFIX=$pkgdir/usr
 
   ninja

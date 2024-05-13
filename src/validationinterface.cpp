@@ -18,6 +18,8 @@
 #include <unordered_map>
 #include <utility>
 
+const std::string RemovalReasonToString(const MemPoolRemovalReason &r) noexcept;
+
 /**
  * MainSignalsImpl manages a list of shared_ptr<CValidationInterface>
  * callbacks.
@@ -232,8 +234,9 @@ void CMainSignals::TransactionRemovedFromMempool(const CTransactionRef &tx,
                                                     mempool_sequence);
         });
     };
-    ENQUEUE_AND_LOG_EVENT(event, "%s: txid=%s", __func__,
-                          tx->GetHash().ToString());
+    ENQUEUE_AND_LOG_EVENT(event, "%s: txid=%s reason=%s", __func__,
+                          tx->GetHash().ToString(),
+                          RemovalReasonToString(reason));
 }
 
 void CMainSignals::BlockConnected(const std::shared_ptr<const CBlock> &pblock,
@@ -287,9 +290,11 @@ void CMainSignals::NewPoWValidBlock(
 }
 
 void CMainSignals::BlockFinalized(const CBlockIndex *pindex) {
-    LOG_EVENT("%s: block hash=%s", __func__,
-              pindex ? pindex->GetBlockHash().ToString() : "null");
-    m_internals->Iterate([&](CValidationInterface &callbacks) {
-        callbacks.BlockFinalized(pindex);
-    });
+    auto event = [pindex, this] {
+        m_internals->Iterate([&](CValidationInterface &callbacks) {
+            callbacks.BlockFinalized(pindex);
+        });
+    };
+    ENQUEUE_AND_LOG_EVENT(event, "%s: block hash=%s", __func__,
+                          pindex ? pindex->GetBlockHash().ToString() : "null");
 }

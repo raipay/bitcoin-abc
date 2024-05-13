@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2023 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -49,10 +48,10 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
         self.disconnect_nodes(0, 1)
         node = self.nodes[0]
 
-        inbound = get_ava_p2p_interface(self, node)
-
         now = int(time.time())
         node.setmocktime(now)
+
+        inbound = get_ava_p2p_interface(self, node)
 
         outbound = node.add_outbound_p2p_connection(
             AvaP2PInterface(self, node),
@@ -64,9 +63,9 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
         assert_equal(len(node.getpeerinfo()), 2)
         outbound.nodeid = node.getpeerinfo()[-1]["id"]
 
-        self.log.info("Check we save the remote proofs for our avalanche outbounds")
+        self.log.info("Check we save the remote proofs for our avalanche peers")
 
-        def remoteFromProof(proof, present=True, last_update=now):
+        def remoteFromProof(proof, present=True):
             return {
                 "proofid": uint256_hex(proof.proofid),
                 "present": present,
@@ -82,7 +81,7 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
             lhs, rhs = check_remote_proofs(node, nodeid, remote_proofs)
             assert_equal(lhs, rhs)
 
-        assert_remote_proofs(inbound.nodeid, [])
+        assert_remote_proofs(inbound.nodeid, [remoteFromProof(inbound.proof)])
         assert_remote_proofs(outbound.nodeid, [remoteFromProof(outbound.proof)])
 
         proofs = []
@@ -96,7 +95,10 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
         inbound.sync_with_ping()
         outbound.sync_with_ping()
 
-        assert_remote_proofs(inbound.nodeid, [])
+        assert_remote_proofs(
+            inbound.nodeid,
+            [remoteFromProof(proof) for proof in [inbound.proof] + proofs],
+        )
         assert_remote_proofs(
             outbound.nodeid,
             [remoteFromProof(proof) for proof in [outbound.proof] + proofs],
@@ -129,12 +131,19 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
         node.setmocktime(now)
 
         def trigger_avaproofs(msg):
-            node.mockscheduler(AVALANCHE_MAX_PERIODIC_NETWORKING_INTERVAL)
+            for _ in range(3):
+                node.mockscheduler(AVALANCHE_MAX_PERIODIC_NETWORKING_INTERVAL)
 
-            outbound.wait_until(lambda: outbound.last_message.get("getavaproofs"))
-            with p2p_lock:
-                outbound.last_message = {}
-            outbound.send_and_ping(msg)
+                outbound.wait_until(lambda: outbound.last_message.get("getavaproofs"))
+                with p2p_lock:
+                    outbound.last_message = {}
+                outbound.send_and_ping(msg)
+
+                remote_proofs = node.getremoteproofs(outbound.nodeid)
+                if any(p["last_update"] == now for p in remote_proofs):
+                    return
+
+            assert False, "Failed to update the remote proofs after 3 retries"
 
         def build_compactproofs_msg(prefilled_proof, proofs_to_announce):
             key0 = random.randint(0, 2**64 - 1)
@@ -176,12 +185,10 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
             node.sendavalancheproof(proof.serialize().hex())
             assert uint256_hex(proof.proofid) in node.getavalancheproofs()["valid"]
 
-        node.mockscheduler(AVALANCHE_MAX_PERIODIC_NETWORKING_INTERVAL)
+        now += 1
+        node.setmocktime(now)
 
-        outbound.wait_until(lambda: outbound.last_message.get("getavaproofs"))
-        with p2p_lock:
-            outbound.last_message = {}
-        outbound.send_and_ping(compactproofs_msg)
+        trigger_avaproofs(compactproofs_msg)
 
         # Now the proofs should be all present
         assert_remote_proofs(
@@ -312,8 +319,12 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
 
         self.wait_until(lambda: node1.getavalancheinfo()["ready_to_poll"] is True)
 
+        # The sending node is not a staker, so it is not acconted for the remote
+        # proofs status.
+        sending_node = AvaP2PInterface()
+        node1.add_p2p_connection(sending_node)
         for proof in proofs:
-            node1_quorum[0].send_avaproof(proof)
+            sending_node.send_avaproof(proof)
             wait_for_proof(node1, uint256_hex(proof.proofid))
             wait_for_finalized_proof(node1, node1_quorum, proof.proofid)
 

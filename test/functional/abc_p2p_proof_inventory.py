@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2021 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -215,7 +214,13 @@ class ProofInventoryTest(BitcoinTestFramework):
         ]
 
         # Connect a block to make the proofs added to our pool
-        self.generate(self.nodes[0], 1, sync_fun=self.sync_blocks)
+        self.generate(
+            self.nodes[0], 1, sync_fun=lambda: self.sync_blocks(self.nodes[:-1])
+        )
+        # Generate a different block on the IBD node, as it will not sync the low
+        # work block while in IBD and it also needs a block to trigger its own proof
+        # registration
+        self.generate(self.nodes[-1], 1, sync_fun=self.no_op)
 
         self.log.info("Nodes should eventually get the proof from their peer")
         self.sync_proofs(self.nodes[:-1])
@@ -232,7 +237,7 @@ class ProofInventoryTest(BitcoinTestFramework):
 
         _, proof = self.generate_proof(self.nodes[0])
         peer.send_avaproof(proof)
-        peer.sync_send_with_ping()
+        peer.sync_with_ping()
         with p2p_lock:
             assert_equal(peer.message_count.get("getdata", 0), 0)
 

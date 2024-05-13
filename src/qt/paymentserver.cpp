@@ -17,7 +17,9 @@
 #include <util/system.h>
 #include <wallet/wallet.h>
 
+#ifdef ENABLE_BIP70
 #include <openssl/x509_vfy.h>
+#endif
 
 #include <QApplication>
 #include <QByteArray>
@@ -30,6 +32,7 @@
 #include <QList>
 #include <QLocalServer>
 #include <QLocalSocket>
+#ifdef ENABLE_BIP70
 #include <QNetworkAccessManager>
 #include <QNetworkProxy>
 #include <QNetworkReply>
@@ -37,6 +40,7 @@
 #include <QSslCertificate>
 #include <QSslConfiguration>
 #include <QSslError>
+#endif
 #include <QStringList>
 #include <QTextDocument>
 #include <QUrlQuery>
@@ -95,14 +99,14 @@ static std::string ipcParseURI(const QString &arg, const CChainParams &params,
 
 static bool ipcCanParseCashAddrURI(const QString &arg,
                                    const std::string &network) {
-    auto tempChainParams = CreateChainParams(network);
+    auto tempChainParams = CreateChainParams(ArgsManager{}, network);
     std::string addr = ipcParseURI(arg, *tempChainParams, true);
     return IsValidDestinationString(addr, *tempChainParams);
 }
 
 static bool ipcCanParseLegacyURI(const QString &arg,
                                  const std::string &network) {
-    auto tempChainParams = CreateChainParams(network);
+    auto tempChainParams = CreateChainParams(ArgsManager{}, network);
     std::string addr = ipcParseURI(arg, *tempChainParams, false);
     return IsValidDestinationString(addr, *tempChainParams);
 }

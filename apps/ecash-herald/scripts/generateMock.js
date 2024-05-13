@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { ChronikClient } = require('chronik-client');
 const chronik = new ChronikClient(config.chronik);
-const { MockChronikClient } = require('../../mock-chronik-client');
+const { MockChronikClient } = require('../../../modules/mock-chronik-client');
 const mockedChronik = new MockChronikClient();
 const { jsonReplacer, getCoingeckoApiUrl } = require('../src/utils');
 const unrevivedBlockMocks = require('../test/mocks/block');
@@ -30,7 +30,6 @@ const { dev } = secrets;
 const { botId, channelId } = dev.telegram;
 // Create a bot that uses 'polling' to fetch new updates
 const telegramBotDev = new TelegramBot(botId, { polling: true });
-const recentStakersApiResponse = require('../test/mocks/recentStakersApiResponse');
 
 /**
  * generateMock.js
@@ -49,6 +48,14 @@ const txids = [
 
     // eToken mint tx
     '010114b9bbe776def1a512ad1e96a4a06ec4c34fc79bcb5d908845f5102f6b0f', // etoken genesis txs
+
+    // Cashtab CACHET rewards
+    '004e018dd98520aa722ee76c608771dd578a044f38103a8298f25e6ffbc7c3ba',
+    '0110cd886ecd2d9570e98b7501cd039f4e5352d69659a46f1a49cc19c1869701',
+    '327101f6f3b740280a6e9fbd8edc41f4f0500633672975a5974a4147c94016a5',
+
+    // Cashtab CACHET send tx that is not a Cashtab Reward
+    'aa13c6f214ff58f36ed5e108a7f36d8f98729c50186b27a53b989c7f36fbf517',
 
     // eToken send txs
     '6ffcc83e76226bd32821cc6862ce9b363b22594247a4e73ccf3701b0023592b2', // etoken send tx, 0 decimals
@@ -196,7 +203,6 @@ async function generateMock(
 
     // Mock a successful API request
     mock.onGet(getCoingeckoApiUrl(config)).reply(200, coingeckoResponse);
-    mock.onGet(config.stakerPeerApi).reply(200, recentStakersApiResponse);
 
     // Generate app mocks using this block
     // TODO need to mock all the calls here

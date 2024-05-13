@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2020-2022 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -130,7 +129,7 @@ class AvalancheQuorumTest(BitcoinTestFramework):
 
                 if empty_avaproof:
                     avapeer.send_message(build_msg_avaproofs([]))
-                    avapeer.sync_send_with_ping()
+                    avapeer.sync_with_ping()
                     with p2p_lock:
                         assert_equal(avapeer.message_count.get("avaproofsreq", 0), 0)
                 else:
@@ -255,6 +254,7 @@ class AvalancheQuorumTest(BitcoinTestFramework):
             for peer in avapeers[7:]:
                 peer.peer_disconnect()
                 peer.wait_for_disconnect()
+            self.wait_until(lambda: node.getavalancheinfo()["ready_to_poll"] is False)
             poll_and_assert_response(node, AvalancheVoteError.UNKNOWN)
 
             # Add a node back and check it resumes the quorum status

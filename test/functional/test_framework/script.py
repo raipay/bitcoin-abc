@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2015-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -462,7 +461,7 @@ class CScript(bytes):
     __slots__ = ()
 
     @classmethod
-    def __coerce_instance(cls, other):
+    def _coerce_instance(cls, other):
         # Coerce other into bytes
         if isinstance(other, CScriptOp):
             other = bytes([other])
@@ -497,7 +496,7 @@ class CScript(bytes):
 
             def coerce_iterable(iterable):
                 for instance in iterable:
-                    yield cls.__coerce_instance(instance)
+                    yield cls._coerce_instance(instance)
 
             # Annoyingly on both python2 and python3 bytes.join() always
             # returns a bytes instance even when subclassed.

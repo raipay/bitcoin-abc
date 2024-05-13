@@ -1,57 +1,67 @@
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 import React from 'react';
 import PropTypes from 'prop-types';
-import Tx from './Tx';
-import { flattenContactList } from 'utils/cashMethods';
+import Tx from 'components/Home/Tx';
 
 const TxHistory = ({
     txs,
+    hashes,
     fiatPrice,
     fiatCurrency,
-    contactList,
-    cashtabSettings,
-    cashtabCache,
+    cashtabState,
+    updateCashtabState,
+    chaintipBlockheight,
+    userLocale = 'en-US',
 }) => {
-    // Convert contactList array of objects to an array of addresses
-    const addressesInContactList = flattenContactList(contactList);
     return (
-        <div>
+        <>
             {txs.map(tx => (
                 <Tx
                     key={tx.txid}
-                    data={tx}
+                    hashes={hashes}
+                    tx={tx}
                     fiatPrice={fiatPrice}
                     fiatCurrency={fiatCurrency}
-                    addressesInContactList={addressesInContactList}
-                    contactList={contactList}
-                    cashtabSettings={cashtabSettings}
-                    cashtabCache={cashtabCache}
+                    cashtabState={cashtabState}
+                    updateCashtabState={updateCashtabState}
+                    chaintipBlockheight={chaintipBlockheight}
+                    userLocale={userLocale}
                 />
             ))}
-        </div>
+        </>
     );
 };
 
 TxHistory.propTypes = {
     txs: PropTypes.array,
+    hashes: PropTypes.arrayOf(PropTypes.string),
     fiatPrice: PropTypes.number,
-    cashtabCache: PropTypes.object,
     fiatCurrency: PropTypes.string,
-    contactList: PropTypes.arrayOf(
-        PropTypes.shape({
-            address: PropTypes.string,
-            name: PropTypes.string,
+    cashtabState: PropTypes.shape({
+        contactList: PropTypes.arrayOf(
+            PropTypes.shape({
+                address: PropTypes.string.isRequired,
+                name: PropTypes.string.isRequired,
+            }),
+        ),
+        settings: PropTypes.shape({
+            fiatCurrency: PropTypes.string.isRequired,
+            sendModal: PropTypes.bool.isRequired,
+            autoCameraOn: PropTypes.bool.isRequired,
+            hideMessagesFromUnknownSenders: PropTypes.bool.isRequired,
+            balanceVisible: PropTypes.bool.isRequired,
+            minFeeSends: PropTypes.bool.isRequired,
         }),
-    ),
-    cashtabSettings: PropTypes.oneOfType([
-        PropTypes.shape({
-            fiatCurrency: PropTypes.string,
-            sendModal: PropTypes.bool,
-            autoCameraOn: PropTypes.bool,
-            hideMessagesFromUnknownSender: PropTypes.bool,
-            toggleShowHideBalance: PropTypes.bool,
+        cashtabCache: PropTypes.shape({
+            tokens: PropTypes.object.isRequired,
         }),
-        PropTypes.bool,
-    ]),
+    }),
+    updateCashtabState: PropTypes.func,
+    userLocale: PropTypes.string,
+    chaintipBlockheight: PropTypes.number,
 };
 
 export default TxHistory;

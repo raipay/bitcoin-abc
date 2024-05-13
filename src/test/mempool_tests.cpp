@@ -4,6 +4,8 @@
 
 #include <txmempool.h>
 
+#include <kernel/disconnected_transactions.h>
+#include <kernel/mempool_entry.h>
 #include <policy/settings.h>
 #include <reverse_iterator.h>
 #include <util/system.h>
@@ -18,7 +20,7 @@
 
 BOOST_FIXTURE_TEST_SUITE(mempool_tests, TestingSetup)
 
-static constexpr auto REMOVAL_REASON_DUMMY = MemPoolRemovalReason::REPLACED;
+static constexpr auto REMOVAL_REASON_DUMMY = MemPoolRemovalReason::CONFLICT;
 
 BOOST_AUTO_TEST_CASE(MempoolRemoveTest) {
     // Test CTxMemPool::remove functionality
@@ -53,7 +55,7 @@ BOOST_AUTO_TEST_CASE(MempoolRemoveTest) {
     }
 
     CTxMemPool &testPool = *Assert(m_node.mempool);
-    LOCK2(cs_main, testPool.cs);
+    LOCK2(::cs_main, testPool.cs);
 
     // Nothing in pool, remove should do nothing:
     unsigned int poolSize = testPool.size();
@@ -148,9 +150,9 @@ static void CheckSort(CTxMemPool &pool, std::vector<std::string> &sortedOrder,
         it = pool.mapTx.get<name>().begin();
     int count = 0;
     for (; it != pool.mapTx.get<name>().end(); ++it, ++count) {
-        BOOST_CHECK_MESSAGE(it->GetTx().GetId().ToString() ==
+        BOOST_CHECK_MESSAGE((*it)->GetTx().GetId().ToString() ==
                                 sortedOrder[count],
-                            it->GetTx().GetId().ToString()
+                            (*it)->GetTx().GetId().ToString()
                                 << " != " << sortedOrder[count] << " in test "
                                 << testcase << ":" << count);
     }
@@ -362,7 +364,8 @@ BOOST_AUTO_TEST_CASE(MempoolSizeLimitTest) {
     BOOST_CHECK_EQUAL(pool.GetMinFee(1).GetFeePerK(),
                       maxFeeRateRemoved.GetFeePerK() + feeIncrement);
     // ... we should keep the same min fee until we get a block
-    pool.removeForBlock(vtx);
+    DisconnectedBlockTransactions disconnectedBlockTxs;
+    disconnectedBlockTxs.removeForBlock(vtx, pool);
     SetMockTime(42 + 2 * CTxMemPool::ROLLING_FEE_HALFLIFE);
     BOOST_CHECK_EQUAL(pool.GetMinFee(1).GetFeePerK(),
                       (maxFeeRateRemoved.GetFeePerK() + feeIncrement) / 2);
@@ -513,21 +516,21 @@ BOOST_AUTO_TEST_CASE(GetModifiedFeeRateTest) {
 
     auto entryNormal = entry.Fee(1000 * SATOSHI).FromTx(tx);
     BOOST_CHECK_EQUAL(1000 * SATOSHI,
-                      entryNormal.GetModifiedFeeRate().GetFee(1000));
+                      entryNormal->GetModifiedFeeRate().GetFee(1000));
 
     // Add modified fee
-    CTxMemPoolEntry entryFeeModified = entry.Fee(1000 * SATOSHI).FromTx(tx);
-    entryFeeModified.UpdateFeeDelta(1000 * SATOSHI);
+    CTxMemPoolEntryRef entryFeeModified = entry.Fee(1000 * SATOSHI).FromTx(tx);
+    entryFeeModified->UpdateFeeDelta(1000 * SATOSHI);
     BOOST_CHECK_EQUAL(2000 * SATOSHI,
-                      entryFeeModified.GetModifiedFeeRate().GetFee(1000));
+                      entryFeeModified->GetModifiedFeeRate().GetFee(1000));
 
     // Excessive sigop count "modifies" size
-    CTxMemPoolEntry entrySizeModified =
+    CTxMemPoolEntryRef entrySizeModified =
         entry.Fee(1000 * SATOSHI)
             .SigChecks(2000 / DEFAULT_BYTES_PER_SIGCHECK)
             .FromTx(tx);
     BOOST_CHECK_EQUAL(500 * SATOSHI,
-                      entrySizeModified.GetModifiedFeeRate().GetFee(1000));
+                      entrySizeModified->GetModifiedFeeRate().GetFee(1000));
 }
 
 BOOST_AUTO_TEST_CASE(CompareTxMemPoolEntryByModifiedFeeRateTest) {
@@ -563,19 +566,72 @@ BOOST_AUTO_TEST_CASE(CompareTxMemPoolEntryByModifiedFeeRateTest) {
 
     // Same with fee delta.
     {
-        CTxMemPoolEntry entryA = entry.Fee(100 * SATOSHI).FromTx(a);
-        CTxMemPoolEntry entryB = entry.Fee(200 * SATOSHI).FromTx(b);
+        CTxMemPoolEntryRef entryA = entry.Fee(100 * SATOSHI).FromTx(a);
+        CTxMemPoolEntryRef entryB = entry.Fee(200 * SATOSHI).FromTx(b);
         // .. A and B have same modified fee, ordering is by lowest txid
-        entryA.UpdateFeeDelta(100 * SATOSHI);
+        entryA->UpdateFeeDelta(100 * SATOSHI);
         checkOrdering(entryB, entryA);
     }
     // .. A is first entering the mempool
-    CTxMemPoolEntry entryA = entry.Fee(100 * SATOSHI).EntryId(1).FromTx(a);
-    CTxMemPoolEntry entryB = entry.Fee(100 * SATOSHI).EntryId(2).FromTx(b);
+    CTxMemPoolEntryRef entryA = entry.Fee(100 * SATOSHI).EntryId(1).FromTx(a);
+    CTxMemPoolEntryRef entryB = entry.Fee(100 * SATOSHI).EntryId(2).FromTx(b);
     checkOrdering(entryA, entryB);
     // .. B has higher modified fee.
-    entryB.UpdateFeeDelta(1 * SATOSHI);
+    entryB->UpdateFeeDelta(1 * SATOSHI);
     checkOrdering(entryB, entryA);
+}
+
+BOOST_AUTO_TEST_CASE(remove_for_finalized_block) {
+    CTxMemPool &pool = *Assert(m_node.mempool);
+    TestMemPoolEntryHelper entry;
+
+    LOCK2(cs_main, pool.cs);
+
+    std::vector<CTransactionRef> txs;
+    txs.reserve(100);
+    for (size_t i = 0; i < 100; i++) {
+        CTransactionRef tx = make_tx({int64_t(i + 1) * COIN});
+        const TxId &txid = tx->GetId();
+        auto mempoolEntry = entry.FromTx(tx);
+
+        pool.addUnchecked(mempoolEntry);
+        BOOST_CHECK(pool.exists(txid));
+
+        BOOST_CHECK(pool.setAvalancheFinalized(mempoolEntry));
+        BOOST_CHECK(pool.isAvalancheFinalized(txid));
+
+        txs.push_back(std::move(tx));
+    }
+
+    std::vector<CTransactionRef> minedTxs(txs.begin(), txs.begin() + 50);
+    pool.removeForFinalizedBlock(minedTxs);
+
+    for (const auto &tx : minedTxs) {
+        // No longer in the radix tree
+        BOOST_CHECK(!pool.isAvalancheFinalized(tx->GetId()));
+    }
+    // Other txs are still there
+    for (size_t i = 50; i < 100; i++) {
+        BOOST_CHECK(pool.isAvalancheFinalized(txs[i]->GetId()));
+    }
+
+    // Repeat is no op
+    pool.removeForFinalizedBlock(minedTxs);
+    for (const auto &tx : minedTxs) {
+        // No longer in the radix tree
+        BOOST_CHECK(!pool.isAvalancheFinalized(tx->GetId()));
+    }
+    // Other txs are still there
+    for (size_t i = 50; i < 100; i++) {
+        BOOST_CHECK(pool.isAvalancheFinalized(txs[i]->GetId()));
+    }
+
+    // Remove them all
+    pool.removeForFinalizedBlock(txs);
+    for (const auto &tx : txs) {
+        // No longer in the radix tree
+        BOOST_CHECK(!pool.isAvalancheFinalized(tx->GetId()));
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -85,7 +85,7 @@ static void WalletTxToJSON(const CWallet &wallet, const CWalletTx &wtx,
     }
     entry.pushKV("walletconflicts", conflicts);
     entry.pushKV("time", wtx.GetTxTime());
-    entry.pushKV("timereceived", (int64_t)wtx.nTimeReceived);
+    entry.pushKV("timereceived", int64_t{wtx.nTimeReceived});
 
     for (const std::pair<const std::string, std::string> &item : wtx.mapValue) {
         entry.pushKV(item.first, item.second);
@@ -2192,7 +2192,7 @@ static RPCHelpMan lockunspent() {
                                        {"vout", UniValueType(UniValue::VNUM)},
                                    });
 
-                const int nOutput = find_value(o, "vout").get_int();
+                const int nOutput = o.find_value("vout").get_int();
                 if (nOutput < 0) {
                     throw JSONRPCError(
                         RPC_INVALID_PARAMETER,

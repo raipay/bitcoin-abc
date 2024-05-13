@@ -5,9 +5,6 @@
 
 #include <policy/settings.h>
 
-#include <feerate.h>
+#include <policy/policy.h>
 
-bool fIsBareMultisigStd = DEFAULT_PERMIT_BAREMULTISIG;
-CFeeRate dustRelayFee = CFeeRate(DUST_RELAY_TX_FEE);
-CFeeRate minRelayTxFee = CFeeRate(DEFAULT_MIN_RELAY_TX_FEE_PER_KB);
 uint32_t nBytesPerSigCheck = DEFAULT_BYTES_PER_SIGCHECK;

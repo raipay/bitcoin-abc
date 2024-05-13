@@ -5,14 +5,11 @@
 
 #include <script/standard.h>
 
-#include <crypto/sha256.h>
 #include <script/script.h>
 
 #include <string>
 
 typedef std::vector<uint8_t> valtype;
-
-bool fAcceptDatacarrier = DEFAULT_ACCEPT_DATACARRIER;
 
 CScriptID::CScriptID(const CScript &in) : BaseHash(Hash160(in)) {}
 CScriptID::CScriptID(const ScriptHash &in)

@@ -57,7 +57,7 @@ module.exports = [
             '0372120c04ca6f5a640cfabe6d6d0000000000000000000000000000000000000000000000000000000000000000010000000000000017ffe3db2f2981010000000015663561663031393839363731656539633239383034',
         payoutOutputScript:
             '76a914ce8c8cf69a922a607e8e03e27ec014fbc24882e088ac',
-        parsed: 'Hathor-MM',
+        parsed: 'anon e0',
     },
     {
         height: 790242,
@@ -65,7 +65,7 @@ module.exports = [
             '03e20e0c04cdc250640cfabe6d6d00000000000000000000000000000000000000000000000000000000000000000100000000000000780131c9f83700000000000015303637373062323039393135643332643630303333',
         payoutOutputScript:
             '76a914ce8c8cf69a922a607e8e03e27ec014fbc24882e088ac',
-        parsed: 'Hathor-MM',
+        parsed: 'anon e0',
     },
     {
         height: 790837,
@@ -73,7 +73,7 @@ module.exports = [
             '0335110c0408fa56640cfabe6d6d000000000000000000000000000000000000000000000000000000000000000001000000000000005ffff258d57091000000000015653364396135343132373039306165353131333437',
         payoutOutputScript:
             '76a914ce8c8cf69a922a607e8e03e27ec014fbc24882e088ac',
-        parsed: 'Hathor-MM',
+        parsed: 'anon e0',
     },
     {
         height: 785677,
@@ -125,6 +125,14 @@ module.exports = [
         parsed: 'IceBerg',
     },
     {
+        height: 821592,
+        parsed: 'iceberg',
+        coinbaseHex:
+            '0358890c00042dc37165044fc5a6120c40bf716509756caf200000000a636b706f6f6c122f6d696e656420627920696365626572672f',
+        payoutOutputScript:
+            '76a9149bbc716500000000ca3d0b0000000000a5bc716588ac',
+    },
+    {
         height: 790863,
         coinbaseHex:
             '034f110c04602a5764084200079077422b017a706f6f6c2e636100fabe6d6da821294426652ebd8cff8df5e02ffcbbdc1b1d9e9022832acf4d071e9bfa2d952000000000000000',
@@ -138,7 +146,7 @@ module.exports = [
             '04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73',
         payoutOutputScript:
             '4104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac',
-        parsed: 'unknown',
+        parsed: 'unknown, 3/Jan/2009 Chancellor on brink of second bailout',
     },
     // Molepool.com
     {
@@ -188,5 +196,98 @@ module.exports = [
         payoutOutputScript:
             '76a914f4728f398bb962656803346fb4ac45d776041a2e88ac',
         parsed: 'solopool.org',
+    },
+    // Determined from pubkey tag output
+    {
+        height: '821556',
+        coinbaseHex:
+            '0334890c2cfabe6d6d2a357fe8c5668c1edd58a42eaaa181f49afcf397cd6ae2475393ec06cfca62f010000000000000007032702d7370622e78797a',
+        payoutOutputScript:
+            '41047fa64f6874fb7213776b24c40bc915451b57ef7f17ad7b982561f99f7cdc7010d141b856a092ee169c5405323895e1962c6b0d7c101120d360164c9e4b3997bdac',
+        parsed: 'p2p-spb',
+    },
+    // Determined from coinbasehex fragment
+    {
+        height: '821556',
+        coinbaseHex:
+            '0334890c2cfabe6d6d2a357fe8c5668c1edd58a42eaaa181f49afcf397cd6ae2475393ec06cfca62f010000000000000007032702d7370622e78797a',
+        payoutOutputScript: 'some new payout address',
+        parsed: 'p2p-spb',
+    },
+    {
+        height: '823276',
+        coinbaseHex:
+            '03ec8f0c486174683dec223b763544f28819df8ba957944bbac2e35cb8de151b030edee88a90135073e02f191d000000',
+        payoutOutputScript:
+            '76a9141c2a7324dc6b7a2fd5d1e385f49f98bbef0e318b88ac',
+        parsed: 'Hathor-MM',
+    },
+    // Parse from hex
+    {
+        height: '823308',
+        coinbaseHex:
+            '030c900c486174685359f0bc84593a22dfc02d55f9121478a99352c1575208aeb484c82cb15fbb752f9701151d000000',
+        payoutOutputScript: 'some new payout address',
+        parsed: 'Hathor-MM',
+    },
+    {
+        height: '825737',
+        coinbaseHex: '0389990c04be0697650060002d03f7f5010004656b7534',
+        payoutOutputScript:
+            '76a91488fd36dad8f1e49913502922c867fab9ce27092288ac',
+        parsed: 'unknown, eku4',
+    },
+    {
+        height: '826279',
+        coinbaseHex: '03a79b0c04f5769c650030000215dacb0200026638',
+        payoutOutputScript:
+            '76a914fe4e85f56ae06e5a67e402354f8f73cab8fc19ce88ac',
+        parsed: 'unknown, f8',
+    },
+    {
+        height: '826256',
+        coinbaseHex: '03909b0c0474679c65003000021796240200026135',
+        payoutOutputScript:
+            '76a914d4b32e161eec0cb2e63a6a0d82e79463fb7f9f6b88ac',
+        parsed: 'unknown, a5',
+    },
+    {
+        height: '825775',
+        coinbaseHex: '03af990c04e68197650060002dbb36000000026f78',
+        payoutOutputScript:
+            '76a91472dce9d2b169bfc20501b4dac5927b16bd6f71e388ac',
+        parsed: 'unknown, ox',
+    },
+    // Parsed from coinbase hex fragment
+    {
+        height: '827550',
+        coinbaseHex:
+            '039ea00c0429c1a765088100001fa15a6800436d696e6f72732d506f6f6c7300fabe6d6df36f3ced97aac363e4f5202e4b39d539454d9d21c408df8ac4be8eb93660420b0100000000000000',
+        payoutOutputScript: 'a914d37c4c809fe9840e7bfa77b86bd47163f6fb6c6087',
+        parsed: 'Cminors-Pools',
+    },
+    // Both coinbase fragment and payout script
+    {
+        height: '827558',
+        coinbaseHex:
+            '03a6a00c04edcda76508810000d1209af801436d696e6f72732d506f6f6c7300fabe6d6dc86e6540b56678f671a630b0d148ed2c4247abd1640348ce0fa3b82b60cf60bb0100000000000000',
+        payoutOutputScript:
+            '76a91478b7743efa732c16c1b956f19fd5ec623e71981388ac',
+        parsed: 'Cminors-Pools',
+    },
+    {
+        height: '840619',
+        coinbaseHex:
+            '03abd30c00046a362166046994e2100c601f21668868440000000000204d696e65642062792077697468204f6d20506f776572202f416e616e6472616a53696e676820506f6f6c2f0d20f09f8f86f09f8f86f09f8f86',
+        payoutOutputScript:
+            '76a914c5c9fb1bef0c5c6a0df37a4bf41e186b6980c43b88ac',
+        parsed: 'AnandrajSingh Pool',
+    },
+    {
+        height: '840619',
+        coinbaseHex:
+            '03abd30c00046a362166046994e2100c601f21668868440000000000204d696e65642062792077697468204f6d20506f776572202f416e616e6472616a53696e676820506f6f6c2f0d20f09f8f86f09f8f86f09f8f86',
+        payoutOutputScript: 'not the one so it is parsed from hex',
+        parsed: 'AnandrajSingh Pool',
     },
 ];

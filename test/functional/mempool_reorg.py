@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2014-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -33,7 +32,6 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
         self.log.info("Add 4 coinbase utxos to the miniwallet")
         # Block 76 contains the first spendable coinbase txs.
         first_block = 76
-        wallet.rescan_utxos()
 
         # Three scenarios for re-orging coinbase spends in the memory pool:
         # 1. Direct coinbase spend  :  spend_1
@@ -50,15 +48,9 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
             "Create three transactions spending from coinbase utxos: spend_1, spend_2,"
             " spend_3"
         )
-        spend_1 = wallet.create_self_transfer(
-            from_node=self.nodes[0], utxo_to_spend=utxo_1
-        )
-        spend_2 = wallet.create_self_transfer(
-            from_node=self.nodes[0], utxo_to_spend=utxo_2
-        )
-        spend_3 = wallet.create_self_transfer(
-            from_node=self.nodes[0], utxo_to_spend=utxo_3
-        )
+        spend_1 = wallet.create_self_transfer(utxo_to_spend=utxo_1)
+        spend_2 = wallet.create_self_transfer(utxo_to_spend=utxo_2)
+        spend_3 = wallet.create_self_transfer(utxo_to_spend=utxo_3)
 
         self.log.info(
             "Create another transaction which is time-locked to two blocks in the"
@@ -66,7 +58,6 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
         )
         utxo = wallet.get_utxo(txid=coinbase_txids[0])
         timelock_tx = wallet.create_self_transfer(
-            from_node=self.nodes[0],
             utxo_to_spend=utxo,
             locktime=self.nodes[0].getblockcount() + 2,
         )["hex"]
@@ -89,12 +80,8 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
         )
 
         self.log.info("Create spend_2_1 and spend_3_1")
-        spend_2_1 = wallet.create_self_transfer(
-            from_node=self.nodes[0], utxo_to_spend=spend_2["new_utxo"]
-        )
-        spend_3_1 = wallet.create_self_transfer(
-            from_node=self.nodes[0], utxo_to_spend=spend_3["new_utxo"]
-        )
+        spend_2_1 = wallet.create_self_transfer(utxo_to_spend=spend_2["new_utxo"])
+        spend_3_1 = wallet.create_self_transfer(utxo_to_spend=spend_3["new_utxo"])
 
         self.log.info("Broadcast and mine spend_3_1")
         spend_3_1_id = self.nodes[0].sendrawtransaction(spend_3_1["hex"])

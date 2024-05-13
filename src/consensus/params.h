@@ -9,6 +9,7 @@
 #include <primitives/blockhash.h>
 #include <uint256.h>
 
+#include <chrono>
 #include <limits>
 
 namespace Consensus {
@@ -62,6 +63,8 @@ struct Params {
     int cowperthwaiteHeight;
     /** Unix time used for MTP activation of 15 May 2024 12:00:00 UTC upgrade */
     int leeKuanYewActivationTime;
+    /** Unix time used for MTP activation of 15 Nov 2024 12:00:00 UTC upgrade */
+    int augustoActivationTime;
 
     /** Enable or disable the miner fund by default */
     bool enableMinerFund;
@@ -76,6 +79,9 @@ struct Params {
     int64_t nDAAHalfLife;
     int64_t nPowTargetSpacing;
     int64_t nPowTargetTimespan;
+    std::chrono::seconds PowTargetSpacing() const {
+        return std::chrono::seconds{nPowTargetSpacing};
+    }
     int64_t DifficultyAdjustmentInterval() const {
         return nPowTargetTimespan / nPowTargetSpacing;
     }

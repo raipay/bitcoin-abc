@@ -10,7 +10,7 @@ const {
     initializeWebsocket,
     parseWebsocketMessage,
 } = require('../src/chronikWsHandler');
-const { MockChronikClient } = require('../../mock-chronik-client');
+const { MockChronikClient } = require('../../../modules/mock-chronik-client');
 const { mockBlock } = require('./mocks/chronikResponses');
 const mockSecrets = require('../secrets.sample');
 const MockAdapter = require('axios-mock-adapter');
@@ -172,7 +172,7 @@ describe('alias-server chronikWsHandler.js', async function () {
         );
         mockedChronik.setScript(type, hash);
         // Set the mock tx history
-        mockedChronik.setTxHistory(generated.txHistory);
+        mockedChronik.setTxHistory(type, hash, generated.txHistory);
 
         // Mock avalanche RPC call
         // onNoMatch: 'throwException' helps to debug if mock is not being used
@@ -277,7 +277,7 @@ describe('alias-server chronikWsHandler.js', async function () {
         );
         mockedChronik.setScript(type, hash);
         // Set the mock tx history
-        mockedChronik.setTxHistory(generated.txHistory);
+        mockedChronik.setTxHistory(type, hash, generated.txHistory);
 
         // Mock avalanche RPC call
         // onNoMatch: 'throwException' helps to debug if mock is not being used
@@ -313,7 +313,7 @@ describe('alias-server chronikWsHandler.js', async function () {
         nextMockedChronik.setScript(type, hash);
         // Set the mock tx history
         // For now, assume it's the same as before, i.e. no new txs found
-        nextMockedChronik.setTxHistory(generated.txHistory);
+        nextMockedChronik.setTxHistory(type, hash, generated.txHistory);
 
         const firstCallPromise = parseWebsocketMessage(
             mockedChronik,

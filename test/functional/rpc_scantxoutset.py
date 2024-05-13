@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2018 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -29,7 +28,6 @@ class ScantxoutsetTest(BitcoinTestFramework):
 
     def run_test(self):
         self.wallet = MiniWallet(self.nodes[0])
-        self.wallet.rescan_utxos()
 
         self.log.info("Create UTXOs...")
         pubk, spk, addr = getnewdestination()

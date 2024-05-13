@@ -9,7 +9,6 @@ use bitcoinsuite_core::{
     block::BlockHash,
     tx::{Tx, TxId},
 };
-use chronik_bridge::ffi;
 use chronik_db::{
     db::Db,
     io::{
@@ -23,7 +22,8 @@ use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, HashOrHeight, OutputsSpent},
+    indexer::Node,
+    query::{make_tx_proto, HashOrHeight, OutputsSpent, TxTokenData},
 };
 
 const MAX_BLOCKS_PAGE_SIZE: usize = 500;
@@ -42,6 +42,10 @@ pub struct QueryBlocks<'a> {
     pub avalanche: &'a Avalanche,
     /// Mempool
     pub mempool: &'a Mempool,
+    /// Access to bitcoind to read txs
+    pub node: &'a Node,
+    /// Whether the SLP/ALP token index is enabled
+    pub is_token_index_enabled: bool,
 }
 
 /// Errors indicating something went wrong with querying blocks.
@@ -195,25 +199,36 @@ impl<'a> QueryBlocks<'a> {
             let db_tx = tx_reader
                 .tx_by_tx_num(tx_num)?
                 .ok_or(BlockHasMissingTx(db_block.hash.clone(), tx_num))?;
-            let tx = ffi::load_tx(
-                db_block.file_num,
-                db_tx.entry.data_pos,
-                db_tx.entry.undo_pos,
-            )
-            .wrap_err(ReadFailure(db_tx.entry.txid))?;
+            let tx = Tx::from(
+                self.node
+                    .bridge
+                    .load_tx(
+                        db_block.file_num,
+                        db_tx.entry.data_pos,
+                        db_tx.entry.undo_pos,
+                    )
+                    .wrap_err(ReadFailure(db_tx.entry.txid))?,
+            );
             let outputs_spent = OutputsSpent::query(
                 &spent_by_reader,
                 &tx_reader,
                 self.mempool.spent_by().outputs_spent(&db_tx.entry.txid),
                 tx_num,
             )?;
+            let token = TxTokenData::from_db(
+                self.db,
+                tx_num,
+                &tx,
+                self.is_token_index_enabled,
+            )?;
             txs.push(make_tx_proto(
-                &Tx::from(tx),
+                &tx,
                 &outputs_spent,
                 db_tx.entry.time_first_seen,
                 db_tx.entry.is_coinbase,
                 Some(&db_block),
                 self.avalanche,
+                token.as_ref(),
             ));
         }
         let total_num_txs = (tx_range.end - tx_range.start) as usize;

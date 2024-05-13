@@ -23,7 +23,7 @@ These are the dependencies currently used by Bitcoin ABC. You can find instructi
 | OpenSSL | [1.0.1k](https://www.openssl.org/source) |  | Yes |  |  |
 | PCRE |  |  |  |  | Yes |
 | protobuf | [21.12](https://github.com/protocolbuffers/protobuf/releases/tag/v21.12) |  | No |  |  |
-| Python (tests) |  | [3.6](https://www.python.org/downloads) |  |  |  |
+| Python (tests) |  | [3.9](https://www.python.org/downloads) |  |  |  |
 | qrencode | [3.4.4](https://fukuchi.org/works/qrencode) |  | No |  |  |
 | Qt | [5.15.5](https://download.qt.io/official_releases/qt/) | 5.9.5 | No |  |  |
 | SQLite | [3.32.1](https://sqlite.org/download.html) | 3.7.17 |  |  |  |
@@ -42,6 +42,7 @@ factors that affect the dependency list.
 * MiniUPnPc is not needed with  `-DENABLE_UPNP=OFF`.
 * MiniUPnPc is not needed with  `-DENABLE_NATPMP=OFF`.
 * Berkeley DB and SQLite are not needed with `-DBUILD_BITCOIN_WALLET=OFF`.
+* OpenSSL is not needed with `-DENABLE_BIP70=OFF`.
 * protobuf is not needed with `-DENABLE_BIP70=OFF`.
 * Qt is not needed with `-DBUILD_BITCOIN_QT=OFF`.
 * qrencode is not needed with `-DENABLE_QRCODE=OFF`.

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -20,9 +19,6 @@ class P2PBlocksOnly(BitcoinTestFramework):
 
     def run_test(self):
         self.miniwallet = MiniWallet(self.nodes[0])
-        # Add enough mature utxos to the wallet, so that all txs spend
-        # confirmed coins
-        self.miniwallet.rescan_utxos()
 
         self.blocksonly_mode_tests()
         self.blocks_relay_conn_tests()
@@ -129,12 +125,12 @@ class P2PBlocksOnly(BitcoinTestFramework):
         # Bump time forward to ensure m_next_inv_send_time timer pops
         self.nodes[0].setmocktime(int(time.time()) + 60)
 
-        conn.sync_send_with_ping()
+        conn.sync_with_ping()
         assert int(txid, 16) not in conn.get_invs()
 
     def check_p2p_tx_violation(self):
         self.log.info("Check that txs from P2P are rejected and result in disconnect")
-        spendtx = self.miniwallet.create_self_transfer(from_node=self.nodes[0])
+        spendtx = self.miniwallet.create_self_transfer()
 
         with self.nodes[0].assert_debug_log(
             ["transaction sent in violation of protocol peer=0"]

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -257,10 +256,10 @@ class PruneTest(BitcoinTestFramework):
         with self.nodes[2].assert_debug_log(
             expected_msgs=[
                 "block verification stopping at height",
-                "(pruning, no data)",
+                "(no data)",
             ]
         ):
-            self.nodes[2].verifychain(checklevel=4, nblocks=0)
+            assert not self.nodes[2].verifychain(checklevel=4, nblocks=0)
         self.log.info(f"Will need to redownload block {self.forkheight}")
 
         # Verify that we have enough history to reorg back to the fork point.

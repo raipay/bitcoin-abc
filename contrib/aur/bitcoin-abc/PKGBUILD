@@ -1,7 +1,7 @@
 # Maintainer: Josh Ellithorpe <quest@mac.com>
 
 pkgname=bitcoin-abc
-pkgver=0.28.4
+pkgver=0.29.4
 pkgrel=0
 pkgdesc="Bitcoin ABC with bitcoind, bitcoin-tx, bitcoin-seeder and bitcoin-cli"
 arch=('i686' 'x86_64')
@@ -35,6 +35,7 @@ build() {
     -DENABLE_STATIC_LIBSTDCXX=ON \
     -DBUILD_BITCOIN_WALLET=OFF \
     -DBUILD_BITCOIN_QT=OFF \
+    -DUSE_LINKER= \
     -DCMAKE_INSTALL_PREFIX=$pkgdir/usr
 
   ninja

@@ -5,6 +5,7 @@
 #include <policy/fees.h>
 #include <policy/policy.h>
 
+#include <kernel/disconnected_transactions.h>
 #include <txmempool.h>
 #include <uint256.h>
 #include <util/time.h>
@@ -51,7 +52,8 @@ BOOST_AUTO_TEST_CASE(MempoolMinimumFeeEstimate) {
             CTransactionRef ptx = mpool.get(txid);
             block.push_back(ptx);
         }
-        mpool.removeForBlock(block);
+        DisconnectedBlockTransactions disconnectedBlocktxs;
+        disconnectedBlocktxs.removeForBlock(block, mpool);
         block.clear();
     }
 

@@ -3,12 +3,19 @@
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Corrosion 0.3.0 REQUIRED)
+include(FetchContent)
+FetchContent_Declare(
+    Corrosion
+    GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
+    GIT_TAG v0.4.7
+)
+FetchContent_MakeAvailable(Corrosion)
 
-set(REQUIRED_RUST_VERSION "1.72.0")
+set(REQUIRED_RUST_VERSION "1.76.0")
 if(Rust_VERSION VERSION_LESS REQUIRED_RUST_VERSION)
     message(FATAL_ERROR "Minimum required Rust version is "
-            "${REQUIRED_RUST_VERSION}, but found ${Rust_VERSION}")
+            "${REQUIRED_RUST_VERSION}, but found ${Rust_VERSION}. "
+            "Use `rustup update stable` to update.")
 endif()
 
 set(CARGO_BUILD_DIR "${CMAKE_BINARY_DIR}/cargo/build")
@@ -28,6 +35,10 @@ find_program_or_fail(RUSTDOC_EXECUTABLE rustdoc
 )
 
 set(CHRONIK_CARGO_FLAGS --locked)
+
+if(BUILD_BITCOIN_CHRONIK_PLUGINS)
+    set(CHRONIK_FEATURE_FLAGS --features plugins)
+endif()
 
 function(add_cargo_custom_target TARGET)
     add_custom_target(${TARGET}
@@ -77,11 +88,26 @@ add_crate_test_targets(abc-rust)
 add_crate_test_targets(bitcoinsuite)
 add_crate_test_targets(chronik)
 
-# Compile Rust, generates chronik-lib-static
+# Compile Rust, generates chronik-lib
 corrosion_import_crate(
     MANIFEST_PATH "chronik-lib/Cargo.toml"
-    FLAGS ${CHRONIK_CARGO_FLAGS}
+    NO_LINKER_OVERRIDE
+    FLAGS
+        ${CHRONIK_CARGO_FLAGS}
+        ${CHRONIK_FEATURE_FLAGS}
+    CRATES
+        chronik-lib
 )
+
+set(Rust_TRIPLE
+    "${Rust_CARGO_TARGET_ARCH}"
+    "${Rust_CARGO_TARGET_VENDOR}"
+    "${Rust_CARGO_TARGET_OS}"
+)
+if (Rust_CARGO_TARGET_ENV)
+    list(APPEND Rust_TRIPLE "${Rust_CARGO_TARGET_ENV}")
+endif()
+list(JOIN Rust_TRIPLE "-" Rust_CARGO_TARGET)
 
 # cxx crate generates some source files at this location
 set(CXXBRIDGE_GENERATED_FOLDER
@@ -90,6 +116,7 @@ set(CHRONIK_BRIDGE_GENERATED_CPP_FILES
     "${CXXBRIDGE_GENERATED_FOLDER}/chronik-bridge/src/ffi.rs.cc")
 set(CHRONIK_LIB_GENERATED_CPP_FILES
     "${CXXBRIDGE_GENERATED_FOLDER}/chronik-lib/src/ffi.rs.cc")
+
 add_custom_command(
     OUTPUT
         ${CHRONIK_BRIDGE_GENERATED_CPP_FILES}
@@ -98,7 +125,7 @@ add_custom_command(
         "${CMAKE_COMMAND}"
         -E env
         "echo" "Generating cxx bridge files"
-    DEPENDS chronik-lib-static
+    DEPENDS $<TARGET_PROPERTY:chronik-lib,INTERFACE_LINK_LIBRARIES>
 )
 
 # Chronik-bridge library
@@ -128,8 +155,15 @@ add_library(chronik
 )
 target_link_libraries(chronik
     chronik-bridge
-    chronik-lib-static
+    chronik-lib
 )
+
+# Plugins require us to link agains libpython
+if(BUILD_BITCOIN_CHRONIK_PLUGINS)
+    find_package(Python COMPONENTS Interpreter Development)
+    message("Adding Python_LIBRARIES: ${Python_LIBRARIES}")
+    target_link_libraries(chronik ${Python_LIBRARIES})
+endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
     # mio crate (dependency of tokio) requires winternl.h, found in ntdll

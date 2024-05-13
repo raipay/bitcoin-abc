@@ -129,12 +129,10 @@ enum class OptionsCategory {
     REGISTER_COMMANDS,
     AVALANCHE,
     NNG_INTERFACE,
+    CHRONIK,
 
     // Always the last option to avoid printing these in the help
     HIDDEN,
-
-    // Hide Chronik for now
-    CHRONIK,
 };
 
 struct SectionInfo {
@@ -142,6 +140,15 @@ struct SectionInfo {
     std::string m_file;
     int m_line;
 };
+
+std::string SettingToString(const util::SettingsValue &, const std::string &);
+std::optional<std::string> SettingToString(const util::SettingsValue &);
+
+int64_t SettingToInt(const util::SettingsValue &, int64_t);
+std::optional<int64_t> SettingToInt(const util::SettingsValue &);
+
+bool SettingToBool(const util::SettingsValue &, bool);
+std::optional<bool> SettingToBool(const util::SettingsValue &);
 
 class ArgsManager {
 public:
@@ -193,6 +200,7 @@ protected:
     bool UseDefaultSection(const std::string &arg) const
         EXCLUSIVE_LOCKS_REQUIRED(cs_args);
 
+public:
     /**
      * Get setting value.
      *
@@ -208,7 +216,6 @@ protected:
     std::vector<util::SettingsValue>
     GetSettingsList(const std::string &arg) const;
 
-public:
     ArgsManager();
     ~ArgsManager();
 
@@ -233,17 +240,6 @@ public:
      * Log warnings for unrecognized section names in the config file.
      */
     const std::list<SectionInfo> GetUnrecognizedSections() const;
-
-    /**
-     * Get a normalized path from a specified pathlike argument
-     *
-     * It is guaranteed that the returned path has no trailing slashes.
-     *
-     * @param pathlike_arg Pathlike argument to get a path from (e.g.,
-     * "-datadir", "-blocksdir" or "-walletdir")
-     * @return Normalized path which is get from a specified pathlike argument
-     */
-    fs::path GetPathArg(std::string pathlike_arg) const;
 
     /**
      * Get blocks directory path
@@ -309,6 +305,22 @@ public:
      */
     std::string GetArg(const std::string &strArg,
                        const std::string &strDefault) const;
+    std::optional<std::string> GetArg(const std::string &strArg) const;
+
+    /**
+     * Return path argument or default value.
+     *
+     * @param arg Argument to get a path from (e.g., "-datadir", "-blocksdir"
+     *     or "-walletdir")
+     * @param default_value Optional default value to return instead of the
+     *     empty path.
+     * @return normalized path if argument is set, with redundant "." and ".."
+     *     path components and trailing separators removed (see patharg unit
+     *     test for examples or implementation for details). If argument is
+     *     empty or not set, default_value is returned unchanged.
+     */
+    fs::path GetPathArg(std::string arg,
+                        const fs::path &default_value = {}) const;
 
     /**
      * Return integer argument or default value.
@@ -318,6 +330,7 @@ public:
      * @return command-line argument (0 if invalid number) or default value
      */
     int64_t GetIntArg(const std::string &strArg, int64_t nDefault) const;
+    std::optional<int64_t> GetIntArg(const std::string &strArg) const;
 
     /**
      * Return boolean argument or default value.
@@ -327,6 +340,7 @@ public:
      * @return command-line argument or default value
      */
     bool GetBoolArg(const std::string &strArg, bool fDefault) const;
+    std::optional<bool> GetBoolArg(const std::string &strArg) const;
 
     /**
      * Set an argument if it doesn't already have a value.
@@ -409,7 +423,8 @@ public:
      * Get settings file path, or return false if read-write settings were
      * disabled with -nosettings.
      */
-    bool GetSettingsPath(fs::path *filepath = nullptr, bool temp = false) const;
+    bool GetSettingsPath(fs::path *filepath = nullptr, bool temp = false,
+                         bool backup = false) const;
 
     /**
      * Read settings file. Push errors to vector, or log them if null.
@@ -417,9 +432,17 @@ public:
     bool ReadSettingsFile(std::vector<std::string> *errors = nullptr);
 
     /**
-     * Write settings file. Push errors to vector, or log them if null.
+     * Write settings file or backup settings file. Push errors to vector, or
+     * log them if null.
      */
-    bool WriteSettingsFile(std::vector<std::string> *errors = nullptr) const;
+    bool WriteSettingsFile(std::vector<std::string> *errors = nullptr,
+                           bool backup = false) const;
+
+    /**
+     * Get current setting from config file or read/write settings file,
+     * ignoring nonpersistent command line or forced settings values.
+     */
+    util::SettingsValue GetPersistentSetting(const std::string &name) const;
 
     /**
      * Access settings with lock held.

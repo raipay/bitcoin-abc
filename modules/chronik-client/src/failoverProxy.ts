@@ -1,8 +1,13 @@
+// Copyright (c) 2023-2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 import axios, { AxiosResponse } from 'axios';
 import WebSocket from 'isomorphic-ws';
 import * as ws from 'ws';
 import * as proto from '../proto/chronik';
 import { WsEndpoint } from './ChronikClient';
+import { WsEndpoint_InNode } from './ChronikClientNode';
 
 type MessageEvent = ws.MessageEvent | { data: Blob };
 
@@ -13,6 +18,8 @@ interface Endpoint {
     /** URL for Chronik's WebSocket interface */
     wsUrl: string;
 }
+
+const WEBSOCKET_TIMEOUT_MS = 5000;
 
 /**
  * Handles the networking to Chronik `Endpoint`s, including cycling
@@ -126,12 +133,12 @@ export class FailoverProxy {
                 this._workingIndex = index;
                 return response;
             } catch (err) {
-                if (
-                    err instanceof Error &&
-                    (err.message.includes(`getaddrinfo ENOTFOUND`) ||
-                        err.message.includes(`Failed getting ${path}`))
-                ) {
+                if (err instanceof Error && 'code' in err) {
                     // Server outage, skip to next url in loop
+                    // Connection error msgs have a 'code' key of 'ECONNREFUSED'
+                    // Error messages from the chronik server (i.e. error
+                    // messages that should not trigger a 'try next server'
+                    // attempt) are of the chronik proto Error type, which has no 'code' key
                     continue;
                 }
                 // Throw upon all other valid error responses from chronik
@@ -202,34 +209,32 @@ export class FailoverProxy {
      */
     private async _websocketUrlConnects(wsUrl: string) {
         return new Promise(resolve => {
+            // If we do not connect in appropriate timeframe,
+            // call it a failure and try the next websocket
+            const timeoutFailure = setTimeout(
+                () => resolve(false),
+                WEBSOCKET_TIMEOUT_MS,
+            );
             const testWs = new WebSocket(wsUrl);
             testWs.onerror = function () {
                 testWs.close();
-                resolve(false);
+                clearTimeout(timeoutFailure);
+                return resolve(false);
             };
             testWs.onopen = function () {
                 testWs.close();
-                resolve(true);
+                clearTimeout(timeoutFailure);
+                return resolve(true);
             };
         }).catch(() => {
             return false;
         });
     }
 
-    /**
-     * Ping the websocket to improve odds of a long-lived connection
-     * @param wsEndpoint
-     */
-    private _ping(wsEndpoint: WsEndpoint) {
-        if (typeof wsEndpoint.ws !== 'undefined') {
-            wsEndpoint.ws.ping();
-        }
-    }
-
     // Iterates through available websocket urls and attempts connection.
     // Upon a successful connection it handles the various websocket callbacks.
     // Upon an unsuccessful connection it iterates to the next websocket url in the array.
-    public async connectWs(wsEndpoint: WsEndpoint) {
+    public async connectWs(wsEndpoint: WsEndpoint | WsEndpoint_InNode) {
         for (let i = 0; i < this._endpointArray.length; i += 1) {
             const index = this.deriveEndpointIndex(i);
             const thisProxyWsUrl = this._endpointArray[index].wsUrl;
@@ -248,12 +253,6 @@ export class FailoverProxy {
                     }
                 };
                 ws.onclose = e => {
-                    if (wsEndpoint.keepAlive) {
-                        // clearInterval for pingInterval
-                        clearInterval(wsEndpoint.pingInterval);
-                        // reset pingInterval
-                        wsEndpoint.pingInterval = undefined;
-                    }
                     // End if manually closed or no auto-reconnect
                     if (
                         wsEndpoint.manuallyClosed ||
@@ -270,28 +269,54 @@ export class FailoverProxy {
                     this.connectWs(wsEndpoint);
                 };
                 wsEndpoint.ws = ws;
-                wsEndpoint.connected = new Promise(resolve => {
-                    ws.onopen = msg => {
-                        wsEndpoint.subs.forEach(sub =>
-                            wsEndpoint.subUnsub(
-                                true,
-                                sub.scriptType,
-                                sub.scriptPayload,
-                            ),
-                        );
-                        resolve(msg);
-                        if (wsEndpoint.onConnect !== undefined) {
-                            wsEndpoint.onConnect(msg);
-                        }
-                        if (wsEndpoint.keepAlive) {
-                            const PING_INTERVAL_MS = 30000;
-                            wsEndpoint.pingInterval = setInterval(
-                                () => this._ping(wsEndpoint),
-                                PING_INTERVAL_MS,
-                            );
-                        }
-                    };
-                });
+                wsEndpoint.connected =
+                    wsEndpoint instanceof WsEndpoint
+                        ? new Promise(resolve => {
+                              ws.onopen = msg => {
+                                  wsEndpoint.subs.forEach(sub =>
+                                      wsEndpoint.subUnsub(
+                                          true,
+                                          sub.scriptType,
+                                          sub.scriptPayload,
+                                      ),
+                                  );
+                                  resolve(msg);
+                                  if (wsEndpoint.onConnect !== undefined) {
+                                      wsEndpoint.onConnect(msg);
+                                  }
+                              };
+                          })
+                        : new Promise(resolve => {
+                              // WsEndpoint_InNode has a slightly different API vs NNG
+                              ws.onopen = msg => {
+                                  // Subscribe to all previously-subscribed scripts
+                                  wsEndpoint.subs.scripts.forEach(sub =>
+                                      wsEndpoint.subscribeToScript(
+                                          sub.scriptType,
+                                          sub.payload,
+                                      ),
+                                  );
+                                  // Subscribe to all previously-subscribed lokadIds
+                                  wsEndpoint.subs.lokadIds.forEach(lokadId =>
+                                      wsEndpoint.subscribeToLokadId(lokadId),
+                                  );
+                                  // Subscribe to all previously-subscribed tokenIds
+                                  wsEndpoint.subs.tokens.forEach(tokenId =>
+                                      wsEndpoint.subscribeToTokenId(tokenId),
+                                  );
+
+                                  // Subscribe to blocks method, if previously subscribed
+                                  if (wsEndpoint.subs.blocks === true) {
+                                      wsEndpoint.subscribeToBlocks();
+                                  }
+                                  resolve(msg);
+                                  if (wsEndpoint.onConnect !== undefined) {
+                                      wsEndpoint.onConnect(msg);
+                                  }
+                                  // If no errors thrown from above call then set this index to state
+                                  this._workingIndex = index;
+                              };
+                          });
                 return;
             }
         }

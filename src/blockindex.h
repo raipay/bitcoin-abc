@@ -8,14 +8,13 @@
 #include <arith_uint256.h>
 #include <blockstatus.h>
 #include <flatfile.h>
+#include <kernel/cs_main.h>
 #include <primitives/block.h>
 #include <sync.h>
-#include <tinyformat.h>
 #include <uint256.h>
+#include <util/time.h>
 
 struct BlockHash;
-
-extern RecursiveMutex cs_main;
 
 /**
  * The block chain is a tree shaped structure starting with the genesis block at
@@ -144,7 +143,10 @@ public:
         return block;
     }
 
-    BlockHash GetBlockHash() const { return *phashBlock; }
+    BlockHash GetBlockHash() const {
+        assert(phashBlock != nullptr);
+        return *phashBlock;
+    }
 
     /**
      * Get the number of transaction in the chain so far.
@@ -170,6 +172,10 @@ public:
      * (IsBlockPruned might return true)
      */
     bool HaveTxsDownloaded() const { return GetChainTxCount() != 0; }
+
+    NodeSeconds Time() const {
+        return NodeSeconds{std::chrono::seconds{nTime}};
+    }
 
     int64_t GetBlockTime() const { return int64_t(nTime); }
 
@@ -198,11 +204,7 @@ public:
         return pbegin[(pend - pbegin) / 2];
     }
 
-    std::string ToString() const {
-        return strprintf(
-            "CBlockIndex(pprev=%p, nHeight=%d, merkle=%s, hashBlock=%s)", pprev,
-            nHeight, hashMerkleRoot.ToString(), GetBlockHash().ToString());
-    }
+    std::string ToString() const;
 
     //! Check whether this block index entry is valid up to the passed validity
     //! level.

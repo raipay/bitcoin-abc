@@ -1,4 +1,6 @@
-/* eslint-disable no-restricted-globals */
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 // This service worker can be customized!
 // See https://developers.google.com/web/tools/workbox/modules
@@ -71,3 +73,19 @@ self.addEventListener('message', event => {
 });
 
 // Any other custom service worker logic can go here.
+addEventListener('fetch', event => {
+    event.respondWith(
+        (async () => {
+            if (
+                event.request.mode === 'navigate' &&
+                event.request.method === 'GET' &&
+                self.registration.waiting &&
+                (await self.clients.matchAll()).length < 2
+            ) {
+                self.registration.waiting.postMessage('skipWaiting');
+                return new Response('', { headers: { Refresh: '0' } });
+            }
+            return (await caches.match(event.request)) || fetch(event.request);
+        })(),
+    );
+});

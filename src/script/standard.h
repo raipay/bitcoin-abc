@@ -6,7 +6,6 @@
 #ifndef BITCOIN_SCRIPT_STANDARD_H
 #define BITCOIN_SCRIPT_STANDARD_H
 
-#include <consensus/amount.h>
 #include <pubkey.h>
 #include <script/script_flags.h>
 #include <uint256.h>
@@ -35,12 +34,6 @@ public:
  * OP_RETURN, +2 for the pushdata opcodes.
  */
 static const unsigned int MAX_OP_RETURN_RELAY = 223;
-
-/**
- * A data carrying output is an unspendable output containing data. The script
- * type is designated as TxoutType::NULL_DATA.
- */
-extern bool fAcceptDatacarrier;
 
 enum class TxoutType {
     NONSTANDARD,

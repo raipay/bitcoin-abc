@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -80,10 +79,6 @@ class GetBlockTemplateLPTest(BitcoinTestFramework):
         # wait 5 seconds or until thread exits
         thr.join(5)
         assert not thr.is_alive()
-
-        # Add enough mature utxos to the wallets, so that all txs spend
-        # confirmed coins
-        self.generate(self.nodes[0], 100)
 
         self.log.info(
             "Test that introducing a new transaction into the mempool will terminate"

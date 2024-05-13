@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2020-2021 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -119,7 +118,7 @@ class AvalanchePeerDiscoveryTest(BitcoinTestFramework):
         no_proof_peer = GetProofDataCountingInterface()
         node.add_p2p_connection(no_proof_peer, wait_for_verack=True)
 
-        no_proof_peer.sync_send_with_ping()
+        no_proof_peer.sync_with_ping()
 
         # No proof is requested
         with p2p_lock:
@@ -427,7 +426,7 @@ class AvalanchePeerDiscoveryTest(BitcoinTestFramework):
         # Check we don't get any avahello message until we have inbounds
         for _ in range(5):
             node.mockscheduler(MAX_AVALANCHE_PERIODIC_NETWORKING)
-            outbound.sync_send_with_ping()
+            outbound.sync_with_ping()
             assert outbound.avahello is None
 
         # Add an inbound
@@ -444,7 +443,7 @@ class AvalanchePeerDiscoveryTest(BitcoinTestFramework):
         # Check we don't get any avahello message anymore
         for _ in range(5):
             node.mockscheduler(MAX_AVALANCHE_PERIODIC_NETWORKING)
-            outbound.sync_send_with_ping()
+            outbound.sync_with_ping()
             assert outbound.avahello is None
 
         # Disconnect the inbound peer

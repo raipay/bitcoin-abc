@@ -12,6 +12,7 @@
 #include <interfaces/handler.h>
 #include <interfaces/node.h>
 #include <interfaces/wallet.h>
+#include <kernel/mempool_entry.h>
 #include <mapport.h>
 #include <net.h>
 #include <net_processing.h>
@@ -29,7 +30,6 @@
 #include <rpc/server.h>
 #include <shutdown.h>
 #include <sync.h>
-#include <timedata.h>
 #include <txmempool.h>
 #include <uint256.h>
 #include <util/check.h>
@@ -100,6 +100,48 @@ namespace {
             }
         }
         bool shutdownRequested() override { return ShutdownRequested(); }
+        bool isPersistentSettingIgnored(const std::string &name) override {
+            bool ignored = false;
+            gArgs.LockSettings([&](util::Settings &settings) {
+                if (auto *options =
+                        util::FindKey(settings.command_line_options, name)) {
+                    ignored = !options->empty();
+                }
+            });
+            return ignored;
+        }
+        util::SettingsValue
+        getPersistentSetting(const std::string &name) override {
+            return gArgs.GetPersistentSetting(name);
+        }
+        void updateRwSetting(const std::string &name,
+                             const util::SettingsValue &value) override {
+            gArgs.LockSettings([&](util::Settings &settings) {
+                if (value.isNull()) {
+                    settings.rw_settings.erase(name);
+                } else {
+                    settings.rw_settings[name] = value;
+                }
+            });
+            gArgs.WriteSettingsFile();
+        }
+        void forceSetting(const std::string &name,
+                          const util::SettingsValue &value) override {
+            gArgs.LockSettings([&](util::Settings &settings) {
+                if (value.isNull()) {
+                    settings.forced_settings.erase(name);
+                } else {
+                    settings.forced_settings[name] = value;
+                }
+            });
+        }
+        void resetSettings() override {
+            gArgs.WriteSettingsFile(/*errors=*/nullptr, /*backup=*/true);
+            gArgs.LockSettings([&](util::Settings &settings) {
+                settings.rw_settings.clear();
+            });
+            gArgs.WriteSettingsFile();
+        }
         void mapPort(bool use_upnp, bool use_natpmp) override {
             StartMapPort(use_upnp, use_natpmp);
         }
@@ -227,8 +269,9 @@ namespace {
         bool isInitialBlockDownload() override {
             return chainman().ActiveChainstate().IsInitialBlockDownload();
         }
-        bool getReindex() override { return node::fReindex; }
-        bool getImporting() override { return node::fImporting; }
+        bool isLoadingBlocks() override {
+            return chainman().m_blockman.LoadingBlocks();
+        }
         void setNetworkActive(bool active) override {
             if (m_context->connman) {
                 m_context->connman->SetNetworkActive(active);
@@ -237,7 +280,12 @@ namespace {
         bool getNetworkActive() override {
             return m_context->connman && m_context->connman->GetNetworkActive();
         }
-        CFeeRate getDustRelayFee() override { return ::dustRelayFee; }
+        CFeeRate getDustRelayFee() override {
+            if (!m_context->mempool) {
+                return CFeeRate{DUST_RELAY_TX_FEE};
+            }
+            return m_context->mempool->m_dust_relay_feerate;
+        }
         UniValue executeRpc(const Config &config, const std::string &command,
                             const UniValue &params,
                             const std::string &uri) override {
@@ -311,12 +359,10 @@ namespace {
         handleNotifyHeaderTip(NotifyHeaderTipFn fn) override {
             /* verification progress is unused when a header was received */
             return MakeHandler(::uiInterface.NotifyHeaderTip_connect(
-                [fn](SynchronizationState sync_state,
-                     const CBlockIndex *block) {
+                [fn](SynchronizationState sync_state, int64_t height,
+                     int64_t timestamp, bool presync) {
                     fn(sync_state,
-                       BlockTip{block->nHeight, block->GetBlockTime(),
-                                block->GetBlockHash()},
-                       0);
+                       BlockTip{int(height), timestamp, BlockHash{}}, presync);
                 }));
         }
         NodeContext *context() override { return m_context; }
@@ -347,6 +393,7 @@ namespace {
         if (block.m_in_active_chain) {
             *block.m_in_active_chain = active[index->nHeight] == index;
         }
+        // TODO backport core#25494 with change from core#25717
         if (block.m_next_block) {
             FillBlock(active[index->nHeight] == index
                           ? active[index->nHeight + 1]
@@ -495,6 +542,7 @@ namespace {
             const CChain &active = Assert(m_node.chainman)->ActiveChain();
             return active.GetLocator();
         }
+        // TODO: backport core#25036 with changes from core#25717
         std::optional<int>
         findLocatorFork(const CBlockLocator &locator) override {
             LOCK(cs_main);
@@ -622,21 +670,30 @@ namespace {
             }
             return m_node.mempool->estimateFee();
         }
-        CFeeRate relayMinFee() override { return ::minRelayTxFee; }
-        CFeeRate relayDustFee() override { return ::dustRelayFee; }
+        CFeeRate relayMinFee() override {
+            if (!m_node.mempool) {
+                return CFeeRate{DEFAULT_MIN_RELAY_TX_FEE_PER_KB};
+            }
+            return m_node.mempool->m_min_relay_feerate;
+        }
+        CFeeRate relayDustFee() override {
+            if (!m_node.mempool) {
+                return CFeeRate{DUST_RELAY_TX_FEE};
+            }
+            return m_node.mempool->m_dust_relay_feerate;
+        }
         bool havePruned() override {
             LOCK(cs_main);
             return m_node.chainman->m_blockman.m_have_pruned;
         }
         bool isReadyToBroadcast() override {
-            return !node::fImporting && !node::fReindex &&
+            return !chainman().m_blockman.LoadingBlocks() &&
                    !isInitialBlockDownload();
         }
         bool isInitialBlockDownload() override {
             return chainman().ActiveChainstate().IsInitialBlockDownload();
         }
         bool shutdownRequested() override { return ShutdownRequested(); }
-        int64_t getAdjustedTime() override { return GetAdjustedTime(); }
         void initMessage(const std::string &message) override {
             ::uiInterface.InitMessage(message);
         }
@@ -679,6 +736,13 @@ namespace {
             RPCRunLater(name, std::move(fn), seconds);
         }
         int rpcSerializationFlags() override { return RPCSerializationFlags(); }
+        util::SettingsValue getSetting(const std::string &name) override {
+            return gArgs.GetSetting(name);
+        }
+        std::vector<util::SettingsValue>
+        getSettingsList(const std::string &name) override {
+            return gArgs.GetSettingsList(name);
+        }
         util::SettingsValue getRwSetting(const std::string &name) override {
             util::SettingsValue result;
             gArgs.LockSettings([&](const util::Settings &settings) {
@@ -690,7 +754,8 @@ namespace {
             return result;
         }
         bool updateRwSetting(const std::string &name,
-                             const util::SettingsValue &value) override {
+                             const util::SettingsValue &value,
+                             bool write) override {
             gArgs.LockSettings([&](util::Settings &settings) {
                 if (value.isNull()) {
                     settings.rw_settings.erase(name);
@@ -698,15 +763,15 @@ namespace {
                     settings.rw_settings[name] = value;
                 }
             });
-            return gArgs.WriteSettingsFile();
+            return !write || gArgs.WriteSettingsFile();
         }
         void requestMempoolTransactions(Notifications &notifications) override {
             if (!m_node.mempool) {
                 return;
             }
             LOCK2(::cs_main, m_node.mempool->cs);
-            for (const CTxMemPoolEntry &entry : m_node.mempool->mapTx) {
-                notifications.transactionAddedToMempool(entry.GetSharedTx(),
+            for (const CTxMemPoolEntryRef &entry : m_node.mempool->mapTx) {
+                notifications.transactionAddedToMempool(entry->GetSharedTx(),
                                                         /*mempool_sequence=*/0);
             }
         }

@@ -74,7 +74,19 @@ footer_classes %}hidden{% endblock %} {% block content %}
 
                             <tr>
                                 <td>Confirmations</td>
-                                <td>{{ confirmations }}</td>
+                                <td>
+                                    {{ confirmations }} {% if
+                                    block_info.is_final %}(Final){% else %}(Not
+                                    final){% endif %}
+                                </td>
+                            </tr>
+
+                            <tr>
+                                <td>Final</td>
+                                <td>
+                                    {% if block_info.is_final %}Yes{% else
+                                    %}No{% endif %}
+                                </td>
                             </tr>
                         </tbody>
                     </table>
@@ -129,11 +141,6 @@ footer_classes %}hidden{% endblock %} {% block content %}
                                 <td>Transactions</td>
                                 <td>{{ block_info.num_txs }}</td>
                             </tr>
-
-                            <tr>
-                                <td>Nonce</td>
-                                <td>{{ block_details.nonce }}</td>
-                            </tr>
                         </tbody>
                     </table>
                 </div>
@@ -151,14 +158,6 @@ footer_classes %}hidden{% endblock %} {% block content %}
             <div class="content">
                 <table class="ui very basic collapsing celled table">
                     <tbody>
-                        <tr>
-                            <td>Header</td>
-                            <td>
-                                <div class="hex">
-                                    {{ block_header|hexify_u8_vector }}
-                                </div>
-                            </td>
-                        </tr>
                         <tr>
                             <td>Coinbase data</td>
                             <td>{{ coinbase_data|string_from_lossy_utf8 }}</td>

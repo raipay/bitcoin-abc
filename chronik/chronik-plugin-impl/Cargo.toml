@@ -1,0 +1,18 @@
+# Copyright (c) 2024 The Bitcoin developers
+
+[package]
+name = "chronik-plugin-impl"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+
+[dependencies]
+abc-rust-lint = { path = "../abc-rust-lint" }
+abc-rust-error = { path = "../abc-rust-error" }
+
+bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+bitcoinsuite-slp = { path = "../bitcoinsuite-slp" }
+
+chronik-util = { path = "../chronik-util" }
+
+pyo3 = { version = "0.20" }

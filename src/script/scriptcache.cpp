@@ -73,7 +73,7 @@ static CuckooCache::cache<ScriptCacheElement, ScriptCacheHasher>
     g_scriptExecutionCache;
 static CSHA256 g_scriptExecutionCacheHasher;
 
-void InitScriptExecutionCache() {
+bool InitScriptExecutionCache(size_t max_size_bytes) {
     // Setup the salted hasher
     uint256 nonce = GetRandHash();
     // We want the nonce to be 64 bytes long to force the hasher to process
@@ -81,18 +81,17 @@ void InitScriptExecutionCache() {
     // just write our 32-byte entropy twice to fill the 64 bytes.
     g_scriptExecutionCacheHasher.Write(nonce.begin(), 32);
     g_scriptExecutionCacheHasher.Write(nonce.begin(), 32);
-    // nMaxCacheSize is unsigned. If -maxscriptcachesize is set to zero,
-    // setup_bytes creates the minimum possible cache (2 elements).
-    size_t nMaxCacheSize =
-        std::min(std::max(int64_t(0),
-                          gArgs.GetIntArg("-maxscriptcachesize",
-                                          DEFAULT_MAX_SCRIPT_CACHE_SIZE)),
-                 MAX_MAX_SCRIPT_CACHE_SIZE) *
-        (size_t(1) << 20);
-    size_t nElems = g_scriptExecutionCache.setup_bytes(nMaxCacheSize);
-    LogPrintf("Using %zu MiB out of %zu requested for script execution cache, "
-              "able to store %zu elements\n",
-              (nElems * sizeof(uint256)) >> 20, nMaxCacheSize >> 20, nElems);
+
+    auto setup_results = g_scriptExecutionCache.setup_bytes(max_size_bytes);
+    if (!setup_results) {
+        return false;
+    }
+
+    const auto [num_elems, approx_size_bytes] = *setup_results;
+    LogPrintf("Using %zu MiB out of %zu MiB requested for script execution "
+              "cache, able to store %zu elements\n",
+              approx_size_bytes >> 20, max_size_bytes >> 20, num_elems);
+    return true;
 }
 
 ScriptCacheKey::ScriptCacheKey(const CTransaction &tx, uint32_t flags) {

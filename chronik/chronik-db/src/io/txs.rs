@@ -160,12 +160,12 @@ pub enum TxsError {
 
 use self::TxsError::*;
 
-fn tx_num_to_bytes(tx_num: TxNum) -> [u8; 8] {
+pub(crate) fn tx_num_to_bytes(tx_num: TxNum) -> [u8; 8] {
     // big-endian, so txs are sorted ascendingly
     tx_num.to_be_bytes()
 }
 
-fn bytes_to_tx_num(bytes: &[u8]) -> Result<TxNum> {
+pub(crate) fn bytes_to_tx_num(bytes: &[u8]) -> Result<TxNum> {
     Ok(TxNum::from_be_bytes(
         bytes
             .try_into()
@@ -191,6 +191,25 @@ impl<'a> LookupColumn for TxColumn<'a> {
 
     fn get_data(&self, tx_num: Self::SerialNum) -> Result<Option<Self::Data>> {
         self.get_tx(tx_num)
+    }
+
+    fn get_data_multi(
+        &self,
+        tx_nums: impl IntoIterator<Item = Self::SerialNum>,
+    ) -> Result<Vec<Option<Self::Data>>> {
+        let data_ser = self.db.multi_get(
+            self.cf_tx,
+            tx_nums.into_iter().map(tx_num_to_bytes),
+            false,
+        )?;
+        data_ser
+            .into_iter()
+            .map(|data_ser| {
+                data_ser
+                    .map(|data_ser| db_deserialize::<SerTx>(&data_ser))
+                    .transpose()
+            })
+            .collect::<_>()
     }
 }
 
@@ -323,7 +342,7 @@ impl<'a> TxWriter<'a> {
             CF_FIRST_TX_BY_BLK,
             Options::default(),
         ));
-        LookupByHash::add_cfs(columns, CF_LOOKUP_TX_BY_HASH);
+        LookupByHash::add_cfs(columns);
     }
 }
 
@@ -379,9 +398,32 @@ impl<'a> TxReader<'a> {
         }
     }
 
+    /// Batch-read just the [`TxNum`]s of the txs by [`TxId`]s, or [`None`] if
+    /// not in the DB.
+    pub fn tx_nums_by_txids<'b, I>(
+        &self,
+        txids: I,
+    ) -> Result<Vec<Option<TxNum>>>
+    where
+        I: IntoIterator<Item = &'b TxId> + Clone,
+        I::IntoIter: Clone,
+    {
+        let data = LookupByHash::get_multi(
+            &self.col,
+            self.col.db,
+            txids.into_iter().map(|txid| txid.as_bytes()),
+        )?;
+        Ok(data
+            .into_iter()
+            .map(|data| data.map(|(tx_num, _)| tx_num))
+            .collect())
+    }
+
     /// Read the [`BlockTx`] by [`TxNum`], or [`None`] if not in the DB.
     pub fn tx_by_tx_num(&self, tx_num: TxNum) -> Result<Option<BlockTx>> {
-        let Some(ser_tx) = self.col.get_tx(tx_num)? else { return Ok(None) };
+        let Some(ser_tx) = self.col.get_tx(tx_num)? else {
+            return Ok(None);
+        };
         let block_height = self.block_height_by_tx_num(tx_num)?;
         Ok(Some(BlockTx {
             entry: TxEntry::from(ser_tx),
@@ -392,7 +434,9 @@ impl<'a> TxReader<'a> {
     /// Read just the [`TxId`] of the tx by [`TxNum`], or [`None`] if not in the
     /// DB. This is faster than [`TxReader::tx_and_num_by_txid`].
     pub fn txid_by_tx_num(&self, tx_num: TxNum) -> Result<Option<TxId>> {
-        let Some(ser_tx) = self.col.get_tx(tx_num)? else { return Ok(None) };
+        let Some(ser_tx) = self.col.get_tx(tx_num)? else {
+            return Ok(None);
+        };
         Ok(Some(TxId::from(ser_tx.txid)))
     }
 

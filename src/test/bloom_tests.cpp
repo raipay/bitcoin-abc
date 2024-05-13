@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <bloom.h>
+#include <common/bloom.h>
 
 #include <clientversion.h>
 #include <consensus/merkle.h>
@@ -55,8 +55,9 @@ BOOST_AUTO_TEST_CASE(bloom_create_insert_serialize) {
     stream << filter;
 
     std::vector<uint8_t> expected = ParseHex("03614e9b050000000000000001");
+    auto result{MakeUCharSpan(stream)};
 
-    BOOST_CHECK_EQUAL_COLLECTIONS(stream.begin(), stream.end(),
+    BOOST_CHECK_EQUAL_COLLECTIONS(result.begin(), result.end(),
                                   expected.begin(), expected.end());
 
     BOOST_CHECK_MESSAGE(
@@ -91,8 +92,9 @@ BOOST_AUTO_TEST_CASE(bloom_create_insert_serialize_with_tweak) {
     stream << filter;
 
     std::vector<uint8_t> expected = ParseHex("03ce4299050000000100008001");
+    auto result{MakeUCharSpan(stream)};
 
-    BOOST_CHECK_EQUAL_COLLECTIONS(stream.begin(), stream.end(),
+    BOOST_CHECK_EQUAL_COLLECTIONS(result.begin(), result.end(),
                                   expected.begin(), expected.end());
 }
 
@@ -106,14 +108,15 @@ BOOST_AUTO_TEST_CASE(bloom_create_insert_key) {
     CBloomFilter filter(2, 0.001, 0, BLOOM_UPDATE_ALL);
     filter.insert(vchPubKey);
     uint160 hash = pubkey.GetID();
-    filter.insert(std::vector<uint8_t>(hash.begin(), hash.end()));
+    filter.insert(hash);
 
     CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
     stream << filter;
 
     std::vector<uint8_t> expected = ParseHex("038fc16b080000000000000001");
+    auto result{MakeUCharSpan(stream)};
 
-    BOOST_CHECK_EQUAL_COLLECTIONS(stream.begin(), stream.end(),
+    BOOST_CHECK_EQUAL_COLLECTIONS(result.begin(), result.end(),
                                   expected.begin(), expected.end());
 }
 
@@ -711,9 +714,10 @@ BOOST_AUTO_TEST_CASE(merkle_block_3_and_serialize) {
                  "00000000000b50cc069d6a3e33e3ff84a5c41d9d3febe7c770fdcc96b2c3f"
                  "f60abe184f196367291b4d4c86041b8fa45d630100000001b50cc069d6a3e"
                  "33e3ff84a5c41d9d3febe7c770fdcc96b2c3ff60abe184f19630101");
+    auto result{MakeUCharSpan(merkleStream)};
 
     BOOST_CHECK_EQUAL_COLLECTIONS(expected.begin(), expected.end(),
-                                  merkleStream.begin(), merkleStream.end());
+                                  result.begin(), result.end());
 }
 
 BOOST_AUTO_TEST_CASE(merkle_block_4) {

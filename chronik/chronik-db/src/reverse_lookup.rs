@@ -50,12 +50,14 @@ use std::{
 };
 
 use abc_rust_error::Result;
-use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch};
+use rocksdb::{ColumnFamilyDescriptor, WriteBatch};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     db::{Db, CF},
+    io::merge::catch_merge_errors,
+    reverse_lookup::IndexError::*,
     ser::{db_deserialize, db_serialize},
 };
 
@@ -72,7 +74,12 @@ pub(crate) struct ReverseLookup<L: LookupColumn>(PhantomData<L>);
 /// Trait providing the data to build a reverse lookup index.
 pub(crate) trait LookupColumn {
     /// Number uniquely identifying `Value`s, e.g. `BlockHeight` or `TxNum`.
-    type SerialNum: Copy + for<'a> Deserialize<'a> + Display + Ord + Serialize;
+    type SerialNum: Copy
+        + for<'a> Deserialize<'a>
+        + Display
+        + Ord
+        + Serialize
+        + 'static;
 
     /// A short hash, compacting keys of type `[u8; 32]`.
     type CheapHash: AsRef<[u8]> + Eq + Hash;
@@ -93,6 +100,12 @@ pub(crate) trait LookupColumn {
 
     /// Fetch the data from the db using the serial num.
     fn get_data(&self, number: Self::SerialNum) -> Result<Option<Self::Data>>;
+
+    /// Fetch data from the batched db using the serial nums.
+    fn get_data_multi(
+        &self,
+        number: impl IntoIterator<Item = Self::SerialNum>,
+    ) -> Result<Vec<Option<Self::Data>>>;
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -106,11 +119,20 @@ pub(crate) enum IndexError {
         cf_data_name: &'static str,
         cf_index_name: &'static str,
     },
+
+    #[error(
+        "Inconsistent DB: Tried inserting {serial_str} into {cf_index_name}, \
+         but value already exists"
+    )]
+    SerialNumAlreadyExists {
+        serial_str: String,
+        cf_index_name: &'static str,
+    },
 }
 
 impl IndexError {
     fn not_in_data_column<L: LookupColumn>(serial: L::SerialNum) -> IndexError {
-        IndexError::NotInDataColumn {
+        NotInDataColumn {
             serial_str: serial.to_string(),
             cf_data_name: L::CF_DATA,
             cf_index_name: L::CF_INDEX,
@@ -118,16 +140,71 @@ impl IndexError {
     }
 }
 
+fn partial_merge_ordered_list(
+    _key: &[u8],
+    _existing_value: Option<&[u8]>,
+    _operands: &rocksdb::MergeOperands,
+) -> Option<Vec<u8>> {
+    // We don't use partial merge
+    None
+}
+
+fn init_ordered_list<SN: for<'a> Deserialize<'a>>(
+    _key: &[u8],
+    existing_value: Option<&[u8]>,
+    operands: &rocksdb::MergeOperands,
+) -> Result<Vec<SN>> {
+    let mut nums = match existing_value {
+        Some(num) => db_deserialize::<Vec<SN>>(num)?,
+        None => vec![],
+    };
+    nums.reserve_exact(operands.len());
+    Ok(nums)
+}
+
+fn apply_ordered_list<SN: for<'a> Deserialize<'a> + Display + Ord>(
+    cf_index_name: &'static str,
+    nums: &mut Vec<SN>,
+    operand: &[u8],
+) -> Result<()> {
+    let num = db_deserialize::<SN>(operand)?;
+    match nums.binary_search(&num) {
+        Ok(_) => {
+            return Err(SerialNumAlreadyExists {
+                serial_str: num.to_string(),
+                cf_index_name,
+            }
+            .into())
+        }
+        Err(insert_idx) => nums.insert(insert_idx, num),
+    }
+    Ok(())
+}
+
+fn ser_ordered_list<SN: Serialize>(
+    _key: &[u8],
+    nums: Vec<SN>,
+) -> Result<Vec<u8>> {
+    db_serialize::<Vec<SN>>(&nums)
+}
+
 impl<L: LookupColumn> ReverseLookup<L> {
     /// Add the cfs required by the reverse lookup index.
-    pub(crate) fn add_cfs(
-        columns: &mut Vec<ColumnFamilyDescriptor>,
-        lookup_cf_name: &'static str,
-    ) {
-        columns.push(ColumnFamilyDescriptor::new(
-            lookup_cf_name,
-            Options::default(),
-        ));
+    pub(crate) fn add_cfs(columns: &mut Vec<ColumnFamilyDescriptor>) {
+        let mut options = rocksdb::Options::default();
+        let merge_op_name = format!("{}::merge_ordered_list", L::CF_INDEX);
+        options.set_merge_operator(
+            merge_op_name.as_str(),
+            catch_merge_errors::<Vec<L::SerialNum>>(
+                init_ordered_list::<L::SerialNum>,
+                |_, nums, operand| {
+                    apply_ordered_list(L::CF_INDEX, nums, operand)
+                },
+                ser_ordered_list::<L::SerialNum>,
+            ),
+            partial_merge_ordered_list,
+        );
+        columns.push(ColumnFamilyDescriptor::new(L::CF_INDEX, options));
     }
 
     /// Read by key from the DB using the index.
@@ -161,6 +238,50 @@ impl<L: LookupColumn> ReverseLookup<L> {
         Ok(None)
     }
 
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn get_multi<'a>(
+        lookup_column: &L,
+        db: &Db,
+        keys: impl IntoIterator<Item = &'a [u8; 32]> + Clone,
+    ) -> Result<Vec<Option<(L::SerialNum, L::Data)>>> {
+        let cf_index = db.cf(L::CF_INDEX)?;
+        let serial_lists = db.multi_get(
+            cf_index,
+            keys.clone().into_iter().map(L::cheap_hash),
+            false,
+        )?;
+        let serial_lists = serial_lists
+            .iter()
+            .map(|serials| match serials {
+                Some(serials) => db_deserialize::<Vec<L::SerialNum>>(serials),
+                None => Ok(vec![]),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut data_lists = lookup_column.get_data_multi(
+            serial_lists.iter().flat_map(|s| s.iter().cloned()),
+        )?;
+        let mut data_idx = 0;
+        let mut result = Vec::with_capacity(serial_lists.len());
+        for (serial_list, key) in serial_lists.into_iter().zip(keys) {
+            let mut has_found = false;
+            for serial in serial_list {
+                if !has_found {
+                    if let Some(data) = data_lists[data_idx].take() {
+                        if L::data_key(&data) == key {
+                            result.push(Some((serial, data)));
+                            has_found = true;
+                        }
+                    }
+                }
+                data_idx += 1;
+            }
+            if !has_found {
+                result.push(None);
+            }
+        }
+        Ok(result)
+    }
+
     /// Insert into the index.
     pub(crate) fn insert_pairs<'a>(
         db: &Db,
@@ -168,18 +289,10 @@ impl<L: LookupColumn> ReverseLookup<L> {
         pairs: impl IntoIterator<Item = (L::SerialNum, &'a [u8; 32])>,
     ) -> Result<()> {
         let cf_index = db.cf(L::CF_INDEX)?;
-        let mut new_entries =
-            HashMap::<L::CheapHash, BTreeSet<L::SerialNum>>::new();
-        // Fill new_entries with either data from the DB or add new entries
+        // Use merge_cf to insert serials into the cheap hashes of the keys
         for (serial, key) in pairs {
-            let serials =
-                Self::get_or_fetch(db, cf_index, &mut new_entries, key)?;
-            serials.insert(serial);
-        }
-        // Add/override all the entries with the inserted serials
-        for (key, serials) in new_entries {
-            let serials = db_serialize(&Vec::from_iter(serials))?;
-            batch.put_cf(cf_index, key, &serials);
+            let cheap_hash = L::cheap_hash(key);
+            batch.merge_cf(cf_index, cheap_hash, db_serialize(&serial)?);
         }
         Ok(())
     }
@@ -302,6 +415,25 @@ mod tests {
                 None => Ok(None),
             }
         }
+
+        fn get_data_multi(
+            &self,
+            numbers: impl IntoIterator<Item = Self::SerialNum>,
+        ) -> Result<Vec<Option<Self::Data>>> {
+            let data_ser = self.db.multi_get(
+                self.cf_data,
+                numbers.into_iter().map(|num| num.to_be_bytes()),
+                false,
+            )?;
+            data_ser
+                .into_iter()
+                .map(|data_ser| {
+                    data_ser
+                        .map(|data_ser| db_deserialize::<TestData>(&data_ser))
+                        .transpose()
+                })
+                .collect::<_>()
+        }
     }
 
     #[test]
@@ -310,7 +442,7 @@ mod tests {
         let tempdir = tempdir::TempDir::new("chronik-db--lookup")?;
         let mut cfs =
             vec![ColumnFamilyDescriptor::new(CF_TEST, Options::default())];
-        Index::add_cfs(&mut cfs, CF_TEST_INDEX);
+        Index::add_cfs(&mut cfs);
         let db = Db::open_with_cfs(tempdir.path(), cfs)?;
         let cf_data = db.cf(CF_TEST)?;
         let column = TestColumn { db: &db, cf_data };
@@ -460,7 +592,7 @@ mod tests {
         let tempdir = tempdir::TempDir::new("chronik-db--lookup_rng")?;
         let mut cfs =
             vec![ColumnFamilyDescriptor::new(CF_TEST, Options::default())];
-        Index::add_cfs(&mut cfs, CF_TEST_INDEX);
+        Index::add_cfs(&mut cfs);
         let db = Db::open_with_cfs(tempdir.path(), cfs)?;
         let cf_data = db.cf(CF_TEST)?;
         let column = TestColumn { db: &db, cf_data };
@@ -505,6 +637,15 @@ mod tests {
                 assert_eq!(expected_num, actual_num);
                 assert_eq!(*expected_data, actual_data);
             }
+            let batch_result = Index::get_multi(
+                &column,
+                &db,
+                entries.iter().map(|(_, data)| &data.key),
+            )?;
+            assert_eq!(
+                batch_result,
+                entries.iter().map(|entry| Some(*entry)).collect::<Vec<_>>(),
+            );
             Ok(())
         };
 
@@ -512,6 +653,12 @@ mod tests {
             for (_, data) in entries {
                 assert!(Index::get(&column, &db, &data.key)?.is_none());
             }
+            let batch_result = Index::get_multi(
+                &column,
+                &db,
+                entries.iter().map(|(_, data)| &data.key),
+            )?;
+            assert_eq!(batch_result, vec![None; entries.len()]);
             Ok(())
         };
 

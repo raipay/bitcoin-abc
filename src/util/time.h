@@ -24,6 +24,7 @@ struct NodeClock : public std::chrono::system_clock {
 };
 using NodeSeconds = std::chrono::time_point<NodeClock, std::chrono::seconds>;
 
+using SteadyClock = std::chrono::steady_clock;
 using SteadySeconds =
     std::chrono::time_point<std::chrono::steady_clock, std::chrono::seconds>;
 using SteadyMilliseconds = std::chrono::time_point<std::chrono::steady_clock,
@@ -44,9 +45,12 @@ void UninterruptibleSleep(const std::chrono::microseconds &n);
  * an interface that doesn't support std::chrono (e.g. RPC, debug log, or the
  * GUI)
  */
+template <typename Dur1, typename Dur2> constexpr auto Ticks(Dur2 d) {
+    return std::chrono::duration_cast<Dur1>(d).count();
+}
 template <typename Duration, typename Timepoint>
 constexpr auto TicksSinceEpoch(Timepoint t) {
-    return std::chrono::time_point_cast<Duration>(t).time_since_epoch().count();
+    return Ticks<Duration>(t.time_since_epoch());
 }
 constexpr int64_t count_seconds(std::chrono::seconds t) {
     return t.count();
@@ -58,6 +62,7 @@ constexpr int64_t count_microseconds(std::chrono::microseconds t) {
     return t.count();
 }
 
+using HoursDouble = std::chrono::duration<double, std::chrono::hours::period>;
 using SecondsDouble =
     std::chrono::duration<double, std::chrono::seconds::period>;
 

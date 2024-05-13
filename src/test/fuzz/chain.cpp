@@ -13,7 +13,7 @@
 #include <optional>
 #include <vector>
 
-void test_one_input(const std::vector<uint8_t> &buffer) {
+FUZZ_TARGET(chain) {
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
     std::optional<CDiskBlockIndex> disk_block_index =
         ConsumeDeserializable<CDiskBlockIndex>(fuzzed_data_provider);
@@ -25,7 +25,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     disk_block_index->phashBlock = &zero;
     {
         LOCK(::cs_main);
-        (void)disk_block_index->GetBlockHash();
+        (void)disk_block_index->ConstructBlockHash();
         (void)disk_block_index->GetBlockPos();
         (void)disk_block_index->GetBlockTime();
         (void)disk_block_index->GetBlockTimeMax();
@@ -37,7 +37,6 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         (void)disk_block_index->GetUndoPos();
         (void)disk_block_index->HaveTxsDownloaded();
         (void)disk_block_index->IsValid();
-        (void)disk_block_index->ToString();
         (void)disk_block_index->UpdateChainStats();
     }
 

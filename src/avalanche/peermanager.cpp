@@ -9,6 +9,7 @@
 #include <avalanche/delegation.h>
 #include <avalanche/validation.h>
 #include <cashaddrenc.h>
+#include <consensus/activation.h>
 #include <logging.h>
 #include <random.h>
 #include <scheduler.h>
@@ -969,7 +970,7 @@ void PeerManager::removeUnbroadcastProof(const ProofId &proofid) {
 }
 
 bool PeerManager::selectStakingRewardWinner(const CBlockIndex *pprev,
-                                            CScript &winner) {
+                                            std::vector<CScript> &winners) {
     if (!pprev) {
         return false;
     }
@@ -980,100 +981,201 @@ bool PeerManager::selectStakingRewardWinner(const CBlockIndex *pprev,
     // previous block or lacking node connected.
     // The previous block time is capped to now for the unlikely event the
     // previous block time is in the future.
-    const int64_t maxRegistrationTime =
-        std::min(pprev->GetBlockTime(), GetTime()) -
-        std::chrono::duration_cast<std::chrono::seconds>(2 *
-                                                         Peer::DANGLING_TIMEOUT)
-            .count();
+    std::chrono::seconds registrationDelay =
+        std::chrono::duration_cast<std::chrono::seconds>(
+            IsLeeKuanYewEnabled(chainman.GetConsensus(), pprev)
+                ? 4 * Peer::DANGLING_TIMEOUT
+                : 2 * Peer::DANGLING_TIMEOUT);
+    std::chrono::seconds maxRegistrationDelay =
+        std::chrono::duration_cast<std::chrono::seconds>(
+            IsLeeKuanYewEnabled(chainman.GetConsensus(), pprev)
+                ? 6 * Peer::DANGLING_TIMEOUT
+                : 4 * Peer::DANGLING_TIMEOUT);
+    std::chrono::seconds minRegistrationDelay =
+        std::chrono::duration_cast<std::chrono::seconds>(
+            2 * Peer::DANGLING_TIMEOUT);
+
+    const int64_t refTime = std::min(pprev->GetBlockTime(), GetTime());
+
+    const int64_t targetRegistrationTime = refTime - registrationDelay.count();
+    const int64_t maxRegistrationTime = refTime - minRegistrationDelay.count();
+    const int64_t minRegistrationTime = refTime - maxRegistrationDelay.count();
 
     const BlockHash prevblockhash = pprev->GetBlockHash();
 
-    double bestRewardRank = std::numeric_limits<double>::max();
-    ProofRef selectedProof = ProofRef();
-    uint256 bestRewardHash;
+    std::vector<ProofRef> selectedProofs;
+    ProofRef firstCompliantProof = ProofRef();
+    while (selectedProofs.size() < peers.size()) {
+        double bestRewardRank = std::numeric_limits<double>::max();
+        ProofRef selectedProof = ProofRef();
+        int64_t selectedProofRegistrationTime{0};
+        uint256 bestRewardHash;
 
-    for (const Peer &peer : peers) {
-        if (!peer.proof) {
-            // Should never happen, continue
-            continue;
+        for (const Peer &peer : peers) {
+            if (!peer.proof) {
+                // Should never happen, continue
+                continue;
+            }
+
+            if (!peer.hasFinalized ||
+                peer.registration_time.count() >= maxRegistrationTime) {
+                continue;
+            }
+
+            if (std::find_if(selectedProofs.begin(), selectedProofs.end(),
+                             [&peer](const ProofRef &proof) {
+                                 return peer.getProofId() == proof->getId();
+                             }) != selectedProofs.end()) {
+                continue;
+            }
+
+            uint256 proofRewardHash;
+            CHash256()
+                .Write(prevblockhash)
+                .Write(peer.getProofId())
+                .Finalize(proofRewardHash);
+
+            if (proofRewardHash == uint256::ZERO) {
+                // This either the result of an incredibly unlikely lucky hash,
+                // or a the hash is getting abused. In this case, skip the
+                // proof.
+                LogPrintf(
+                    "Staking reward hash has a suspicious value of zero for "
+                    "proof %s and blockhash %s, skipping\n",
+                    peer.getProofId().ToString(), prevblockhash.ToString());
+                continue;
+            }
+
+            // To make sure the selection is properly weighted according to the
+            // proof score, we normalize the proofRewardHash to a number between
+            // 0 and 1, then take the logarithm and divide by the weight. Since
+            // it is scale-independent, we can simplify by removing constants
+            // and use base 2 logarithm.
+            // Inspired by: https://stackoverflow.com/a/30226926.
+            double proofRewardRank =
+                (256.0 -
+                 std::log2(UintToArith256(proofRewardHash).getdouble())) /
+                peer.getScore();
+
+            // The best ranking is the lowest ranking value
+            if (proofRewardRank < bestRewardRank) {
+                bestRewardRank = proofRewardRank;
+                selectedProof = peer.proof;
+                selectedProofRegistrationTime = peer.registration_time.count();
+                bestRewardHash = proofRewardHash;
+            }
+
+            // Select the lowest reward hash then proofid in the unlikely case
+            // of a collision.
+            if (proofRewardRank == bestRewardRank &&
+                (proofRewardHash < bestRewardHash ||
+                 (proofRewardHash == bestRewardHash &&
+                  peer.getProofId() < selectedProof->getId()))) {
+                selectedProof = peer.proof;
+                selectedProofRegistrationTime = peer.registration_time.count();
+                bestRewardHash = proofRewardHash;
+            }
         }
 
-        if (!peer.hasFinalized ||
-            peer.registration_time.count() >= maxRegistrationTime) {
-            continue;
+        if (!selectedProof) {
+            // No winner
+            break;
         }
 
-        uint256 proofRewardHash;
-        CHash256()
-            .Write(prevblockhash)
-            .Write(peer.getProofId())
-            .Finalize(proofRewardHash);
-
-        if (proofRewardHash == uint256::ZERO) {
-            // This either the result of an incredibly unlikely lucky hash, or
-            // a the hash is getting abused. In this case, skip the proof.
-            LogPrintf("Staking reward hash has a suspicious value of zero for "
-                      "proof %s and blockhash %s, skipping\n",
-                      peer.getProofId().ToString(), prevblockhash.ToString());
-            continue;
+        if (!firstCompliantProof &&
+            selectedProofRegistrationTime < targetRegistrationTime) {
+            firstCompliantProof = selectedProof;
         }
 
-        // To make sure the selection is properly weighted according to the
-        // proof score, we normalize the proofRewardHash to a number between 0
-        // and 1, then take the logarithm and divide by the weight.
-        // Since it is scale-independent, we can simplify by removing constants
-        // and use base 2 logarithm.
-        // Inspired by: https://stackoverflow.com/a/30226926.
-        double proofRewardRank =
-            (256.0 - std::log2(UintToArith256(proofRewardHash).getdouble())) /
-            peer.getScore();
+        selectedProofs.push_back(selectedProof);
 
-        // The best ranking is the lowest ranking value
-        if (proofRewardRank < bestRewardRank) {
-            bestRewardRank = proofRewardRank;
-            selectedProof = peer.proof;
-            bestRewardHash = proofRewardHash;
+        if (selectedProofRegistrationTime < minRegistrationTime &&
+            !isFlaky(selectedProof->getId())) {
+            break;
         }
+    }
 
-        // Select the lowest reward hash then proofid in the unlikely case of a
-        // collision.
-        if (proofRewardRank == bestRewardRank &&
-            (proofRewardHash < bestRewardHash ||
-             (proofRewardHash == bestRewardHash &&
-              peer.getProofId() < selectedProof->getId()))) {
-            selectedProof = peer.proof;
-            bestRewardHash = proofRewardHash;
-        }
-    };
+    winners.clear();
 
-    if (!selectedProof) {
-        // No winner
+    if (!firstCompliantProof) {
         return false;
     }
 
-    winner = selectedProof->getPayoutScript();
+    winners.reserve(selectedProofs.size());
+
+    // Find the winner
+    for (const ProofRef &proof : selectedProofs) {
+        if (proof->getId() == firstCompliantProof->getId()) {
+            winners.push_back(proof->getPayoutScript());
+        }
+    }
+    // Add the others (if any) after the winner
+    for (const ProofRef &proof : selectedProofs) {
+        if (proof->getId() != firstCompliantProof->getId()) {
+            winners.push_back(proof->getPayoutScript());
+        }
+    }
 
     return true;
 }
 
-bool PeerManager::getPeerScoreFromNodeId(const NodeId nodeid,
-                                         uint32_t &score) const {
-    auto nit = nodes.find(nodeid);
-    if (nit == nodes.end()) {
-        // No such node
+bool PeerManager::isFlaky(const ProofId &proofid) const {
+    if (localProof && proofid == localProof->getId()) {
         return false;
     }
 
-    const PeerId peerid = nit->peerid;
-
-    auto pit = peers.find(peerid);
-    if (pit == peers.end()) {
-        // Peer not found
-        return false;
+    // If we are missing connection to this proof, consider flaky
+    if (forPeer(proofid,
+                [](const Peer &peer) { return peer.node_count == 0; })) {
+        return true;
     }
 
-    score = pit->getScore();
-    return true;
+    auto &remoteProofsByNodeId = remoteProofs.get<by_nodeid>();
+    auto &nview = nodes.get<next_request_time>();
+
+    std::unordered_map<PeerId, std::unordered_set<ProofId, SaltedProofIdHasher>>
+        missing_per_peer;
+
+    // Construct a set of missing proof ids per peer
+    double total_score{0};
+    for (const Peer &peer : peers) {
+        const PeerId peerid = peer.peerid;
+
+        total_score += peer.getScore();
+
+        auto nodes_range = nview.equal_range(peerid);
+        for (auto &nit = nodes_range.first; nit != nodes_range.second; ++nit) {
+            auto proofs_range = remoteProofsByNodeId.equal_range(nit->nodeid);
+            for (auto &proofit = proofs_range.first;
+                 proofit != proofs_range.second; ++proofit) {
+                if (!proofit->present) {
+                    missing_per_peer[peerid].insert(proofit->proofid);
+                }
+            }
+        };
+    }
+
+    double missing_score{0};
+
+    // Now compute a score for the missing proof
+    for (const auto &[peerid, missingProofs] : missing_per_peer) {
+        if (missingProofs.size() > 3) {
+            // Ignore peers with too many missing proofs
+            continue;
+        }
+
+        auto pit = peers.find(peerid);
+        if (pit == peers.end()) {
+            // Peer not found
+            continue;
+        }
+
+        if (missingProofs.count(proofid) > 0) {
+            missing_score += pit->getScore();
+        }
+    }
+
+    return (missing_score / total_score) > 0.3;
 }
 
 std::optional<bool>
@@ -1086,37 +1188,77 @@ PeerManager::getRemotePresenceStatus(const ProofId &proofid) const {
         return std::nullopt;
     }
 
-    size_t total_remotes{0};
-    uint32_t total_score{0};
-    size_t present_remotes{0};
-    uint32_t present_score{0};
-    size_t missing_remotes{0};
-    uint32_t missing_score{0};
+    double total_score{0};
+    double present_score{0};
+    double missing_score{0};
+
     for (auto it = begin; it != end; it++) {
-        uint32_t score;
-        if (!getPeerScoreFromNodeId(it->nodeid, score)) {
-            // Should never happen
+        auto nit = nodes.find(it->nodeid);
+        if (nit == nodes.end()) {
+            // No such node
             continue;
         }
 
-        ++total_remotes;
+        const PeerId peerid = nit->peerid;
+
+        auto pit = peers.find(peerid);
+        if (pit == peers.end()) {
+            // Peer not found
+            continue;
+        }
+
+        uint32_t node_count = pit->node_count;
+        if (localProof && pit->getProofId() == localProof->getId()) {
+            // If that's our local proof, account for ourself
+            ++node_count;
+        }
+
+        if (node_count == 0) {
+            // should never happen
+            continue;
+        }
+
+        const double score = double(pit->getScore()) / node_count;
+
         total_score += score;
         if (it->present) {
-            ++present_remotes;
             present_score += score;
         } else {
-            ++missing_remotes;
             missing_score += score;
         }
     }
 
-    if ((double(present_remotes) / total_remotes > 0.8) &&
-        (double(present_score) / total_score > 0.8)) {
+    if (localProof) {
+        auto &peersByProofid = peers.get<by_proofid>();
+
+        // Do we have a node connected for that proof ?
+        bool present = false;
+        auto pit = peersByProofid.find(proofid);
+        if (pit != peersByProofid.end()) {
+            present = pit->node_count > 0;
+        }
+
+        pit = peersByProofid.find(localProof->getId());
+        if (pit != peersByProofid.end()) {
+            // Also divide by node_count, we can have several nodes even for our
+            // local proof.
+            const double score =
+                double(pit->getScore()) / (1 + pit->node_count);
+
+            total_score += score;
+            if (present) {
+                present_score += score;
+            } else {
+                missing_score += score;
+            }
+        }
+    }
+
+    if (present_score / total_score > 0.55) {
         return std::make_optional(true);
     }
 
-    if ((double(missing_remotes) / total_remotes > 0.8) &&
-        (double(missing_score) / total_score > 0.8)) {
+    if (missing_score / total_score > 0.55) {
         return std::make_optional(false);
     }
 

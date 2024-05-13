@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Electrum ABC - lightweight eCash client
 # Copyright (C) 2020 The Electrum ABC developers
 # Copyright (C) 2019 calin.culianu@gmail.com
@@ -36,7 +35,8 @@ from .util import Buttons, WindowModalDialog
 
 class ScanBeyondGap(WindowModalDialog, PrintError):
     progress_sig = pyqtSignal(int, int, int, int)
-    done_sig = pyqtSignal(object, object)
+    done_sig = pyqtSignal(int, int)
+    error_sig = pyqtSignal(Exception)
 
     def __init__(self, main_window):
         super().__init__(parent=main_window, title=_("Scan Beyond Gap"))
@@ -73,6 +73,7 @@ class ScanBeyondGap(WindowModalDialog, PrintError):
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
         )
         vbox.addWidget(label)
+
         vbox.addStretch(1)
         hbox = QtWidgets.QHBoxLayout()
         label = QtWidgets.QLabel(_("Number of addresses to scan:"))
@@ -90,15 +91,31 @@ class ScanBeyondGap(WindowModalDialog, PrintError):
         hbox.addWidget(self.which_cb)
         hbox.addStretch(1)
         vbox.addLayout(hbox)
+
+        self.always_add_addresses_cb = QtWidgets.QCheckBox(
+            _("Always add scanned addresses to the wallet")
+        )
+        self.always_add_addresses_cb.setToolTip(
+            _(
+                "Add the scanned addresses even if no new history is found. Leave this "
+                "unchecked if unsure, because subscribing to more addresses may "
+                "needlessly slow down your wallet."
+            )
+        )
+        vbox.addWidget(self.always_add_addresses_cb)
+
         self.prog = QtWidgets.QProgressBar()
         self.prog.setMinimum(0)
         self.prog.setMaximum(100)
         vbox.addWidget(self.prog)
+
         self.prog_label = QtWidgets.QLabel()
         vbox.addWidget(self.prog_label)
+
         self.found_label = QtWidgets.QLabel()
         vbox.addWidget(self.found_label)
         vbox.addStretch(1)
+
         self.cancel_but = QtWidgets.QPushButton(_("Cancel"))
         self.scan_but = QtWidgets.QPushButton(_("Start Scan"))
         vbox.addLayout(Buttons(self.cancel_but, self.scan_but))
@@ -107,13 +124,14 @@ class ScanBeyondGap(WindowModalDialog, PrintError):
         self.scan_but.clicked.connect(self.scan)
 
         self.thread = threading.Thread(target=self.scan_thread, daemon=True)
-        self._thread_args = (None,) * 2
+        self._thread_args = (None,) * 3
         self.stop_flag = False
         self.canceling = False
         self.stage2 = False
 
         self.progress_sig.connect(self.progress_slot)
         self.done_sig.connect(self.done_slot)
+        self.error_sig.connect(self.error_slot)
 
     def cancel(self):
         if self.canceling:
@@ -156,9 +174,11 @@ class ScanBeyondGap(WindowModalDialog, PrintError):
         self.which_cb.setDisabled(True)
         self.num_sb.setDisabled(True)
         self.found_label.setText("")
-        total = self.num_sb.value()
-        which = self.which_cb.currentIndex()
-        self._thread_args = (total, which)
+        self._thread_args = (
+            self.num_sb.value(),
+            self.which_cb.currentIndex(),
+            self.always_add_addresses_cb.isChecked(),
+        )
         self.thread.start()
 
     def progress_slot(self, pct, scanned, total, found):
@@ -177,24 +197,16 @@ class ScanBeyondGap(WindowModalDialog, PrintError):
             )
         self.prog.setValue(pct)
 
-    def done_slot(self, found, exc):
+    def done_slot(self, num_found, num_added):
         if self.canceling:
             return
         self.cancel_but.setText(_("Close"))
-        if exc:
-            self.prog_label.setText(
-                "<font color=red><b>Error:</b></font> <i>{}</i>".format(repr(exc))
-            )
-            return
-        added = 0
-        if found:
-            found, added = found  # decompose the tuple passed in
-        if added:
+        if num_added:
             self.show_message(
                 _(
                     "{} address(es) with a history and {} in-between address(es) were"
                     " added to your wallet."
-                ).format(len(found), added)
+                ).format(num_found, num_added)
             )
         else:
             self.show_message(
@@ -205,11 +217,15 @@ class ScanBeyondGap(WindowModalDialog, PrintError):
             )
         self.accept()
 
-    def _add_addresses(self, found):
-        recv = [n for is_change, n in found if not is_change]
-        change = [n for is_change, n in found if is_change]
-        recv_end = max(recv or [-1])
-        change_end = max(change or [-1])
+    def error_slot(self, exc: Exception):
+        if self.canceling:
+            return
+        self.cancel_but.setText(_("Close"))
+        self.prog_label.setText(
+            "<font color=red><b>Error:</b></font> <i>{}</i>".format(repr(exc))
+        )
+
+    def _add_addresses(self, recv_end: int, change_end: int) -> int:
         self.stage2 = True
         wallet = self.main_window.wallet
         total, added = 0, 0
@@ -243,12 +259,12 @@ class ScanBeyondGap(WindowModalDialog, PrintError):
         )
 
     def scan_thread(self):
-        total, which = self._thread_args
-        assert total is not None and which is not None
+        total, which, always_add = self._thread_args
+        assert all(arg is not None for arg in self._thread_args)
         wallet = self.main_window.wallet
         network = wallet.network
         assert network
-        found = []
+        num_found, recv_end, change_end = 0, 0, 0
         recv_begin = len(wallet.get_receiving_addresses())
         change_begin = len(wallet.get_change_addresses())
         paths = (False, recv_begin), (True, change_begin)
@@ -273,24 +289,30 @@ class ScanBeyondGap(WindowModalDialog, PrintError):
                     )
                     if self.stop_flag:
                         return
-                    if self._addr_has_history(addr, network):
+                    has_history = self._addr_has_history(addr, network)
+                    if has_history:
                         self.print_error(
                             "FOUND:",
                             addr,
                             "(Change)" if is_change else "(Receiving)",
                             n,
                         )
-                        found.append((is_change, n))
+                        num_found += 1
+                    if has_history or always_add:
+                        if is_change:
+                            change_end = n
+                        else:
+                            recv_end = n
                     ct += 1
-                    self.progress_sig.emit(ct * 100 // total, ct, total, len(found))
+                    self.progress_sig.emit(ct * 100 // total, ct, total, num_found)
                 i += 1
-            added = 0
-            if found:
-                added = self._add_addresses(found)
-            self.done_sig.emit((found, added), None)
+            num_added = 0
+            if num_found or (always_add and (recv_end or change_end)):
+                num_added = self._add_addresses(recv_end, change_end)
+            self.done_sig.emit(num_found, num_added)
         except ServerError as e:
             # Suppress untrusted server string from appearing in the UI
             self.print_error("Server error:", repr(e))
-            self.done_sig.emit(None, ServerError("The server replied with an error."))
+            self.error_sig.emit(ServerError("The server replied with an error."))
         except Exception as e:
-            self.done_sig.emit(None, e)
+            self.error_sig.emit(e)

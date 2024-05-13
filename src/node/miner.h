@@ -7,6 +7,7 @@
 #define BITCOIN_NODE_MINER_H
 
 #include <consensus/amount.h>
+#include <kernel/mempool_entry.h>
 #include <primitives/block.h>
 #include <txmempool.h>
 
@@ -63,11 +64,10 @@ private:
 
     // Chain context for the block
     int nHeight;
-    int64_t nLockTimeCutoff;
-    int64_t nMedianTimePast;
+    int64_t m_lock_time_cutoff;
     const CChainParams &chainParams;
 
-    const CTxMemPool &m_mempool;
+    const CTxMemPool *const m_mempool;
     Chainstate &m_chainstate;
 
     const bool fPrintPriority;
@@ -81,8 +81,8 @@ public:
     };
 
     BlockAssembler(const Config &config, Chainstate &chainstate,
-                   const CTxMemPool &mempool);
-    BlockAssembler(Chainstate &chainstate, const CTxMemPool &mempool,
+                   const CTxMemPool *mempool);
+    BlockAssembler(Chainstate &chainstate, const CTxMemPool *mempool,
                    const Options &options);
 
     /** Construct a new block template with coinbase to scriptPubKeyIn */
@@ -99,13 +99,13 @@ private:
     /** Clear the block's state and prepare for assembling a new block */
     void resetBlock();
     /** Add a tx to the block */
-    void AddToBlock(const CTxMemPoolEntry &entry);
+    void AddToBlock(const CTxMemPoolEntryRef &entry);
 
     // Methods for how to add transactions to a block.
     /**
      * Add transactions from the mempool based on individual tx feerate.
      */
-    void addTxs() EXCLUSIVE_LOCKS_REQUIRED(m_mempool.cs);
+    void addTxs(const CTxMemPool &mempool) EXCLUSIVE_LOCKS_REQUIRED(mempool.cs);
 
     // helper functions for addTxs()
     /** Test if a new Tx would "fit" in the block */

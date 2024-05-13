@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2015-2017 The Bitcoin Core developers
 # Copyright (c) 2019 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
@@ -1166,7 +1165,7 @@ class FullBlockTest(BitcoinTestFramework):
         blocks2 = []
         for i in range(89, LARGE_REORG_SIZE + 89):
             blocks2.append(self.next_block(f"alt{i}"))
-        self.send_blocks(blocks2, False, force_send=True)
+        self.send_blocks(blocks2, False, force_send=False)
 
         # extend alt chain to trigger re-org
         block = self.next_block(f"alt{chain1_tip + 1}")

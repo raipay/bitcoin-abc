@@ -14,6 +14,7 @@ PACKAGES=(
   bison
   bsdmainutils
   build-essential
+  binaryen
   ccache
   cmake
   curl
@@ -75,7 +76,6 @@ PACKAGES=(
   python3-setuptools
   python3-yaml
   python3-zmq
-  qemu-user-static
   qttools5-dev
   qttools5-dev-tools
   shellcheck
@@ -99,6 +99,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y $(join_by ' ' "${PACKAGES[@]}"
 
 BACKPORTS=(
   git-filter-repo
+  qemu-user-static
 )
 
 echo "deb http://deb.debian.org/debian bullseye-backports main" | tee -a /etc/apt/sources.list
@@ -147,7 +148,7 @@ pip3 install pytest
 # This version is compatible with Debian's "protobuf-compiler" package
 pip3 install "protobuf<=3.20"
 # For security-check.py and symbol-check.py
-pip3 install "lief>=0.11.5"
+pip3 install "lief==0.13.2"
 # For Chronik WebSocket endpoint
 pip3 install websocket-client
 
@@ -157,17 +158,23 @@ echo "export PATH=\"$(python3 -m site --user-base)/bin:\$PATH\"" >> ~/.bashrc
 # shellcheck source=/dev/null
 source ~/.bashrc
 
-# Install npm v8.x and nodejs v16.x
-curl -sL https://deb.nodesource.com/setup_16.x | bash -
+# Install npm v10.x and nodejs v20.x
+wget https://deb.nodesource.com/setup_20.x -O nodesetup.sh
+echo "f8fb478685fb916cc70858200595a4f087304bcde1e69aa713bf2eb41695afc1 nodesetup.sh" | sha256sum -c
+chmod +x nodesetup.sh
+./nodesetup.sh
 apt-get install -y nodejs
 
 # Install nyc for mocha unit test reporting
 npm i -g nyc
 
-# Install Rust stable 1.72.0 and nightly from the 2023-08-23
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain=1.72.0
+# Install Rust stable 1.76.0 and nightly from the 2023-12-29
+curl -sSf https://static.rust-lang.org/rustup/archive/1.26.0/x86_64-unknown-linux-gnu/rustup-init -o rustup-init
+echo "0b2f6c8f85a3d02fde2efc0ced4657869d73fccfce59defb4e8d29233116e6db rustup-init" | sha256sum -c
+chmod +x rustup-init
+./rustup-init -y --default-toolchain=1.76.0
 RUST_HOME="${HOME}/.cargo/bin"
-RUST_NIGHTLY_DATE=2023-08-23
+RUST_NIGHTLY_DATE=2023-12-29
 "${RUST_HOME}/rustup" install nightly-${RUST_NIGHTLY_DATE}
 "${RUST_HOME}/rustup" component add rustfmt --toolchain nightly-${RUST_NIGHTLY_DATE}
 # Name the nightly toolchain "abc-nightly"
@@ -179,17 +186,11 @@ RUST_NIGHTLY_DATE=2023-08-23
                                  "aarch64-unknown-linux-gnu" \
                                  "arm-unknown-linux-gnueabihf" \
                                  "x86_64-apple-darwin" \
-                                 "x86_64-pc-windows-gnu"
+                                 "x86_64-pc-windows-gnu" \
+                                 "wasm32-unknown-unknown"
 
-# Install corrosion from Github
-wget https://api.github.com/repos/corrosion-rs/corrosion/tarball/v0.3.0 -O corrosion.tar.gz
-echo "3b9a48737264add649983df26c83f3285ce17e20d86194c7756689a0d8470267 corrosion.tar.gz" | sha256sum -c
-tar xzf corrosion.tar.gz
-CORROSION_SRC_FOLDER=corrosion-rs-corrosion-b764a9f
-CORROSION_BUILD_FOLDER=${CORROSION_SRC_FOLDER}-build
-cmake -S${CORROSION_SRC_FOLDER} -B${CORROSION_BUILD_FOLDER} -DCMAKE_BUILD_TYPE=Release
-cmake --build ${CORROSION_BUILD_FOLDER} --config Release
-cmake --install ${CORROSION_BUILD_FOLDER} --config Release
+# Install wasm-bindgen to extract type info from .wasm files
+"${RUST_HOME}/cargo" install -f wasm-bindgen-cli@0.2.92
 
 # Install Electrum ABC test dependencies
 here=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")

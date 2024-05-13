@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2023 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -6,7 +5,7 @@
 import http.client
 import threading
 import time
-from typing import List, Union
+from typing import List, Optional, Union
 
 import chronik_pb2 as pb
 import websocket
@@ -20,8 +19,9 @@ class UnexpectedContentType(Exception):
 
 
 class ChronikResponse:
-    def __init__(self, status: int, *, ok_proto=None, error_proto=None) -> None:
-        self.status = status
+    def __init__(self, response, *, ok_proto=None, error_proto=None) -> None:
+        self.response = response
+        self.status = response.status
         self.ok_proto = ok_proto
         self.error_proto = error_proto
 
@@ -80,10 +80,65 @@ class ChronikScriptClient:
         )
 
 
+class ChronikTokenIdClient:
+    def __init__(self, client: "ChronikClient", token_id: str) -> None:
+        self.client = client
+        self.token_id = token_id
+
+    def confirmed_txs(self, page=None, page_size=None):
+        query = _page_query_params(page, page_size)
+        return self.client._request_get(
+            f"/token-id/{self.token_id}/confirmed-txs{query}",
+            pb.TxHistoryPage,
+        )
+
+    def history(self, page=None, page_size=None):
+        query = _page_query_params(page, page_size)
+        return self.client._request_get(
+            f"/token-id/{self.token_id}/history{query}",
+            pb.TxHistoryPage,
+        )
+
+    def unconfirmed_txs(self):
+        return self.client._request_get(
+            f"/token-id/{self.token_id}/unconfirmed-txs",
+            pb.TxHistoryPage,
+        )
+
+    def utxos(self):
+        return self.client._request_get(f"/token-id/{self.token_id}/utxos", pb.Utxos)
+
+
+class ChronikLokadIdClient:
+    def __init__(self, client: "ChronikClient", lokad_id: str) -> None:
+        self.client = client
+        self.lokad_id = lokad_id
+
+    def confirmed_txs(self, page=None, page_size=None):
+        query = _page_query_params(page, page_size)
+        return self.client._request_get(
+            f"/lokad-id/{self.lokad_id}/confirmed-txs{query}",
+            pb.TxHistoryPage,
+        )
+
+    def history(self, page=None, page_size=None):
+        query = _page_query_params(page, page_size)
+        return self.client._request_get(
+            f"/lokad-id/{self.lokad_id}/history{query}",
+            pb.TxHistoryPage,
+        )
+
+    def unconfirmed_txs(self):
+        return self.client._request_get(
+            f"/lokad-id/{self.lokad_id}/unconfirmed-txs",
+            pb.TxHistoryPage,
+        )
+
+
 class ChronikWs:
     def __init__(self, client: "ChronikClient", **kwargs) -> None:
         self.messages: List[pb.WsMsg] = []
-        self.errors: List[str] = []
+        self.errors: List[Exception] = []
         self.timeout = kwargs.get("timeout", client.timeout)
         self.ping_interval = kwargs.get("ping_interval", 10)
         self.ping_timeout = kwargs.get("ping_timeout", 5)
@@ -126,7 +181,7 @@ class ChronikWs:
         ws_msg.ParseFromString(message)
         self.messages.append(ws_msg)
 
-    def on_error(self, ws, error):
+    def on_error(self, ws, error: Exception):
         self.errors.append(error)
 
     def on_open(self, ws):
@@ -143,11 +198,15 @@ class ChronikWs:
 
     def recv(self):
         recv_timeout = time.time() + self.timeout
-        while len(self.messages) == 0:
+        while len(self.messages) == 0 and len(self.errors) == 0:
             if time.time() > recv_timeout:
                 raise TimeoutError(
                     f"No message received from {self.ws_url} after {self.timeout}s"
                 )
+            time.sleep(0.05)
+        if self.errors:
+            # Raise an error if we encountered one
+            raise self.errors.pop(0)
         return self.messages.pop(0)
 
     def send_bytes(self, data: bytes) -> None:
@@ -164,9 +223,26 @@ class ChronikWs:
         )
         self.send_bytes(sub.SerializeToString())
 
+    def sub_token_id(self, token_id: str, *, is_unsub=False) -> None:
+        sub = pb.WsSub(
+            is_unsub=is_unsub,
+            token_id=pb.WsSubTokenId(token_id=token_id),
+        )
+        self.send_bytes(sub.SerializeToString())
+
+    def sub_lokad_id(self, lokad_id: bytes, *, is_unsub=False) -> None:
+        sub = pb.WsSub(
+            is_unsub=is_unsub,
+            lokad_id=pb.WsSubLokadId(lokad_id=lokad_id),
+        )
+        self.send_bytes(sub.SerializeToString())
+
     def close(self):
         self.ws.close()
         self.ws_thread.join(self.timeout)
+        if self.errors:
+            # If there's any errors left over, raise the oldest now
+            raise self.errors.pop(0)
 
 
 class ChronikClient:
@@ -181,6 +257,9 @@ class ChronikClient:
         self.https = https
 
     def _request_get(self, path: str, pb_type):
+        return self._request("GET", path, None, pb_type)
+
+    def _request(self, method: str, path: str, body: Optional[bytes], pb_type):
         kwargs = {}
         if self.timeout is not None:
             kwargs["timeout"] = self.timeout
@@ -189,7 +268,10 @@ class ChronikClient:
             if self.https
             else http.client.HTTPConnection(self.host, self.port, **kwargs)
         )
-        client.request("GET", path)
+        headers = {}
+        if body is not None:
+            headers["Content-Type"] = self.CONTENT_TYPE
+        client.request(method, path, body, headers)
         response = client.getresponse()
         content_type = response.getheader("Content-Type")
         body = response.read()
@@ -203,11 +285,11 @@ class ChronikClient:
         if response.status != 200:
             proto_error = pb.Error()
             proto_error.ParseFromString(body)
-            return ChronikResponse(response.status, error_proto=proto_error)
+            return ChronikResponse(response, error_proto=proto_error)
 
         ok_proto = pb_type()
         ok_proto.ParseFromString(body)
-        return ChronikResponse(response.status, ok_proto=ok_proto)
+        return ChronikResponse(response, ok_proto=ok_proto)
 
     def blockchain_info(self) -> ChronikResponse:
         return self._request_get("/blockchain-info", pb.BlockchainInfo)
@@ -235,8 +317,46 @@ class ChronikClient:
     def raw_tx(self, txid: str) -> bytes:
         return self._request_get(f"/raw-tx/{txid}", pb.RawTx)
 
+    def token_info(self, txid: str) -> bytes:
+        return self._request_get(f"/token/{txid}", pb.TokenInfo)
+
+    def validate_tx(self, raw_tx: bytes) -> ChronikResponse:
+        return self._request(
+            "POST", "/validate-tx", pb.RawTx(raw_tx=raw_tx).SerializeToString(), pb.Tx
+        )
+
+    def broadcast_tx(
+        self, raw_tx: bytes, skip_token_checks: bool = False
+    ) -> ChronikResponse:
+        return self._request(
+            "POST",
+            "/broadcast-tx",
+            pb.BroadcastTxRequest(
+                raw_tx=raw_tx, skip_token_checks=skip_token_checks
+            ).SerializeToString(),
+            pb.BroadcastTxResponse,
+        )
+
+    def broadcast_txs(
+        self, raw_txs: List[bytes], skip_token_checks: bool = False
+    ) -> ChronikResponse:
+        return self._request(
+            "POST",
+            "/broadcast-txs",
+            pb.BroadcastTxsRequest(
+                raw_txs=raw_txs, skip_token_checks=skip_token_checks
+            ).SerializeToString(),
+            pb.BroadcastTxsResponse,
+        )
+
     def script(self, script_type: str, script_payload: str) -> ChronikScriptClient:
         return ChronikScriptClient(self, script_type, script_payload)
+
+    def token_id(self, token_id: str) -> ChronikTokenIdClient:
+        return ChronikTokenIdClient(self, token_id)
+
+    def lokad_id(self, lokad_id_hex: str) -> ChronikLokadIdClient:
+        return ChronikLokadIdClient(self, lokad_id_hex)
 
     def pause(self) -> ChronikResponse:
         return self._request_get("/pause", pb.Empty)

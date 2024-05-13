@@ -1,3 +1,7 @@
+// Copyright (c) 2023-2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 import * as chai from 'chai';
 import chaiAsPromised from 'chai-as-promised';
 import {
@@ -11,6 +15,8 @@ import {
     UtxoState,
 } from '../index';
 import { FailoverProxy } from '../src/failoverProxy';
+import { isValidWsSubscription } from '../src/validation';
+import vectors from './vectors';
 
 const expect = chai.expect;
 const assert = chai.assert;
@@ -520,18 +526,6 @@ describe('/ws', () => {
         });
         await promise;
     });
-    it('connects to the ws if keepAlive = false', async () => {
-        const promise = new Promise((resolve, rejects) => {
-            const ws = chronik.ws({ keepAlive: false });
-            ws.waitForOpen()
-                .then(() => {
-                    resolve({});
-                    ws.close();
-                })
-                .catch(err => rejects(err));
-        });
-        await promise;
-    });
     it('connects to a working ws in an array of broken ws', async () => {
         const halfBrokenChronik = new ChronikClient([
             'https://chronikaaaa.be.cash/xec',
@@ -714,5 +708,16 @@ describe('deriveEndpointIndex', () => {
             indexOrder.push(proxyInterface.deriveEndpointIndex(i));
         }
         expect(indexOrder).to.eql([3, 0, 1, 2]);
+    });
+});
+
+describe('isValidWsSubscription', () => {
+    const { expectedReturns } = vectors.isValidWsSubscription;
+
+    expectedReturns.forEach(expectedReturn => {
+        const { description, subscription, result } = expectedReturn;
+        it(`isValidWsSubscription: ${description}`, () => {
+            expect(isValidWsSubscription(subscription)).to.eql(result);
+        });
     });
 });

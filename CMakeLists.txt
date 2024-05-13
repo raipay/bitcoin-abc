@@ -7,7 +7,7 @@ set(CMAKE_USER_MAKE_RULES_OVERRIDE
 )
 
 project(bitcoin-abc
-	VERSION 0.28.4
+	VERSION 0.29.4
 	DESCRIPTION "Bitcoin ABC is a full node implementation of the eCash protocol."
 	HOMEPAGE_URL "https://www.bitcoinabc.org"
 )
@@ -22,7 +22,7 @@ set(PACKAGE_NAME "Bitcoin ABC")
 set(PACKAGE_BUGREPORT "https://github.com/Bitcoin-ABC/bitcoin-abc/issues")
 
 # Copyright
-set(COPYRIGHT_YEAR 2023)
+set(COPYRIGHT_YEAR 2024)
 set(COPYRIGHT_HOLDERS "The %s developers")
 set(COPYRIGHT_HOLDERS_SUBSTITUTION Bitcoin)
 string(REPLACE "%s" ${COPYRIGHT_HOLDERS_SUBSTITUTION} COPYRIGHT_HOLDERS_FINAL ${COPYRIGHT_HOLDERS})
@@ -41,7 +41,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Find the python interpreter. This is required for several targets.
-find_package(Python 3.6 COMPONENTS Interpreter REQUIRED)
+find_package(Python 3.9 COMPONENTS Interpreter REQUIRED)
 
 # Add the magic targets `check-*`
 add_custom_target(check-all)
@@ -75,6 +75,14 @@ exclude_from_source_package(
 
 	# Files
 	"[^.]+[.]md$"
+
+	# GUIX
+	"var/"
+	"output/"
+	"distsrc-.*/"
+
+	# CI
+	"abc-ci-builds/"
 )
 
 option(ENABLE_COVERAGE "Enable coverage" OFF)
@@ -123,6 +131,7 @@ endif()
 add_subdirectory(src)
 
 option(BUILD_BITCOIN_CHRONIK "Activate the Chronik indexer" OFF)
+option(BUILD_BITCOIN_CHRONIK_PLUGINS "Activate the plugin system for Chronik" OFF)
 if(BUILD_BITCOIN_CHRONIK)
 	add_subdirectory(chronik)
 endif()

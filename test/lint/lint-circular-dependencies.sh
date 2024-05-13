@@ -15,14 +15,10 @@ set -euo pipefail
 EXPECTED_CIRCULAR_DEPENDENCIES=(
     "node/blockstorage -> validation -> node/blockstorage"
     "node/utxo_snapshot -> validation -> node/utxo_snapshot"
-    "index/blockfilterindex -> node/blockstorage -> validation -> index/blockfilterindex"
-    "index/base -> validation -> index/blockfilterindex -> index/base"
-    "index/coinstatsindex -> node/coinstats -> index/coinstatsindex"
     "qt/addresstablemodel -> qt/walletmodel -> qt/addresstablemodel"
     "qt/bitcoingui -> qt/walletframe -> qt/bitcoingui"
     "qt/recentrequeststablemodel -> qt/walletmodel -> qt/recentrequeststablemodel"
     "qt/transactiontablemodel -> qt/walletmodel -> qt/transactiontablemodel"
-    "txmempool -> validation -> txmempool"
     "wallet/fees -> wallet/wallet -> wallet/fees"
     "wallet/rpcwallet -> wallet/wallet -> wallet/rpcwallet"
     "wallet/wallet -> wallet/walletdb -> wallet/wallet"
@@ -34,7 +30,9 @@ EXPECTED_CIRCULAR_DEPENDENCIES=(
     "seeder/bitcoin -> seeder/db -> seeder/bitcoin"
     "chainparams -> protocol -> config -> chainparams"
     "avalanche/peermanager -> avalanche/proofpool -> avalanche/peermanager"
-    "node/coinstats -> validation -> node/coinstats"
+    "kernel/coinstats -> validation -> kernel/coinstats"
+    "kernel/mempool_persist -> validation -> kernel/mempool_persist"
+    "kernel/disconnected_transactions -> validation -> kernel/disconnected_transactions"
 )
 
 EXIT_CODE=0

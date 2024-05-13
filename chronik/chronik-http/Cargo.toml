@@ -12,7 +12,9 @@ abc-rust-error = { path = "../abc-rust-error" }
 abc-rust-lint = { path = "../abc-rust-lint" }
 
 bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+bitcoinsuite-slp = { path = "../bitcoinsuite-slp" }
 
+chronik-bridge = { path = "../chronik-bridge" }
 chronik-db = { path = "../chronik-db" }
 chronik-indexer = { path = "../chronik-indexer" }
 chronik-proto = { path = "../chronik-proto" }
@@ -22,7 +24,7 @@ chronik-util = { path = "../chronik-util" }
 async-trait = "0.1"
 
 # HTTP webapps
-axum = { version = "0.6", features = ["ws"] }
+axum = { version = "0.7", features = ["ws"] }
 
 # Async toolkit
 futures = "0.3"
@@ -30,14 +32,26 @@ futures = "0.3"
 # En-/decode hex
 hex = "0.4"
 
+# HTTP types
+http = "1.0"
+
+# Helpers for dealing with the http 1.0 Body type
+http-body-util = "0.1"
+
 # HTTP implementation
-hyper = "0.14"
+hyper = "1.1"
 
 # Protobuf en-/decoding
 prost = "0.11"
 
 # Derive error enums
 thiserror = "1.0"
+
+# Tower middleware and utilities for HTTP clients and servers 
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Trait representing an asynchronous server. 
+tower-service = "0.3"
 
 # Async runtime
 [dependencies.tokio]

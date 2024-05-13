@@ -9,9 +9,11 @@
 #include <crypto/muhash.h>
 #include <flatfile.h>
 #include <index/base.h>
-#include <node/coinstats.h>
+#include <kernel/coinstats.h>
 
 struct Amount;
+
+static constexpr bool DEFAULT_COINSTATSINDEX{false};
 
 /**
  * CoinStatsIndex maintains statistics on the UTXO set.
@@ -37,6 +39,8 @@ private:
 
     bool ReverseBlock(const CBlock &block, const CBlockIndex *pindex);
 
+    bool AllowPrune() const override { return true; }
+
 protected:
     bool Init() override;
 
@@ -57,7 +61,7 @@ public:
                             bool f_wipe = false);
 
     // Look up stats for a specific block using CBlockIndex
-    std::optional<node::CCoinsStats>
+    std::optional<kernel::CCoinsStats>
     LookUpStats(const CBlockIndex *block_index) const;
 };
 

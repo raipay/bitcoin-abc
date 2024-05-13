@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
 # Copyright (c) 2020 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Tests that a mempool transaction expires after a given timeout and that its
 children are removed as well.
 
-Both the default expiry timeout defined by DEFAULT_MEMPOOL_EXPIRY and a user
+Both the default expiry timeout defined by DEFAULT_MEMPOOL_EXPIRY_HOURS and a user
 definable expiry timeout via the '-mempoolexpiry=<n>' command line argument
 (<n> is the timeout in hours) are tested.
 """
@@ -16,25 +15,18 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 from test_framework.wallet import MiniWallet
 
-DEFAULT_MEMPOOL_EXPIRY = 336  # hours
+DEFAULT_MEMPOOL_EXPIRY_HOURS = 336  # hours
 CUSTOM_MEMPOOL_EXPIRY = 10  # hours
 
 
 class MempoolExpiryTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.setup_clean_chain = True
 
     def test_transaction_expiry(self, timeout):
         """Tests that a transaction expires after the expiry timeout and its
         children are removed as well."""
         node = self.nodes[0]
-        self.wallet = MiniWallet(node)
-
-        # Add enough mature utxos to the wallet so that all txs spend confirmed
-        # coins.
-        self.generate(self.wallet, 4)
-        self.generate(node, 100)
 
         # Send a parent transaction that will expire.
         parent_txid = self.wallet.send_self_transfer(from_node=node)["txid"]
@@ -111,10 +103,12 @@ class MempoolExpiryTest(BitcoinTestFramework):
         assert_equal(half_expiry_time, node.getmempoolentry(independent_txid)["time"])
 
     def run_test(self):
+        self.wallet = MiniWallet(self.nodes[0])
+
         self.log.info(
-            f"Test default mempool expiry timeout of {DEFAULT_MEMPOOL_EXPIRY} hours."
+            f"Test default mempool expiry timeout of {DEFAULT_MEMPOOL_EXPIRY_HOURS} hours."
         )
-        self.test_transaction_expiry(DEFAULT_MEMPOOL_EXPIRY)
+        self.test_transaction_expiry(DEFAULT_MEMPOOL_EXPIRY_HOURS)
 
         self.log.info(
             f"Test custom mempool expiry timeout of {CUSTOM_MEMPOOL_EXPIRY} hours."

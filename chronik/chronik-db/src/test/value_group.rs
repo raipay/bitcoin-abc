@@ -7,7 +7,7 @@ use bitcoinsuite_core::tx::{
 };
 
 use crate::{
-    group::{Group, GroupQuery, MemberItem},
+    group::{Group, GroupQuery, MemberItem, UtxoDataValue},
     io::{GroupHistoryConf, GroupUtxoConf},
 };
 
@@ -17,11 +17,17 @@ use crate::{
 pub(crate) struct ValueGroup;
 
 impl Group for ValueGroup {
+    type Aux = ();
     type Iter<'a> = Vec<MemberItem<i64>>;
     type Member<'a> = i64;
-    type MemberSer<'a> = [u8; 8];
+    type MemberSer = [u8; 8];
+    type UtxoData = UtxoDataValue;
 
-    fn input_members(&self, query: GroupQuery<'_>) -> Self::Iter<'_> {
+    fn input_members(
+        &self,
+        query: GroupQuery<'_>,
+        _aux: &(),
+    ) -> Self::Iter<'_> {
         let mut inputs = Vec::new();
         if !query.is_coinbase {
             for (idx, input) in query.tx.inputs.iter().enumerate() {
@@ -36,7 +42,11 @@ impl Group for ValueGroup {
         inputs
     }
 
-    fn output_members(&self, query: GroupQuery<'_>) -> Self::Iter<'_> {
+    fn output_members(
+        &self,
+        query: GroupQuery<'_>,
+        _aux: &(),
+    ) -> Self::Iter<'_> {
         let mut outputs = Vec::new();
         for (idx, output) in query.tx.outputs.iter().enumerate() {
             outputs.push(MemberItem {
@@ -47,7 +57,7 @@ impl Group for ValueGroup {
         outputs
     }
 
-    fn ser_member<'a>(&self, value: &i64) -> Self::MemberSer<'a> {
+    fn ser_member(&self, value: &i64) -> Self::MemberSer {
         ser_value(*value)
     }
 

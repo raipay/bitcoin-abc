@@ -10,6 +10,7 @@
 #include <pow/pow.h>
 #include <streams.h>
 #include <txmempool.h>
+#include <validation.h>
 
 #include <test/util/setup_common.h>
 
@@ -67,7 +68,7 @@ static void expectUseCount(const CTxMemPool &pool, const TxId &txid,
                            long expectedCount)
     EXCLUSIVE_LOCKS_REQUIRED(pool.cs) {
     AssertLockHeld(pool.cs);
-    BOOST_CHECK_EQUAL(pool.mapTx.find(txid)->GetSharedTx().use_count(),
+    BOOST_CHECK_EQUAL((*pool.mapTx.find(txid))->GetSharedTx().use_count(),
                       SHARED_TX_OFFSET + expectedCount);
 }
 
@@ -92,7 +93,8 @@ BOOST_AUTO_TEST_CASE(SimpleRoundTripTest) {
         CBlockHeaderAndShortTxIDs shortIDs2;
         stream >> shortIDs2;
 
-        PartiallyDownloadedBlock partialBlock(GetConfig(), &pool);
+        PartiallyDownloadedBlock partialBlock(m_node.chainman->GetConfig(),
+                                              &pool);
         BOOST_CHECK(partialBlock.InitData(shortIDs2, extra_txn) ==
                     READ_STATUS_OK);
         BOOST_CHECK(partialBlock.IsTxAvailable(0));
@@ -102,7 +104,7 @@ BOOST_AUTO_TEST_CASE(SimpleRoundTripTest) {
         expectUseCount(pool, block_txid2, 1);
 
         size_t poolSize = pool.size();
-        pool.removeRecursive(*block.vtx[2], MemPoolRemovalReason::REPLACED);
+        pool.removeRecursive(*block.vtx[2], MemPoolRemovalReason::CONFLICT);
         BOOST_CHECK_EQUAL(pool.size(), poolSize - 1);
 
         CBlock block2;
@@ -196,7 +198,8 @@ BOOST_AUTO_TEST_CASE(NonCoinbasePreforwardRTTest) {
         CBlockHeaderAndShortTxIDs shortIDs2;
         stream >> shortIDs2;
 
-        PartiallyDownloadedBlock partialBlock(GetConfig(), &pool);
+        PartiallyDownloadedBlock partialBlock(m_node.chainman->GetConfig(),
+                                              &pool);
         BOOST_CHECK(partialBlock.InitData(shortIDs2, extra_txn) ==
                     READ_STATUS_OK);
         BOOST_CHECK(!partialBlock.IsTxAvailable(0));
@@ -279,7 +282,8 @@ BOOST_AUTO_TEST_CASE(SufficientPreforwardRTTest) {
         CBlockHeaderAndShortTxIDs shortIDs2;
         stream >> shortIDs2;
 
-        PartiallyDownloadedBlock partialBlock(GetConfig(), &pool);
+        PartiallyDownloadedBlock partialBlock(m_node.chainman->GetConfig(),
+                                              &pool);
         BOOST_CHECK(partialBlock.InitData(shortIDs2, extra_txn) ==
                     READ_STATUS_OK);
         BOOST_CHECK(partialBlock.IsTxAvailable(0));
@@ -344,7 +348,8 @@ BOOST_AUTO_TEST_CASE(EmptyBlockRoundTripTest) {
         CBlockHeaderAndShortTxIDs shortIDs2;
         stream >> shortIDs2;
 
-        PartiallyDownloadedBlock partialBlock(GetConfig(), &pool);
+        PartiallyDownloadedBlock partialBlock(m_node.chainman->GetConfig(),
+                                              &pool);
         BOOST_CHECK(partialBlock.InitData(shortIDs2, extra_txn) ==
                     READ_STATUS_OK);
         BOOST_CHECK(partialBlock.IsTxAvailable(0));

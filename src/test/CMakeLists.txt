@@ -142,6 +142,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		blockfilter_tests.cpp
 		blockfilter_index_tests.cpp
 		blockindex_tests.cpp
+		blockmanager_tests.cpp
 		blockstatus_tests.cpp
 		blockstorage_tests.cpp
 		bloom_tests.cpp
@@ -170,6 +171,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		getarg_tests.cpp
 		hash_tests.cpp
 		hasher_tests.cpp
+		headers_sync_chainwork_tests.cpp
 		i2p_tests.cpp
 		interfaces_tests.cpp
 		intmath_tests.cpp
@@ -198,6 +200,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		raii_event_tests.cpp
 		random_tests.cpp
 		rcu_tests.cpp
+		result_tests.cpp
 		reverselock_tests.cpp
 		rpc_tests.cpp
 		rpc_server_tests.cpp
@@ -206,7 +209,6 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		scheduler_tests.cpp
 		schnorr_tests.cpp
 		script_bitfield_tests.cpp
-		script_commitment_tests.cpp
 		script_p2sh_tests.cpp
 		script_standard_tests.cpp
 		script_tests.cpp
@@ -226,6 +228,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		timedata_tests.cpp
 		torcontrol_tests.cpp
 		transaction_tests.cpp
+		translation_tests.cpp
 		txindex_tests.cpp
 		txpackage_tests.cpp
 		txrequest_tests.cpp

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2010 ArtForz -- public domain half-a-node
 # Copyright (c) 2012 Jeff Garzik
 # Copyright (c) 2010-2019 The Bitcoin Core developers
@@ -1071,8 +1070,8 @@ class AvalancheProofVoteResponse(IntEnum):
 class AvalancheTxVoteError(IntEnum):
     ACCEPTED = 0
     INVALID = 1
-    ORPHAN = 2
     UNKNOWN = -1
+    ORPHAN = -2
 
 
 class AvalancheVote:

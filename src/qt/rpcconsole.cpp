@@ -233,7 +233,7 @@ bool RPCConsole::RPCParseCommandLine(interfaces::Node *node,
                                     subelement =
                                         lastResult[atoi(curarg.c_str())];
                                 } else if (lastResult.isObject()) {
-                                    subelement = find_value(lastResult, curarg);
+                                    subelement = lastResult.find_value(curarg);
                                 } else {
                                     // no array or object: abort
                                     throw std::runtime_error(
@@ -489,8 +489,8 @@ void RPCExecutor::request(const QString &command,
     } catch (UniValue &objError) {
         // Nice formatting for standard-format error
         try {
-            int code = find_value(objError, "code").get_int();
-            std::string message = find_value(objError, "message").get_str();
+            int code = objError.find_value("code").get_int();
+            std::string message = objError.find_value("message").get_str();
             Q_EMIT reply(RPCConsole::CMD_ERROR,
                          QString::fromStdString(message) + " (code " +
                              QString::number(code) + ")");
@@ -675,7 +675,7 @@ void RPCConsole::setClientModel(ClientModel *model, int bestblock_height,
                 &RPCConsole::setNumConnections);
 
         setNumBlocks(bestblock_height, QDateTime::fromTime_t(bestblock_date),
-                     verification_progress, false);
+                     verification_progress, SyncType::BLOCK_SYNC);
         connect(model, &ClientModel::numBlocksChanged, this,
                 &RPCConsole::setNumBlocks);
 
@@ -1022,8 +1022,8 @@ void RPCConsole::setNetworkActive(bool networkActive) {
 }
 
 void RPCConsole::setNumBlocks(int count, const QDateTime &blockDate,
-                              double nVerificationProgress, bool headers) {
-    if (!headers) {
+                              double nVerificationProgress, SyncType synctype) {
+    if (synctype == SyncType::BLOCK_SYNC) {
         ui->numberOfBlocks->setText(QString::number(count));
         ui->lastBlockTime->setText(blockDate.toString());
     }

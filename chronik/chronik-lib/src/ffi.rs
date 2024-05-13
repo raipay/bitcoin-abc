@@ -22,18 +22,36 @@ mod ffi_inner {
         pub default_port: u16,
         /// Whether to clear the DB before proceeding, e.g. when reindexing
         pub wipe_db: bool,
+        /// Whether Chronik should index SLP/ALP token transactions
+        pub enable_token_index: bool,
+        /// Whether Chronik should index transactions by LOKAD ID
+        pub enable_lokad_id_index: bool,
         /// Whether pausing Chronik indexing is allowed
         pub is_pause_allowed: bool,
         /// Whether to output Chronik performance statistics into a perf/
         /// folder
         pub enable_perf_stats: bool,
+        /// Duration between WebSocket pings initiated by Chronik.
+        pub ws_ping_interval_secs: u64,
+        /// Enable permissive CORS on Chronik's HTTP endpoint
+        pub enable_cors: bool,
+        /// Tuning settings for the TxNumCache.
+        pub tx_num_cache: TxNumCacheSettings,
+    }
+
+    /// Settings for tuning the TxNumCache.
+    #[derive(Debug)]
+    pub struct TxNumCacheSettings {
+        /// How many buckets are on the belt
+        pub num_buckets: usize,
+        /// How many txs are cached in each bucket
+        pub bucket_size: usize,
     }
 
     extern "Rust" {
         type Chronik;
         fn setup_chronik(
             params: SetupParams,
-            config: &Config,
             node: &NodeContext,
         ) -> bool;
 

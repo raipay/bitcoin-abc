@@ -25,8 +25,6 @@
 #include <node/coinstats.h>
 #include <node/context.h>
 #include <node/utxo_snapshot.h>
-#include <policy/policy.h>
-#include <policy/settings.h>
 #include <primitives/transaction.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
@@ -48,9 +46,10 @@
 #include <memory>
 #include <mutex>
 
+using kernel::CCoinsStats;
+using kernel::CoinStatsHashType;
+
 using node::BlockManager;
-using node::CCoinsStats;
-using node::CoinStatsHashType;
 using node::GetUTXOStats;
 using node::NodeContext;
 using node::ReadBlockFromDisk;
@@ -458,368 +457,6 @@ static RPCHelpMan getdifficulty() {
     };
 }
 
-static std::vector<RPCResult> MempoolEntryDescription() {
-    const auto &ticker = Currency::get().ticker;
-    return {
-        RPCResult{RPCResult::Type::NUM, "size", "transaction size."},
-        RPCResult{RPCResult::Type::NUM_TIME, "time",
-                  "local time transaction entered pool in seconds since 1 Jan "
-                  "1970 GMT"},
-        RPCResult{RPCResult::Type::NUM, "height",
-                  "block height when transaction entered pool"},
-        RPCResult{RPCResult::Type::OBJ,
-                  "fees",
-                  "",
-                  {{
-                      RPCResult{RPCResult::Type::STR_AMOUNT, "base",
-                                "transaction fee in " + ticker},
-                      RPCResult{RPCResult::Type::STR_AMOUNT, "modified",
-                                "transaction fee with fee deltas used for "
-                                "mining priority in " +
-                                    ticker},
-                  }}},
-        RPCResult{
-            RPCResult::Type::ARR,
-            "depends",
-            "unconfirmed transactions used as inputs for this transaction",
-            {RPCResult{RPCResult::Type::STR_HEX, "transactionid",
-                       "parent transaction id"}}},
-        RPCResult{
-            RPCResult::Type::ARR,
-            "spentby",
-            "unconfirmed transactions spending outputs from this transaction",
-            {RPCResult{RPCResult::Type::STR_HEX, "transactionid",
-                       "child transaction id"}}},
-        RPCResult{RPCResult::Type::BOOL, "unbroadcast",
-                  "Whether this transaction is currently unbroadcast (initial "
-                  "broadcast not yet acknowledged by any peers)"},
-    };
-}
-
-static void entryToJSON(const CTxMemPool &pool, UniValue &info,
-                        const CTxMemPoolEntry &e)
-    EXCLUSIVE_LOCKS_REQUIRED(pool.cs) {
-    AssertLockHeld(pool.cs);
-
-    UniValue fees(UniValue::VOBJ);
-    fees.pushKV("base", e.GetFee());
-    fees.pushKV("modified", e.GetModifiedFee());
-    info.pushKV("fees", fees);
-
-    info.pushKV("size", (int)e.GetTxSize());
-    info.pushKV("time", count_seconds(e.GetTime()));
-    info.pushKV("height", (int)e.GetHeight());
-    const CTransaction &tx = e.GetTx();
-    std::set<std::string> setDepends;
-    for (const CTxIn &txin : tx.vin) {
-        if (pool.exists(txin.prevout.GetTxId())) {
-            setDepends.insert(txin.prevout.GetTxId().ToString());
-        }
-    }
-
-    UniValue depends(UniValue::VARR);
-    for (const std::string &dep : setDepends) {
-        depends.push_back(dep);
-    }
-
-    info.pushKV("depends", depends);
-
-    UniValue spent(UniValue::VARR);
-    for (const CTxMemPoolEntry &child : e.GetMemPoolChildrenConst()) {
-        spent.push_back(child.GetTx().GetId().ToString());
-    }
-
-    info.pushKV("spentby", spent);
-    info.pushKV("unbroadcast", pool.IsUnbroadcastTx(tx.GetId()));
-}
-
-UniValue MempoolToJSON(const CTxMemPool &pool, bool verbose,
-                       bool include_mempool_sequence) {
-    if (verbose) {
-        if (include_mempool_sequence) {
-            throw JSONRPCError(
-                RPC_INVALID_PARAMETER,
-                "Verbose results cannot contain mempool sequence values.");
-        }
-        LOCK(pool.cs);
-        UniValue o(UniValue::VOBJ);
-        for (const CTxMemPoolEntry &e : pool.mapTx) {
-            const TxId &txid = e.GetTx().GetId();
-            UniValue info(UniValue::VOBJ);
-            entryToJSON(pool, info, e);
-            // Mempool has unique entries so there is no advantage in using
-            // UniValue::pushKV, which checks if the key already exists in O(N).
-            // UniValue::__pushKV is used instead which currently is O(1).
-            o.__pushKV(txid.ToString(), info);
-        }
-        return o;
-    } else {
-        uint64_t mempool_sequence;
-        std::vector<TxId> vtxids;
-        {
-            LOCK(pool.cs);
-            pool.getAllTxIds(vtxids);
-            mempool_sequence = pool.GetSequence();
-        }
-        UniValue a(UniValue::VARR);
-        for (const TxId &txid : vtxids) {
-            a.push_back(txid.ToString());
-        }
-
-        if (!include_mempool_sequence) {
-            return a;
-        } else {
-            UniValue o(UniValue::VOBJ);
-            o.pushKV("txids", a);
-            o.pushKV("mempool_sequence", mempool_sequence);
-            return o;
-        }
-    }
-}
-
-static RPCHelpMan getrawmempool() {
-    return RPCHelpMan{
-        "getrawmempool",
-        "Returns all transaction ids in memory pool as a json array of "
-        "string transaction ids.\n"
-        "\nHint: use getmempoolentry to fetch a specific transaction from the "
-        "mempool.\n",
-        {
-            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false},
-             "True for a json object, false for array of transaction ids"},
-            {"mempool_sequence", RPCArg::Type::BOOL, RPCArg::Default{false},
-             "If verbose=false, returns a json object with transaction list "
-             "and mempool sequence number attached."},
-        },
-        {
-            RPCResult{"for verbose = false",
-                      RPCResult::Type::ARR,
-                      "",
-                      "",
-                      {
-                          {RPCResult::Type::STR_HEX, "", "The transaction id"},
-                      }},
-            RPCResult{"for verbose = true",
-                      RPCResult::Type::OBJ_DYN,
-                      "",
-                      "",
-                      {
-                          {RPCResult::Type::OBJ, "transactionid", "",
-                           MempoolEntryDescription()},
-                      }},
-            RPCResult{
-                "for verbose = false and mempool_sequence = true",
-                RPCResult::Type::OBJ,
-                "",
-                "",
-                {
-                    {RPCResult::Type::ARR,
-                     "txids",
-                     "",
-                     {
-                         {RPCResult::Type::STR_HEX, "", "The transaction id"},
-                     }},
-                    {RPCResult::Type::NUM, "mempool_sequence",
-                     "The mempool sequence value."},
-                }},
-        },
-        RPCExamples{HelpExampleCli("getrawmempool", "true") +
-                    HelpExampleRpc("getrawmempool", "true")},
-        [&](const RPCHelpMan &self, const Config &config,
-            const JSONRPCRequest &request) -> UniValue {
-            bool fVerbose = false;
-            if (!request.params[0].isNull()) {
-                fVerbose = request.params[0].get_bool();
-            }
-
-            bool include_mempool_sequence = false;
-            if (!request.params[1].isNull()) {
-                include_mempool_sequence = request.params[1].get_bool();
-            }
-
-            return MempoolToJSON(EnsureAnyMemPool(request.context), fVerbose,
-                                 include_mempool_sequence);
-        },
-    };
-}
-
-static RPCHelpMan getmempoolancestors() {
-    return RPCHelpMan{
-        "getmempoolancestors",
-        "If txid is in the mempool, returns all in-mempool ancestors.\n",
-        {
-            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
-             "The transaction id (must be in mempool)"},
-            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false},
-             "True for a json object, false for array of transaction ids"},
-        },
-        {
-            RPCResult{
-                "for verbose = false",
-                RPCResult::Type::ARR,
-                "",
-                "",
-                {{RPCResult::Type::STR_HEX, "",
-                  "The transaction id of an in-mempool ancestor transaction"}}},
-            RPCResult{"for verbose = true",
-                      RPCResult::Type::OBJ_DYN,
-                      "",
-                      "",
-                      {
-                          {RPCResult::Type::OBJ, "transactionid", "",
-                           MempoolEntryDescription()},
-                      }},
-        },
-        RPCExamples{HelpExampleCli("getmempoolancestors", "\"mytxid\"") +
-                    HelpExampleRpc("getmempoolancestors", "\"mytxid\"")},
-        [&](const RPCHelpMan &self, const Config &config,
-            const JSONRPCRequest &request) -> UniValue {
-            bool fVerbose = false;
-            if (!request.params[1].isNull()) {
-                fVerbose = request.params[1].get_bool();
-            }
-
-            TxId txid(ParseHashV(request.params[0], "parameter 1"));
-
-            const CTxMemPool &mempool = EnsureAnyMemPool(request.context);
-            LOCK(mempool.cs);
-
-            CTxMemPool::txiter it = mempool.mapTx.find(txid);
-            if (it == mempool.mapTx.end()) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                                   "Transaction not in mempool");
-            }
-
-            CTxMemPool::setEntries setAncestors;
-            mempool.CalculateMemPoolAncestors(*it, setAncestors, false);
-
-            if (!fVerbose) {
-                UniValue o(UniValue::VARR);
-                for (CTxMemPool::txiter ancestorIt : setAncestors) {
-                    o.push_back(ancestorIt->GetTx().GetId().ToString());
-                }
-                return o;
-            } else {
-                UniValue o(UniValue::VOBJ);
-                for (CTxMemPool::txiter ancestorIt : setAncestors) {
-                    const CTxMemPoolEntry &e = *ancestorIt;
-                    const TxId &_txid = e.GetTx().GetId();
-                    UniValue info(UniValue::VOBJ);
-                    entryToJSON(mempool, info, e);
-                    o.pushKV(_txid.ToString(), info);
-                }
-                return o;
-            }
-        },
-    };
-}
-
-static RPCHelpMan getmempooldescendants() {
-    return RPCHelpMan{
-        "getmempooldescendants",
-        "If txid is in the mempool, returns all in-mempool descendants.\n",
-        {
-            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
-             "The transaction id (must be in mempool)"},
-            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false},
-             "True for a json object, false for array of transaction ids"},
-        },
-        {
-            RPCResult{"for verbose = false",
-                      RPCResult::Type::ARR,
-                      "",
-                      "",
-                      {{RPCResult::Type::STR_HEX, "",
-                        "The transaction id of an in-mempool descendant "
-                        "transaction"}}},
-            RPCResult{"for verbose = true",
-                      RPCResult::Type::OBJ_DYN,
-                      "",
-                      "",
-                      {
-                          {RPCResult::Type::OBJ, "transactionid", "",
-                           MempoolEntryDescription()},
-                      }},
-        },
-        RPCExamples{HelpExampleCli("getmempooldescendants", "\"mytxid\"") +
-                    HelpExampleRpc("getmempooldescendants", "\"mytxid\"")},
-        [&](const RPCHelpMan &self, const Config &config,
-            const JSONRPCRequest &request) -> UniValue {
-            bool fVerbose = false;
-            if (!request.params[1].isNull()) {
-                fVerbose = request.params[1].get_bool();
-            }
-
-            TxId txid(ParseHashV(request.params[0], "parameter 1"));
-
-            const CTxMemPool &mempool = EnsureAnyMemPool(request.context);
-            LOCK(mempool.cs);
-
-            CTxMemPool::txiter it = mempool.mapTx.find(txid);
-            if (it == mempool.mapTx.end()) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                                   "Transaction not in mempool");
-            }
-
-            CTxMemPool::setEntries setDescendants;
-            mempool.CalculateDescendants(it, setDescendants);
-            // CTxMemPool::CalculateDescendants will include the given tx
-            setDescendants.erase(it);
-
-            if (!fVerbose) {
-                UniValue o(UniValue::VARR);
-                for (CTxMemPool::txiter descendantIt : setDescendants) {
-                    o.push_back(descendantIt->GetTx().GetId().ToString());
-                }
-
-                return o;
-            } else {
-                UniValue o(UniValue::VOBJ);
-                for (CTxMemPool::txiter descendantIt : setDescendants) {
-                    const CTxMemPoolEntry &e = *descendantIt;
-                    const TxId &_txid = e.GetTx().GetId();
-                    UniValue info(UniValue::VOBJ);
-                    entryToJSON(mempool, info, e);
-                    o.pushKV(_txid.ToString(), info);
-                }
-                return o;
-            }
-        },
-    };
-}
-
-static RPCHelpMan getmempoolentry() {
-    return RPCHelpMan{
-        "getmempoolentry",
-        "Returns mempool data for given transaction\n",
-        {
-            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
-             "The transaction id (must be in mempool)"},
-        },
-        RPCResult{RPCResult::Type::OBJ, "", "", MempoolEntryDescription()},
-        RPCExamples{HelpExampleCli("getmempoolentry", "\"mytxid\"") +
-                    HelpExampleRpc("getmempoolentry", "\"mytxid\"")},
-        [&](const RPCHelpMan &self, const Config &config,
-            const JSONRPCRequest &request) -> UniValue {
-            TxId txid(ParseHashV(request.params[0], "parameter 1"));
-
-            const CTxMemPool &mempool = EnsureAnyMemPool(request.context);
-            LOCK(mempool.cs);
-
-            CTxMemPool::txiter it = mempool.mapTx.find(txid);
-            if (it == mempool.mapTx.end()) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                                   "Transaction not in mempool");
-            }
-
-            const CTxMemPoolEntry &e = *it;
-            UniValue info(UniValue::VOBJ);
-            entryToJSON(mempool, info, e);
-            return info;
-        },
-    };
-}
-
 static RPCHelpMan getblockfrompeer() {
     return RPCHelpMan{
         "getblockfrompeer",
@@ -1195,13 +832,13 @@ static RPCHelpMan pruneblockchain() {
                     HelpExampleRpc("pruneblockchain", "1000")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!node::fPruneMode) {
+            ChainstateManager &chainman = EnsureAnyChainman(request.context);
+            if (!chainman.m_blockman.IsPruneMode()) {
                 throw JSONRPCError(
                     RPC_MISC_ERROR,
                     "Cannot prune blocks because node is not in prune mode.");
             }
 
-            ChainstateManager &chainman = EnsureAnyChainman(request.context);
             LOCK(cs_main);
             Chainstate &active_chainstate = chainman.ActiveChainstate();
             CChain &active_chain = active_chainstate.m_chain;
@@ -1622,14 +1259,16 @@ static RPCHelpMan verifychain() {
              RPCArg::DefaultHint{strprintf("%d, 0=all", DEFAULT_CHECKBLOCKS)},
              "The number of blocks to check."},
         },
-        RPCResult{RPCResult::Type::BOOL, "", "Verified or not"},
+        RPCResult{RPCResult::Type::BOOL, "",
+                  "Verification finished successfully. If false, check "
+                  "debug.log for reason."},
         RPCExamples{HelpExampleCli("verifychain", "") +
                     HelpExampleRpc("verifychain", "")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            const int check_level(request.params[0].isNull()
+            const int check_level{request.params[0].isNull()
                                       ? DEFAULT_CHECKLEVEL
-                                      : request.params[0].get_int());
+                                      : request.params[0].get_int()};
             const int check_depth{request.params[1].isNull()
                                       ? DEFAULT_CHECKBLOCKS
                                       : request.params[1].get_int()};
@@ -1638,9 +1277,9 @@ static RPCHelpMan verifychain() {
             LOCK(cs_main);
 
             Chainstate &active_chainstate = chainman.ActiveChainstate();
-            return CVerifyDB().VerifyDB(active_chainstate, config,
-                                        active_chainstate.CoinsTip(),
-                                        check_level, check_depth);
+            return CVerifyDB().VerifyDB(
+                       active_chainstate, active_chainstate.CoinsTip(),
+                       check_level, check_depth) == VerifyDBResult::SUCCESS;
         },
     };
 }
@@ -1725,17 +1364,19 @@ RPCHelpMan getblockchaininfo() {
             obj.pushKV("chainwork", tip.nChainWork.GetHex());
             obj.pushKV("size_on_disk",
                        chainman.m_blockman.CalculateCurrentUsage());
-            obj.pushKV("pruned", node::fPruneMode);
+            obj.pushKV("pruned", chainman.m_blockman.IsPruneMode());
 
-            if (node::fPruneMode) {
+            if (chainman.m_blockman.IsPruneMode()) {
                 obj.pushKV("pruneheight",
                            node::GetFirstStoredBlock(&tip)->nHeight);
 
-                // if 0, execution bypasses the whole if block.
-                bool automatic_pruning = (gArgs.GetIntArg("-prune", 0) != 1);
+                const bool automatic_pruning{
+                    chainman.m_blockman.GetPruneTarget() !=
+                    BlockManager::PRUNE_TARGET_MANUAL};
                 obj.pushKV("automatic_pruning", automatic_pruning);
                 if (automatic_pruning) {
-                    obj.pushKV("prune_target_size", node::nPruneTarget);
+                    obj.pushKV("prune_target_size",
+                               chainman.m_blockman.GetPruneTarget());
                 }
             }
 
@@ -1883,67 +1524,6 @@ static RPCHelpMan getchaintips() {
     };
 }
 
-UniValue MempoolInfoToJSON(const CTxMemPool &pool) {
-    // Make sure this call is atomic in the pool.
-    LOCK(pool.cs);
-    UniValue ret(UniValue::VOBJ);
-    ret.pushKV("loaded", pool.IsLoaded());
-    ret.pushKV("size", (int64_t)pool.size());
-    ret.pushKV("bytes", (int64_t)pool.GetTotalTxSize());
-    ret.pushKV("usage", (int64_t)pool.DynamicMemoryUsage());
-    ret.pushKV("total_fee", pool.GetTotalFee());
-    size_t maxmempool =
-        gArgs.GetIntArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000;
-    ret.pushKV("maxmempool", (int64_t)maxmempool);
-    ret.pushKV(
-        "mempoolminfee",
-        std::max(pool.GetMinFee(maxmempool), ::minRelayTxFee).GetFeePerK());
-    ret.pushKV("minrelaytxfee", ::minRelayTxFee.GetFeePerK());
-    ret.pushKV("unbroadcastcount", uint64_t{pool.GetUnbroadcastTxs().size()});
-    return ret;
-}
-
-static RPCHelpMan getmempoolinfo() {
-    const auto &ticker = Currency::get().ticker;
-    return RPCHelpMan{
-        "getmempoolinfo",
-        "Returns details on the active state of the TX memory pool.\n",
-        {},
-        RPCResult{
-            RPCResult::Type::OBJ,
-            "",
-            "",
-            {
-                {RPCResult::Type::BOOL, "loaded",
-                 "True if the mempool is fully loaded"},
-                {RPCResult::Type::NUM, "size", "Current tx count"},
-                {RPCResult::Type::NUM, "bytes", "Sum of all transaction sizes"},
-                {RPCResult::Type::NUM, "usage",
-                 "Total memory usage for the mempool"},
-                {RPCResult::Type::NUM, "maxmempool",
-                 "Maximum memory usage for the mempool"},
-                {RPCResult::Type::STR_AMOUNT, "total_fee",
-                 "Total fees for the mempool in " + ticker +
-                     ", ignoring modified fees through prioritizetransaction"},
-                {RPCResult::Type::STR_AMOUNT, "mempoolminfee",
-                 "Minimum fee rate in " + ticker +
-                     "/kB for tx to be accepted. Is the maximum of "
-                     "minrelaytxfee and minimum mempool fee"},
-                {RPCResult::Type::STR_AMOUNT, "minrelaytxfee",
-                 "Current minimum relay fee for transactions"},
-                {RPCResult::Type::NUM, "unbroadcastcount",
-                 "Current number of transactions that haven't passed initial "
-                 "broadcast yet"},
-            }},
-        RPCExamples{HelpExampleCli("getmempoolinfo", "") +
-                    HelpExampleRpc("getmempoolinfo", "")},
-        [&](const RPCHelpMan &self, const Config &config,
-            const JSONRPCRequest &request) -> UniValue {
-            return MempoolInfoToJSON(EnsureAnyMemPool(request.context));
-        },
-    };
-}
-
 static RPCHelpMan preciousblock() {
     return RPCHelpMan{
         "preciousblock",
@@ -1975,8 +1555,7 @@ static RPCHelpMan preciousblock() {
             }
 
             BlockValidationState state;
-            chainman.ActiveChainstate().PreciousBlock(config, state,
-                                                      pblockindex);
+            chainman.ActiveChainstate().PreciousBlock(state, pblockindex);
 
             if (!state.IsValid()) {
                 throw JSONRPCError(RPC_DATABASE_ERROR, state.GetRejectReason());
@@ -2017,11 +1596,10 @@ static RPCHelpMan invalidateblock() {
                                        "Block not found");
                 }
             }
-            chainman.ActiveChainstate().InvalidateBlock(config, state,
-                                                        pblockindex);
+            chainman.ActiveChainstate().InvalidateBlock(state, pblockindex);
 
             if (state.IsValid()) {
-                chainman.ActiveChainstate().ActivateBestChain(config, state);
+                chainman.ActiveChainstate().ActivateBestChain(state);
             }
 
             if (!state.IsValid()) {
@@ -2071,10 +1649,10 @@ RPCHelpMan parkblock() {
                 }
             }
 
-            active_chainstate.ParkBlock(config, state, pblockindex);
+            active_chainstate.ParkBlock(state, pblockindex);
 
             if (state.IsValid()) {
-                active_chainstate.ActivateBestChain(config, state);
+                active_chainstate.ActivateBestChain(state);
             }
 
             if (!state.IsValid()) {
@@ -2120,7 +1698,7 @@ static RPCHelpMan reconsiderblock() {
             }
 
             BlockValidationState state;
-            chainman.ActiveChainstate().ActivateBestChain(config, state);
+            chainman.ActiveChainstate().ActivateBestChain(state);
 
             if (!state.IsValid()) {
                 throw JSONRPCError(RPC_DATABASE_ERROR, state.ToString());
@@ -2185,7 +1763,7 @@ RPCHelpMan unparkblock() {
             }
 
             BlockValidationState state;
-            active_chainstate.ActivateBestChain(config, state);
+            active_chainstate.ActivateBestChain(state);
 
             if (!state.IsValid()) {
                 throw JSONRPCError(RPC_DATABASE_ERROR, state.GetRejectReason());
@@ -2600,47 +2178,6 @@ static RPCHelpMan getblockstats() {
                 }
                 ret.pushKV(stat, value);
             }
-            return ret;
-        },
-    };
-}
-
-static RPCHelpMan savemempool() {
-    return RPCHelpMan{
-        "savemempool",
-        "Dumps the mempool to disk. It will fail until the previous dump is "
-        "fully loaded.\n",
-        {},
-        RPCResult{RPCResult::Type::OBJ,
-                  "",
-                  "",
-                  {
-                      {RPCResult::Type::STR, "filename",
-                       "the directory and file where the mempool was saved"},
-                  }},
-        RPCExamples{HelpExampleCli("savemempool", "") +
-                    HelpExampleRpc("savemempool", "")},
-        [&](const RPCHelpMan &self, const Config &config,
-            const JSONRPCRequest &request) -> UniValue {
-            const CTxMemPool &mempool = EnsureAnyMemPool(request.context);
-
-            const NodeContext &node = EnsureAnyNodeContext(request.context);
-
-            if (!mempool.IsLoaded()) {
-                throw JSONRPCError(RPC_MISC_ERROR,
-                                   "The mempool was not loaded yet");
-            }
-
-            if (!DumpMempool(mempool)) {
-                throw JSONRPCError(RPC_MISC_ERROR,
-                                   "Unable to dump mempool to disk");
-            }
-
-            UniValue ret(UniValue::VOBJ);
-            ret.pushKV("filename",
-                       fs::path((node.args->GetDataDirNet() / "mempool.dat"))
-                           .u8string());
-
             return ret;
         },
     };
@@ -3067,12 +2604,13 @@ static RPCHelpMan dumptxoutset() {
         RPCExamples{HelpExampleCli("dumptxoutset", "utxo.dat")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
+            const ArgsManager &args{EnsureAnyArgsman(request.context)};
             const fs::path path = fsbridge::AbsPathJoin(
-                gArgs.GetDataDirNet(), fs::u8path(request.params[0].get_str()));
+                args.GetDataDirNet(), fs::u8path(request.params[0].get_str()));
             // Write to a temporary path and then move into `path` on completion
             // to avoid confusion due to an interruption.
             const fs::path temppath = fsbridge::AbsPathJoin(
-                gArgs.GetDataDirNet(),
+                args.GetDataDirNet(),
                 fs::u8path(request.params[0].get_str() + ".incomplete"));
 
             if (fs::exists(path)) {
@@ -3190,15 +2728,9 @@ void RegisterBlockchainRPCCommands(CRPCTable &t) {
         { "blockchain",         getchaintips,                      },
         { "blockchain",         getchaintxstats,                   },
         { "blockchain",         getdifficulty,                     },
-        { "blockchain",         getmempoolancestors,               },
-        { "blockchain",         getmempooldescendants,             },
-        { "blockchain",         getmempoolentry,                   },
-        { "blockchain",         getmempoolinfo,                    },
-        { "blockchain",         getrawmempool,                     },
         { "blockchain",         gettxout,                          },
         { "blockchain",         gettxoutsetinfo,                   },
         { "blockchain",         pruneblockchain,                   },
-        { "blockchain",         savemempool,                       },
         { "blockchain",         verifychain,                       },
         { "blockchain",         preciousblock,                     },
         { "blockchain",         scantxoutset,                      },

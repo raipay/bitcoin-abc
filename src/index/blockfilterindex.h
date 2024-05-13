@@ -11,6 +11,8 @@
 #include <index/base.h>
 #include <util/hasher.h>
 
+static const char *const DEFAULT_BLOCKFILTERINDEX = "0";
+
 /** Interval between compact filter checkpoints. See BIP 157. */
 static constexpr int CFCHECKPT_INTERVAL = 1000;
 
@@ -41,6 +43,8 @@ private:
      */
     std::unordered_map<BlockHash, uint256, FilterHeaderHasher>
         m_headers_cache GUARDED_BY(m_cs_headers_cache);
+
+    bool AllowPrune() const override { return true; }
 
 protected:
     bool Init() override;

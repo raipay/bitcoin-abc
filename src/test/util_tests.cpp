@@ -13,6 +13,7 @@
 #include <test/util/logging.h>
 #include <test/util/str.h>
 #include <uint256.h>
+#include <util/bitdeque.h>
 #include <util/check.h>
 #include <util/getuniquepath.h>
 #include <util/message.h> // For MessageSign(), MessageVerify(), MESSAGE_MAGIC
@@ -193,9 +194,24 @@ BOOST_AUTO_TEST_CASE(util_HexStr) {
 
     BOOST_CHECK_EQUAL(HexStr(Span{ParseHex_expected}.first(0)), "");
 
-    std::vector<uint8_t> ParseHex_vec(ParseHex_expected, ParseHex_expected + 5);
+    {
+        const std::vector<char> in_s{ParseHex_expected, ParseHex_expected + 5};
+        const Span<const uint8_t> in_u{MakeUCharSpan(in_s)};
+        const Span<const std::byte> in_b{MakeByteSpan(in_s)};
+        const std::string out_exp{"04678afdb0"};
 
-    BOOST_CHECK_EQUAL(HexStr(ParseHex_vec), "04678afdb0");
+        BOOST_CHECK_EQUAL(HexStr(in_u), out_exp);
+        BOOST_CHECK_EQUAL(HexStr(in_s), out_exp);
+        BOOST_CHECK_EQUAL(HexStr(in_b), out_exp);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(span_write_bytes) {
+    std::array<uint8_t, 2> mut_arr{{0xaa, 0xbb}};
+    const auto mut_bytes{MakeWritableByteSpan(mut_arr)};
+    mut_bytes[1] = std::byte{0x11};
+    BOOST_CHECK_EQUAL(mut_arr.at(0), 0xaa);
+    BOOST_CHECK_EQUAL(mut_arr.at(1), 0x11);
 }
 
 BOOST_AUTO_TEST_CASE(util_Join) {
@@ -2678,7 +2694,7 @@ BOOST_AUTO_TEST_CASE(message_sign) {
 }
 
 BOOST_AUTO_TEST_CASE(message_verify) {
-    const auto params = CreateChainParams(CBaseChainParams::MAIN);
+    const auto params = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
     BOOST_CHECK_EQUAL(MessageVerify(*params, "invalid address",
                                     "signature should be irrelevant",
                                     "message too"),

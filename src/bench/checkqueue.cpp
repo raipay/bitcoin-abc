@@ -27,12 +27,10 @@ static void CCheckQueueSpeedPrevectorJob(benchmark::Bench &bench) {
 
     struct PrevectorJob {
         prevector<PREVECTOR_SIZE, uint8_t> p;
-        PrevectorJob() {}
         explicit PrevectorJob(FastRandomContext &insecure_rand) {
             p.resize(insecure_rand.randrange(PREVECTOR_SIZE * 2));
         }
         bool operator()() { return true; }
-        void swap(PrevectorJob &x) noexcept { p.swap(x.p); };
     };
     CCheckQueue<PrevectorJob> queue{QUEUE_BATCH_SIZE};
     queue.StartWorkerThreads(std::max(MIN_CORES, GetNumCores()));
@@ -55,7 +53,7 @@ static void CCheckQueueSpeedPrevectorJob(benchmark::Bench &bench) {
             CCheckQueueControl<PrevectorJob> control(&queue);
             std::vector<std::vector<PrevectorJob>> vBatches(BATCHES);
             for (auto &vChecks : vBatches) {
-                control.Add(vChecks);
+                control.Add(std::move(vChecks));
             }
             // control waits for completion by RAII, but it is done explicitly
             // here for clarity

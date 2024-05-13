@@ -72,7 +72,7 @@ BOOST_AUTO_TEST_CASE(streams_vector_writer) {
 BOOST_AUTO_TEST_CASE(streams_vector_reader) {
     std::vector<uint8_t> vch = {1, 255, 3, 4, 5, 6};
 
-    VectorReader reader(SER_NETWORK, INIT_PROTO_VERSION, vch, 0);
+    SpanReader reader{SER_NETWORK, INIT_PROTO_VERSION, vch};
     BOOST_CHECK_EQUAL(reader.size(), 6U);
     BOOST_CHECK(!reader.empty());
 
@@ -103,7 +103,7 @@ BOOST_AUTO_TEST_CASE(streams_vector_reader) {
     BOOST_CHECK_THROW(reader >> d, std::ios_base::failure);
 
     // Read a 4 bytes as a (signed) int32_t from the beginning of the buffer.
-    VectorReader new_reader(SER_NETWORK, INIT_PROTO_VERSION, vch, 0);
+    SpanReader new_reader{SER_NETWORK, INIT_PROTO_VERSION, vch};
     new_reader >> d;
     // 67370753 = 1,255,3,4 in little-endian base-256
     BOOST_CHECK_EQUAL(d, 67370753);
@@ -152,7 +152,7 @@ BOOST_AUTO_TEST_CASE(bitstream_reader_writer) {
 }
 
 BOOST_AUTO_TEST_CASE(streams_serializedata_xor) {
-    std::vector<uint8_t> in;
+    std::vector<std::byte> in;
     std::vector<char> expected_xor;
     std::vector<uint8_t> key;
     CDataStream ds(in, 0, 0);
@@ -163,10 +163,10 @@ BOOST_AUTO_TEST_CASE(streams_serializedata_xor) {
     key.push_back('\x00');
     ds.Xor(key);
     BOOST_CHECK_EQUAL(std::string(expected_xor.begin(), expected_xor.end()),
-                      std::string(ds.begin(), ds.end()));
+                      ds.str());
 
-    in.push_back('\x0f');
-    in.push_back('\xf0');
+    in.push_back(std::byte{0x0f});
+    in.push_back(std::byte{0xf0});
     expected_xor.push_back('\xf0');
     expected_xor.push_back('\x0f');
 
@@ -179,14 +179,14 @@ BOOST_AUTO_TEST_CASE(streams_serializedata_xor) {
     key.push_back('\xff');
     ds.Xor(key);
     BOOST_CHECK_EQUAL(std::string(expected_xor.begin(), expected_xor.end()),
-                      std::string(ds.begin(), ds.end()));
+                      ds.str());
 
     // Multi character key
 
     in.clear();
     expected_xor.clear();
-    in.push_back('\xf0');
-    in.push_back('\x0f');
+    in.push_back(std::byte{0xf0});
+    in.push_back(std::byte{0x0f});
     expected_xor.push_back('\x0f');
     expected_xor.push_back('\x00');
 
@@ -199,7 +199,7 @@ BOOST_AUTO_TEST_CASE(streams_serializedata_xor) {
 
     ds.Xor(key);
     BOOST_CHECK_EQUAL(std::string(expected_xor.begin(), expected_xor.end()),
-                      std::string(ds.begin(), ds.end()));
+                      ds.str());
 }
 
 BOOST_AUTO_TEST_CASE(streams_empty_vector) {
@@ -207,15 +207,18 @@ BOOST_AUTO_TEST_CASE(streams_empty_vector) {
     CDataStream ds(in, 0, 0);
 
     // read 0 bytes used to cause a segfault on some older systems.
-    BOOST_CHECK_NO_THROW(ds.read(nullptr, 0));
+    BOOST_CHECK_NO_THROW(ds.read({}));
 
     // Same goes for writing 0 bytes from a vector ...
-    const std::vector<uint8_t> vdata{'f', 'o', 'o', 'b', 'a', 'r'};
+    const std::vector<std::byte> vdata{std::byte{'f'}, std::byte{'o'},
+                                       std::byte{'o'}, std::byte{'b'},
+                                       std::byte{'a'}, std::byte{'r'}};
     BOOST_CHECK_NO_THROW(ds.insert(ds.begin(), vdata.begin(), vdata.begin()));
     BOOST_CHECK_NO_THROW(ds.insert(ds.begin(), vdata.begin(), vdata.end()));
 
     // ... or an array.
-    const char adata[6] = {'f', 'o', 'o', 'b', 'a', 'r'};
+    const std::byte adata[6] = {std::byte{'f'}, std::byte{'o'}, std::byte{'o'},
+                                std::byte{'b'}, std::byte{'a'}, std::byte{'r'}};
     BOOST_CHECK_NO_THROW(ds.insert(ds.begin(), &adata[0], &adata[0]));
     BOOST_CHECK_NO_THROW(ds.insert(ds.begin(), &adata[0], &adata[6]));
 }
@@ -275,7 +278,7 @@ BOOST_AUTO_TEST_CASE(streams_buffered_file) {
         bf >> i;
         BOOST_CHECK(false);
     } catch (const std::exception &e) {
-        BOOST_CHECK(strstr(e.what(), "Read attempted past buffer limit") !=
+        BOOST_CHECK(strstr(e.what(), "Attempt to position past buffer limit") !=
                     nullptr);
     }
     // The default argument removes the limit completely.
@@ -345,12 +348,63 @@ BOOST_AUTO_TEST_CASE(streams_buffered_file) {
     BOOST_CHECK(!bf.SetPos(0));
     // But we should now be positioned at least as far back as allowed
     // by the rewind window (relative to our farthest read position, 40).
-    BOOST_CHECK(bf.GetPos() <= 30);
+    BOOST_CHECK(bf.GetPos() <= 30U);
 
     // We can explicitly close the file, or the destructor will do it.
     bf.fclose();
 
     fs::remove("streams_test_tmp");
+}
+
+BOOST_AUTO_TEST_CASE(streams_buffered_file_skip) {
+    fs::path streams_test_filename =
+        m_args.GetDataDirBase() / "streams_test_tmp";
+    FILE *file = fsbridge::fopen(streams_test_filename, "w+b");
+    // The value at each offset is the byte offset (e.g. byte 1 in the file has
+    // the value 0x01).
+    for (uint8_t j = 0; j < 40; ++j) {
+        fwrite(&j, 1, 1, file);
+    }
+    rewind(file);
+
+    // The buffer is 25 bytes, allow rewinding 10 bytes.
+    CBufferedFile bf(file, 25, 10, 222, 333);
+
+    uint8_t i;
+    // This is like bf >> (7-byte-variable), in that it will cause data
+    // to be read from the file into memory, but it's not copied to us.
+    bf.SkipTo(7);
+    BOOST_CHECK_EQUAL(bf.GetPos(), 7U);
+    bf >> i;
+    BOOST_CHECK_EQUAL(i, 7);
+
+    // The bytes in the buffer up to offset 7 are valid and can be read.
+    BOOST_CHECK(bf.SetPos(0));
+    bf >> i;
+    BOOST_CHECK_EQUAL(i, 0);
+    bf >> i;
+    BOOST_CHECK_EQUAL(i, 1);
+
+    bf.SkipTo(11);
+    bf >> i;
+    BOOST_CHECK_EQUAL(i, 11);
+
+    // SkipTo() honors the transfer limit; we can't position beyond the limit.
+    bf.SetLimit(13);
+    try {
+        bf.SkipTo(14);
+        BOOST_CHECK(false);
+    } catch (const std::exception &e) {
+        BOOST_CHECK(strstr(e.what(), "Attempt to position past buffer limit") !=
+                    nullptr);
+    }
+
+    // We can position exactly to the transfer limit.
+    bf.SkipTo(13);
+    BOOST_CHECK_EQUAL(bf.GetPos(), 13U);
+
+    bf.fclose();
+    fs::remove(streams_test_filename);
 }
 
 BOOST_AUTO_TEST_CASE(streams_buffered_file_rand) {
@@ -383,7 +437,7 @@ BOOST_AUTO_TEST_CASE(streams_buffered_file_rand) {
             // sizes; the boundaries of the objects can interact arbitrarily
             // with the CBufferFile's internal buffer. These first three
             // cases simulate objects of various sizes (1, 2, 5 bytes).
-            switch (InsecureRandRange(5)) {
+            switch (InsecureRandRange(6)) {
                 case 0: {
                     uint8_t a[1];
                     if (currentPos + 1 > fileSize) {
@@ -424,6 +478,19 @@ BOOST_AUTO_TEST_CASE(streams_buffered_file_rand) {
                     break;
                 }
                 case 3: {
+                    // SkipTo is similar to the "read" cases above, except
+                    // we don't receive the data.
+                    size_t skip_length{
+                        static_cast<size_t>(InsecureRandRange(5))};
+                    if (currentPos + skip_length > fileSize) {
+                        continue;
+                    }
+                    bf.SetLimit(currentPos + skip_length);
+                    bf.SkipTo(currentPos + skip_length);
+                    currentPos += skip_length;
+                    break;
+                }
+                case 4: {
                     // Find a byte value (that is at or ahead of the current
                     // position).
                     size_t find = currentPos + InsecureRandRange(8);
@@ -442,7 +509,7 @@ BOOST_AUTO_TEST_CASE(streams_buffered_file_rand) {
                     currentPos++;
                     break;
                 }
-                case 4: {
+                case 5: {
                     size_t requestPos = InsecureRandRange(maxPos + 4);
                     bool okay = bf.SetPos(requestPos);
                     // The new position may differ from the requested position

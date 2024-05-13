@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -12,16 +11,10 @@ from test_framework.wallet import MiniWallet
 class MempoolCoinbaseTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.setup_clean_chain = True
 
     def run_test(self):
         node = self.nodes[0]
         wallet = MiniWallet(node)
-
-        # Add enough mature utxos to the wallet so that all txs spend confirmed
-        # coins
-        self.generate(wallet, 3)
-        self.generate(node, 100)
 
         # Spend block 1/2/3's coinbase transactions
         # Mine a block

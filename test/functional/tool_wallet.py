@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2018-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -259,7 +258,8 @@ class ToolWalletTest(BitcoinTestFramework):
         # TODO: Check salvage actually salvages and doesn't break things.
         # https://github.com/bitcoin/bitcoin/issues/7463
         self.log.info("Check salvage")
-        self.start_node(0, ["-wallet=salvage"])
+        self.start_node(0)
+        self.nodes[0].createwallet("salvage")
         self.stop_node(0)
 
         self.assert_tool_output("", "-wallet=salvage", "salvage")

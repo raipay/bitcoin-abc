@@ -11,7 +11,12 @@
 #include <dbwrapper.h>
 #include <flatfile.h>
 #include <fs.h>
+#include <kernel/cs_main.h>
+#include <util/result.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -21,11 +26,11 @@
 struct BlockHash;
 class CBlockFileInfo;
 class CBlockIndex;
+class COutPoint;
 
 namespace Consensus {
 struct Params;
 };
-struct bilingual_str;
 
 //! min. -dbcache (MiB)
 static constexpr int64_t MIN_DB_CACHE_MB = 4;
@@ -47,24 +52,24 @@ static constexpr int64_t MAX_FILTER_INDEX_CACHE_MB = 1024;
 //! Max memory allocated to coin DB specific cache (MiB)
 static constexpr int64_t MAX_COINS_DB_CACHE_MB = 8;
 
-// Actually declared in validation.cpp; can't include because of circular
-// dependency.
-extern RecursiveMutex cs_main;
+//! User-controlled performance and debug options.
+struct CoinsViewOptions {
+    //! Maximum database write batch size in bytes.
+    size_t batch_write_bytes = DEFAULT_DB_BATCH_SIZE;
+    //! If non-zero, randomly exit when the database is flushed with (1/ratio)
+    //! probability.
+    int simulate_crash_ratio = 0;
+};
 
 /** CCoinsView backed by the coin database (chainstate/) */
 class CCoinsViewDB final : public CCoinsView {
 protected:
+    DBParams m_db_params;
+    CoinsViewOptions m_options;
     std::unique_ptr<CDBWrapper> m_db;
-    fs::path m_ldb_path;
-    bool m_is_memory;
 
 public:
-    /**
-     * @param[in] ldb_path    Location in the filesystem where leveldb data will
-     * be stored.
-     */
-    explicit CCoinsViewDB(fs::path ldb_path, size_t nCacheSize, bool fMemory,
-                          bool fWipe);
+    explicit CCoinsViewDB(DBParams db_params, CoinsViewOptions options);
 
     bool GetCoin(const COutPoint &outpoint, Coin &coin) const override;
     bool HaveCoin(const COutPoint &outpoint) const override;
@@ -110,9 +115,7 @@ private:
 /** Access to the block database (blocks/index/) */
 class CBlockTreeDB : public CDBWrapper {
 public:
-    explicit CBlockTreeDB(size_t nCacheSize, bool fMemory = false,
-                          bool fWipe = false);
-
+    using CDBWrapper::CDBWrapper;
     bool WriteBatchSync(
         const std::vector<std::pair<int, const CBlockFileInfo *>> &fileInfo,
         int nLastFile, const std::vector<const CBlockIndex *> &blockinfo);
@@ -133,6 +136,7 @@ public:
     bool Upgrade();
 };
 
-std::optional<bilingual_str> CheckLegacyTxindex(CBlockTreeDB &block_tree_db);
+[[nodiscard]] util::Result<void>
+CheckLegacyTxindex(CBlockTreeDB &block_tree_db);
 
 #endif // BITCOIN_TXDB_H

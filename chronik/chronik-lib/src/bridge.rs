@@ -7,25 +7,26 @@
 use std::{
     net::{AddrParseError, IpAddr, SocketAddr},
     sync::Arc,
+    time::Duration,
 };
 
 use abc_rust_error::Result;
 use bitcoinsuite_core::tx::{Tx, TxId};
 use chronik_bridge::{ffi::init_error, util::expect_unique_ptr};
-use chronik_db::mem::MempoolTx;
-use chronik_http::server::{ChronikServer, ChronikServerParams};
+use chronik_db::{index_tx::TxNumCacheSettings, mem::MempoolTx};
+use chronik_http::server::{
+    ChronikServer, ChronikServerParams, ChronikSettings,
+};
 use chronik_indexer::{
     indexer::{ChronikIndexer, ChronikIndexerParams, Node},
     pause::Pause,
 };
+use chronik_plugin::context::PluginContext;
 use chronik_util::{log, log_chronik, mount_loggers, Loggers};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
-use crate::{
-    error::ok_or_abort_node,
-    ffi::{self, StartChronikValidationInterface},
-};
+use crate::ffi::{self, StartChronikValidationInterface};
 
 /// Errors for [`Chronik`] and [`setup_chronik`].
 #[derive(Debug, Eq, Error, PartialEq)]
@@ -40,10 +41,9 @@ use self::ChronikError::*;
 /// Setup the Chronik bridge. Returns a ChronikIndexer object.
 pub fn setup_chronik(
     params: ffi::SetupParams,
-    config: &ffi::Config,
     node: &ffi::NodeContext,
 ) -> bool {
-    match try_setup_chronik(params, config, node) {
+    match try_setup_chronik(params, node) {
         Ok(()) => true,
         Err(report) => {
             log_chronik!("{report:?}\n");
@@ -54,7 +54,6 @@ pub fn setup_chronik(
 
 fn try_setup_chronik(
     params: ffi::SetupParams,
-    config: &ffi::Config,
     node_context: &ffi::NodeContext,
 ) -> Result<()> {
     abc_rust_error::install();
@@ -67,17 +66,24 @@ fn try_setup_chronik(
         .into_iter()
         .map(|host| parse_socket_addr(host, params.default_port))
         .collect::<Result<Vec<_>>>()?;
+    PluginContext::setup()?;
     log!("Starting Chronik bound to {:?}\n", hosts);
-    let bridge = chronik_bridge::ffi::make_bridge(config, node_context);
+    let bridge = chronik_bridge::ffi::make_bridge(node_context);
     let bridge_ref = expect_unique_ptr("make_bridge", &bridge);
     let (pause, pause_notify) = Pause::new_pair(params.is_pause_allowed);
     let mut indexer = ChronikIndexer::setup(ChronikIndexerParams {
         datadir_net: params.datadir_net.into(),
         wipe_db: params.wipe_db,
+        enable_token_index: params.enable_token_index,
+        enable_lokad_id_index: params.enable_lokad_id_index,
         enable_perf_stats: params.enable_perf_stats,
+        tx_num_cache: TxNumCacheSettings {
+            bucket_size: params.tx_num_cache.bucket_size,
+            num_buckets: params.tx_num_cache.num_buckets,
+        },
     })?;
     indexer.resync_indexer(bridge_ref)?;
-    if chronik_bridge::ffi::shutdown_requested() {
+    if bridge.shutdown_requested() {
         // Don't setup Chronik if the user requested shutdown during resync
         return Ok(());
     }
@@ -96,11 +102,20 @@ fn try_setup_chronik(
                 indexer,
                 node,
                 pause_notify: Arc::new(pause_notify),
+                settings: ChronikSettings {
+                    ws_ping_interval: Duration::from_secs(
+                        params.ws_ping_interval_secs,
+                    ),
+                    enable_cors: params.enable_cors,
+                },
             })
         }
     })?;
-    runtime.spawn(async move {
-        ok_or_abort_node("ChronikServer::serve", server.serve().await);
+    runtime.spawn({
+        let node = Arc::clone(&node);
+        async move {
+            node.ok_or_abort("ChronikServer::serve", server.serve().await);
+        }
     });
     let chronik = Box::new(Chronik {
         node: Arc::clone(&node),
@@ -143,7 +158,7 @@ impl Chronik {
         time_first_seen: i64,
     ) {
         self.block_if_paused();
-        ok_or_abort_node(
+        self.node.ok_or_abort(
             "handle_tx_added_to_mempool",
             self.add_tx_to_mempool(ptx, spent_coins, time_first_seen),
         );
@@ -154,7 +169,7 @@ impl Chronik {
         self.block_if_paused();
         let mut indexer = self.indexer.blocking_write();
         let txid = TxId::from(txid);
-        ok_or_abort_node(
+        self.node.ok_or_abort(
             "handle_tx_removed_from_mempool",
             indexer.handle_tx_removed_from_mempool(txid),
         );
@@ -168,7 +183,7 @@ impl Chronik {
         bindex: &ffi::CBlockIndex,
     ) {
         self.block_if_paused();
-        ok_or_abort_node(
+        self.node.ok_or_abort(
             "handle_block_connected",
             self.connect_block(block, bindex),
         );
@@ -181,7 +196,7 @@ impl Chronik {
         bindex: &ffi::CBlockIndex,
     ) {
         self.block_if_paused();
-        ok_or_abort_node(
+        self.node.ok_or_abort(
             "handle_block_disconnected",
             self.disconnect_block(block, bindex),
         );
@@ -190,7 +205,8 @@ impl Chronik {
     /// Block finalized with Avalanche
     pub fn handle_block_finalized(&self, bindex: &ffi::CBlockIndex) {
         self.block_if_paused();
-        ok_or_abort_node("handle_block_finalized", self.finalize_block(bindex));
+        self.node
+            .ok_or_abort("handle_block_finalized", self.finalize_block(bindex));
     }
 
     fn add_tx_to_mempool(
@@ -215,8 +231,11 @@ impl Chronik {
         block: &ffi::CBlock,
         bindex: &ffi::CBlockIndex,
     ) -> Result<()> {
+        let block_undo = self.node.bridge.load_block_undo(bindex)?;
+        let block =
+            chronik_bridge::ffi::bridge_block(block, &block_undo, bindex)?;
         let mut indexer = self.indexer.blocking_write();
-        let block = indexer.make_chronik_block(block, bindex)?;
+        let block = indexer.make_chronik_block(block);
         let block_hash = block.db_block.hash.clone();
         let num_txs = block.block_txs.txs.len();
         indexer.handle_block_connected(block)?;
@@ -233,8 +252,11 @@ impl Chronik {
         block: &ffi::CBlock,
         bindex: &ffi::CBlockIndex,
     ) -> Result<()> {
+        let block_undo = self.node.bridge.load_block_undo(bindex)?;
+        let block =
+            chronik_bridge::ffi::bridge_block(block, &block_undo, bindex)?;
         let mut indexer = self.indexer.blocking_write();
-        let block = indexer.make_chronik_block(block, bindex)?;
+        let block = indexer.make_chronik_block(block);
         let block_hash = block.db_block.hash.clone();
         let num_txs = block.block_txs.txs.len();
         indexer.handle_block_disconnected(block)?;
@@ -247,10 +269,8 @@ impl Chronik {
     }
 
     fn finalize_block(&self, bindex: &ffi::CBlockIndex) -> Result<()> {
-        let block = self.node.bridge.load_block(bindex)?;
-        let block_ref = expect_unique_ptr("load_block", &block);
         let mut indexer = self.indexer.blocking_write();
-        let block = indexer.make_chronik_block(block_ref, bindex)?;
+        let block = indexer.load_chronik_block(&self.node.bridge, bindex)?;
         let block_hash = block.db_block.hash.clone();
         let num_txs = block.block_txs.txs.len();
         indexer.handle_block_finalized(block)?;

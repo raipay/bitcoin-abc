@@ -17,15 +17,12 @@
 
 #include <boost/test/unit_test.hpp>
 
-BOOST_FIXTURE_TEST_SUITE(validation_chainstate_tests, TestingSetup)
+BOOST_FIXTURE_TEST_SUITE(validation_chainstate_tests, ChainTestingSetup)
 
 //! Test resizing coins-related Chainstate caches during runtime.
 //!
 BOOST_AUTO_TEST_CASE(validation_chainstate_resize_caches) {
-    const Config &config = GetConfig();
-    ChainstateManager manager(config);
-    WITH_LOCK(::cs_main, manager.m_blockman.m_block_tree_db =
-                             std::make_unique<CBlockTreeDB>(1 << 20, true));
+    ChainstateManager &manager = *Assert(m_node.chainman);
     CTxMemPool &mempool = *Assert(m_node.mempool);
 
     //! Create and add a Coin with DynamicMemoryUsage of 80 bytes to the given
@@ -111,29 +108,28 @@ BOOST_FIXTURE_TEST_CASE(chainstate_update_tip, TestChain100Setup) {
 
     curr_tip = BlockHash{::g_best_block};
 
-    Chainstate *background_cs = nullptr;
+    BOOST_CHECK_EQUAL(chainman.GetAll().size(), 2);
 
-    auto chainstates = chainman.GetAll();
-    BOOST_CHECK_EQUAL(chainstates.size(), 2);
-    for (Chainstate *cs : chainman.GetAll()) {
-        BOOST_CHECK(cs);
-        if (cs != &chainman.ActiveChainstate()) {
-            background_cs = cs;
+    Chainstate &background_cs{*[&] {
+        for (Chainstate *cs : chainman.GetAll()) {
+            if (cs != &chainman.ActiveChainstate()) {
+                return cs;
+            }
         }
-    }
-    BOOST_CHECK(background_cs);
+        assert(false);
+    }()};
 
     // Create a block to append to the validation chain.
     std::vector<CMutableTransaction> noTxns;
     CScript scriptPubKey = CScript() << ToByteVector(coinbaseKey.GetPubKey())
                                      << OP_CHECKSIG;
     CBlock validation_block =
-        this->CreateBlock(noTxns, scriptPubKey, *background_cs);
+        this->CreateBlock(noTxns, scriptPubKey, background_cs);
     auto pblock = std::make_shared<const CBlock>(validation_block);
     BlockValidationState state;
     bool newblock = false;
 
-    const Config &config = GetConfig();
+    const Config &config = chainman.GetConfig();
     // TODO: much of this is inlined from ProcessNewBlock(); just reuse PNB()
     // once it is changed to support multiple chainstates.
     {
@@ -142,15 +138,15 @@ BOOST_FIXTURE_TEST_CASE(chainstate_update_tip, TestChain100Setup) {
         bool checked = CheckBlock(
             *pblock, state, config.GetChainParams().GetConsensus(), options);
         BOOST_CHECK(checked);
-        bool accepted = background_cs->AcceptBlock(config, pblock, state, true,
-                                                   nullptr, &newblock);
+        bool accepted = background_cs.AcceptBlock(pblock, state, true, nullptr,
+                                                  &newblock, true);
         BOOST_CHECK(accepted);
     }
     // UpdateTip is called here
-    bool block_added = background_cs->ActivateBestChain(config, state, pblock);
+    bool block_added = background_cs.ActivateBestChain(state, pblock);
 
     // Ensure tip is as expected
-    BOOST_CHECK_EQUAL(background_cs->m_chain.Tip()->GetBlockHash(),
+    BOOST_CHECK_EQUAL(background_cs.m_chain.Tip()->GetBlockHash(),
                       validation_block.GetHash());
 
     // g_best_block should be unchanged after adding a block to the background

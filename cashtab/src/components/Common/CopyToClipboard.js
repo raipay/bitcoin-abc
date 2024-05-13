@@ -1,44 +1,45 @@
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 import React from 'react';
-import { generalNotification } from './Notifications';
 import PropTypes from 'prop-types';
+import { toast } from 'react-toastify';
+import styled from 'styled-components';
 
-const CopyToClipboard = ({ data, optionalOnCopyNotification, children }) => {
+const CopyWrapper = styled.div`
+    cursor: pointer;
+`;
+
+const CopyToClipboard = ({
+    data,
+    showToast = false,
+    customMsg = false,
+    children,
+}) => {
     return (
-        <div
+        <CopyWrapper
             onClick={() => {
-                let result = { title: '', msg: '' };
-
                 if (navigator.clipboard) {
                     navigator.clipboard.writeText(data);
                 }
-                if (optionalOnCopyNotification) {
-                    if (
-                        optionalOnCopyNotification.msg &&
-                        optionalOnCopyNotification.msg.length > 0
-                    ) {
-                        result.msg = optionalOnCopyNotification.msg;
-                    }
-                    if (
-                        optionalOnCopyNotification.title &&
-                        optionalOnCopyNotification.title.length > 0
-                    ) {
-                        result.title = optionalOnCopyNotification.title;
-                    }
-                    generalNotification(result.msg, result.title);
+                if (showToast) {
+                    const toastMsg = customMsg
+                        ? customMsg
+                        : `"${data}" copied to clipboard`;
+                    toast.success(toastMsg);
                 }
             }}
         >
             {children}
-        </div>
+        </CopyWrapper>
     );
 };
 
 CopyToClipboard.propTypes = {
     data: PropTypes.string,
-    optionalOnCopyNotification: PropTypes.shape({
-        title: PropTypes.string,
-        msg: PropTypes.string,
-    }),
+    showToast: PropTypes.bool,
+    customMsg: PropTypes.oneOfType([PropTypes.bool, PropTypes.string]),
     children: PropTypes.node,
 };
 

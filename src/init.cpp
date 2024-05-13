@@ -9,6 +9,9 @@
 
 #include <init.h>
 
+#include <kernel/mempool_persist.h>
+#include <kernel/validation_cache_sizes.h>
+
 #include <addrman.h>
 #include <avalanche/avalanche.h>
 #include <avalanche/processor.h>
@@ -35,16 +38,21 @@
 #include <interfaces/chain.h>
 #include <interfaces/node.h>
 #include <mapport.h>
+#include <mempool_args.h>
 #include <net.h>
 #include <net_permissions.h>
 #include <net_processing.h>
 #include <netbase.h>
+#include <node/blockmanager_args.h>
 #include <node/blockstorage.h>
 #include <node/caches.h>
 #include <node/chainstate.h>
+#include <node/chainstatemanager_args.h>
 #include <node/context.h>
+#include <node/mempool_persist_args.h>
 #include <node/miner.h>
 #include <node/ui_interface.h>
+#include <node/validation_cache_args.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
 #include <rpc/blockchain.h>
@@ -105,15 +113,20 @@
 #include <thread>
 #include <vector>
 
+using kernel::DumpMempool;
+using kernel::ValidationCacheSizes;
+
+using node::ApplyArgsManOptions;
 using node::CacheSizes;
 using node::CalculateCacheSizes;
 using node::CleanupBlockRevFiles;
+using node::DEFAULT_PERSIST_MEMPOOL;
 using node::DEFAULT_STOPAFTERBLOCKIMPORT;
-using node::fPruneMode;
 using node::fReindex;
 using node::LoadChainstate;
+using node::MempoolPath;
 using node::NodeContext;
-using node::nPruneTarget;
+using node::ShouldPersistMempool;
 using node::ThreadImport;
 using node::VerifyLoadedChainstate;
 
@@ -137,8 +150,7 @@ static const char *DEFAULT_ASMAP_FILENAME = "ip_asn.map";
 static const char *BITCOIN_PID_FILENAME = "bitcoind.pid";
 
 static fs::path GetPidFile(const ArgsManager &args) {
-    return AbsPathForConfigVal(
-        fs::PathFromString(args.GetArg("-pid", BITCOIN_PID_FILENAME)));
+    return AbsPathForConfigVal(args.GetPathArg("-pid", BITCOIN_PID_FILENAME));
 }
 
 [[nodiscard]] static bool CreatePidFile(const ArgsManager &args) {
@@ -273,9 +285,9 @@ void Shutdown(NodeContext &node) {
     node.banman.reset();
     node.addrman.reset();
 
-    if (node.mempool && node.mempool->IsLoaded() &&
-        node.args->GetBoolArg("-persistmempool", DEFAULT_PERSIST_MEMPOOL)) {
-        DumpMempool(*node.mempool);
+    if (node.mempool && node.mempool->GetLoadTried() &&
+        ShouldPersistMempool(*node.args)) {
+        DumpMempool(*node.mempool, MempoolPath(*node.args));
     }
 
     // FlushStateToDisk generates a ChainStateFlushed callback, which we should
@@ -294,7 +306,9 @@ void Shutdown(NodeContext &node) {
     GetMainSignals().FlushBackgroundCallbacks();
 
 #if ENABLE_CHRONIK
-    chronik::Stop();
+    if (node.args->GetBoolArg("-chronik", DEFAULT_CHRONIK)) {
+        chronik::Stop();
+    }
 #endif
 
     // Stop and delete all indexes only after flushing background callbacks.
@@ -354,7 +368,6 @@ void Shutdown(NodeContext &node) {
                   fsbridge::get_filesystem_error_message(e));
     }
 
-    node.args = nullptr;
     LogPrintf("%s: done\n", __func__);
 }
 
@@ -422,11 +435,12 @@ void SetupServerArgs(NodeContext &node) {
         CreateBaseChainParams(CBaseChainParams::TESTNET);
     const auto regtestBaseParams =
         CreateBaseChainParams(CBaseChainParams::REGTEST);
-    const auto defaultChainParams = CreateChainParams(CBaseChainParams::MAIN);
+    const auto defaultChainParams =
+        CreateChainParams(argsman, CBaseChainParams::MAIN);
     const auto testnetChainParams =
-        CreateChainParams(CBaseChainParams::TESTNET);
+        CreateChainParams(argsman, CBaseChainParams::TESTNET);
     const auto regtestChainParams =
-        CreateChainParams(CBaseChainParams::REGTEST);
+        CreateChainParams(argsman, CBaseChainParams::REGTEST);
 
     // Hidden Options
     std::vector<std::string> hidden_args = {
@@ -438,6 +452,7 @@ void SetupServerArgs(NodeContext &node) {
         "-replayprotectionactivationtime",
         "-enableminerfund",
         "-chronikallowpause",
+        "-chronikcors",
         // GUI args. These will be overwritten by SetupUIArgs for the GUI
         "-allowselfsignedrootcertificates", "-choosedatadir", "-lang=<lang>",
         "-min", "-resetguisettings", "-rootcertificates=<file>", "-splash",
@@ -533,7 +548,7 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg("-maxmempool=<n>",
                    strprintf("Keep the transaction memory pool below <n> "
                              "megabytes (default: %u)",
-                             DEFAULT_MAX_MEMPOOL_SIZE),
+                             DEFAULT_MAX_MEMPOOL_SIZE_MB),
                    ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-maxorphantx=<n>",
                    strprintf("Keep at most <n> unconnectable transactions in "
@@ -543,7 +558,7 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg("-mempoolexpiry=<n>",
                    strprintf("Do not keep transactions in the mempool longer "
                              "than <n> hours (default: %u)",
-                             DEFAULT_MEMPOOL_EXPIRY),
+                             DEFAULT_MEMPOOL_EXPIRY_HOURS),
                    ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg(
         "-minimumchainwork=<hex>",
@@ -643,10 +658,36 @@ void SetupServerArgs(NodeContext &node) {
             regtestBaseParams->ChronikPort()),
         ArgsManager::ALLOW_STRING | ArgsManager::NETWORK_ONLY,
         OptionsCategory::CHRONIK);
+    argsman.AddArg("-chroniktokenindex",
+                   "Enable token indexing in Chronik (default: 1)",
+                   ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg("-chroniklokadidindex",
+                   "Enable LOKAD ID indexing in Chronik (default: 1)",
+                   ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
     argsman.AddArg("-chronikreindex",
                    "Reindex the Chronik indexer from genesis, but leave the "
                    "other indexes untouched",
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg(
+        "-chroniktxnumcachebuckets",
+        strprintf(
+            "Tuning param of the TxNumCache, specifies how many buckets "
+            "to use on the belt. Caution against setting this too high, "
+            "it may slow down indexing. Set to 0 to disable. (default: %d)",
+            chronik::DEFAULT_TX_NUM_CACHE_BUCKETS),
+        ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
+    argsman.AddArg(
+        "-chroniktxnumcachebucketsize",
+        strprintf(
+            "Tuning param of the TxNumCache, specifies the size of each bucket "
+            "on the belt. Unlike the number of buckets, this may be increased "
+            "without much danger of slowing the indexer down. The total cache "
+            "size will be `num_buckets * bucket_size * 40B`, so by default the "
+            "cache will require %dkB of memory. (default: %d)",
+            chronik::DEFAULT_TX_NUM_CACHE_BUCKETS *
+                chronik::DEFAULT_TX_NUM_CACHE_BUCKET_SIZE * 40 / 1000,
+            chronik::DEFAULT_TX_NUM_CACHE_BUCKET_SIZE),
+        ArgsManager::ALLOW_INT, OptionsCategory::CHRONIK);
     argsman.AddArg("-chronikperfstats",
                    "Output some performance statistics (e.g. num cache hits, "
                    "seconds spent) into a <datadir>/perf folder. (default: 0)",
@@ -1048,19 +1089,19 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg(
         "-maxsigcachesize=<n>",
         strprintf("Limit size of signature cache to <n> MiB (default: %u)",
-                  DEFAULT_MAX_SIG_CACHE_SIZE),
+                  DEFAULT_MAX_SIG_CACHE_BYTES >> 20),
         ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
         OptionsCategory::DEBUG_TEST);
     argsman.AddArg(
         "-maxscriptcachesize=<n>",
         strprintf("Limit size of script cache to <n> MiB (default: %u)",
-                  DEFAULT_MAX_SCRIPT_CACHE_SIZE),
+                  DEFAULT_MAX_SCRIPT_CACHE_BYTES >> 20),
         ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
         OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-maxtipage=<n>",
                    strprintf("Maximum tip age in seconds to consider node in "
                              "initial block download (default: %u)",
-                             DEFAULT_MAX_TIP_AGE),
+                             Ticks<std::chrono::seconds>(DEFAULT_MAX_TIP_AGE)),
                    ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY,
                    OptionsCategory::DEBUG_TEST);
 
@@ -1389,8 +1430,8 @@ void SetupServerArgs(NodeContext &node) {
         "-maxavalancheoutbound",
         strprintf(
             "Set the maximum number of avalanche outbound peers to connect to. "
-            "Note that the -maxconnections option takes precedence (default: "
-            "%u).",
+            "Note that this option takes precedence over the -maxconnections "
+            "option (default: %u).",
             DEFAULT_MAX_AVALANCHE_OUTBOUND_CONNECTIONS),
         ArgsManager::ALLOW_INT, OptionsCategory::AVALANCHE);
     argsman.AddArg(
@@ -1793,6 +1834,17 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
         args.GetIntArg("-maxconnections", DEFAULT_MAX_PEER_CONNECTIONS);
     nMaxConnections = std::max(nUserMaxConnections, 0);
 
+    // -maxavalancheoutbound takes precedence over -maxconnections
+    const int maxAvalancheOutbound = args.GetIntArg(
+        "-maxavalancheoutbound", DEFAULT_MAX_AVALANCHE_OUTBOUND_CONNECTIONS);
+    if (isAvalancheEnabled(args) && maxAvalancheOutbound > nMaxConnections) {
+        nMaxConnections = std::max(maxAvalancheOutbound, nMaxConnections);
+        // Indicate the value set by the user
+        LogPrintf("Increasing -maxconnections from %d to %d to comply with "
+                  "-maxavalancheoutbound\n",
+                  nUserMaxConnections, nMaxConnections);
+    }
+
     // Trim requested connection counts, to fit into system limitations
     // <int> in std::min<int>(...) to work around FreeBSD compilation issue
     // described in #2695
@@ -1828,49 +1880,6 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
     // Step 3: parameter-to-internal-flags
     init::SetLoggingCategories(args);
 
-    fCheckBlockIndex = args.GetBoolArg("-checkblockindex",
-                                       chainparams.DefaultConsistencyChecks());
-    fCheckpointsEnabled =
-        args.GetBoolArg("-checkpoints", DEFAULT_CHECKPOINTS_ENABLED);
-    if (fCheckpointsEnabled) {
-        LogPrintf("Checkpoints will be verified.\n");
-    } else {
-        LogPrintf("Skipping checkpoint verification.\n");
-    }
-
-    hashAssumeValid = BlockHash::fromHex(
-        args.GetArg("-assumevalid",
-                    chainparams.GetConsensus().defaultAssumeValid.GetHex()));
-
-    if (args.IsArgSet("-minimumchainwork")) {
-        const std::string minChainWorkStr =
-            args.GetArg("-minimumchainwork", "");
-        if (!IsHexNumber(minChainWorkStr)) {
-            return InitError(strprintf(
-                Untranslated(
-                    "Invalid non-hex (%s) minimum chain work value specified"),
-                minChainWorkStr));
-        }
-        nMinimumChainWork = UintToArith256(uint256S(minChainWorkStr));
-    } else {
-        nMinimumChainWork =
-            UintToArith256(chainparams.GetConsensus().nMinimumChainWork);
-    }
-
-    // mempool limits
-    int64_t nMempoolSizeMax =
-        args.GetIntArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000;
-    // FIXME: this legacy limit comes from the DEFAULT_DESCENDANT_SIZE_LIMIT
-    // (101) that was enforced before the wellington activation. While it's
-    // still a good idea to have some minimum mempool size, using this value as
-    // a threshold is no longer relevant.
-    int64_t nMempoolSizeMin = 101 * 1000 * 40;
-    if (nMempoolSizeMax < 0 ||
-        (!chainparams.IsTestChain() && nMempoolSizeMax < nMempoolSizeMin)) {
-        return InitError(strprintf(_("-maxmempool must be at least %d MB"),
-                                   std::ceil(nMempoolSizeMin / 1000000.0)));
-    }
-
     // Configure excessive block size.
     const int64_t nProposedExcessiveBlockSize =
         args.GetIntArg("-excessiveblocksize", DEFAULT_MAX_BLOCK_SIZE);
@@ -1892,28 +1901,6 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
                            "(excessiveblocksize)"));
     }
 
-    // block pruning; get the amount of disk space (in MiB) to allot for block &
-    // undo files
-    int64_t nPruneArg = args.GetIntArg("-prune", 0);
-    if (nPruneArg < 0) {
-        return InitError(
-            _("Prune cannot be configured with a negative value."));
-    }
-    nPruneTarget = (uint64_t)nPruneArg * 1024 * 1024;
-    if (nPruneArg == 1) {
-        // manual pruning: -prune=1
-        nPruneTarget = std::numeric_limits<uint64_t>::max();
-        fPruneMode = true;
-    } else if (nPruneTarget) {
-        if (nPruneTarget < MIN_DISK_SPACE_FOR_BLOCK_FILES) {
-            return InitError(
-                strprintf(_("Prune configured below the minimum of %d MiB. "
-                            "Please use a higher number."),
-                          MIN_DISK_SPACE_FOR_BLOCK_FILES / 1024 / 1024));
-        }
-        fPruneMode = true;
-    }
-
     nConnectTimeout = args.GetIntArg("-timeout", DEFAULT_CONNECT_TIMEOUT);
     if (nConnectTimeout <= 0) {
         nConnectTimeout = DEFAULT_CONNECT_TIMEOUT;
@@ -1924,17 +1911,6 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
     if (peer_connect_timeout <= 0) {
         return InitError(Untranslated(
             "peertimeout cannot be configured with a negative value."));
-    }
-
-    if (args.IsArgSet("-minrelaytxfee")) {
-        Amount n = Amount::zero();
-        auto parsed = ParseMoney(args.GetArg("-minrelaytxfee", ""), n);
-        if (!parsed || n == Amount::zero()) {
-            return InitError(AmountErrMsg("minrelaytxfee",
-                                          args.GetArg("-minrelaytxfee", "")));
-        }
-        // High fee check is done afterward in CWallet::Create()
-        ::minRelayTxFee = CFeeRate(n);
     }
 
     // Sanity check argument for min fee for including tx in block
@@ -1948,26 +1924,6 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
         }
     }
 
-    // Feerate used to define dust.  Shouldn't be changed lightly as old
-    // implementations may inadvertently create non-standard transactions.
-    if (args.IsArgSet("-dustrelayfee")) {
-        Amount n = Amount::zero();
-        auto parsed = ParseMoney(args.GetArg("-dustrelayfee", ""), n);
-        if (!parsed || Amount::zero() == n) {
-            return InitError(
-                AmountErrMsg("dustrelayfee", args.GetArg("-dustrelayfee", "")));
-        }
-        dustRelayFee = CFeeRate(n);
-    }
-
-    fRequireStandard =
-        !args.GetBoolArg("-acceptnonstdtxn", !chainparams.RequireStandard());
-    if (!chainparams.IsTestChain() && !fRequireStandard) {
-        return InitError(strprintf(
-            Untranslated(
-                "acceptnonstdtxn is not currently supported for %s chain"),
-            chainparams.NetworkIDString()));
-    }
     nBytesPerSigCheck =
         args.IsArgSet("-bytespersigcheck")
             ? args.GetIntArg("-bytespersigcheck", nBytesPerSigCheck)
@@ -1977,19 +1933,12 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
         return false;
     }
 
-    fIsBareMultisigStd =
-        args.GetBoolArg("-permitbaremultisig", DEFAULT_PERMIT_BAREMULTISIG);
-    fAcceptDatacarrier =
-        args.GetBoolArg("-datacarrier", DEFAULT_ACCEPT_DATACARRIER);
-
     // Option to startup with mocktime set (used for regression testing):
     SetMockTime(args.GetIntArg("-mocktime", 0)); // SetMockTime(0) is a no-op
 
     if (args.GetBoolArg("-peerbloomfilters", DEFAULT_PEERBLOOMFILTERS)) {
         nLocalServices = ServiceFlags(nLocalServices | NODE_BLOOM);
     }
-
-    nMaxTipAge = args.GetIntArg("-maxtipage", DEFAULT_MAX_TIP_AGE);
 
     if (args.IsArgSet("-proxy") && args.GetArg("-proxy", "").empty()) {
         return InitError(_(
@@ -2027,6 +1976,44 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
             amount != avalanche::PROOF_DUST_THRESHOLD) {
             return InitError(_("Avalanche stake UTXO dust threshold can "
                                "only be set on test chains."));
+        }
+    }
+
+    // This is a staking node
+    if (isAvalancheEnabled(args) && args.IsArgSet("-avaproof")) {
+        if (!args.GetBoolArg("-listen", true)) {
+            return InitError(_("Running a staking node requires accepting "
+                               "inbound connections. Please enable -listen."));
+        }
+        if (args.IsArgSet("-proxy")) {
+            return InitError(_("Running a staking node behind a proxy is not "
+                               "supported. Please disable -proxy."));
+        }
+        if (args.IsArgSet("-i2psam")) {
+            return InitError(_("Running a staking node behind I2P is not "
+                               "supported. Please disable -i2psam."));
+        }
+        if (args.IsArgSet("-onlynet")) {
+            return InitError(
+                _("Restricting the outbound network is not supported when "
+                  "running a staking node. Please disable -onlynet."));
+        }
+    }
+
+    // Also report errors from parsing before daemonization
+    {
+        ChainstateManager::Options chainman_opts_dummy{
+            .config = config,
+            .datadir = args.GetDataDirNet(),
+        };
+        if (const auto error{ApplyArgsManOptions(args, chainman_opts_dummy)}) {
+            return InitError(*error);
+        }
+        node::BlockManager::Options blockman_opts_dummy{
+            .chainparams = chainman_opts_dummy.config.GetChainParams(),
+        };
+        if (const auto error{ApplyArgsManOptions(args, blockman_opts_dummy)}) {
+            return InitError(*error);
         }
     }
 
@@ -2124,8 +2111,22 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
                   fs::PathToString(fs::current_path()));
     }
 
-    InitSignatureCache();
-    InitScriptExecutionCache();
+    ValidationCacheSizes validation_cache_sizes{};
+    ApplyArgsManOptions(args, validation_cache_sizes);
+
+    if (!InitSignatureCache(validation_cache_sizes.signature_cache_bytes)) {
+        return InitError(strprintf(
+            _("Unable to allocate memory for -maxsigcachesize: '%s' MiB"),
+            args.GetIntArg("-maxsigcachesize",
+                           DEFAULT_MAX_SIG_CACHE_BYTES >> 20)));
+    }
+    if (!InitScriptExecutionCache(
+            validation_cache_sizes.script_execution_cache_bytes)) {
+        return InitError(strprintf(
+            _("Unable to allocate memory for -maxscriptcachesize: '%s' MiB"),
+            args.GetIntArg("-maxscriptcachesize",
+                           DEFAULT_MAX_SCRIPT_CACHE_BYTES >> 20)));
+    }
 
     int script_threads = args.GetIntArg("-par", DEFAULT_SCRIPTCHECK_THREADS);
     if (script_threads <= 0) {
@@ -2215,10 +2216,8 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         // Read asmap file if configured
         std::vector<bool> asmap;
         if (args.IsArgSet("-asmap")) {
-            fs::path asmap_path = fs::PathFromString(args.GetArg("-asmap", ""));
-            if (asmap_path.empty()) {
-                asmap_path = fs::PathFromString(DEFAULT_ASMAP_FILENAME);
-            }
+            fs::path asmap_path =
+                args.GetPathArg("-asmap", DEFAULT_ASMAP_FILENAME);
             if (!asmap_path.is_absolute()) {
                 asmap_path = args.GetDataDirNet() / asmap_path;
             }
@@ -2241,10 +2240,11 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         }
 
         uiInterface.InitMessage(_("Loading P2P addresses...").translated);
-        if (const auto error{
-                LoadAddrman(chainparams, asmap, args, node.addrman)}) {
-            return InitError(*error);
+        auto addrman{LoadAddrman(chainparams, asmap, args)};
+        if (!addrman) {
+            return InitError(util::ErrorString(addrman));
         }
+        node.addrman = std::move(*addrman);
     }
 
     assert(!node.banman);
@@ -2386,12 +2386,30 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     fReindex = args.GetBoolArg("-reindex", false);
     bool fReindexChainState = args.GetBoolArg("-reindex-chainstate", false);
 
+    ChainstateManager::Options chainman_opts{
+        .config = config,
+        .datadir = args.GetDataDirNet(),
+        .adjusted_time_callback = GetAdjustedTime,
+    };
+    // no error can happen, already checked in AppInitParameterInteraction
+    Assert(!ApplyArgsManOptions(args, chainman_opts));
+
+    if (chainman_opts.checkpoints_enabled) {
+        LogPrintf("Checkpoints will be verified.\n");
+    } else {
+        LogPrintf("Skipping checkpoint verification.\n");
+    }
+
+    node::BlockManager::Options blockman_opts{
+        .chainparams = chainman_opts.config.GetChainParams(),
+    };
+    // no error can happen, already checked in AppInitParameterInteraction
+    Assert(!ApplyArgsManOptions(args, blockman_opts));
+
     // cache size calculations
     CacheSizes cache_sizes =
         CalculateCacheSizes(args, g_enabled_filter_types.size());
 
-    int64_t nMempoolSizeMax =
-        args.GetIntArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000;
     LogPrintf("Cache configuration:\n");
     LogPrintf("* Using %.1f MiB for block index database\n",
               cache_sizes.block_tree_db * (1.0 / 1024 / 1024));
@@ -2406,32 +2424,52 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     }
     LogPrintf("* Using %.1f MiB for chain state database\n",
               cache_sizes.coins_db * (1.0 / 1024 / 1024));
-    LogPrintf("* Using %.1f MiB for in-memory UTXO set (plus up to %.1f MiB of "
-              "unused mempool space)\n",
-              cache_sizes.coins * (1.0 / 1024 / 1024),
-              nMempoolSizeMax * (1.0 / 1024 / 1024));
 
     assert(!node.mempool);
     assert(!node.chainman);
-    const int mempool_check_ratio = std::clamp<int>(
-        args.GetIntArg("-checkmempool",
-                       chainparams.DefaultConsistencyChecks() ? 1 : 0),
-        0, 1000000);
+
+    CTxMemPool::Options mempool_opts{
+        .check_ratio = chainparams.DefaultConsistencyChecks() ? 1 : 0,
+    };
+    if (const auto err{ApplyArgsManOptions(args, chainparams, mempool_opts)}) {
+        return InitError(*err);
+    }
+    mempool_opts.check_ratio =
+        std::clamp<int>(mempool_opts.check_ratio, 0, 1'000'000);
+
+    // FIXME: this legacy limit comes from the DEFAULT_DESCENDANT_SIZE_LIMIT
+    // (101) that was enforced before the wellington activation. While it's
+    // still a good idea to have some minimum mempool size, using this value as
+    // a threshold is no longer relevant.
+    int64_t nMempoolSizeMin = 101 * 1000 * 40;
+    if (mempool_opts.max_size_bytes < 0 ||
+        (!chainparams.IsTestChain() &&
+         mempool_opts.max_size_bytes < nMempoolSizeMin)) {
+        return InitError(strprintf(_("-maxmempool must be at least %d MB"),
+                                   std::ceil(nMempoolSizeMin / 1000000.0)));
+    }
+    LogPrintf("* Using %.1f MiB for in-memory UTXO set (plus up to %.1f MiB of "
+              "unused mempool space)\n",
+              cache_sizes.coins * (1.0 / 1024 / 1024),
+              mempool_opts.max_size_bytes * (1.0 / 1024 / 1024));
 
     for (bool fLoaded = false; !fLoaded && !ShutdownRequested();) {
-        node.mempool = std::make_unique<CTxMemPool>(mempool_check_ratio);
+        node.mempool = std::make_unique<CTxMemPool>(mempool_opts);
 
-        node.chainman = std::make_unique<ChainstateManager>(config);
+        node.chainman =
+            std::make_unique<ChainstateManager>(chainman_opts, blockman_opts);
         ChainstateManager &chainman = *node.chainman;
 
         node::ChainstateLoadOptions options;
         options.mempool = Assert(node.mempool.get());
         options.reindex = node::fReindex;
         options.reindex_chainstate = fReindexChainState;
-        options.prune = node::fPruneMode;
+        options.prune = chainman.m_blockman.IsPruneMode();
         options.check_blocks =
             args.GetIntArg("-checkblocks", DEFAULT_CHECKBLOCKS);
         options.check_level = args.GetIntArg("-checklevel", DEFAULT_CHECKLEVEL);
+        options.require_full_verification =
+            args.IsArgSet("-checkblocks") || args.IsArgSet("-checklevel");
         options.check_interrupt = ShutdownRequested;
         options.coins_error_cb = [] {
             uiInterface.ThreadSafeMessageBox(
@@ -2461,9 +2499,8 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
                           "blocks; only checking available blocks\n",
                           MIN_BLOCKS_TO_KEEP);
             }
-            std::tie(status, error) = catch_exceptions([&] {
-                return VerifyLoadedChainstate(chainman, options, config);
-            });
+            std::tie(status, error) = catch_exceptions(
+                [&] { return VerifyLoadedChainstate(chainman, options); });
             if (status == node::ChainstateLoadStatus::SUCCESS) {
                 fLoaded = true;
                 LogPrintf(" block index %15dms\n",
@@ -2471,7 +2508,10 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
             }
         }
 
-        if (status == node::ChainstateLoadStatus::FAILURE_INCOMPATIBLE_DB) {
+        if (status == node::ChainstateLoadStatus::FAILURE_FATAL ||
+            status == node::ChainstateLoadStatus::FAILURE_INCOMPATIBLE_DB ||
+            status ==
+                node::ChainstateLoadStatus::FAILURE_INSUFFICIENT_DBCACHE) {
             return InitError(error);
         }
 
@@ -2537,10 +2577,11 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
 
     // Step 8: load indexers
     if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
-        if (const auto error{WITH_LOCK(
-                cs_main, return CheckLegacyTxindex(
-                             *Assert(chainman.m_blockman.m_block_tree_db)))}) {
-            return InitError(*error);
+        auto result{
+            WITH_LOCK(cs_main, return CheckLegacyTxindex(*Assert(
+                                   chainman.m_blockman.m_block_tree_db)))};
+        if (!result) {
+            return InitError(util::ErrorString(result));
         }
 
         g_txindex =
@@ -2594,7 +2635,7 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
 
     // if pruning, unset the service bit and perform the initial blockstore
     // prune after any wallet rescanning has taken place.
-    if (fPruneMode) {
+    if (chainman.m_blockman.IsPruneMode()) {
         LogPrintf("Unsetting NODE_NETWORK on prune mode\n");
         nLocalServices = ServiceFlags(nLocalServices & ~NODE_NETWORK);
         if (!fReindex) {
@@ -2656,9 +2697,11 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         vImportFiles.push_back(fs::PathFromString(strFile));
     }
 
-    chainman.m_load_block = std::thread(
-        &util::TraceThread, "loadblk", [=, &config, &chainman, &args] {
-            ThreadImport(config, chainman, vImportFiles, args);
+    chainman.m_load_block =
+        std::thread(&util::TraceThread, "loadblk", [=, &chainman, &args] {
+            ThreadImport(chainman, vImportFiles, args,
+                         ShouldPersistMempool(args) ? MempoolPath(args)
+                                                    : fs::path{});
         });
 
     // Wait for genesis block to be processed
@@ -2712,12 +2755,11 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     CConnman::Options connOptions;
     connOptions.nLocalServices = nLocalServices;
     connOptions.nMaxConnections = nMaxConnections;
-    connOptions.m_max_avalanche_outbound = std::min<int64_t>(
+    connOptions.m_max_avalanche_outbound =
         g_avalanche && isAvalancheEnabled(args)
             ? args.GetIntArg("-maxavalancheoutbound",
                              DEFAULT_MAX_AVALANCHE_OUTBOUND_CONNECTIONS)
-            : 0,
-        connOptions.nMaxConnections);
+            : 0;
     connOptions.m_max_outbound_full_relay = std::min(
         MAX_OUTBOUND_FULL_RELAY_CONNECTIONS,
         connOptions.nMaxConnections - connOptions.m_max_avalanche_outbound);

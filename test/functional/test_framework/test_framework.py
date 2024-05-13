@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -126,10 +125,16 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         # addrman will not result in automatic connections to them.
         self.disable_autoconnect = True
         self.set_test_params()
+        assert self.wallet_names is None or len(self.wallet_names) <= self.num_nodes
         if self.options.timeout_factor == 0:
             self.options.timeout_factor = 99999
         # optionally, increase timeout by a factor
         self.rpc_timeout = int(self.rpc_timeout * self.options.timeout_factor)
+
+    def _run_test_internal(self):
+        """Alias for run_test() for regular BitcoinTestFramework functional tests.
+        Can be overloaded by subclasses if needed to add custom logic."""
+        self.run_test()
 
     def main(self):
         """Main function. This should not be overridden by the subclass test scripts."""
@@ -139,7 +144,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
 
         try:
             self.setup()
-            self.run_test()
+            self._run_test_internal()
         except JSONRPCException:
             self.log.exception("JSONRPC error")
             self.success = TestStatus.FAILED
@@ -524,13 +529,17 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
                 assert_equal(chain_info["initialblockdownload"], False)
 
     def import_deterministic_coinbase_privkeys(self):
-        wallet_names = (
-            [self.default_wallet_name] * len(self.nodes)
+        for i in range(self.num_nodes):
+            self.init_wallet(i)
+
+    def init_wallet(self, i):
+        wallet_name = (
+            self.default_wallet_name
             if self.wallet_names is None
-            else self.wallet_names
+            else self.wallet_names[i] if i < len(self.wallet_names) else False
         )
-        assert len(wallet_names) <= len(self.nodes)
-        for wallet_name, n in zip(wallet_names, self.nodes):
+        if wallet_name is not False:
+            n = self.nodes[i]
             if wallet_name is not None:
                 n.createwallet(
                     wallet_name=wallet_name,
@@ -1054,6 +1063,11 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         if not self.is_chronik_compiled():
             raise SkipTest("Chronik indexer has not been compiled.")
 
+    def skip_if_no_chronik_plugins(self):
+        """Skip the running test if Chronik indexer plugins have not been compiled."""
+        if not self.is_chronik_plugins_compiled():
+            raise SkipTest("Chronik indexer plugins have not been compiled.")
+
     def is_cli_compiled(self):
         """Checks whether bitcoin-cli was compiled."""
         return self.config["components"].getboolean("ENABLE_CLI")
@@ -1069,6 +1083,10 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
     def is_chronik_compiled(self):
         """Checks whether Chronik indexer was compiled."""
         return self.config["components"].getboolean("ENABLE_CHRONIK")
+
+    def is_chronik_plugins_compiled(self):
+        """Checks whether Chronik indexer plugins were compiled."""
+        return self.config["components"].getboolean("ENABLE_CHRONIK_PLUGINS")
 
     def is_zmq_compiled(self):
         """Checks whether the zmq module was compiled."""

@@ -44,6 +44,47 @@ const nextConfig = {
                 destination: '/brand',
                 permanent: true,
             },
+            {
+                source: '/developers',
+                destination: '/build',
+                permanent: true,
+            },
+        ];
+    },
+    async headers() {
+        return [
+            {
+                source: '/(.*?)',
+                headers: [
+                    {
+                        key: 'Strict-Transport-Security',
+                        value: 'max-age=31536000; includeSubDomains; preload',
+                    },
+                    {
+                        key: 'X-Frame-Options',
+                        value: 'DENY',
+                    },
+                    {
+                        key: 'X-Content-Type-Options',
+                        value: 'nosniff',
+                    },
+                    {
+                        key: 'Referrer-Policy',
+                        value: 'strict-origin-when-cross-origin',
+                    },
+                    {
+                        key: 'Permissions-Policy',
+                        value: 'camera=(), microphone=()',
+                    },
+                    {
+                        key: 'Content-Security-Policy',
+                        value:
+                            process.env.NODE_ENV === 'development'
+                                ? `default-src 'self' https: wss: 'unsafe-inline' 'unsafe-eval'; img-src 'self' https: data:;`
+                                : `default-src https: wss: 'unsafe-inline' 'unsafe-eval'; img-src 'self' https: data:;`,
+                    },
+                ],
+            },
         ];
     },
 };

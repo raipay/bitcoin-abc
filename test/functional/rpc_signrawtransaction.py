@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2015-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -299,6 +298,8 @@ class SignRawTransactionsTest(BitcoinTestFramework):
         outputs = {"mpLQjfK79b7CCV4VMJWEWAj5Mpx8Up5zxB": 100000}
 
         multiwallet_node = self.nodes[0]
+        multiwallet_node.createwallet("w1")
+        multiwallet_node.createwallet("w2")
 
         rawTx = multiwallet_node.createrawtransaction(inputs, outputs)
 
@@ -337,10 +338,6 @@ class SignRawTransactionsTest(BitcoinTestFramework):
         self.test_sighashes()
         self.test_with_lock_outputs()
         self.test_fully_signed_tx()
-
-        # The multiwalet require the node to use different flags, so we run it
-        # last.
-        self.restart_node(0, ["-wallet=w1", "-wallet=w2"])
         self.multiwallet_signing_test()
 
 

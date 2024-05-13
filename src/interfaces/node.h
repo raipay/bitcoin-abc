@@ -11,6 +11,7 @@
 #include <netaddress.h> // For Network
 
 #include <support/allocators/secure.h> // For SecureString
+#include <util/settings.h>             // For util::SettingsValue
 #include <util/translation.h>
 
 #include <cstddef>
@@ -85,6 +86,27 @@ public:
     //! Return whether shutdown was requested.
     virtual bool shutdownRequested() = 0;
 
+    //! Return whether a particular setting in <datadir>/settings.json
+    //! would be ignored because it is also specified in the command line.
+    virtual bool isPersistentSettingIgnored(const std::string &name) = 0;
+
+    //! Return setting value from <datadir>/settings.json or bitcoin.conf.
+    virtual util::SettingsValue
+    getPersistentSetting(const std::string &name) = 0;
+
+    //! Update a setting in <datadir>/settings.json.
+    virtual void updateRwSetting(const std::string &name,
+                                 const util::SettingsValue &value) = 0;
+
+    //! Force a setting value to be applied, overriding any other configuration
+    //! source, but not being persisted.
+    virtual void forceSetting(const std::string &name,
+                              const util::SettingsValue &value) = 0;
+
+    //! Clear all settings in <datadir>/settings.json and store a backup of
+    //! previous settings in <datadir>/settings.json.bak.
+    virtual void resetSettings() = 0;
+
     //! Map port.
     virtual void mapPort(bool use_upnp, bool use_natpmp) = 0;
 
@@ -144,11 +166,8 @@ public:
     //! Is initial block download.
     virtual bool isInitialBlockDownload() = 0;
 
-    //! Get reindex.
-    virtual bool getReindex() = 0;
-
-    //! Get importing.
-    virtual bool getImporting() = 0;
+    //! Is loading blocks.
+    virtual bool isLoadingBlocks() = 0;
 
     //! Set network active.
     virtual void setNetworkActive(bool active) = 0;
@@ -232,9 +251,8 @@ public:
     handleNotifyBlockTip(NotifyBlockTipFn fn) = 0;
 
     //! Register handler for header tip messages.
-    using NotifyHeaderTipFn =
-        std::function<void(SynchronizationState, interfaces::BlockTip tip,
-                           double verification_progress)>;
+    using NotifyHeaderTipFn = std::function<void(
+        SynchronizationState, interfaces::BlockTip tip, bool presync)>;
     virtual std::unique_ptr<Handler>
     handleNotifyHeaderTip(NotifyHeaderTipFn fn) = 0;
 
@@ -245,7 +263,7 @@ public:
 };
 
 //! Return implementation of Node interface.
-std::unique_ptr<Node> MakeNode(node::NodeContext *context = nullptr);
+std::unique_ptr<Node> MakeNode(node::NodeContext *context);
 
 //! Block tip (could be a header or not, depends on the subscribed signal).
 struct BlockTip {

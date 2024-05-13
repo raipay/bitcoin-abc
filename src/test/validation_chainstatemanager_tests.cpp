@@ -5,6 +5,7 @@
 #include <chainparams.h>
 #include <config.h>
 #include <consensus/validation.h>
+#include <kernel/disconnected_transactions.h>
 #include <node/utxo_snapshot.h>
 #include <random.h>
 #include <rpc/blockchain.h>
@@ -82,7 +83,7 @@ BOOST_AUTO_TEST_CASE(chainstatemanager) {
     // Unlike c1, which doesn't have any blocks. Gets us different tip, height.
     c2.LoadGenesisBlock();
     BlockValidationState _;
-    BOOST_CHECK(c2.ActivateBestChain(GetConfig(), _, nullptr));
+    BOOST_CHECK(c2.ActivateBestChain(_, nullptr));
 
     BOOST_CHECK(manager.IsSnapshotActive());
     BOOST_CHECK(WITH_LOCK(::cs_main, return !manager.IsSnapshotValidated()));
@@ -127,7 +128,7 @@ BOOST_AUTO_TEST_CASE(chainstatemanager_rebalance_caches) {
     // Create a legacy (IBD) chainstate.
     //
     Chainstate &c1 =
-        WITH_LOCK(cs_main, return manager.InitializeChainstate(&mempool));
+        WITH_LOCK(::cs_main, return manager.InitializeChainstate(&mempool));
     chainstates.push_back(&c1);
     c1.InitCoinsDB(
         /* cache_size_bytes */ 1 << 23, /* in_memory */ true,
@@ -292,8 +293,8 @@ struct SnapshotTestSetup : TestChain100Setup {
             BOOST_CHECK(!chainman.ActiveChain().Genesis()->IsAssumedValid());
         }
 
-        const AssumeutxoData &au_data = *ExpectedAssumeutxo(
-            snapshot_height, ::GetConfig().GetChainParams());
+        const AssumeutxoData &au_data =
+            *ExpectedAssumeutxo(snapshot_height, chainman.GetParams());
         const CBlockIndex *tip =
             WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip());
 
@@ -385,16 +386,29 @@ struct SnapshotTestSetup : TestChain100Setup {
 
         BOOST_TEST_MESSAGE("Simulating node restart");
         {
-            LOCK(::cs_main);
             for (Chainstate *cs : chainman.GetAll()) {
+                LOCK(::cs_main);
                 cs->ForceFlushStateToDisk();
             }
+            // Process all callbacks referring to the old manager before wiping
+            // it.
+            SyncWithValidationInterfaceQueue();
+            LOCK(::cs_main);
             chainman.ResetChainstates();
             BOOST_CHECK_EQUAL(chainman.GetAll().size(), 0);
+            const ChainstateManager::Options chainman_opts{
+                .config = chainman.GetConfig(),
+                .datadir = m_args.GetDataDirNet(),
+                .adjusted_time_callback = GetAdjustedTime,
+            };
+            node::BlockManager::Options blockman_opts{
+                .chainparams = chainman_opts.config.GetChainParams(),
+            };
             // For robustness, ensure the old manager is destroyed before
             // creating a new one.
             m_node.chainman.reset();
-            m_node.chainman.reset(new ChainstateManager(::GetConfig()));
+            m_node.chainman = std::make_unique<ChainstateManager>(
+                chainman_opts, blockman_opts);
         }
         return *Assert(m_node.chainman);
     }
@@ -533,7 +547,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_init, SnapshotTestSetup) {
     BOOST_TEST_MESSAGE("Performing Load/Verify/Activate of chainstate");
 
     // This call reinitializes the chainstates.
-    this->LoadVerifyActivateChainstate(::GetConfig());
+    this->LoadVerifyActivateChainstate();
 
     {
         LOCK(chainman_restarted.GetMutex());
@@ -614,7 +628,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_completion,
     // chainstate_snapshot should still exist.
     BOOST_CHECK(fs::exists(snapshot_chainstate_dir));
 
-    // Test that simulating a shutdown (reseting ChainstateManager) and then
+    // Test that simulating a shutdown (resetting ChainstateManager) and then
     // performing chainstate reinitializing successfully cleans up the
     // background-validation chainstate data, and we end up with a single
     // chainstate that is at tip.
@@ -624,7 +638,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_completion,
 
     // This call reinitializes the chainstates, and should clean up the now
     // unnecessary background-validation leveldb contents.
-    this->LoadVerifyActivateChainstate(::GetConfig());
+    this->LoadVerifyActivateChainstate();
 
     BOOST_CHECK(!fs::exists(snapshot_invalid_dir));
     // chainstate_snapshot should now *not* exist.
@@ -692,7 +706,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_completion_hash_mismatch,
         gArgs.GetDataDirNet() / "chainstate_snapshot_INVALID";
     BOOST_CHECK(fs::exists(snapshot_invalid_dir));
 
-    // Test that simulating a shutdown (reseting ChainstateManager) and then
+    // Test that simulating a shutdown (resetting ChainstateManager) and then
     // performing chainstate reinitializing successfully loads only the
     // fully-validated chainstate data, and we end up with a single chainstate
     // that is at tip.
@@ -702,7 +716,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_snapshot_completion_hash_mismatch,
 
     // This call reinitializes the chainstates, and should clean up the now
     // unnecessary background-validation leveldb contents.
-    this->LoadVerifyActivateChainstate(::GetConfig());
+    this->LoadVerifyActivateChainstate();
 
     BOOST_CHECK(fs::exists(snapshot_invalid_dir));
     BOOST_CHECK(!fs::exists(snapshot_chainstate_dir));

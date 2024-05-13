@@ -23,7 +23,7 @@ std::string GetArgumentName(const std::string &name) {
 }
 } // namespace
 
-void test_one_input(const std::vector<uint8_t> &buffer) {
+FUZZ_TARGET(system) {
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
     ArgsManager args_manager{};
 
@@ -32,31 +32,28 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     }
 
     while (fuzzed_data_provider.ConsumeBool()) {
-        switch (fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 7)) {
-            case 0: {
+        CallOneOf(
+            fuzzed_data_provider,
+            [&] {
                 args_manager.SelectConfigNetwork(
                     fuzzed_data_provider.ConsumeRandomLengthString(16));
-                break;
-            }
-            case 1: {
+            },
+            [&] {
                 args_manager.SoftSetArg(
                     fuzzed_data_provider.ConsumeRandomLengthString(16),
                     fuzzed_data_provider.ConsumeRandomLengthString(16));
-                break;
-            }
-            case 2: {
+            },
+            [&] {
                 args_manager.ForceSetArg(
                     fuzzed_data_provider.ConsumeRandomLengthString(16),
                     fuzzed_data_provider.ConsumeRandomLengthString(16));
-                break;
-            }
-            case 3: {
+            },
+            [&] {
                 args_manager.SoftSetBoolArg(
                     fuzzed_data_provider.ConsumeRandomLengthString(16),
                     fuzzed_data_provider.ConsumeBool());
-                break;
-            }
-            case 4: {
+            },
+            [&] {
                 const OptionsCategory options_category =
                     fuzzed_data_provider.PickValueInArray<OptionsCategory>(
                         {OptionsCategory::OPTIONS, OptionsCategory::CONNECTION,
@@ -76,16 +73,15 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                 const std::string argument_name = GetArgumentName(
                     fuzzed_data_provider.ConsumeRandomLengthString(16));
                 if (args_manager.GetArgFlags(argument_name) != std::nullopt) {
-                    break;
+                    return;
                 }
                 args_manager.AddArg(
                     argument_name,
                     fuzzed_data_provider.ConsumeRandomLengthString(16),
                     fuzzed_data_provider.ConsumeIntegral<unsigned int>(),
                     options_category);
-                break;
-            }
-            case 5: {
+            },
+            [&] {
                 // Avoid hitting:
                 // util/system.cpp:425: void ArgsManager::AddArg(const
                 // std::string &, const std::string &, unsigned int, const
@@ -107,13 +103,9 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     hidden_arguments.push_back(hidden_argument);
                 }
                 args_manager.AddHiddenArgs(hidden_arguments);
-                break;
-            }
-            case 6: {
-                args_manager.ClearArgs();
-                break;
-            }
-            case 7: {
+            },
+            [&] { args_manager.ClearArgs(); },
+            [&] {
                 const std::vector<std::string> random_arguments =
                     ConsumeRandomLengthStringVector(fuzzed_data_provider);
                 std::vector<const char *> argv;
@@ -127,9 +119,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                                                        error);
                 } catch (const std::logic_error &) {
                 }
-                break;
-            }
-        }
+            });
     }
 
     const std::string s1 = fuzzed_data_provider.ConsumeRandomLengthString(16);

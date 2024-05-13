@@ -20,7 +20,7 @@ const {
 const { MongoClient } = require('mongodb');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 // Mock chronik
-const { MockChronikClient } = require('../../mock-chronik-client');
+const { MockChronikClient } = require('../../../modules/mock-chronik-client');
 const NodeCache = require('node-cache');
 
 describe('alias-server main.js', async function () {
@@ -84,7 +84,7 @@ describe('alias-server main.js', async function () {
         );
         mockedChronik.setScript(type, hash);
         // Set the mock tx history
-        mockedChronik.setTxHistory(generated.txHistory);
+        mockedChronik.setTxHistory(type, hash, generated.txHistory);
 
         // Mock avalanche RPC call
         // onNoMatch: 'throwException' helps to debug if mock is not being used

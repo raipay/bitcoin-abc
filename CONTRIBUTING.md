@@ -140,7 +140,7 @@ will have to install the following:
 Install all the code formatting tools on Debian Bullseye (11) or Ubuntu 20.04:
 ```
 sudo apt-get install python3-pip php-codesniffer shellcheck yamllint
-pip3 install "black>=23.0" "isort>=5.6.4" "mypy>=0.910" "flynt>=0.78" "flake8>=5" flake8-comprehensions flake8-builtins
+pip3 install "black>=24.0" "isort>=5.6.4" "mypy>=0.910" "flynt>=0.78" "flake8>=5" flake8-comprehensions flake8-builtins
 echo "export PATH=\"`python3 -m site --user-base`/bin:\$PATH\"" >> ~/.bashrc
 source ~/.bashrc
 ```
@@ -194,9 +194,19 @@ Then:
 cd bitcoin-abc
 [sudo] nvm install 16
 [sudo] npm install -g npm@latest
-[sudo] npm install -g prettier
+[sudo] npm install -g prettier@2.6.0
 [sudo] npm install -g eslint
 ```
+
+Some repositories have a `.nvmrc` file which specifies the version of node expected.
+For example, to work in Cashtab,
+
+```
+cd bitcoin-abc/cashtab
+nvm use
+```
+
+The specified version of nodejs will be installed and used.
 
 To work on the extension, you will need `browserify`
 

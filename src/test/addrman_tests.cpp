@@ -113,13 +113,13 @@ public:
     // Simulates connection failure so that we can test eviction of offline
     // nodes
     void SimConnFail(const CService &addr) {
-        int64_t nLastSuccess = 1;
+        auto last_success{NodeSeconds{1s}};
         // Set last good connection in the deep past.
-        Good(addr, true, nLastSuccess);
+        Good(addr, true, last_success);
 
         bool count_failure = false;
-        int64_t nLastTry = GetAdjustedTime() - 61;
-        Attempt(addr, count_failure, nLastTry);
+        auto last_try = AdjustedTime() - 61s;
+        Attempt(addr, count_failure, last_try);
     }
 };
 
@@ -340,7 +340,7 @@ BOOST_AUTO_TEST_CASE(addrman_tried_collisions) {
     // Test: tried table collision!
     CService addr1 = ResolveService("250.1.1." + ToString(++num_addrs));
     uint32_t collisions{1};
-    BOOST_CHECK(addrman.Add({CAddress(addr1, NODE_NONE)}, source));
+    BOOST_CHECK(!addrman.Add({CAddress(addr1, NODE_NONE)}, source));
     BOOST_CHECK_EQUAL(addrman.size(), num_addrs - collisions);
 
     CService addr2 = ResolveService("250.1.1." + ToString(++num_addrs));
@@ -428,15 +428,15 @@ BOOST_AUTO_TEST_CASE(addrman_getaddr) {
     BOOST_CHECK_EQUAL(vAddr1.size(), 0U);
 
     CAddress addr1 = CAddress(ResolveService("250.250.2.1", 8333), NODE_NONE);
-    addr1.nTime = GetAdjustedTime(); // Set time so isTerrible = false
+    addr1.nTime = AdjustedTime(); // Set time so isTerrible = false
     CAddress addr2 = CAddress(ResolveService("250.251.2.2", 9999), NODE_NONE);
-    addr2.nTime = GetAdjustedTime();
+    addr2.nTime = AdjustedTime();
     CAddress addr3 = CAddress(ResolveService("251.252.2.3", 8333), NODE_NONE);
-    addr3.nTime = GetAdjustedTime();
+    addr3.nTime = AdjustedTime();
     CAddress addr4 = CAddress(ResolveService("252.253.3.4", 8333), NODE_NONE);
-    addr4.nTime = GetAdjustedTime();
+    addr4.nTime = AdjustedTime();
     CAddress addr5 = CAddress(ResolveService("252.254.4.5", 8333), NODE_NONE);
-    addr5.nTime = GetAdjustedTime();
+    addr5.nTime = AdjustedTime();
     CNetAddr source1 = ResolveIP("250.1.2.1");
     CNetAddr source2 = ResolveIP("250.2.3.3");
 
@@ -479,7 +479,7 @@ BOOST_AUTO_TEST_CASE(addrman_getaddr) {
         CAddress addr = CAddress(ResolveService(strAddr), NODE_NONE);
 
         // Ensure that for all addrs in addrman, isTerrible == false.
-        addr.nTime = GetAdjustedTime();
+        addr.nTime = AdjustedTime();
         addrman.Add({addr}, ResolveIP(strAddr));
         if (i % 8 == 0) {
             addrman.Good(addr);
@@ -1069,6 +1069,94 @@ BOOST_AUTO_TEST_CASE(load_addrman_corrupted) {
     BOOST_CHECK(addrman2.size() == 0);
     BOOST_CHECK_THROW(ReadFromStream(Params(), addrman2, ssPeers2),
                       std::ios_base::failure);
+}
+
+BOOST_AUTO_TEST_CASE(addrman_is_terrible) {
+    AddrInfo addr_info{};
+    const auto now = Now<NodeSeconds>();
+    const auto addrman_horizon{30 * 24h};
+    const auto address_time_init{100000000s};
+    const int32_t addrman_retries{3};
+    const auto addrman_min_fail{7 * 24h};
+    const int32_t addrman_max_failures{10};
+
+    SetMockTime(now.time_since_epoch());
+
+    // AddrInfo is initially terrible (never tried, not seen recently)
+    BOOST_CHECK_EQUAL(
+        TicksSinceEpoch<std::chrono::seconds>(addr_info.m_last_try), 0);
+    BOOST_CHECK_EQUAL(TicksSinceEpoch<std::chrono::seconds>(addr_info.nTime),
+                      address_time_init.count());
+    BOOST_CHECK(addr_info.IsTerrible());
+
+    // Things tried in the last minute are never considered terrible
+    addr_info.m_last_try = now - 60s;
+    BOOST_CHECK(!addr_info.IsTerrible());
+
+    addr_info.m_last_try = now;
+    BOOST_CHECK(!addr_info.IsTerrible());
+
+    // Not seen in recent history
+    addr_info.m_last_try = now - 61s;
+    BOOST_CHECK(addr_info.IsTerrible());
+
+    addr_info.nTime = now - addrman_horizon - 1s;
+    BOOST_CHECK(addr_info.IsTerrible());
+
+    // Seen recently
+    addr_info.nTime = now - addrman_horizon;
+    BOOST_CHECK(!addr_info.IsTerrible());
+
+    addr_info.nTime = now;
+    BOOST_CHECK(!addr_info.IsTerrible());
+
+    // Time in the recent enough future
+    addr_info.nTime = now + 1s;
+    BOOST_CHECK(!addr_info.IsTerrible());
+
+    addr_info.nTime = now + 10min;
+    BOOST_CHECK(!addr_info.IsTerrible());
+
+    // Time too far in the future
+    addr_info.nTime = now + 10min + 1s;
+    BOOST_CHECK(addr_info.IsTerrible());
+
+    // Tried less than ADDRMAN_RETRIES times with never a success
+    addr_info.nTime = now;
+    BOOST_CHECK_EQUAL(
+        TicksSinceEpoch<std::chrono::seconds>(addr_info.m_last_success), 0);
+    BOOST_CHECK(!addr_info.IsTerrible());
+
+    for (int i = 0; i < addrman_retries; i++) {
+        addr_info.nAttempts = i;
+        BOOST_CHECK(!addr_info.IsTerrible());
+    }
+
+    // Tried ADDRMAN_RETRIES times with never a success
+    addr_info.nAttempts = addrman_retries;
+    BOOST_CHECK(addr_info.IsTerrible());
+
+    // No recent success but less than ADDRMAN_MAX_FAILURES attempts in the
+    // last week
+    addr_info.m_last_success = NodeSeconds{1s};
+    for (int i = 0; i < addrman_max_failures; i++) {
+        addr_info.nAttempts = i;
+        BOOST_CHECK(!addr_info.IsTerrible());
+    }
+
+    // Too many failures in the last week
+    addr_info.nAttempts = addrman_max_failures;
+    BOOST_CHECK(addr_info.IsTerrible());
+
+    addr_info.m_last_success = now - addrman_min_fail - 1s;
+    BOOST_CHECK(addr_info.IsTerrible());
+
+    // Recent success
+    addr_info.m_last_success = now;
+    BOOST_CHECK(!addr_info.IsTerrible());
+
+    addr_info.m_last_success = now - addrman_min_fail;
+    BOOST_CHECK(!addr_info.IsTerrible());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

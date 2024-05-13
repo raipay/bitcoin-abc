@@ -21,9 +21,12 @@ static ChainstateLoadResult CompleteChainstateInitialization(
     // new CBlockTreeDB tries to delete the existing file, which
     // fails if it's still open from the previous loop. Close it first:
     pblocktree.reset();
-    pblocktree.reset(new CBlockTreeDB(cache_sizes.block_tree_db,
-                                      options.block_tree_db_in_memory,
-                                      options.reindex));
+    pblocktree = std::make_unique<CBlockTreeDB>(
+        DBParams{.path = chainman.m_options.datadir / "blocks" / "index",
+                 .cache_bytes = static_cast<size_t>(cache_sizes.block_tree_db),
+                 .memory_only = options.block_tree_db_in_memory,
+                 .wipe_data = options.reindex,
+                 .options = chainman.m_options.block_tree_db});
 
     if (options.reindex) {
         pblocktree->WriteReindexing(true);
@@ -163,26 +166,28 @@ static ChainstateLoadResult CompleteChainstateInitialization(
 ChainstateLoadResult LoadChainstate(ChainstateManager &chainman,
                                     const CacheSizes &cache_sizes,
                                     const ChainstateLoadOptions &options) {
-    if (!hashAssumeValid.IsNull()) {
+    if (!chainman.AssumedValidBlock().IsNull()) {
         LogPrintf("Assuming ancestors of block %s have valid signatures.\n",
-                  hashAssumeValid.GetHex());
+                  chainman.AssumedValidBlock().GetHex());
     } else {
         LogPrintf("Validating signatures for all blocks.\n");
     }
-    LogPrintf("Setting nMinimumChainWork=%s\n", nMinimumChainWork.GetHex());
-    if (nMinimumChainWork <
+    LogPrintf("Setting nMinimumChainWork=%s\n",
+              chainman.MinimumChainWork().GetHex());
+    if (chainman.MinimumChainWork() <
         UintToArith256(chainman.GetConsensus().nMinimumChainWork)) {
         LogPrintf("Warning: nMinimumChainWork set below default value of %s\n",
                   chainman.GetConsensus().nMinimumChainWork.GetHex());
     }
-    if (nPruneTarget == std::numeric_limits<uint64_t>::max()) {
+    if (chainman.m_blockman.GetPruneTarget() ==
+        BlockManager::PRUNE_TARGET_MANUAL) {
         LogPrintf(
             "Block pruning enabled.  Use RPC call pruneblockchain(height) to "
             "manually prune block and undo files.\n");
-    } else if (nPruneTarget) {
+    } else if (chainman.m_blockman.GetPruneTarget()) {
         LogPrintf("Prune configured to target %u MiB on disk for block and "
                   "undo files.\n",
-                  nPruneTarget / 1024 / 1024);
+                  chainman.m_blockman.GetPruneTarget() / 1024 / 1024);
     }
 
     LOCK(cs_main);
@@ -219,7 +224,9 @@ ChainstateLoadResult LoadChainstate(ChainstateManager &chainman,
         LogPrintf("[snapshot] cleaning up unneeded background chainstate, then "
                   "reinitializing\n");
         if (!chainman.ValidatedSnapshotCleanup()) {
-            AbortNode("Background chainstate cleanup failed unexpectedly.");
+            return {ChainstateLoadStatus::FAILURE_FATAL,
+                    Untranslated(
+                        "Background chainstate cleanup failed unexpectedly.")};
         }
 
         // Because ValidatedSnapshotCleanup() has torn down chainstates with
@@ -252,8 +259,7 @@ ChainstateLoadResult LoadChainstate(ChainstateManager &chainman,
 
 ChainstateLoadResult
 VerifyLoadedChainstate(ChainstateManager &chainman,
-                       const ChainstateLoadOptions &options,
-                       const Config &config) {
+                       const ChainstateLoadOptions &options) {
     auto is_coinsview_empty =
         [&](Chainstate *chainstate) EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
             return options.reindex || options.reindex_chainstate ||
@@ -275,12 +281,27 @@ VerifyLoadedChainstate(ChainstateManager &chainman,
                           "that your computer's date and time are correct")};
             }
 
-            if (!CVerifyDB().VerifyDB(
-                    *chainstate, config, chainstate->CoinsDB(),
-                    options.check_level, options.check_blocks)) {
-                return {ChainstateLoadStatus::FAILURE,
-                        _("Corrupted block database detected")};
-            }
+            VerifyDBResult result =
+                CVerifyDB().VerifyDB(*chainstate, chainstate->CoinsDB(),
+                                     options.check_level, options.check_blocks);
+            switch (result) {
+                case VerifyDBResult::SUCCESS:
+                case VerifyDBResult::SKIPPED_MISSING_BLOCKS:
+                    break;
+                case VerifyDBResult::INTERRUPTED:
+                    return {ChainstateLoadStatus::INTERRUPTED,
+                            _("Block verification was interrupted")};
+                case VerifyDBResult::CORRUPTED_BLOCK_DB:
+                    return {ChainstateLoadStatus::FAILURE,
+                            _("Corrupted block database detected")};
+                case VerifyDBResult::SKIPPED_L3_CHECKS:
+                    if (options.require_full_verification) {
+                        return {
+                            ChainstateLoadStatus::FAILURE_INSUFFICIENT_DBCACHE,
+                            _("Insufficient dbcache for block verification")};
+                    }
+                    break;
+            } // no default case, so the compiler can warn about missing cases
         }
     }
 

@@ -1,13 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { Modal } from 'antd';
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+import React from 'react';
+import { useState, useEffect } from 'react';
+import UpgradeModal from 'components/Common/UpgradeModal';
 import * as serviceWorkerRegistration from 'serviceWorkerRegistration';
 
 const ServiceWorkerWrapper = () => {
-    const [showReloadModal, setShowReloadModal] = useState(false);
     const [waitingWorker, setWaitingWorker] = useState(null);
+    const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
     const onSWUpdate = registration => {
-        setShowReloadModal(true);
+        setShowUpgradeModal(true);
         setWaitingWorker(registration.waiting);
     };
 
@@ -17,23 +22,17 @@ const ServiceWorkerWrapper = () => {
 
     const reloadPage = () => {
         waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
-        setShowReloadModal(false);
+        setShowUpgradeModal(false);
         window.location.reload(true);
     };
 
     return (
-        <Modal
-            title="Reload"
-            open={showReloadModal}
-            onOk={reloadPage}
-            onCancel={reloadPage}
-            cancelButtonProps={{ style: { display: 'none' } }}
-        >
-            <p>
-                A new version of Cashtab is available. Refresh or click OK to
-                load.
-            </p>
-        </Modal>
+        showUpgradeModal && (
+            <UpgradeModal
+                handleOk={reloadPage}
+                handleCancel={() => setShowUpgradeModal(false)}
+            />
+        )
     );
 };
 

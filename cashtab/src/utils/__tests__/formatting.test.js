@@ -1,11 +1,15 @@
-import BigNumber from 'bignumber.js';
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 import {
     formatDate,
     formatFiatBalance,
-    formatSavedBalance,
     formatBalance,
-    formatTokenBalance,
+    decimalizedTokenQtyToLocaleFormat,
+    toFormattedXec,
 } from 'utils/formatting';
+import vectors from 'utils/fixtures/vectors';
 
 describe('Correctly executes formatting functions', () => {
     it(`test formatBalance with an input of 0`, () => {
@@ -84,41 +88,6 @@ describe('Correctly executes formatting functions', () => {
     it(`Rejects an invalid string containing numbers.`, () => {
         expect(formatDate('10000000000000000', 'en-US')).toBe('Invalid Date');
     });
-
-    it(`test formatSavedBalance with zero XEC balance input`, () => {
-        expect(formatSavedBalance('0', 'en-US')).toBe('0');
-    });
-    it(`test formatSavedBalance with a small XEC balance input with 2+ decimal figures`, () => {
-        expect(formatSavedBalance('1574.5445', 'en-US')).toBe('1,574.54');
-    });
-    it(`test formatSavedBalance with 1 Million XEC balance input`, () => {
-        expect(formatSavedBalance('1000000', 'en-US')).toBe('1,000,000');
-    });
-    it(`test formatSavedBalance with 1 Billion XEC balance input`, () => {
-        expect(formatSavedBalance('1000000000', 'en-US')).toBe('1,000,000,000');
-    });
-    it(`test formatSavedBalance with total supply as XEC balance input`, () => {
-        expect(formatSavedBalance('21000000000000', 'en-US')).toBe(
-            '21,000,000,000,000',
-        );
-    });
-    it(`test formatSavedBalance with > total supply as XEC balance input`, () => {
-        expect(formatSavedBalance('31000000000000', 'en-US')).toBe(
-            '31,000,000,000,000',
-        );
-    });
-    it(`test formatSavedBalance with no balance`, () => {
-        expect(formatSavedBalance('', 'en-US')).toBe('0');
-    });
-    it(`test formatSavedBalance with null input`, () => {
-        expect(formatSavedBalance(null, 'en-US')).toBe('0');
-    });
-    it(`test formatSavedBalance with undefined sw.state.balance or sw.state.balance.totalBalance as input`, () => {
-        expect(formatSavedBalance(undefined, 'en-US')).toBe('N/A');
-    });
-    it(`test formatSavedBalance with non-numeric input`, () => {
-        expect(formatSavedBalance('CainBCHA', 'en-US')).toBe('NaN');
-    });
     it(`test formatFiatBalance with zero XEC balance input`, () => {
         expect(formatFiatBalance(Number('0'), 'en-US')).toBe('0.00');
     });
@@ -139,23 +108,28 @@ describe('Correctly executes formatting functions', () => {
     it(`test formatFiatBalance with undefined input`, () => {
         expect(formatFiatBalance(undefined, 'en-US')).toBe(undefined);
     });
-    it(`returns undefined formatTokenBalance with undefined inputs`, () => {
-        expect(formatTokenBalance(undefined, undefined)).toBe(undefined);
+    describe('We can format decimalized token strings for userLocale', () => {
+        const { expectedReturns } = vectors.decimalizedTokenQtyToLocaleFormat;
+        expectedReturns.forEach(vector => {
+            const { description, decimalizedTokenQty, userLocale, returned } =
+                vector;
+            it(`decimalizedTokenQtyToLocaleFormat: ${description}`, () => {
+                expect(
+                    decimalizedTokenQtyToLocaleFormat(
+                        decimalizedTokenQty,
+                        userLocale,
+                    ),
+                ).toBe(returned);
+            });
+        });
     });
-    it(`test formatTokenBalance with valid balance & decimal inputs`, () => {
-        const testBalance = new BigNumber(100.00000001);
-        expect(formatTokenBalance(testBalance, 8)).toBe('100.00000001');
-    });
-    it(`returns undefined when passed invalid decimals parameter`, () => {
-        const testBalance = new BigNumber(100.00000001);
-        expect(formatTokenBalance(testBalance, 'cheese')).toBe(undefined);
-    });
-    it(`returns undefined when passed invalid balance parameter`, () => {
-        const testBalance = '100.000010122';
-        expect(formatTokenBalance(testBalance, 9)).toBe(undefined);
-    });
-    it(`maintains trailing zeros in balance per tokenDecimal parameter`, () => {
-        const testBalance = new BigNumber(10000);
-        expect(formatTokenBalance(testBalance, 8)).toBe('10,000.00000000');
+    describe('We can format an XEC balance', () => {
+        const { expectedReturns } = vectors.toFormattedXec;
+        expectedReturns.forEach(vector => {
+            const { description, satoshis, userLocale, returned } = vector;
+            it(`toFormattedXec: ${description}`, () => {
+                expect(toFormattedXec(satoshis, userLocale)).toBe(returned);
+            });
+        });
     });
 });

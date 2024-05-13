@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #
 # Electrum ABC - lightweight eCash client
 # Copyright (C) 2020 The Electrum ABC developers
@@ -208,7 +207,7 @@ class Commands:
         a legacy or a Cash Address and both forms will be returned as a JSON
         dict."""
         try:
-            addr = Address.from_string(address)
+            addr = Address.from_string(address, support_arbitrary_prefix=True)
         except Exception as e:
             raise AddressError(f"Invalid address: {address}") from e
         return {
@@ -879,11 +878,8 @@ class Commands:
                     q.get(timeout=min(max(time_remaining() / 2.0, 0.001), 10.0))
                 except queue.Empty:
                     pass
-                kwargs[
-                    "fee_calc_timeout"
-                ] = (
-                    time_remaining()
-                )  # since we blocked above, recompute time_remaining for kwargs
+                # since we blocked above, recompute time_remaining for kwargs
+                kwargs["fee_calc_timeout"] = time_remaining()
         return self.wallet.export_history(**kwargs)
 
     @command("w")

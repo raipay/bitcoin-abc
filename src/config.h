@@ -5,11 +5,13 @@
 #ifndef BITCOIN_CONFIG_H
 #define BITCOIN_CONFIG_H
 
+#include <chainparams.h>
 #include <consensus/amount.h>
 #include <feerate.h>
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 class CChainParams;
@@ -18,6 +20,7 @@ class Config {
 public:
     virtual bool SetMaxBlockSize(uint64_t maxBlockSize) = 0;
     virtual uint64_t GetMaxBlockSize() const = 0;
+    virtual void SetChainParams(const CChainParams chainParamsIn) = 0;
     virtual const CChainParams &GetChainParams() const = 0;
     virtual void SetCashAddrEncoding(bool) = 0;
     virtual bool UseCashAddrEncoding() const = 0;
@@ -32,6 +35,7 @@ public:
     GlobalConfig();
     bool SetMaxBlockSize(uint64_t maxBlockSize) override;
     uint64_t GetMaxBlockSize() const override;
+    void SetChainParams(const CChainParams chainParamsIn) override;
     const CChainParams &GetChainParams() const override;
     void SetCashAddrEncoding(bool) override;
     bool UseCashAddrEncoding() const override;
@@ -41,25 +45,8 @@ private:
 
     /** The largest block size this node will accept. */
     uint64_t nMaxBlockSize;
-};
 
-// Dummy for subclassing in unittests
-class DummyConfig : public Config {
-public:
-    DummyConfig();
-    explicit DummyConfig(std::string net);
-    explicit DummyConfig(std::unique_ptr<CChainParams> chainParamsIn);
-    bool SetMaxBlockSize(uint64_t maxBlockSize) override { return false; }
-    uint64_t GetMaxBlockSize() const override { return 0; }
-
-    void SetChainParams(std::string net);
-    const CChainParams &GetChainParams() const override { return *chainParams; }
-
-    void SetCashAddrEncoding(bool) override {}
-    bool UseCashAddrEncoding() const override { return false; }
-
-private:
-    std::unique_ptr<CChainParams> chainParams;
+    std::optional<const CChainParams> chainParams;
 };
 
 // Temporary woraround.

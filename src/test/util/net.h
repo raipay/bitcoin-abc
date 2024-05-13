@@ -37,9 +37,11 @@ struct ConnmanTestMsg : public CConnman {
     void Handshake(CNode &node, bool successfully_connected,
                    ServiceFlags remote_services, ServiceFlags local_services,
                    NetPermissionFlags permission_flags, int32_t version,
-                   bool relay_txs);
+                   bool relay_txs)
+        EXCLUSIVE_LOCKS_REQUIRED(NetEventsInterface::g_msgproc_mutex);
 
-    void ProcessMessagesOnce(CNode &node) {
+    void ProcessMessagesOnce(CNode &node)
+        EXCLUSIVE_LOCKS_REQUIRED(NetEventsInterface::g_msgproc_mutex) {
         for (auto interface : m_msgproc) {
             interface->ProcessMessages(*config, &node, flagInterruptMsgProc);
         }
@@ -49,6 +51,26 @@ struct ConnmanTestMsg : public CConnman {
                              bool &complete) const;
 
     bool ReceiveMsgFrom(CNode &node, CSerializedNetMsg &ser_msg) const;
+};
+
+constexpr ServiceFlags ALL_SERVICE_FLAGS[]{
+    NODE_NONE,      NODE_NETWORK,         NODE_GETUTXO,
+    NODE_BLOOM,     NODE_COMPACT_FILTERS, NODE_NETWORK_LIMITED,
+    NODE_AVALANCHE,
+};
+
+constexpr NetPermissionFlags ALL_NET_PERMISSION_FLAGS[]{
+    NetPermissionFlags::None,     NetPermissionFlags::BloomFilter,
+    NetPermissionFlags::Relay,    NetPermissionFlags::ForceRelay,
+    NetPermissionFlags::NoBan,    NetPermissionFlags::Mempool,
+    NetPermissionFlags::Addr,     NetPermissionFlags::Download,
+    NetPermissionFlags::Implicit, NetPermissionFlags::All,
+};
+
+constexpr ConnectionType ALL_CONNECTION_TYPES[]{
+    ConnectionType::INBOUND,     ConnectionType::OUTBOUND_FULL_RELAY,
+    ConnectionType::MANUAL,      ConnectionType::FEELER,
+    ConnectionType::BLOCK_RELAY, ConnectionType::ADDR_FETCH,
 };
 
 constexpr std::array<Network, 7> ALL_NETWORKS = {{

@@ -297,13 +297,13 @@ static RPCHelpMan buildavalancheproof() {
                         {"privatekey", UniValue::VSTR},
                     });
 
-                int nOut = find_value(stake, "vout").get_int();
+                int nOut = stake.find_value("vout").get_int();
                 if (nOut < 0) {
                     throw JSONRPCError(RPC_DESERIALIZATION_ERROR,
                                        "vout cannot be negative");
                 }
 
-                const int height = find_value(stake, "height").get_int();
+                const int height = stake.find_value("height").get_int();
                 if (height < 1) {
                     throw JSONRPCError(RPC_DESERIALIZATION_ERROR,
                                        "height must be positive");
@@ -317,13 +317,13 @@ static RPCHelpMan buildavalancheproof() {
                 }
 
                 const Amount amount =
-                    AmountFromValue(find_value(stake, "amount"));
+                    AmountFromValue(stake.find_value("amount"));
 
-                const UniValue &iscbparam = find_value(stake, "iscoinbase");
+                const UniValue &iscbparam = stake.find_value("iscoinbase");
                 const bool iscoinbase =
                     iscbparam.isNull() ? false : iscbparam.get_bool();
                 CKey key =
-                    DecodeSecret(find_value(stake, "privatekey").get_str());
+                    DecodeSecret(stake.find_value("privatekey").get_str());
 
                 if (!key.IsValid()) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER,
@@ -659,10 +659,6 @@ static RPCHelpMan getavalancheinfo() {
                      {RPCResult::Type::STR, "verification_status",
                       "The proof verification status. Only available if the "
                       "\"verified\" flag is false."},
-                     {RPCResult::Type::BOOL, "sharing",
-                      "DEPRECATED: Whether the node local proof is being "
-                      "advertised on the network or not. Only displayed if the "
-                      "-deprecatedrpc=getavalancheinfo_sharing option is set."},
                      {RPCResult::Type::STR_HEX, "proofid",
                       "The node local proof id."},
                      {RPCResult::Type::STR_HEX, "limited_proofid",
@@ -766,9 +762,6 @@ static RPCHelpMan getavalancheinfo() {
                                      ? (sharing ? "pending verification"
                                                 : "pending inbound connections")
                                      : state.GetRejectReason());
-                }
-                if (IsDeprecatedRPCEnabled(gArgs, "getavalancheinfo_sharing")) {
-                    local.pushKV("sharing", sharing);
                 }
                 local.pushKV("proofid", localProof->getId().ToString());
                 local.pushKV("limited_proofid",
@@ -1025,7 +1018,10 @@ static RPCHelpMan getavalancheproofs() {
 static RPCHelpMan getstakingreward() {
     return RPCHelpMan{
         "getstakingreward",
-        "Return the staking reward winner based on the previous block hash.\n",
+        "Return a list of possible staking reward winners based on the previous "
+        "block hash.\n"
+        "If -deprecatedrpc=getstakingreward is set it returns a single payout "
+        "script instead of an array.\n",
         {
             {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
              "The previous block hash, hex encoded."},
@@ -1033,22 +1029,51 @@ static RPCHelpMan getstakingreward() {
              "Whether to recompute the staking reward winner if there is a "
              "cached value."},
         },
+        // Deprecated in 0.28.11
+        IsDeprecatedRPCEnabled(gArgs, "getstakingreward")?
         RPCResult{
             RPCResult::Type::OBJ,
-            "payoutscript",
-            "The winning proof payout script",
+                "payoutscript",
+                "The winning proof payout script",
+                {
+                    {RPCResult::Type::STR, "asm", "Decoded payout script"},
+                    {RPCResult::Type::STR_HEX, "hex",
+                    "Raw payout script in hex format"},
+                    {RPCResult::Type::STR, "type",
+                    "The output type (e.g. " + GetAllOutputTypes() + ")"},
+                    {RPCResult::Type::NUM, "reqSigs",
+                    "The required signatures"},
+                    {RPCResult::Type::ARR,
+                    "addresses",
+                    "",
+                    {
+                        {RPCResult::Type::STR, "address", "eCash address"},
+                    }},
+                },
+            }
+        :
+        RPCResult{
+            RPCResult::Type::ARR,
+            "",
+            "",
             {
-                {RPCResult::Type::STR, "asm", "Decoded payout script"},
-                {RPCResult::Type::STR_HEX, "hex",
-                 "Raw payout script in hex format"},
-                {RPCResult::Type::STR, "type",
-                 "The output type (e.g. " + GetAllOutputTypes() + ")"},
-                {RPCResult::Type::NUM, "reqSigs", "The required signatures"},
-                {RPCResult::Type::ARR,
-                 "addresses",
-                 "",
+                {RPCResult::Type::OBJ,
+                 "payoutscript",
+                 "The winning proof payout script",
                  {
-                     {RPCResult::Type::STR, "address", "eCash address"},
+                     {RPCResult::Type::STR, "asm", "Decoded payout script"},
+                     {RPCResult::Type::STR_HEX, "hex",
+                      "Raw payout script in hex format"},
+                     {RPCResult::Type::STR, "type",
+                      "The output type (e.g. " + GetAllOutputTypes() + ")"},
+                     {RPCResult::Type::NUM, "reqSigs",
+                      "The required signatures"},
+                     {RPCResult::Type::ARR,
+                      "addresses",
+                      "",
+                      {
+                          {RPCResult::Type::STR, "address", "eCash address"},
+                      }},
                  }},
             }},
         RPCExamples{HelpExampleRpc("getstakingreward", "<blockhash>")},
@@ -1056,6 +1081,7 @@ static RPCHelpMan getstakingreward() {
             const JSONRPCRequest &request) -> UniValue {
             const NodeContext &node = EnsureAnyNodeContext(request.context);
             ChainstateManager &chainman = EnsureChainman(node);
+            const ArgsManager &args{EnsureAnyArgsman(request.context)};
 
             const BlockHash blockhash(
                 ParseHashV(request.params[0], "blockhash"));
@@ -1095,9 +1121,9 @@ static RPCHelpMan getstakingreward() {
                               blockhash.ToString()));
             }
 
-            CScript winnerPayoutScript;
-            if (!g_avalanche->getStakingRewardWinner(blockhash,
-                                                     winnerPayoutScript)) {
+            std::vector<CScript> winnerPayoutScripts;
+            if (!g_avalanche->getStakingRewardWinners(blockhash,
+                                                      winnerPayoutScripts)) {
                 throw JSONRPCError(
                     RPC_INTERNAL_ERROR,
                     strprintf("Unable to retrieve the staking reward winner "
@@ -1105,11 +1131,19 @@ static RPCHelpMan getstakingreward() {
                               blockhash.ToString()));
             }
 
-            UniValue stakingRewardsPayoutScriptObj(UniValue::VOBJ);
-            ScriptPubKeyToUniv(winnerPayoutScript,
-                               stakingRewardsPayoutScriptObj,
-                               /*fIncludeHex=*/true);
-            return stakingRewardsPayoutScriptObj;
+            UniValue winners(UniValue::VARR);
+            for (auto &winnerPayoutScript : winnerPayoutScripts) {
+                UniValue stakingRewardsPayoutScriptObj(UniValue::VOBJ);
+                ScriptPubKeyToUniv(winnerPayoutScript,
+                                   stakingRewardsPayoutScriptObj,
+                                   /*fIncludeHex=*/true);
+                if (IsDeprecatedRPCEnabled(args, "getstakingreward")) {
+                    return stakingRewardsPayoutScriptObj;
+                }
+                winners.push_back(stakingRewardsPayoutScriptObj);
+            }
+
+            return winners;
         },
     };
 }
@@ -1123,6 +1157,8 @@ static RPCHelpMan setstakingreward() {
              "The previous block hash, hex encoded."},
             {"payoutscript", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
              "The payout script for the staking reward, hex encoded."},
+            {"append", RPCArg::Type::BOOL, RPCArg::Default{false},
+             "Append to the list of possible winners instead of replacing."},
         },
         RPCResult{RPCResult::Type::BOOL, "success",
                   "Whether the payout script was set or not"},
@@ -1161,10 +1197,21 @@ static RPCHelpMan setstakingreward() {
                 ParseHex(request.params[1].get_str());
             const CScript payoutScript(data.begin(), data.end());
 
+            std::vector<CScript> payoutScripts;
+
+            if (!request.params[2].isNull() && request.params[2].get_bool()) {
+                // Append mode, initialize our list with the current winners
+                // and the new one will be added to the back of that list. If
+                // there is no winner the list will remain empty.
+                g_avalanche->getStakingRewardWinners(blockhash, payoutScripts);
+            }
+
+            payoutScripts.push_back(std::move(payoutScript));
+
             // This will return true upon insertion or false upon replacement.
             // We want to convey the success of the RPC, so we always return
             // true.
-            g_avalanche->setStakingRewardWinner(pprev, payoutScript);
+            g_avalanche->setStakingRewardWinners(pprev, payoutScripts);
             return true;
         },
     };
@@ -1420,6 +1467,7 @@ static RPCHelpMan isfinaltransaction() {
 
             const NodeContext &node = EnsureAnyNodeContext(request.context);
             ChainstateManager &chainman = EnsureChainman(node);
+            const CTxMemPool &mempool = EnsureMemPool(node);
             const TxId txid = TxId(ParseHashV(request.params[0], "txid"));
             CBlockIndex *pindex = nullptr;
 
@@ -1442,8 +1490,8 @@ static RPCHelpMan isfinaltransaction() {
 
             BlockHash hash_block;
             const CTransactionRef tx = GetTransaction(
-                pindex, node.mempool.get(), txid,
-                config.GetChainParams().GetConsensus(), hash_block);
+                pindex, &mempool, txid, config.GetChainParams().GetConsensus(),
+                hash_block);
 
             if (!g_avalanche->isQuorumEstablished()) {
                 throw JSONRPCError(RPC_MISC_ERROR,
@@ -1461,8 +1509,8 @@ static RPCHelpMan isfinaltransaction() {
                     errmsg = "No such transaction found in the provided block.";
                 } else if (!g_txindex) {
                     errmsg = "No such transaction. Use -txindex or provide a "
-                             "block "
-                             "hash to enable blockchain transaction queries.";
+                             "block hash to enable blockchain transaction "
+                             "queries.";
                 } else if (!f_txindex_ready) {
                     errmsg = "No such transaction. Blockchain transactions are "
                              "still in the process of being indexed.";
@@ -1477,10 +1525,18 @@ static RPCHelpMan isfinaltransaction() {
                 pindex = chainman.m_blockman.LookupBlockIndex(hash_block);
             }
 
-            // The first 2 checks are redundant as we expect to throw a JSON RPC
-            // error for these cases, but they are almost free so they are kept
-            // as a safety net.
-            return tx != nullptr && !node.mempool->exists(txid) &&
+            if (!tx) {
+                // Tx not found, we should have raised an error at this stage
+                return false;
+            }
+
+            if (mempool.isAvalancheFinalized(txid)) {
+                // The transaction is finalized
+                return true;
+            }
+
+            // Return true if the tx is in a finalized block
+            return !node.mempool->exists(txid) &&
                    chainman.ActiveChainstate().IsBlockAvalancheFinalized(
                        pindex);
         },
@@ -1492,7 +1548,7 @@ static RPCHelpMan reconsideravalancheproof() {
         "reconsideravalancheproof",
         "Reconsider a known avalanche proof.\n",
         {
-            {"proofid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+            {"proof", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
              "The hex encoded avalanche proof."},
         },
         RPCResult{

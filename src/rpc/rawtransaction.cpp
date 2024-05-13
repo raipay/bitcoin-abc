@@ -536,7 +536,7 @@ static RPCHelpMan decodescript() {
             ScriptPubKeyToUniv(script, r, /* fIncludeHex */ false);
 
             UniValue type;
-            type = find_value(r, "type");
+            type = r.find_value("type");
 
             if (type.isStr() && type.get_str() != "scripthash") {
                 // P2SH cannot be wrapped in a P2SH. If this script is already a
@@ -994,7 +994,7 @@ static RPCHelpMan testmempoolaccept() {
             const PackageMempoolAcceptResult package_result = [&] {
                 LOCK(::cs_main);
                 if (txns.size() > 1) {
-                    return ProcessNewPackage(config, chainstate, mempool, txns,
+                    return ProcessNewPackage(chainstate, mempool, txns,
                                              /* test_accept */ true);
                 }
                 return PackageMempoolAcceptResult(

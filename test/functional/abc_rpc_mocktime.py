@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2020 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -16,7 +15,6 @@ class MocktimeTest(BitcoinTestFramework):
         self.setup_clean_chain = True
 
     def run_test(self):
-        self.nodes[0].setmocktime(9223372036854775807)
         self.nodes[0].setmocktime(0)
         assert_raises_rpc_error(
             -8, "Mocktime can not be negative: -1.", self.nodes[0].setmocktime, -1

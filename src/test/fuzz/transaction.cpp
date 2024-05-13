@@ -21,11 +21,11 @@
 
 #include <cassert>
 
-void initialize() {
+void initialize_transaction() {
     SelectParams(CBaseChainParams::REGTEST);
 }
 
-void test_one_input(const std::vector<uint8_t> &buffer) {
+FUZZ_TARGET_INIT(transaction, initialize_transaction) {
     CDataStream ds(buffer, SER_NETWORK, INIT_PROTO_VERSION);
     try {
         int nVersion;
@@ -64,15 +64,17 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
 
     const CFeeRate dust_relay_fee{DUST_RELAY_TX_FEE};
     std::string reason;
-    const bool is_standard_with_permit_bare_multisig = IsStandardTx(
-        tx, /* permit_bare_multisig= */ true, dust_relay_fee, reason);
-    const bool is_standard_without_permit_bare_multisig = IsStandardTx(
-        tx, /* permit_bare_multisig= */ false, dust_relay_fee, reason);
+    const bool is_standard_with_permit_bare_multisig =
+        IsStandardTx(tx, std::nullopt, /* permit_bare_multisig= */ true,
+                     dust_relay_fee, reason);
+    const bool is_standard_without_permit_bare_multisig =
+        IsStandardTx(tx, std::nullopt, /* permit_bare_multisig= */ false,
+                     dust_relay_fee, reason);
     if (is_standard_without_permit_bare_multisig) {
         assert(is_standard_with_permit_bare_multisig);
     }
-    std::unique_ptr<CChainParams> params =
-        CreateChainParams(CBaseChainParams::REGTEST);
+    std::unique_ptr<const CChainParams> params =
+        CreateChainParams(ArgsManager{}, CBaseChainParams::REGTEST);
     (void)tx.GetHash();
     (void)tx.GetTotalSize();
     try {
@@ -87,7 +89,6 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     (void)GetVirtualTransactionSize(tx);
     (void)ContextualCheckTransaction(params->GetConsensus(), tx, state, 1024,
                                      1024);
-    (void)IsStandardTx(tx, reason);
     (void)RecursiveDynamicUsage(tx);
 
     CCoinsView coins_view;

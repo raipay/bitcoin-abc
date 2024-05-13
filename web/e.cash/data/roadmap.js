@@ -21,18 +21,13 @@ export const roadmap = [
                 status: 'complete',
             },
             {
-                title: 'QUIC',
-                description: 'lightning fast network',
+                title: 'UTXO Commitments',
+                description: 'blockchain pruning, faster initial sync',
                 status: 'underway',
             },
             {
                 title: 'Faster Block Propagation',
                 description: 'graphene or other',
-                status: 'planning',
-            },
-            {
-                title: 'UTXO Commitment',
-                description: 'blockchain pruning, faster initial sync',
                 status: 'planning',
             },
             {
@@ -78,16 +73,16 @@ export const roadmap = [
             {
                 title: 'CashFusion',
                 description: 'opt-in privacy',
-                status: 'underway',
+                status: 'complete',
+            },
+            {
+                title: 'Blockchain Indexer',
+                description: 'powerful application API',
+                status: 'complete',
             },
             {
                 title: 'Regular Heartbeat',
                 description: 'more consistent block times',
-                status: 'underway',
-            },
-            {
-                title: 'Reference Indexer',
-                description: 'programmatic block explorer',
                 status: 'underway',
             },
             {
@@ -96,7 +91,7 @@ export const roadmap = [
                 status: 'underway',
             },
             {
-                title: 'Zero-Knowledge Subchain',
+                title: 'Zero-Knowledge Subnet',
                 description: 'bulletproof privacy',
                 status: 'planning',
             },
@@ -132,7 +127,7 @@ export const roadmap = [
                 status: 'complete',
             },
             {
-                title: 'EVM Subchain',
+                title: 'EVM Subnet',
                 description: 'scalable smart contracts & improved privacy',
                 status: 'planning',
             },

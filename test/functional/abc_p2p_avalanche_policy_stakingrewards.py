@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2023 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -75,7 +74,7 @@ class ABCStakingRewardsPolicyTest(BitcoinTestFramework):
 
         assert node.getavalancheinfo()["ready_to_poll"] is True
 
-        now += 60 * 60
+        now += 60 * 60 + 1
         node.setmocktime(now)
 
         self.generate(node, 1)

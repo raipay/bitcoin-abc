@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2020 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -229,7 +228,7 @@ class FilterTest(BitcoinTestFramework):
             scriptPubKey=getnewdestination()[1],
             amount=7 * COIN,
         )
-        filter_peer.sync_send_with_ping()
+        filter_peer.sync_with_ping()
         assert not filter_peer.merkleblock_received
         assert not filter_peer.tx_received
 
@@ -282,7 +281,6 @@ class FilterTest(BitcoinTestFramework):
 
     def run_test(self):
         self.wallet = MiniWallet(self.nodes[0])
-        self.wallet.rescan_utxos()
 
         filter_peer = self.nodes[0].add_p2p_connection(P2PBloomFilter())
         self.log.info("Test filter size limits")

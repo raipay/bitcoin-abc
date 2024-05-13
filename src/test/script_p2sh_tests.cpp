@@ -20,6 +20,11 @@
 #include <vector>
 
 // Helpers:
+static bool IsStandardTx(const CTransaction &tx, std::string &reason) {
+    return IsStandardTx(tx, std::nullopt, DEFAULT_PERMIT_BAREMULTISIG,
+                        CFeeRate{DUST_RELAY_TX_FEE}, reason);
+}
+
 static std::vector<uint8_t> Serialize(const CScript &s) {
     std::vector<uint8_t> sSerialized(s.begin(), s.end());
     return sSerialized;
@@ -50,7 +55,6 @@ static bool Verify(const CScript &scriptSig, const CScript &scriptPubKey,
 BOOST_FIXTURE_TEST_SUITE(script_p2sh_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(sign) {
-    LOCK(cs_main);
     // Pay-to-script-hash looks like this:
     // scriptSig:    <sig> <sig...> <serialized_script>
     // scriptPubKey: HASH160 <hash> EQUAL
@@ -160,7 +164,6 @@ BOOST_AUTO_TEST_CASE(norecurse) {
 }
 
 BOOST_AUTO_TEST_CASE(set) {
-    LOCK(cs_main);
     // Test the CScript::Set* methods
     FillableSigningProvider keystore;
     CKey key[4];
@@ -282,7 +285,6 @@ BOOST_AUTO_TEST_CASE(switchover) {
 }
 
 BOOST_AUTO_TEST_CASE(AreInputsStandard) {
-    LOCK(cs_main);
     CCoinsView coinsDummy;
     CCoinsViewCache coins(&coinsDummy);
     FillableSigningProvider keystore;

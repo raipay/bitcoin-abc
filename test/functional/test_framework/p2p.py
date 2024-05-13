@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2010 ArtForz -- public domain half-a-node
 # Copyright (c) 2012 Jeff Garzik
 # Copyright (c) 2010-2019 The Bitcoin Core developers
@@ -133,10 +132,16 @@ MESSAGEMAP = {
     b"version": msg_version,
 }
 
-MAGIC_BYTES = {
+NET_MAGIC_BYTES = {
     "mainnet": b"\xe3\xe1\xf3\xe8",
     "testnet3": b"\xf4\xe5\xf3\xf4",
     "regtest": b"\xda\xb5\xbf\xfa",
+}
+
+DISK_MAGIC_BYTES = {
+    "mainnet": b"\xf9\xbe\xb4\xd9",
+    "testnet3": b"\x0b\x11\x09\x07",
+    "regtest": b"\xfa\xbf\xb5\xda",
 }
 
 
@@ -172,7 +177,7 @@ class P2PConnection(asyncio.Protocol):
         self.on_connection_send_msg = None
         self.on_connection_send_msg_is_raw = False
         self.recvbuf = b""
-        self.magic_bytes = MAGIC_BYTES[net]
+        self.magic_bytes = NET_MAGIC_BYTES[net]
 
     def peer_connect(self, dstaddr, dstport, *, net, timeout_factor):
         self.peer_connect_helper(dstaddr, dstport, net, timeout_factor)
@@ -673,16 +678,12 @@ class P2PInterface(P2PConnection):
         self.send_message(message)
         self.sync_with_ping(timeout=timeout)
 
-    def sync_send_with_ping(self, timeout=60):
-        """Ensure SendMessages is called on this connection"""
-        # Calling sync_with_ping twice requires that the node calls
+    def sync_with_ping(self, timeout=60):
+        """Ensure ProcessMessages and SendMessages is called on this connection"""
+        # Sending two pings back-to-back, requires that the node calls
         # `ProcessMessage` twice, and thus ensures `SendMessages` must have
         # been called at least once
-        self.sync_with_ping()
-        self.sync_with_ping()
-
-    def sync_with_ping(self, timeout=60):
-        """Ensure ProcessMessages is called on this connection"""
+        self.send_message(msg_ping(nonce=0))
         self.send_message(msg_ping(nonce=self.ping_counter))
 
         def test_function():

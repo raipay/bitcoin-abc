@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2020 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -51,6 +50,13 @@ class MiniWallet:
         self._scriptPubKey = bytes.fromhex(
             self._test_node.validateaddress(self._address)["scriptPubKey"]
         )
+
+        # When the pre-mined test framework chain is used, it contains coinbase
+        # outputs to the MiniWallet's default address in blocks 76-100
+        # (see method BitcoinTestFramework._initialize_chain())
+        # The MiniWallet needs to rescan_utxos() in order to account
+        # for those mature UTXOs, so that all txs spend confirmed coins
+        self.rescan_utxos()
 
     def _create_utxo(self, *, txid, vout, value, height):
         return {"txid": txid, "vout": vout, "value": value, "height": height}
@@ -129,10 +135,10 @@ class MiniWallet:
 
         return self._utxos.pop(index)
 
-    def send_self_transfer(self, **kwargs):
+    def send_self_transfer(self, *, from_node, **kwargs):
         """Create and send a tx with the specified fee_rate. Fee may be exact or at most one satoshi higher than needed."""
         tx = self.create_self_transfer(**kwargs)
-        self.sendrawtransaction(from_node=kwargs["from_node"], tx_hex=tx["hex"])
+        self.sendrawtransaction(from_node=from_node, tx_hex=tx["hex"])
         return tx
 
     def send_to(self, *, from_node, scriptPubKey, amount, fee=1000):
@@ -145,7 +151,7 @@ class MiniWallet:
         (the utxo with the largest value is taken).
         Returns a tuple (txid, n) referring to the created external utxo outpoint.
         """
-        tx = self.create_self_transfer(from_node=from_node, fee_rate=0)["tx"]
+        tx = self.create_self_transfer(fee_rate=0)["tx"]
         assert_greater_than_or_equal(tx.vout[0].nValue, amount + fee)
         # change output -> MiniWallet
         tx.vout[0].nValue -= amount + fee
@@ -155,7 +161,7 @@ class MiniWallet:
         return txid, len(tx.vout) - 1
 
     def create_self_transfer(
-        self, *, fee_rate=Decimal("3000.00"), from_node, utxo_to_spend=None, locktime=0
+        self, *, fee_rate=Decimal("3000.00"), utxo_to_spend=None, locktime=0
     ):
         """Create and return a tx with the specified fee_rate. Fee may be exact or at most one satoshi higher than needed."""
         utxo_to_spend = utxo_to_spend or self.get_utxo()

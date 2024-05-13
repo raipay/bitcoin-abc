@@ -105,9 +105,8 @@ block content %}
                     {% for (token_id, json_balance) in json_balances %} {% if
                     token_id != "main" %} {% let token =
                     tokens|get_token(token_id) %} {% match token %} {% when Some
-                    with (token) %} {% match token.slp_tx_data %} {% when Some
-                    with (slp_tx_data) %} {% match slp_tx_data.genesis_info %}
-                    {% when Some with (genesis_info) %}
+                    with (token) %} {% match token.genesis_info %} {% when Some
+                    with (genesis_info) %}
                     <div class="etoken-row">
                         <div class="etoken-row-cell">
                             {{
@@ -155,7 +154,7 @@ block content %}
                         </div>
                     </div>
                     {% when None %} {% endmatch %} {% when None %} {% endmatch
-                    %} {% when None %} {% endmatch %} {% endif %} {% endfor %}
+                    %} {% endif %} {% endfor %}
                 </div>
                 {% endif %}
             </div>
@@ -167,16 +166,16 @@ block content %}
             >
                 <thead>
                     <tr>
-                        <th>Age</th>
-                        <th>Date</th>
+                        <th data-priority="1">Age</th>
+                        <th data-priority="3">Date</th>
                         <th data-priority="1">ID</th>
                         <th data-priority="2">Block Height</th>
-                        <th>Size</th>
-                        <th>Fee</th>
-                        <th>Inputs</th>
-                        <th>Outputs</th>
+                        <th data-priority="5">Size</th>
+                        <th data-priority="5">Fee</th>
+                        <th data-priority="4">Inputs</th>
+                        <th data-priority="4">Outputs</th>
                         <th data-priority="1">Amount XEC</th>
-                        <th>Amount Token</th>
+                        <th data-priority="2">Amount Token</th>
                         <th></th>
                     </tr>
                 </thead>

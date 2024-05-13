@@ -33,6 +33,7 @@
 #include <script/descriptor.h>
 #include <script/script.h>
 #include <shutdown.h>
+#include <timedata.h>
 #include <txmempool.h>
 #include <univalue.h>
 #include <util/strencodings.h>
@@ -132,13 +133,12 @@ static RPCHelpMan getnetworkhashps() {
     };
 }
 
-static bool GenerateBlock(const Config &config, ChainstateManager &chainman,
-                          CBlock &block, uint64_t &max_tries,
-                          BlockHash &block_hash) {
+static bool GenerateBlock(ChainstateManager &chainman, CBlock &block,
+                          uint64_t &max_tries, BlockHash &block_hash) {
     block_hash.SetNull();
     block.hashMerkleRoot = BlockMerkleRoot(block);
 
-    const Consensus::Params &params = config.GetChainParams().GetConsensus();
+    const Consensus::Params &params = chainman.GetConsensus();
 
     while (max_tries > 0 &&
            block.nNonce < std::numeric_limits<uint32_t>::max() &&
@@ -156,7 +156,9 @@ static bool GenerateBlock(const Config &config, ChainstateManager &chainman,
 
     std::shared_ptr<const CBlock> shared_pblock =
         std::make_shared<const CBlock>(block);
-    if (!chainman.ProcessNewBlock(config, shared_pblock, true, nullptr)) {
+    if (!chainman.ProcessNewBlock(shared_pblock,
+                                  /*force_processing=*/true,
+                                  /*min_pow_checked=*/true, nullptr)) {
         throw JSONRPCError(RPC_INTERNAL_ERROR,
                            "ProcessNewBlock, block not accepted");
     }
@@ -165,15 +167,15 @@ static bool GenerateBlock(const Config &config, ChainstateManager &chainman,
     return true;
 }
 
-static UniValue generateBlocks(const Config &config,
-                               ChainstateManager &chainman,
+static UniValue generateBlocks(ChainstateManager &chainman,
                                const CTxMemPool &mempool,
                                const CScript &coinbase_script, int nGenerate,
                                uint64_t nMaxTries) {
     UniValue blockHashes(UniValue::VARR);
     while (nGenerate > 0 && !ShutdownRequested()) {
         std::unique_ptr<CBlockTemplate> pblocktemplate(
-            BlockAssembler{config, chainman.ActiveChainstate(), mempool}
+            BlockAssembler{chainman.GetConfig(), chainman.ActiveChainstate(),
+                           &mempool}
                 .CreateNewBlock(coinbase_script));
 
         if (!pblocktemplate.get()) {
@@ -183,7 +185,7 @@ static UniValue generateBlocks(const Config &config,
         CBlock *pblock = &pblocktemplate->block;
 
         BlockHash block_hash;
-        if (!GenerateBlock(config, chainman, *pblock, nMaxTries, block_hash)) {
+        if (!GenerateBlock(chainman, *pblock, nMaxTries, block_hash)) {
             break;
         }
 
@@ -275,7 +277,7 @@ static RPCHelpMan generatetodescriptor() {
             const CTxMemPool &mempool = EnsureMemPool(node);
             ChainstateManager &chainman = EnsureChainman(node);
 
-            return generateBlocks(config, chainman, mempool, coinbase_script,
+            return generateBlocks(chainman, mempool, coinbase_script,
                                   num_blocks, max_tries);
         },
     };
@@ -340,7 +342,7 @@ static RPCHelpMan generatetoaddress() {
 
             CScript coinbase_script = GetScriptForDestination(destination);
 
-            return generateBlocks(config, chainman, mempool, coinbase_script,
+            return generateBlocks(chainman, mempool, coinbase_script,
                                   num_blocks, max_tries);
         },
     };
@@ -437,10 +439,8 @@ static RPCHelpMan generateblock() {
             {
                 LOCK(cs_main);
 
-                CTxMemPool empty_mempool;
                 std::unique_ptr<CBlockTemplate> blocktemplate(
-                    BlockAssembler{config, chainman.ActiveChainstate(),
-                                   empty_mempool}
+                    BlockAssembler{config, chainman.ActiveChainstate(), nullptr}
                         .CreateNewBlock(coinbase_script));
                 if (!blocktemplate) {
                     throw JSONRPCError(RPC_INTERNAL_ERROR,
@@ -462,6 +462,7 @@ static RPCHelpMan generateblock() {
                                        chainman.ActiveChainstate(), block,
                                        chainman.m_blockman.LookupBlockIndex(
                                            block.hashPrevBlock),
+                                       GetAdjustedTime,
                                        BlockValidationOptions(config)
                                            .withCheckPoW(false)
                                            .withCheckMerkleRoot(false))) {
@@ -474,8 +475,7 @@ static RPCHelpMan generateblock() {
             BlockHash block_hash;
             uint64_t max_tries{DEFAULT_MAX_TRIES};
 
-            if (!GenerateBlock(config, chainman, block, max_tries,
-                               block_hash) ||
+            if (!GenerateBlock(chainman, block, max_tries, block_hash) ||
                 block_hash.IsNull()) {
                 throw JSONRPCError(RPC_MISC_ERROR, "Failed to make block.");
             }
@@ -832,7 +832,7 @@ static RPCHelpMan getblocktemplate() {
             CChain &active_chain = active_chainstate.m_chain;
             if (!request.params[0].isNull()) {
                 const UniValue &oparam = request.params[0].get_obj();
-                const UniValue &modeval = find_value(oparam, "mode");
+                const UniValue &modeval = oparam.find_value("mode");
                 if (modeval.isStr()) {
                     strMode = modeval.get_str();
                 } else if (modeval.isNull()) {
@@ -840,10 +840,10 @@ static RPCHelpMan getblocktemplate() {
                 } else {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid mode");
                 }
-                lpval = find_value(oparam, "longpollid");
+                lpval = oparam.find_value("longpollid");
 
                 if (strMode == "proposal") {
-                    const UniValue &dataval = find_value(oparam, "data");
+                    const UniValue &dataval = oparam.find_value("data");
                     if (!dataval.isStr()) {
                         throw JSONRPCError(
                             RPC_TYPE_ERROR,
@@ -877,7 +877,7 @@ static RPCHelpMan getblocktemplate() {
                     }
                     BlockValidationState state;
                     TestBlockValidity(state, chainparams, active_chainstate,
-                                      block, pindexPrev,
+                                      block, pindexPrev, GetAdjustedTime,
                                       BlockValidationOptions(config)
                                           .withCheckPoW(false)
                                           .withCheckMerkleRoot(true));
@@ -976,7 +976,7 @@ static RPCHelpMan getblocktemplate() {
                 // Create new block
                 CScript scriptDummy = CScript() << OP_TRUE;
                 pblocktemplate =
-                    BlockAssembler{config, active_chainstate, mempool}
+                    BlockAssembler{config, active_chainstate, &mempool}
                         .CreateNewBlock(scriptDummy);
                 if (!pblocktemplate) {
                     throw JSONRPCError(RPC_OUT_OF_MEMORY, "Out of memory");
@@ -1058,13 +1058,13 @@ static RPCHelpMan getblocktemplate() {
             UniValue coinbasetxn(UniValue::VOBJ);
             coinbasetxn.pushKV("minerfund", minerFund);
 
-            CScript stakingRewardsPayoutScript;
+            std::vector<CScript> stakingRewardsPayoutScripts;
             if (IsStakingRewardsActivated(consensusParams, pindexPrev) &&
-                g_avalanche->getStakingRewardWinner(
-                    pindexPrev->GetBlockHash(), stakingRewardsPayoutScript)) {
+                g_avalanche->getStakingRewardWinners(
+                    pindexPrev->GetBlockHash(), stakingRewardsPayoutScripts)) {
                 UniValue stakingRewards(UniValue::VOBJ);
                 UniValue stakingRewardsPayoutScriptObj(UniValue::VOBJ);
-                ScriptPubKeyToUniv(stakingRewardsPayoutScript,
+                ScriptPubKeyToUniv(stakingRewardsPayoutScripts[0],
                                    stakingRewardsPayoutScriptObj,
                                    /*fIncludeHex=*/true);
                 stakingRewards.pushKV("payoutscript",
@@ -1191,10 +1191,10 @@ static RPCHelpMan submitblock() {
             auto sc =
                 std::make_shared<submitblock_StateCatcher>(block.GetHash());
             RegisterSharedValidationInterface(sc);
-            bool accepted =
-                chainman.ProcessNewBlock(config, blockptr,
-                                         /* fForceProcessing */ true,
-                                         /* fNewBlock */ &new_block);
+            bool accepted = chainman.ProcessNewBlock(blockptr,
+                                                     /*force_processing=*/true,
+                                                     /*min_pow_checked=*/true,
+                                                     /*new_block=*/&new_block);
             UnregisterSharedValidationInterface(sc);
             if (!new_block && accepted) {
                 return "duplicate";
@@ -1244,7 +1244,8 @@ static RPCHelpMan submitheader() {
             }
 
             BlockValidationState state;
-            chainman.ProcessNewBlockHeaders(config, {h}, state);
+            chainman.ProcessNewBlockHeaders({h},
+                                            /*min_pow_checked=*/true, state);
             if (state.IsValid()) {
                 return NullUniValue;
             }

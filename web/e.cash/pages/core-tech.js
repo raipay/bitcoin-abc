@@ -9,11 +9,12 @@ import { Container, GradientSpacer } from '/components/atoms';
 import fist from '/public/animations/fist.json';
 import avalanche from '/public/animations/avalanche.json';
 import staking from '/public/animations/staking.json';
-import govern from '/public/animations/govern.json';
-import etoken from '/public/animations/etoken.json';
+import spiningcoin from '/public/animations/spiningcoin.json';
+import subnets from '/public/animations/subnets.json';
 import calculate from '/public/animations/calculate.json';
 import cashfusion from '/public/animations/cashfusion.json';
 import AnimateImage from '/components/animate-image';
+import chronik from '/public/animations/services.json';
 import {
     TextImageBlockCtn,
     LeftTopArrow,
@@ -58,7 +59,7 @@ export default function CoreTech() {
     return (
         <Layout
             metaTitle="Core Tech"
-            metaDescription="Welcome to the next generation of crypto investments. eCash opens the door to possibilities previously unattainable by combining the core tech behind Bitcoin’s success - the same fixed supply, halving schedule, and genesis block - with the latest Proof of Stake consensus & protocol governance. eCash is the continuation of the Bitcoin Cash project and continues to be developed by Bitcoin ABC, the team who started it back in 2017."
+            metaDescription="Welcome to the next generation of crypto. eCash combines the core tech behind Bitcoin’s success - the same fixed supply, halving schedule, and genesis block - with state of the art crypto tech (Avalanche). eCash is built by Bitcoin ABC, a team of Bitcoin developers established in 2017."
         >
             <SubPageHero
                 image={fist}
@@ -67,16 +68,11 @@ export default function CoreTech() {
                 imagespeed="0"
             >
                 <p>
-                    Welcome to the next generation of crypto investments. eCash
-                    opens the door to possibilities previously unattainable by
-                    combining the core tech behind Bitcoin’s success - the same
-                    fixed supply, halving schedule, and genesis block - with the
-                    latest Proof of Stake consensus & protocol governance.
-                </p>
-                <p>
-                    eCash is the continuation of the Bitcoin Cash project and
-                    continues to be developed by Bitcoin ABC, the team who
-                    started it back in 2017.
+                    Welcome to the next generation of crypto. eCash combines the
+                    core tech behind Bitcoin’s success - the same fixed supply,
+                    halving schedule, and genesis block - with state of the art
+                    crypto tech (Avalanche). eCash is built by Bitcoin ABC, a
+                    team of Bitcoin developers established in 2017.
                 </p>
             </SubPageHero>
             <GradientSpacer />
@@ -94,11 +90,12 @@ export default function CoreTech() {
                     >
                         <p>
                             Avalanche is a revolutionary consensus algorithm
-                            that enables instant transactions, enhanced
-                            security, and fork-free upgrades. Other bitcoin
-                            competitors (like Bitcoin Cash) lost significant
-                            value from contentious (and seemingly endless)
-                            forks.
+                            integrated with eCash&apos;s core Proof-of-Work,
+                            enabling instant transactions, enhanced security,
+                            subnets, staking rewards for node operators and
+                            fork-free upgrades. This hybrid consensus model
+                            pushes eCash to the forefront of blockchain
+                            technology.
                         </p>
                         <ButtonRow>
                             <Button
@@ -151,30 +148,65 @@ export default function CoreTech() {
                     </TextImageBlock>
 
                     <TextImageBlock
-                        id="governance"
-                        title="Governance"
-                        image={govern}
+                        id="subnets"
+                        title="Subnets"
+                        image={subnets}
+                        speed={0.8}
                     >
                         <p>
-                            Protocol revenue is continually reinvested back into
-                            the eCash ecosystem to fund key infrastructure and
-                            ecosystem growth initiatives, with funding approvals
-                            guided by the Global Network Council (GNC).
+                            Subnets are customized networks linked to the main
+                            eCash network. They will allow developers to build
+                            networks with unique or experimental properties
+                            &mdash; while tethering value to the main eCash
+                            network.
+                        </p>
+                        <p>
+                            The technology is powered by subsets of Avalanche
+                            validators, who monitor the subnets to validate
+                            token tranfers to and from the subnet. This enables
+                            decentralized and trustless setup.
+                        </p>
+                        <p>
+                            Subnets enable eCash to natively connect with the
+                            wider DeFi ecosystem. Services can run their subnets
+                            with customized rules and properties according to
+                            their business requirements, including privately
+                            owned ones. Two subnets planned by the eCash team
+                            are an Ethereum Virtual Machine (EVM) and a
+                            Zero-Knowledge (ZK) privacy subnet.
+                        </p>
+                    </TextImageBlock>
+
+                    <TextImageBlock
+                        id="chronik"
+                        title="Chronik"
+                        image={chronik}
+                        imagespeed={0.7}
+                    >
+                        <p>
+                            Chronik is an indexer integrated right into the
+                            node. This removes redundancy and complexity when
+                            interacting with the blockchain. This super fast,
+                            reliable and highly scalable indexing solution makes
+                            it easy for developers to bootstrap and leverage
+                            native support for all available features on the
+                            eCash network.
                         </p>
                     </TextImageBlock>
 
                     <TextImageBlock
                         id="etokens"
                         title="eTokens"
-                        image={etoken}
+                        image={spiningcoin}
                         speed={0.8}
                     >
                         <p>
                             eCash supports tokens that anyone can create and
-                            trade. Instantly create your own token with your own
-                            name, supply, decimal places, and icon -- all for
-                            the low cost and high speed of a single eCash
-                            transaction (much less than $0.01).
+                            trade with a few clicks. Instantly create your NFT
+                            collection or fungible tokens with your own name,
+                            supply, decimal places and icon -- all for the low
+                            cost and high speed of a single eCash transaction
+                            (much less than $0.01).
                         </p>
                     </TextImageBlock>
 

@@ -37,4 +37,24 @@ See `test/` for usage.
 
 -   Improvements from [diff review](https://reviews.bitcoinabc.org/D14526)
 
+2.0.2-3
+
+-   Dep upgrades
+
+2.0.4
+
+-   Add support for utxo format from in-node chronik-client [diff](https://reviews.bitcoinabc.org/D15518)
+
+2.1.0
+
+-   Support input param `tokenInputs` to create txs with user-specified inputs [diff](https://reviews.bitcoinabc.org/D15520)
+
+2.2.0
+
+-   Export new function `getMaxSendAmountSatoshis` [diff](https://reviews.bitcoinabc.org/D15555)
+
+2.2.1
+
+-   Add stub type declarations file so `ecash-coinselect` can be used by typescript projects [diff](https://reviews.bitcoinabc.org/D15997)
+
 ## License [MIT](LICENSE)

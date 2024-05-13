@@ -21,6 +21,29 @@
 static const size_t DBWRAPPER_PREALLOC_KEY_SIZE = 64;
 static const size_t DBWRAPPER_PREALLOC_VALUE_SIZE = 1024;
 
+//! User-controlled performance and debug options.
+struct DBOptions {
+    //! Compact database on startup.
+    bool force_compact = false;
+};
+
+//! Application-specific storage settings.
+struct DBParams {
+    //! Location in the filesystem where leveldb data will be stored.
+    fs::path path;
+    //! Configures various leveldb cache settings.
+    size_t cache_bytes;
+    //! If true, use leveldb's memory environment.
+    bool memory_only = false;
+    //! If true, remove all existing data.
+    bool wipe_data = false;
+    //! If true, store data obfuscated via simple XOR. If false, XOR with a
+    //! zero'd byte array.
+    bool obfuscate = false;
+    //! Passed-through options.
+    DBOptions options{};
+};
+
 class dbwrapper_error : public std::runtime_error {
 public:
     explicit dbwrapper_error(const std::string &msg)
@@ -149,7 +172,7 @@ public:
     template <typename K> bool GetKey(K &key) {
         leveldb::Slice slKey = piter->key();
         try {
-            CDataStream ssKey(MakeUCharSpan(slKey), SER_DISK, CLIENT_VERSION);
+            CDataStream ssKey{MakeByteSpan(slKey), SER_DISK, CLIENT_VERSION};
             ssKey >> key;
         } catch (const std::exception &) {
             return false;
@@ -160,8 +183,8 @@ public:
     template <typename V> bool GetValue(V &value) {
         leveldb::Slice slValue = piter->value();
         try {
-            CDataStream ssValue(MakeUCharSpan(slValue), SER_DISK,
-                                CLIENT_VERSION);
+            CDataStream ssValue{MakeByteSpan(slValue), SER_DISK,
+                                CLIENT_VERSION};
             ssValue.Xor(dbwrapper_private::GetObfuscateKey(parent));
             ssValue >> value;
         } catch (const std::exception &) {
@@ -221,18 +244,7 @@ private:
     bool m_is_memory;
 
 public:
-    /**
-     * @param[in] path        Location in the filesystem where leveldb data will
-     * be stored.
-     * @param[in] nCacheSize  Configures various leveldb cache settings.
-     * @param[in] fMemory     If true, use leveldb's memory environment.
-     * @param[in] fWipe       If true, remove all existing data.
-     * @param[in] obfuscate   If true, store data obfuscated via simple XOR. If
-     * false, XOR
-     *                        with a zero'd byte array.
-     */
-    CDBWrapper(const fs::path &path, size_t nCacheSize, bool fMemory = false,
-               bool fWipe = false, bool obfuscate = false);
+    CDBWrapper(const DBParams &params);
     ~CDBWrapper();
 
     CDBWrapper(const CDBWrapper &) = delete;
@@ -252,8 +264,8 @@ public:
             dbwrapper_private::HandleError(status);
         }
         try {
-            CDataStream ssValue(MakeUCharSpan(strValue), SER_DISK,
-                                CLIENT_VERSION);
+            CDataStream ssValue{MakeByteSpan(strValue), SER_DISK,
+                                CLIENT_VERSION};
             ssValue.Xor(obfuscate_key);
             ssValue >> value;
         } catch (const std::exception &) {

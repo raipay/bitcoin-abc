@@ -24,13 +24,20 @@ enum class SynchronizationState;
 namespace interfaces {
 class Handler;
 class Node;
+struct BlockTip;
 } // namespace interfaces
 
 QT_BEGIN_NAMESPACE
 class QTimer;
 QT_END_NAMESPACE
 
-enum class BlockSource { NONE, REINDEX, DISK, NETWORK };
+enum class BlockSource {
+    NONE,
+    DISK,
+    NETWORK,
+};
+
+enum class SyncType { HEADER_PRESYNC, HEADER_SYNC, BLOCK_SYNC };
 
 /** Model for Bitcoin network client. */
 class ClientModel : public QObject {
@@ -60,8 +67,8 @@ public:
     int getHeaderTipHeight() const;
     int64_t getHeaderTipTime() const;
 
-    //! Returns enum BlockSource of the current importing/syncing state
-    enum BlockSource getBlockSource() const;
+    //! Returns the block source of the current importing/syncing state
+    BlockSource getBlockSource() const;
     //! Return warnings to be displayed in status bar
     QString getStatusBarWarnings() const;
 
@@ -100,13 +107,15 @@ private:
     //! A thread to interact with m_node asynchronously
     QThread *const m_thread;
 
+    void TipChanged(SynchronizationState sync_state, interfaces::BlockTip tip,
+                    double verification_progress, SyncType synctype);
     void subscribeToCoreSignals();
     void unsubscribeFromCoreSignals();
 
 Q_SIGNALS:
     void numConnectionsChanged(int count);
     void numBlocksChanged(int count, const QDateTime &blockDate,
-                          double nVerificationProgress, bool header,
+                          double nVerificationProgress, SyncType header,
                           SynchronizationState sync_state);
     void mempoolSizeChanged(long count, size_t mempoolSizeInBytes);
     void networkActiveChanged(bool networkActive);
@@ -119,12 +128,6 @@ Q_SIGNALS:
 
     // Show progress dialog e.g. for verifychain
     void showProgress(const QString &title, int nProgress);
-
-public Q_SLOTS:
-    void updateNumConnections(int numConnections);
-    void updateNetworkActive(bool networkActive);
-    void updateAlert();
-    void updateBanlist();
 };
 
 #endif // BITCOIN_QT_CLIENTMODEL_H

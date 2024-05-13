@@ -46,11 +46,11 @@
 #include <set>
 #include <vector>
 
-void initialize() {
+void initialize_integer() {
     SelectParams(CBaseChainParams::REGTEST);
 }
 
-void test_one_input(const std::vector<uint8_t> &buffer) {
+FUZZ_TARGET_INIT(integer, initialize_integer) {
     if (buffer.size() < sizeof(uint256) + sizeof(uint160)) {
         return;
     }
@@ -108,11 +108,6 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     }
     (void)GetSizeOfCompactSize(u64);
     (void)GetSpecialScriptSize(u32);
-    if (!MultiplicationOverflow(i64,
-                                static_cast<int64_t>(::nBytesPerSigCheck)) &&
-        !AdditionOverflow(i64 * ::nBytesPerSigCheck, static_cast<int64_t>(4))) {
-        (void)GetVirtualTransactionSize(i64, i64);
-    }
     if (!MultiplicationOverflow(i64, static_cast<int64_t>(u32)) &&
         !AdditionOverflow(i64, static_cast<int64_t>(4)) &&
         !AdditionOverflow(i64 * u32, static_cast<int64_t>(4))) {
@@ -251,11 +246,6 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         stream << i8;
         stream >> deserialized_i8;
         assert(i8 == deserialized_i8 && stream.empty());
-
-        char deserialized_ch;
-        stream << ch;
-        stream >> deserialized_ch;
-        assert(ch == deserialized_ch && stream.empty());
 
         bool deserialized_b;
         stream << b;

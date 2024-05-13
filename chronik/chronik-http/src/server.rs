@@ -5,23 +5,26 @@
 //! Module for [`ChronikServer`].
 
 use std::collections::HashMap;
+use std::time::Duration;
 use std::{net::SocketAddr, sync::Arc};
 
 use abc_rust_error::{Result, WrapErr};
 use axum::{
     extract::{Path, Query, WebSocketUpgrade},
     response::IntoResponse,
-    routing, Extension, Router,
+    routing::{self, MethodFilter},
+    Extension, Router,
 };
 use bitcoinsuite_core::tx::TxId;
+use chronik_bridge::ffi;
 use chronik_indexer::{
     indexer::{ChronikIndexer, Node},
     pause::PauseNotify,
 };
 use chronik_proto::proto;
-use hyper::server::conn::AddrIncoming;
 use thiserror::Error;
 use tokio::sync::RwLock;
+use tower_http::cors::{AllowMethods, AllowOrigin, CorsLayer};
 
 use crate::{
     error::ReportError, handlers, protobuf::Protobuf,
@@ -35,6 +38,15 @@ pub type NodeRef = Arc<Node>;
 /// Ref-counted pause notifier for Chronik indexing
 pub type PauseNotifyRef = Arc<PauseNotify>;
 
+/// Settings to tune Chronik
+#[derive(Clone, Debug)]
+pub struct ChronikSettings {
+    /// Duration between WebSocket pings initiated by Chronik.
+    pub ws_ping_interval: Duration,
+    /// Enable CORS headers
+    pub enable_cors: bool,
+}
+
 /// Params defining what and where to serve for [`ChronikServer`].
 #[derive(Clone, Debug)]
 pub struct ChronikServerParams {
@@ -46,16 +58,19 @@ pub struct ChronikServerParams {
     pub node: NodeRef,
     /// Handle for pausing/resuming indexing any updates from the node
     pub pause_notify: PauseNotifyRef,
+    /// Settings to tune Chronik
+    pub settings: ChronikSettings,
 }
 
 /// Chronik HTTP server, holding all the data/handles required to serve an
 /// instance.
 #[derive(Debug)]
 pub struct ChronikServer {
-    server_builders: Vec<hyper::server::Builder<AddrIncoming>>,
+    tcp_listeners: Vec<tokio::net::TcpListener>,
     indexer: ChronikIndexerRef,
     node: NodeRef,
     pause_notify: PauseNotifyRef,
+    settings: ChronikSettings,
 }
 
 /// Errors for [`ChronikServer`].
@@ -87,34 +102,42 @@ use self::ChronikServerError::*;
 impl ChronikServer {
     /// Binds the Chronik server on the given hosts
     pub fn setup(params: ChronikServerParams) -> Result<Self> {
-        let server_builders = params
+        let tcp_listeners = params
             .hosts
             .into_iter()
-            .map(|host| {
-                axum::Server::try_bind(&host).map_err(|err| {
-                    FailedBindingAddress(host, err.to_string()).into()
-                })
+            .map(|host| -> Result<_> {
+                let tcp = std::net::TcpListener::bind(host).map_err(|err| {
+                    FailedBindingAddress(host, err.to_string())
+                })?;
+                // Important: We need to set non-blocking ourselves
+                tcp.set_nonblocking(true)?;
+                Ok(tokio::net::TcpListener::from_std(tcp)?)
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(ChronikServer {
-            server_builders,
+            tcp_listeners,
             indexer: params.indexer,
             node: params.node,
             pause_notify: params.pause_notify,
+            settings: params.settings,
         })
     }
 
     /// Serve a Chronik HTTP endpoint with the given parameters.
     pub async fn serve(self) -> Result<()> {
-        let app = Self::make_router(self.indexer, self.node, self.pause_notify);
+        let app = Self::make_router(
+            self.indexer,
+            self.node,
+            self.pause_notify,
+            self.settings,
+        );
         let servers = self
-            .server_builders
+            .tcp_listeners
             .into_iter()
             .zip(std::iter::repeat(app))
-            .map(|(server_builder, app)| {
+            .map(|(tcp_listener, app)| {
                 Box::pin(async move {
-                    server_builder
-                        .serve(app.into_make_service())
+                    axum::serve(tcp_listener, app.into_make_service())
                         .await
                         .map_err(|err| ServingFailed(err.to_string()))
                 })
@@ -128,14 +151,32 @@ impl ChronikServer {
         indexer: ChronikIndexerRef,
         node: NodeRef,
         pause_notify: PauseNotifyRef,
+        settings: ChronikSettings,
     ) -> Router {
-        Router::new()
+        let enable_cors = settings.enable_cors;
+        let mut router = Router::new()
             .route("/blockchain-info", routing::get(handle_blockchain_info))
             .route("/block/:hash_or_height", routing::get(handle_block))
             .route("/block-txs/:hash_or_height", routing::get(handle_block_txs))
             .route("/blocks/:start/:end", routing::get(handle_block_range))
             .route("/chronik-info", routing::get(handle_chronik_info))
             .route("/tx/:txid", routing::get(handle_tx))
+            .route("/token/:txid", routing::get(handle_token_info))
+            .route(
+                "/validate-tx",
+                routing::post(handle_validate_tx)
+                    .on(MethodFilter::OPTIONS, handle_post_options),
+            )
+            .route(
+                "/broadcast-tx",
+                routing::post(handle_broadcast_tx)
+                    .on(MethodFilter::OPTIONS, handle_post_options),
+            )
+            .route(
+                "/broadcast-txs",
+                routing::post(handle_broadcast_txs)
+                    .on(MethodFilter::OPTIONS, handle_post_options),
+            )
             .route("/raw-tx/:txid", routing::get(handle_raw_tx))
             .route(
                 "/script/:type/:payload/confirmed-txs",
@@ -153,6 +194,34 @@ impl ChronikServer {
                 "/script/:type/:payload/utxos",
                 routing::get(handle_script_utxos),
             )
+            .route(
+                "/token-id/:token_id/confirmed-txs",
+                routing::get(handle_token_id_confirmed_txs),
+            )
+            .route(
+                "/token-id/:token_id/history",
+                routing::get(handle_token_id_history),
+            )
+            .route(
+                "/token-id/:token_id/unconfirmed-txs",
+                routing::get(handle_token_id_unconfirmed_txs),
+            )
+            .route(
+                "/token-id/:token_id/utxos",
+                routing::get(handle_token_id_utxos),
+            )
+            .route(
+                "/lokad-id/:lokad_id/confirmed-txs",
+                routing::get(handle_lokad_id_confirmed_txs),
+            )
+            .route(
+                "/lokad-id/:lokad_id/history",
+                routing::get(handle_lokad_id_history),
+            )
+            .route(
+                "/lokad-id/:lokad_id/unconfirmed-txs",
+                routing::get(handle_lokad_id_unconfirmed_txs),
+            )
             .route("/ws", routing::get(handle_ws))
             .route("/pause", routing::get(handle_pause))
             .route("/resume", routing::get(handle_resume))
@@ -160,14 +229,24 @@ impl ChronikServer {
             .layer(Extension(indexer))
             .layer(Extension(node))
             .layer(Extension(pause_notify))
+            .layer(Extension(settings));
+        if enable_cors {
+            router = router.layer(
+                CorsLayer::new()
+                    .allow_origin(AllowOrigin::any())
+                    .allow_methods(AllowMethods::any()),
+            );
+        }
+        router
     }
 }
 
 async fn handle_blockchain_info(
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::BlockchainInfo>, ReportError> {
     let indexer = indexer.read().await;
-    let blocks = indexer.blocks();
+    let blocks = indexer.blocks(&node);
     Ok(Protobuf(blocks.blockchain_info()?))
 }
 
@@ -183,18 +262,20 @@ async fn handle_chronik_info(
 async fn handle_block_range(
     Path((start_height, end_height)): Path<(i32, i32)>,
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::Blocks>, ReportError> {
     let indexer = indexer.read().await;
-    let blocks = indexer.blocks();
+    let blocks = indexer.blocks(&node);
     Ok(Protobuf(blocks.by_range(start_height, end_height)?))
 }
 
 async fn handle_block(
     Path(hash_or_height): Path<String>,
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::Block>, ReportError> {
     let indexer = indexer.read().await;
-    let blocks = indexer.blocks();
+    let blocks = indexer.blocks(&node);
     Ok(Protobuf(blocks.by_hash_or_height(hash_or_height)?))
 }
 
@@ -202,36 +283,113 @@ async fn handle_block_txs(
     Path(hash_or_height): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
     let indexer = indexer.read().await;
     Ok(Protobuf(
-        handlers::handle_block_txs(hash_or_height, &query_params, &indexer)
-            .await?,
+        handlers::handle_block_txs(
+            hash_or_height,
+            &query_params,
+            &indexer,
+            &node,
+        )
+        .await?,
     ))
 }
 
 async fn handle_tx(
     Path(txid): Path<String>,
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::Tx>, ReportError> {
     let indexer = indexer.read().await;
     let txid = txid.parse::<TxId>().wrap_err(NotTxId(txid))?;
-    Ok(Protobuf(indexer.txs().tx_by_id(txid)?))
+    Ok(Protobuf(indexer.txs(&node).tx_by_id(txid)?))
+}
+
+async fn handle_token_info(
+    Path(txid): Path<String>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TokenInfo>, ReportError> {
+    let indexer = indexer.read().await;
+    let txid = txid.parse::<TxId>().wrap_err(NotTxId(txid))?;
+    Ok(Protobuf(indexer.txs(&node).token_info(&txid)?))
+}
+
+async fn handle_broadcast_tx(
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+    Protobuf(request): Protobuf<proto::BroadcastTxRequest>,
+) -> Result<Protobuf<proto::BroadcastTxResponse>, ReportError> {
+    let indexer = indexer.read().await;
+    let txids_result = indexer
+        .broadcast(node.as_ref())
+        .broadcast_txs(&[request.raw_tx.into()], request.skip_token_checks);
+    // Drop indexer before syncing otherwise we get a deadlock
+    drop(indexer);
+    // Block for indexer being synced before returning so the user can query
+    // the broadcast txs right away
+    ffi::sync_with_validation_interface_queue();
+    let txids = txids_result?;
+    Ok(Protobuf(proto::BroadcastTxResponse {
+        txid: txids[0].to_vec(),
+    }))
+}
+
+async fn handle_broadcast_txs(
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+    Protobuf(request): Protobuf<proto::BroadcastTxsRequest>,
+) -> Result<Protobuf<proto::BroadcastTxsResponse>, ReportError> {
+    let indexer = indexer.read().await;
+    let txids_result = indexer.broadcast(node.as_ref()).broadcast_txs(
+        &request
+            .raw_txs
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>(),
+        request.skip_token_checks,
+    );
+    // Drop indexer before syncing otherwise we get a deadlock
+    drop(indexer);
+    // Block for indexer being synced before returning so the user can query
+    // the broadcast txs right away
+    ffi::sync_with_validation_interface_queue();
+    let txids = txids_result?;
+    Ok(Protobuf(proto::BroadcastTxsResponse {
+        txids: txids.into_iter().map(|txid| txid.to_vec()).collect(),
+    }))
+}
+
+async fn handle_validate_tx(
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+    Protobuf(raw_tx): Protobuf<proto::RawTx>,
+) -> Result<Protobuf<proto::Tx>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        indexer
+            .broadcast(node.as_ref())
+            .validate_tx(raw_tx.raw_tx)?,
+    ))
 }
 
 async fn handle_raw_tx(
     Path(txid): Path<String>,
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::RawTx>, ReportError> {
     let indexer = indexer.read().await;
     let txid = txid.parse::<TxId>().wrap_err(NotTxId(txid))?;
-    Ok(Protobuf(indexer.txs().raw_tx_by_id(&txid)?))
+    Ok(Protobuf(indexer.txs(&node).raw_tx_by_id(&txid)?))
 }
 
 async fn handle_script_confirmed_txs(
     Path((script_type, payload)): Path<(String, String)>,
     Query(query_params): Query<HashMap<String, String>>,
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
     let indexer = indexer.read().await;
     Ok(Protobuf(
@@ -240,6 +398,7 @@ async fn handle_script_confirmed_txs(
             &payload,
             &query_params,
             &indexer,
+            &node,
         )
         .await?,
     ))
@@ -249,6 +408,7 @@ async fn handle_script_history(
     Path((script_type, payload)): Path<(String, String)>,
     Query(query_params): Query<HashMap<String, String>>,
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
     let indexer = indexer.read().await;
     Ok(Protobuf(
@@ -257,6 +417,7 @@ async fn handle_script_history(
             &payload,
             &query_params,
             &indexer,
+            &node,
         )
         .await?,
     ))
@@ -265,6 +426,7 @@ async fn handle_script_history(
 async fn handle_script_unconfirmed_txs(
     Path((script_type, payload)): Path<(String, String)>,
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
     let indexer = indexer.read().await;
     Ok(Protobuf(
@@ -272,6 +434,7 @@ async fn handle_script_unconfirmed_txs(
             &script_type,
             &payload,
             &indexer,
+            &node,
         )
         .await?,
     ))
@@ -284,6 +447,120 @@ async fn handle_script_utxos(
     let indexer = indexer.read().await;
     Ok(Protobuf(
         handlers::handle_script_utxos(&script_type, &payload, &indexer).await?,
+    ))
+}
+
+async fn handle_token_id_confirmed_txs(
+    Path(token_id_hex): Path<String>,
+    Query(query_params): Query<HashMap<String, String>>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_token_id_confirmed_txs(
+            &token_id_hex,
+            &query_params,
+            &indexer,
+            &node,
+        )
+        .await?,
+    ))
+}
+
+async fn handle_token_id_history(
+    Path(token_id_hex): Path<String>,
+    Query(query_params): Query<HashMap<String, String>>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_token_id_history(
+            &token_id_hex,
+            &query_params,
+            &indexer,
+            &node,
+        )
+        .await?,
+    ))
+}
+
+async fn handle_token_id_unconfirmed_txs(
+    Path(token_id_hex): Path<String>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_token_id_unconfirmed_txs(
+            &token_id_hex,
+            &indexer,
+            &node,
+        )
+        .await?,
+    ))
+}
+
+async fn handle_token_id_utxos(
+    Path(token_id_hex): Path<String>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+) -> Result<Protobuf<proto::Utxos>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_token_id_utxos(&token_id_hex, &indexer).await?,
+    ))
+}
+
+async fn handle_lokad_id_confirmed_txs(
+    Path(lokad_id_hex): Path<String>,
+    Query(query_params): Query<HashMap<String, String>>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_lokad_id_confirmed_txs(
+            &lokad_id_hex,
+            &query_params,
+            &indexer,
+            &node,
+        )
+        .await?,
+    ))
+}
+
+async fn handle_lokad_id_history(
+    Path(lokad_id_hex): Path<String>,
+    Query(query_params): Query<HashMap<String, String>>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_lokad_id_history(
+            &lokad_id_hex,
+            &query_params,
+            &indexer,
+            &node,
+        )
+        .await?,
+    ))
+}
+
+async fn handle_lokad_id_unconfirmed_txs(
+    Path(lokad_id_hex): Path<String>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_lokad_id_unconfirmed_txs(
+            &lokad_id_hex,
+            &indexer,
+            &node,
+        )
+        .await?,
     ))
 }
 
@@ -304,6 +581,15 @@ async fn handle_resume(
 async fn handle_ws(
     ws: WebSocketUpgrade,
     Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(settings): Extension<ChronikSettings>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|ws| handle_subscribe_socket(ws, indexer))
+    ws.on_upgrade(|ws| handle_subscribe_socket(ws, indexer, settings))
+}
+
+async fn handle_post_options(
+) -> Result<axum::http::Response<axum::body::Body>, ReportError> {
+    axum::http::Response::builder()
+        .header("Allow", "OPTIONS, HEAD, POST")
+        .body(axum::body::Body::empty())
+        .map_err(|err| ReportError(err.into()))
 }

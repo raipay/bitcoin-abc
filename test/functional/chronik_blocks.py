@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2023 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -68,9 +67,7 @@ class ChronikBlockRangeTest(BitcoinTestFramework):
         assert_equal(chronik.blocks(500, 500).ok(), pb.Blocks(blocks=[]))
         assert_equal(chronik.blocks(1, 500).ok(), pb.Blocks(blocks=[]))
         assert_equal(chronik.blocks(500, 999).ok(), pb.Blocks(blocks=[]))
-        assert_equal(
-            chronik.blocks(2**31 - 500, 2**31 - 1).ok(), pb.Blocks(blocks=[])
-        )
+        assert_equal(chronik.blocks(2**31 - 500, 2**31 - 1).ok(), pb.Blocks(blocks=[]))
 
         block_hashes = [GENESIS_BLOCK_HASH]
         block_hashes += self.generatetoaddress(node, 12, ADDRESS_ECREG_UNSPENDABLE)

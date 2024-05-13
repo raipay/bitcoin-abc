@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -317,7 +316,7 @@ MAX_NODES = 64
 # default testnet port)
 PORT_MIN = int(os.getenv("TEST_RUNNER_PORT_MIN", default=20000))
 # The number of ports to "reserve" for p2p and rpc, each
-PORT_RANGE = 5000
+PORT_RANGE = 4000
 # The number of times we increment the port counters and test it again before
 # giving up.
 MAX_PORT_RETRY = 5
@@ -462,6 +461,8 @@ def write_config(config_path, *, n, chain, extra_config="", disable_autoconnect=
         f.write(f"port={str(p2p_port(n))}\n")
         f.write(f"rpcport={str(rpc_port(n))}\n")
         f.write(f"chronikbind=127.0.0.1:{str(chronik_port(n))}\n")
+        # Chronik by default is tuned for initial sync, tune it down for regtest
+        f.write("chroniktxnumcachebucketsize=100\n")
         f.write("fallbackfee=200\n")
         f.write("server=1\n")
         f.write("keypool=1\n")
@@ -638,6 +639,36 @@ def modinv(a, n):
 
 def uint256_hex(hash_int: int) -> str:
     return f"{hash_int:0{64}x}"
+
+
+def chronik_sub_to_blocks(ws, node, *, is_unsub=False) -> None:
+    """Subscribe to block events and make sure the subscription is active before returning"""
+    subscribe_log = "unsubscribe from" if is_unsub else "subscribe to"
+    with node.assert_debug_log([f"WS {subscribe_log} blocks"]):
+        ws.sub_to_blocks(is_unsub=is_unsub)
+
+
+def chronik_sub_script(
+    ws, node, script_type: str, payload: bytes, *, is_unsub=False
+) -> None:
+    """Subscribe to script events and make sure the subscription is active before returning"""
+    subscribe_log = "unsubscribe from" if is_unsub else "subscribe to"
+    with node.assert_debug_log([f"WS {subscribe_log} {script_type}({payload.hex()})"]):
+        ws.sub_script(script_type, payload, is_unsub=is_unsub)
+
+
+def chronik_sub_token_id(ws, node, token_id: str, *, is_unsub=False) -> None:
+    """Subscribe to token events and make sure the subscription is active before returning"""
+    subscribe_log = "unsubscribe from" if is_unsub else "subscribe to"
+    with node.assert_debug_log([f"WS {subscribe_log} token ID {token_id}"]):
+        ws.sub_token_id(token_id, is_unsub=is_unsub)
+
+
+def chronik_sub_lokad_id(ws, node, lokad_id: bytes, *, is_unsub=False) -> None:
+    """Subscribe to LOKAD ID events and make sure the subscription is active before returning"""
+    subscribe_log = "unsubscribe from" if is_unsub else "subscribe to"
+    with node.assert_debug_log([f"WS {subscribe_log} LOKAD ID {lokad_id.hex()}"]):
+        ws.sub_lokad_id(lokad_id, is_unsub=is_unsub)
 
 
 class TestFrameworkUtil(unittest.TestCase):

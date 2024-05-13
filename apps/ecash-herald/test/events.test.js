@@ -9,10 +9,9 @@ const unrevivedBlock = require('./mocks/block');
 const { jsonReviver, getCoingeckoApiUrl } = require('../src/utils');
 const block = JSON.parse(JSON.stringify(unrevivedBlock), jsonReviver);
 const cashaddr = require('ecashaddrjs');
-const recentStakersApiResponse = require('../test/mocks/recentStakersApiResponse');
 
 const { handleBlockConnected } = require('../src/events');
-const { MockChronikClient } = require('../../mock-chronik-client');
+const { MockChronikClient } = require('../../../modules/mock-chronik-client');
 const { MockTelegramBot, mockChannelId } = require('./mocks/telegramBotMock');
 
 const axios = require('axios');
@@ -77,9 +76,6 @@ describe('ecash-herald events.js', async function () {
 
         // Mock a successful API request
         mock.onGet(getCoingeckoApiUrl(config)).reply(200, mockResult);
-
-        // Mock successful peername request
-        mock.onGet(config.stakerPeerApi).reply(200, recentStakersApiResponse);
 
         const result = await handleBlockConnected(
             mockedChronik,
@@ -159,8 +155,6 @@ describe('ecash-herald events.js', async function () {
 
         // Mock a failed API request
         mock.onGet(getCoingeckoApiUrl(config)).reply(500, { error: 'error' });
-        // Mock failed staker peerName API request
-        mock.onGet(config.stakerPeerApi).reply(500, { error: 'some error' });
 
         const result = await handleBlockConnected(
             mockedChronik,

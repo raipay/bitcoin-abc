@@ -21,7 +21,7 @@ FOLDERS_SRC = ["/src/**/", "/chronik/**/"]
 FOLDERS_TEST = ["/src/**/test/", "/chronik/test/**/"]
 
 EXTENSIONS = ["*.c", "*.h", "*.cpp", "*.cc", "*.hpp"]
-REGEX_ARG = r'(?:ForceSet|SoftSet|Get|Is)(?:Bool|Int)?Args?(?:Set)?\(\s*"(-[^"]+)"'
+REGEX_ARG = r'(?:ForceSet|SoftSet|Get|Is)(?:Bool|Int|Path)?Args?(?:Set)?\(\s*"(-[^"]+)"'
 REGEX_DOC = r'AddArg\(\s*"(-[^"=]+?)(?:=|")'
 
 # list false positive unknows arguments
@@ -48,6 +48,7 @@ SET_FALSE_POSITIVE_UNDOCUMENTED = {
     "-automaticunparking",
     "-avalanchepreconsensus",
     "-chronikallowpause",
+    "-chronikcors",
     "-dbcrashratio",
     "-enableminerfund",
     "-forcecompactdb",

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -67,9 +66,16 @@ class BlockchainTest(BitcoinTestFramework):
         self.mine_chain()
 
         self._test_max_future_block_time()
-
-        # Set extra args with pruning after rescan is complete
-        self.restart_node(0, extra_args=["-stopatheight=207", "-prune=1"])
+        self.restart_node(
+            0,
+            extra_args=[
+                "-stopatheight=207",
+                # Check all blocks
+                "-checkblocks=-1",
+                # Set pruning after rescan is complete
+                "-prune=1",
+            ],
+        )
 
         self._test_getblockchaininfo()
         self._test_getchaintxstats()
@@ -445,8 +451,10 @@ class BlockchainTest(BitcoinTestFramework):
         # (Previously this was broken based on setting
         # `rpc/blockchain.cpp:latestblock` incorrectly.)
         #
-        b20hash = node.getblockhash(20)
-        b20 = node.getblock(b20hash)
+        # choose something vaguely near our tip
+        fork_height = current_height - 100
+        fork_hash = node.getblockhash(fork_height)
+        fork_block = node.getblock(fork_hash)
 
         def solve_and_send_block(prevhash, height, time):
             b = create_block(prevhash, create_coinbase(height), time)
@@ -454,10 +462,12 @@ class BlockchainTest(BitcoinTestFramework):
             peer.send_and_ping(msg_block(b))
             return b
 
-        b21f = solve_and_send_block(int(b20hash, 16), 21, b20["time"] + 1)
-        b22f = solve_and_send_block(b21f.sha256, 22, b21f.nTime + 1)
+        b1 = solve_and_send_block(
+            int(fork_hash, 16), fork_height + 1, fork_block["time"] + 1
+        )
+        b2 = solve_and_send_block(b1.sha256, fork_height + 1, b1.nTime + 1)
 
-        node.invalidateblock(b22f.hash)
+        node.invalidateblock(b2.hash)
 
         def assert_waitforheight(height, timeout=2):
             assert_equal(
@@ -513,7 +523,6 @@ class BlockchainTest(BitcoinTestFramework):
         node = self.nodes[0]
 
         miniwallet = MiniWallet(node)
-        miniwallet.rescan_utxos()
 
         fee_per_byte = Decimal("0.1")
         fee_per_kb = 1000 * fee_per_byte

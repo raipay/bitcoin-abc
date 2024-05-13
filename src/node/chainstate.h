@@ -30,6 +30,7 @@ struct ChainstateLoadOptions {
     bool reindex{false};
     bool reindex_chainstate{false};
     bool prune{false};
+    bool require_full_verification{true};
     int64_t check_blocks{DEFAULT_CHECKBLOCKS};
     int64_t check_level{DEFAULT_CHECKLEVEL};
     std::function<bool()> check_interrupt;
@@ -42,8 +43,12 @@ struct ChainstateLoadOptions {
 //! and exit cleanly in the interrupted case.
 enum class ChainstateLoadStatus {
     SUCCESS,
+    //! Generic failure which reindexing may fix
     FAILURE,
+    //! Fatal error which should not prompt to reindex
+    FAILURE_FATAL,
     FAILURE_INCOMPATIBLE_DB,
+    FAILURE_INSUFFICIENT_DBCACHE,
     INTERRUPTED
 };
 
@@ -70,8 +75,7 @@ ChainstateLoadResult LoadChainstate(ChainstateManager &chainman,
 
 ChainstateLoadResult
 VerifyLoadedChainstate(ChainstateManager &chainman,
-                       const ChainstateLoadOptions &options,
-                       const Config &config);
+                       const ChainstateLoadOptions &options);
 } // namespace node
 
 #endif // BITCOIN_NODE_CHAINSTATE_H

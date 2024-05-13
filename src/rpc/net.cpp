@@ -165,6 +165,10 @@ static RPCHelpMan getpeerinfo() {
                          Join(CONNECTION_TYPE_DOC, ",\n") + "."},
                     {RPCResult::Type::NUM, "startingheight",
                      "The starting height (block) of the peer"},
+                    {RPCResult::Type::NUM, "presynced_headers",
+                     /*optional=*/true,
+                     "The current height of header pre-synchronization with "
+                     "this peer, or -1 if no low-work sync is in progress"},
                     {RPCResult::Type::NUM, "synced_headers",
                      "The last header we have in common with this peer"},
                     {RPCResult::Type::NUM, "synced_blocks",
@@ -276,6 +280,7 @@ static RPCHelpMan getpeerinfo() {
                 obj.pushKV("bip152_hb_from", stats.m_bip152_highbandwidth_from);
                 if (fStateStats) {
                     obj.pushKV("startingheight", statestats.m_starting_height);
+                    obj.pushKV("presynced_headers", statestats.presync_height);
                     obj.pushKV("synced_headers", statestats.nSyncHeight);
                     obj.pushKV("synced_blocks", statestats.nCommonHeight);
                     UniValue heights(UniValue::VARR);
@@ -427,6 +432,9 @@ static RPCHelpMan addconnection() {
                                          "testing (-regtest mode) only.");
             }
 
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            const ArgsManager &args{EnsureArgsman(node)};
+
             RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VSTR});
             const std::string address = request.params[0].get_str();
             const std::string conn_type_in{
@@ -441,7 +449,7 @@ static RPCHelpMan addconnection() {
             } else if (conn_type_in == "feeler") {
                 conn_type = ConnectionType::FEELER;
             } else if (conn_type_in == "avalanche") {
-                if (!g_avalanche || !isAvalancheEnabled(gArgs)) {
+                if (!g_avalanche || !isAvalancheEnabled(args)) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER,
                                        "Error: avalanche outbound requested "
                                        "but avalanche is not enabled.");
@@ -451,7 +459,6 @@ static RPCHelpMan addconnection() {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, self.ToString());
             }
 
-            NodeContext &node = EnsureAnyNodeContext(request.context);
             CConnman &connman = EnsureConnman(node);
 
             const bool success = connman.AddConnection(address, conn_type);
@@ -802,7 +809,12 @@ static RPCHelpMan getnetworkinfo() {
                                                   CConnman::CONNECTIONS_OUT)));
             }
             obj.pushKV("networks", GetNetworksInfo());
-            obj.pushKV("relayfee", ::minRelayTxFee.GetFeePerK());
+            if (node.mempool) {
+                // This field can be deprecated, to be replaced by the
+                // getmempoolinfo fields
+                obj.pushKV("relayfee",
+                           node.mempool->m_min_relay_feerate.GetFeePerK());
+            }
             UniValue localAddresses(UniValue::VARR);
             {
                 LOCK(g_maplocalhost_mutex);
@@ -1091,7 +1103,9 @@ static RPCHelpMan getnodeaddresses() {
 
             for (const CAddress &addr : vAddr) {
                 UniValue obj(UniValue::VOBJ);
-                obj.pushKV("time", int(addr.nTime));
+                obj.pushKV(
+                    "time",
+                    int64_t{TicksSinceEpoch<std::chrono::seconds>(addr.nTime)});
                 obj.pushKV("services", uint64_t(addr.nServices));
                 obj.pushKV("address", addr.ToStringIP());
                 obj.pushKV("port", addr.GetPort());
@@ -1149,7 +1163,7 @@ static RPCHelpMan addpeeraddress() {
 
             if (LookupHost(addr_string, net_addr, false)) {
                 CAddress address{{net_addr, port}, ServiceFlags(NODE_NETWORK)};
-                address.nTime = GetAdjustedTime();
+                address.nTime = AdjustedTime();
                 // The source address is set equal to the address. This is
                 // equivalent to the peer announcing itself.
                 if (node.addrman->Add({address}, address)) {

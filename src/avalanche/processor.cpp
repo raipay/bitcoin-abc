@@ -134,6 +134,11 @@ public:
     NotificationsHandler(Processor *p) : m_processor(p) {}
 
     void updatedBlockTip() override { m_processor->updatedBlockTip(); }
+
+    void transactionAddedToMempool(const CTransactionRef &tx,
+                                   uint64_t mempool_sequence) override {
+        m_processor->transactionAddedToMempool(tx);
+    }
 };
 
 Processor::Processor(Config avaconfigIn, interfaces::Chain &chain,
@@ -144,7 +149,7 @@ Processor::Processor(Config avaconfigIn, interfaces::Chain &chain,
                      double minQuorumConnectedScoreRatioIn,
                      int64_t minAvaproofsNodeCountIn,
                      uint32_t staleVoteThresholdIn, uint32_t staleVoteFactorIn,
-                     Amount stakeUtxoDustThreshold)
+                     Amount stakeUtxoDustThreshold, bool preConsensus)
     : avaconfig(std::move(avaconfigIn)), connman(connmanIn),
       chainman(chainmanIn), mempool(mempoolIn),
       voteRecords(RWCollection<VoteMap>(VoteMap(VoteMapComparator(mempool)))),
@@ -156,7 +161,7 @@ Processor::Processor(Config avaconfigIn, interfaces::Chain &chain,
       minQuorumConnectedScoreRatio(minQuorumConnectedScoreRatioIn),
       minAvaproofsNodeCount(minAvaproofsNodeCountIn),
       staleVoteThreshold(staleVoteThresholdIn),
-      staleVoteFactor(staleVoteFactorIn) {
+      staleVoteFactor(staleVoteFactorIn), m_preConsensus(preConsensus) {
     // Make sure we get notified of chain state changes.
     chainNotificationsHandler =
         chain.handleNotifications(std::make_shared<NotificationsHandler>(this));
@@ -392,7 +397,9 @@ Processor::MakeProcessor(const ArgsManager &argsman, interfaces::Chain &chain,
         std::move(peerData), std::move(sessionKey),
         Proof::amountToScore(minQuorumStake), minQuorumConnectedStakeRatio,
         minAvaproofsNodeCount, staleVoteThreshold, staleVoteFactor,
-        stakeUtxoDustThreshold));
+        stakeUtxoDustThreshold,
+        argsman.GetBoolArg("-avalanchepreconsensus",
+                           DEFAULT_AVALANCHE_PRECONSENSUS)));
 }
 
 static bool isNull(const AnyVoteItem &item) {
@@ -844,8 +851,7 @@ bool Processor::isQuorumEstablished() {
     // Attempt to compute the staking rewards winner now so we don't have to
     // wait for a block if we already have all the prerequisites.
     const CBlockIndex *pprev = WITH_LOCK(cs_main, return chainman.ActiveTip());
-    if (pprev && IsStakingRewardsActivated(
-                     GetConfig().GetChainParams().GetConsensus(), pprev)) {
+    if (pprev && IsStakingRewardsActivated(chainman.GetConsensus(), pprev)) {
         computeStakingReward(pprev);
     }
 
@@ -888,7 +894,7 @@ bool Processor::computeStakingReward(const CBlockIndex *pindex) {
     _stakingRewards.blockheight = pindex->nHeight;
 
     if (WITH_LOCK(cs_peerManager, return peerManager->selectStakingRewardWinner(
-                                      pindex, _stakingRewards.winner))) {
+                                      pindex, _stakingRewards.winners))) {
         LOCK(cs_stakingRewards);
         return stakingRewards
             .emplace(pindex->GetBlockHash(), std::move(_stakingRewards))
@@ -915,25 +921,25 @@ void Processor::cleanupStakingRewards(const int minHeight) {
     }
 }
 
-bool Processor::getStakingRewardWinner(const BlockHash &prevBlockHash,
-                                       CScript &winner) const {
+bool Processor::getStakingRewardWinners(const BlockHash &prevBlockHash,
+                                        std::vector<CScript> &winners) const {
     LOCK(cs_stakingRewards);
     auto it = stakingRewards.find(prevBlockHash);
     if (it == stakingRewards.end()) {
         return false;
     }
 
-    winner = it->second.winner;
+    winners = it->second.winners;
     return true;
 }
 
-bool Processor::setStakingRewardWinner(const CBlockIndex *pprev,
-                                       const CScript &winner) {
+bool Processor::setStakingRewardWinners(const CBlockIndex *pprev,
+                                        const std::vector<CScript> &winners) {
     assert(pprev);
 
     StakingReward stakingReward;
     stakingReward.blockheight = pprev->nHeight;
-    stakingReward.winner = winner;
+    stakingReward.winners = winners;
 
     LOCK(cs_stakingRewards);
     return stakingRewards.insert_or_assign(pprev->GetBlockHash(), stakingReward)
@@ -993,6 +999,12 @@ void Processor::updatedBlockTip() {
     auto registeredProofs = registerProofs();
     for (const auto &proof : registeredProofs) {
         reconcileOrFinalize(proof);
+    }
+}
+
+void Processor::transactionAddedToMempool(const CTransactionRef &tx) {
+    if (m_preConsensus) {
+        addToReconcile(tx);
     }
 }
 
@@ -1197,6 +1209,8 @@ bool Processor::IsWorthPolling::operator()(const CBlockIndex *pindex) const {
 }
 
 bool Processor::IsWorthPolling::operator()(const ProofRef &proof) const {
+    // Avoid lock order issues cs_main -> cs_peerManager
+    AssertLockNotHeld(::cs_main);
     AssertLockNotHeld(processor.cs_peerManager);
 
     const ProofId &proofid = proof->getId();

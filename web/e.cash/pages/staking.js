@@ -18,7 +18,7 @@ function Staking(props) {
                 h2text="Staking"
             >
                 <p>
-                    Stakers have an important job: to participate in the
+                    Stakers have an important job: to participate in
                     eCash&apos;s avalanche consensus system, enabling eCash to
                     be a fast and reliable electronic cash system. eCash
                     avalanche participants should run reliable high-availability
@@ -37,8 +37,8 @@ function Staking(props) {
                     caution with any third party staking service.
                 </WarningBox>
                 <p>
-                    Staking rewards will go live on the eCash network on
-                    November 15th, 2023 as part of the eCash{' '}
+                    Staking rewards went live on the eCash network on November
+                    15th, 2023 as part of the eCash{' '}
                     <Link href="/upgrade">network upgrade</Link>. The purpose of
                     staking rewards is to incentivize running eCash avalanche
                     nodes to improve the overall security and performance of
@@ -84,6 +84,12 @@ function Staking(props) {
                         provide better service to the avalanche network, and
                         ease in upgrading nodes one at a time to ensure no
                         staking downtime.
+                    </li>
+                    <li>
+                        Do not use Tor for your staking node. Using Tor results
+                        in an unreliable connection to the rest of the network.
+                        It provides worse service to the avalanche network, and
+                        increases the chance of losing your staking rewards.
                     </li>
                 </ul>
                 <H3 text="Frequently Asked Questions" id="faq" />

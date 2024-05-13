@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2020 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -164,9 +163,7 @@ class CoinStatsIndexTest(BitcoinTestFramework):
 
         # Generate and send another tx with an OP_RETURN output (which is
         # unspendable)
-        tx2 = self.wallet.create_self_transfer(
-            from_node=self.nodes[0], utxo_to_spend=tx1_out_21
-        )["tx"]
+        tx2 = self.wallet.create_self_transfer(utxo_to_spend=tx1_out_21)["tx"]
         tx2.vout = [
             CTxOut(int(20_990_000 * XEC), CScript([OP_RETURN] + [OP_FALSE] * 50))
         ]

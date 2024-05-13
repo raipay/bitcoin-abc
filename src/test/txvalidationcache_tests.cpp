@@ -5,6 +5,7 @@
 #include <chain.h>
 #include <config.h>
 #include <consensus/validation.h>
+#include <kernel/validation_cache_sizes.h>
 #include <key.h>
 #include <policy/policy.h>
 #include <script/scriptcache.h>
@@ -134,7 +135,7 @@ CheckInputScripts(const CTransaction &tx, TxValidationState &state,
 static void ValidateCheckInputsForAllFlags(
     const CTransaction &tx, uint32_t failing_flags, uint32_t required_flags,
     bool add_to_cache, CCoinsViewCache &active_coins_tip,
-    int expected_sigchecks) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
+    int expected_sigchecks) EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
     PrecomputedTransactionData txdata(tx);
 
     MMIXLinearCongruentialGenerator lcg;
@@ -190,11 +191,6 @@ static void ValidateCheckInputsForAllFlags(
 BOOST_FIXTURE_TEST_CASE(checkinputs_test, TestChain100Setup) {
     // Test that passing CheckInputScripts with one set of script flags doesn't
     // imply that we would pass again with a different set of flags.
-    {
-        LOCK(cs_main);
-        InitScriptExecutionCache();
-    }
-
     CScript p2pk_scriptPubKey =
         CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
     CScript p2sh_scriptPubKey =
@@ -624,8 +620,6 @@ BOOST_AUTO_TEST_CASE(scriptcache_values) {
         int dummy;                                                             \
         BOOST_CHECK(!IsKeyInScriptCache(key, false, dummy));                   \
     }
-
-    InitScriptExecutionCache();
 
     // construct four distinct keys from very slightly different data
     CMutableTransaction tx1;

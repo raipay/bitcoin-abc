@@ -11,20 +11,23 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/util/setup_common.h>
 
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
-void initialize() {
-    static const ECCVerifyHandle ecc_verify_handle;
-    ECC_Start();
-    SelectParams(CBaseChainParams::REGTEST);
-    InitSignatureCache();
+namespace {
+const BasicTestingSetup *g_setup;
+} // namespace
+
+void initialize_script_sigcache() {
+    static const auto testing_setup = MakeNoLogFileContext<>();
+    g_setup = testing_setup.get();
 }
 
-void test_one_input(const std::vector<uint8_t> &buffer) {
+FUZZ_TARGET_INIT(script_sigcache, initialize_script_sigcache) {
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
 
     const std::optional<CMutableTransaction> mutable_transaction =

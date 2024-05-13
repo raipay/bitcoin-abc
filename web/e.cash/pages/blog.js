@@ -5,7 +5,7 @@ import Image from 'next/image';
 import Layout from '/components/layout';
 import H3 from '/components/h3';
 import { Container } from '/components/atoms';
-import { getBlogPosts } from '/data/blog.js';
+import { getBlogPosts, sortBlogPostsByDate } from '/data/blog.js';
 import {
     BlogCtn,
     FeaturedCardCtn,
@@ -18,6 +18,8 @@ import {
     DateText,
 } from '/styles/pages/blog.js';
 import { formatTimestamp } from '/data/blog.js';
+import fs from 'fs';
+import RSS from 'rss';
 
 function Blog(props) {
     const featuredPosts = props.posts.slice(0, 3);
@@ -98,6 +100,41 @@ function Blog(props) {
 }
 
 /**
+ * Converts JSON blog posts into XML format for RSS feed
+ * @param {object} posts - the blog posts to be converted to XML format
+ */
+async function generateRssFeed(posts) {
+    const feedOptions = {
+        title: 'eCash Blog',
+        description: 'Latest eCash news and information',
+        site_url: process.env.NEXT_PUBLIC_SITE_URL,
+        feed_url: `${process.env.NEXT_PUBLIC_SITE_URL}/rss.xml`,
+        image_url: `${process.env.NEXT_PUBLIC_SITE_URL}/images/logos/ecash-logo-primary-horizontal-dark-text.png`,
+        pubDate: new Date(),
+        copyright: `©${new Date().getFullYear()}, Bitcoin ABC. All Rights Reserved.`,
+    };
+
+    const feed = new RSS(feedOptions);
+
+    posts.map(post => {
+        feed.item({
+            title: post.attributes.title,
+            description: post.attributes.short_content,
+            url: `${process.env.NEXT_PUBLIC_SITE_URL}/blog/${post.attributes.slug}`,
+            date: post.attributes.publishedAt,
+            enclosure: {
+                url:
+                    process.env.NEXT_PUBLIC_STRAPI_URL +
+                    post.attributes.image.data.attributes.url,
+                type: post.attributes.image.data.attributes.mime,
+                length: post.attributes.image.data.attributes.size,
+            },
+        });
+    });
+    fs.writeFileSync('./public/rss.xml', feed.xml({ indent: true }));
+}
+
+/**
  * Call function to fetch blog api data and return posts
  * This only runs at build time, and the build should fail if the api call fails
  * @returns {object} props - page props to pass to the page
@@ -105,7 +142,14 @@ function Blog(props) {
  */
 export async function getStaticProps() {
     const posts = await getBlogPosts();
-    return posts;
+    const orderedPosts = await sortBlogPostsByDate(posts.props.posts);
+    await generateRssFeed(orderedPosts);
+
+    return {
+        props: {
+            posts: orderedPosts,
+        },
+    };
 }
 
 export default Blog;

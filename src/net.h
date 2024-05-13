@@ -9,13 +9,14 @@
 
 #include <avalanche/proofid.h>
 #include <avalanche/proofradixtreeadapter.h>
-#include <bloom.h>
 #include <chainparams.h>
+#include <common/bloom.h>
 #include <compat.h>
 #include <consensus/amount.h>
 #include <crypto/siphash.h>
 #include <hash.h>
 #include <i2p.h>
+#include <kernel/cs_main.h>
 #include <logging.h>
 #include <net_permissions.h>
 #include <netaddress.h>
@@ -31,7 +32,6 @@
 #include <uint256.h>
 #include <util/check.h>
 #include <util/time.h>
-#include <validation.h> // For cs_main
 
 #include <atomic>
 #include <condition_variable>
@@ -123,6 +123,13 @@ struct CSerializedNetMsg {
     // No copying, only moves.
     CSerializedNetMsg(const CSerializedNetMsg &msg) = delete;
     CSerializedNetMsg &operator=(const CSerializedNetMsg &) = delete;
+
+    CSerializedNetMsg Copy() const {
+        CSerializedNetMsg copy;
+        copy.data = data;
+        copy.m_type = m_type;
+        return copy;
+    }
 
     std::vector<uint8_t> data;
     std::string m_type;
@@ -470,8 +477,6 @@ public:
     std::list<CNetMessage> vProcessMsg GUARDED_BY(cs_vProcessMsg);
     size_t nProcessQueueSize{0};
 
-    RecursiveMutex cs_sendProcessing;
-
     uint64_t nRecvBytes GUARDED_BY(cs_vRecv){0};
 
     std::atomic<std::chrono::seconds> m_last_send{0s};
@@ -788,6 +793,11 @@ private:
  */
 class NetEventsInterface {
 public:
+    /**
+     * Mutex for anything that is only accessed via the msg processing thread
+     */
+    static Mutex g_msgproc_mutex;
+
     /** Initialize a peer (setup state, queue any initial messages) */
     virtual void InitializeNode(const Config &config, CNode &node,
                                 ServiceFlags our_services) = 0;
@@ -805,7 +815,8 @@ public:
      * @return                      True if there is more work to be done
      */
     virtual bool ProcessMessages(const Config &config, CNode *pnode,
-                                 std::atomic<bool> &interrupt) = 0;
+                                 std::atomic<bool> &interrupt)
+        EXCLUSIVE_LOCKS_REQUIRED(g_msgproc_mutex) = 0;
 
     /**
      * Send queued protocol messages to a given node.
@@ -815,7 +826,7 @@ public:
      * @return                      True if there is more work to be done
      */
     virtual bool SendMessages(const Config &config, CNode *pnode)
-        EXCLUSIVE_LOCKS_REQUIRED(pnode->cs_sendProcessing) = 0;
+        EXCLUSIVE_LOCKS_REQUIRED(g_msgproc_mutex) = 0;
 
 protected:
     /**

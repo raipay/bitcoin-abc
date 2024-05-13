@@ -10,6 +10,7 @@
 #include <avalanche/test/util.h>
 #include <cashaddrenc.h>
 #include <config.h>
+#include <consensus/activation.h>
 #include <core_io.h>
 #include <key_io.h>
 #include <script/standard.h>
@@ -18,6 +19,7 @@
 #include <util/translation.h>
 #include <validation.h>
 
+#include <test/util/blockindex.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -92,12 +94,6 @@ namespace {
             return pm.peers.size();
         }
 
-        static uint32_t getPeerScoreFromNodeId(const PeerManager &pm,
-                                               const NodeId nodeid,
-                                               uint32_t &score) {
-            return pm.getPeerScoreFromNodeId(nodeid, score);
-        }
-
         static std::optional<bool>
         getRemotePresenceStatus(const PeerManager &pm, const ProofId &proofid) {
             return pm.getRemotePresenceStatus(proofid);
@@ -112,6 +108,14 @@ namespace {
                 pm.removePeer(peerid);
             }
             BOOST_CHECK_EQUAL(pm.peers.size(), 0);
+        }
+
+        static void setLocalProof(PeerManager &pm, const ProofRef &proof) {
+            pm.localProof = proof;
+        }
+
+        static bool isFlaky(const PeerManager &pm, const ProofId &proofid) {
+            return pm.isFlaky(proofid);
         }
     };
 
@@ -678,8 +682,7 @@ BOOST_AUTO_TEST_CASE(node_binding_reorg) {
     {
         BlockValidationState state;
         chainman.ActiveChainstate().InvalidateBlock(
-            GetConfig(), state,
-            WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()));
+            state, WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()));
         BOOST_CHECK_EQUAL(
             WITH_LOCK(chainman.GetMutex(), return chainman.ActiveHeight()), 99);
     }
@@ -700,8 +703,7 @@ BOOST_AUTO_TEST_CASE(node_binding_reorg) {
         SetMockTime(GetTime() + 20);
         mineBlocks(1);
         BlockValidationState state;
-        BOOST_CHECK(
-            chainman.ActiveChainstate().ActivateBestChain(GetConfig(), state));
+        BOOST_CHECK(chainman.ActiveChainstate().ActivateBestChain(state));
         LOCK(chainman.GetMutex());
         BOOST_CHECK_EQUAL(chainman.ActiveHeight(), 100);
     }
@@ -1133,8 +1135,7 @@ BOOST_AUTO_TEST_CASE(conflicting_immature_proofs) {
     {
         BlockValidationState state;
         active_chainstate.InvalidateBlock(
-            GetConfig(), state,
-            WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()));
+            state, WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()));
         BOOST_CHECK_EQUAL(
             WITH_LOCK(chainman.GetMutex(), return chainman.ActiveHeight()), 99);
     }
@@ -2313,9 +2314,9 @@ BOOST_AUTO_TEST_CASE(select_staking_reward_winner) {
                           /*expirationTime=*/0, payoutScript);
     };
 
-    CScript winner;
+    std::vector<CScript> winners;
     // Null pprev
-    BOOST_CHECK(!pm.selectStakingRewardWinner(nullptr, winner));
+    BOOST_CHECK(!pm.selectStakingRewardWinner(nullptr, winners));
 
     CBlockIndex prevBlock;
 
@@ -2326,11 +2327,11 @@ BOOST_AUTO_TEST_CASE(select_staking_reward_winner) {
     BlockHash prevHash{uint256::ONE};
     prevBlock.phashBlock = &prevHash;
     // No peer
-    BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+    BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winners));
 
     // Let's build a list of payout addresses, and register a proofs for each
     // address
-    size_t numProofs = 10;
+    size_t numProofs = 8;
     std::vector<ProofRef> proofs;
     proofs.reserve(numProofs);
     for (size_t i = 0; i < numProofs; i++) {
@@ -2349,10 +2350,33 @@ BOOST_AUTO_TEST_CASE(select_staking_reward_winner) {
     }
 
     // Make sure the proofs have been registered before the prev block was found
-    // and before 2x the peer replacement cooldown.
-    now += 30min + 1s;
+    // and before 4x the peer replacement cooldown.
+    now += 4 * avalanche::Peer::DANGLING_TIMEOUT + 1s;
     SetMockTime(now);
     prevBlock.nTime = now.count();
+
+    // At this stage we have a set of peers out of which none has any node
+    // attached, so they're all considered flaky. Note that we have no remote
+    // proofs status yet.
+    BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+    BOOST_CHECK_LE(winners.size(), numProofs);
+
+    // Let's add a node for each peer
+    for (size_t i = 0; i < numProofs; i++) {
+        BOOST_CHECK(TestPeerManager::isFlaky(pm, proofs[i]->getId()));
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_LE(winners.size(), numProofs);
+
+        BOOST_CHECK(pm.addNode(NodeId(i), proofs[i]->getId()));
+
+        BOOST_CHECK(!TestPeerManager::isFlaky(pm, proofs[i]->getId()));
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_LE(winners.size(), numProofs - i);
+    }
+
+    // Now we have a single winner
+    BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+    BOOST_CHECK_LE(winners.size(), 1);
 
     // All proofs have the same amount, so the same probability to get picked.
     // Let's compute how many loop iterations we need to have a low false
@@ -2367,10 +2391,98 @@ BOOST_AUTO_TEST_CASE(select_staking_reward_winner) {
     for (size_t i = 0; i < loop_iters; i++) {
         BlockHash randomHash = BlockHash(GetRandHash());
         prevBlock.phashBlock = &randomHash;
-        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winner));
-        winningCounts[FormatScript(winner)]++;
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        winningCounts[FormatScript(winners[0])]++;
     }
     BOOST_CHECK_EQUAL(winningCounts.size(), numProofs);
+
+    prevBlock.phashBlock = &prevHash;
+
+    // Ensure all nodes have all the proofs
+    for (size_t i = 0; i < numProofs; i++) {
+        for (size_t j = 0; j < numProofs; j++) {
+            BOOST_CHECK(
+                pm.saveRemoteProof(proofs[j]->getId(), NodeId(i), true));
+        }
+    }
+
+    // Make all the proofs flaky. This loop needs to be updated if the threshold
+    // or the number of proofs change, so assert the test precondition.
+    BOOST_CHECK_GT(3. / numProofs, 0.3);
+    for (size_t i = 0; i < numProofs; i++) {
+        const NodeId nodeid = NodeId(i);
+
+        BOOST_CHECK(pm.saveRemoteProof(
+            proofs[(i - 1 + numProofs) % numProofs]->getId(), nodeid, false));
+        BOOST_CHECK(pm.saveRemoteProof(
+            proofs[(i + numProofs) % numProofs]->getId(), nodeid, false));
+        BOOST_CHECK(pm.saveRemoteProof(
+            proofs[(i + 1 + numProofs) % numProofs]->getId(), nodeid, false));
+    }
+
+    // Now all the proofs are flaky
+    BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+    for (const auto &proof : proofs) {
+        BOOST_CHECK(TestPeerManager::isFlaky(pm, proof->getId()));
+    }
+    BOOST_CHECK_EQUAL(winners.size(), numProofs);
+
+    // Revert flakyness for all proofs
+    for (const auto &proof : proofs) {
+        for (NodeId nodeid = 0; nodeid < NodeId(numProofs); nodeid++) {
+            BOOST_CHECK(pm.saveRemoteProof(proof->getId(), nodeid, true));
+        }
+    }
+
+    BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+    BOOST_CHECK_EQUAL(winners.size(), 1);
+
+    // Increase the list from 1 to 4 winners by making them flaky
+    for (size_t numWinner = 1; numWinner < 4; numWinner++) {
+        // Who is the last possible winner ?
+        CScript lastWinner = winners[numWinner - 1];
+
+        // Make the last winner flaky, the other proofs untouched
+        ProofId winnerProofId = ProofId(uint256::ZERO);
+        for (const auto &proof : proofs) {
+            if (proof->getPayoutScript() == lastWinner) {
+                winnerProofId = proof->getId();
+                break;
+            }
+        }
+        BOOST_CHECK_NE(winnerProofId, ProofId(uint256::ZERO));
+
+        for (NodeId nodeid = 0; nodeid < NodeId(numProofs); nodeid++) {
+            BOOST_CHECK(pm.saveRemoteProof(winnerProofId, nodeid, false));
+        }
+        BOOST_CHECK(TestPeerManager::isFlaky(pm, winnerProofId));
+
+        // There should be now exactly numWinner + 1 winners
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_EQUAL(winners.size(), numWinner + 1);
+    }
+
+    // One more time and the nodes will be missing too many proofs, so they are
+    // no longer considered for flakyness evaluation and we're back to a single
+    // winner.
+    CScript lastWinner = winners[3];
+
+    ProofId winnerProofId = ProofId(uint256::ZERO);
+    for (const auto &proof : proofs) {
+        if (proof->getPayoutScript() == lastWinner) {
+            winnerProofId = proof->getId();
+            break;
+        }
+    }
+    BOOST_CHECK_NE(winnerProofId, ProofId(uint256::ZERO));
+
+    for (NodeId nodeid = 0; nodeid < NodeId(numProofs); nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(winnerProofId, nodeid, false));
+    }
+
+    // We're back to exactly 1 winner
+    BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+    BOOST_CHECK_EQUAL(winners.size(), 1);
 
     // Remove all proofs
     for (auto &proof : proofs) {
@@ -2379,7 +2491,7 @@ BOOST_AUTO_TEST_CASE(select_staking_reward_winner) {
     }
     // No more winner
     prevBlock.phashBlock = &prevHash;
-    BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+    BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winners));
 
     {
         // Add back a single proof
@@ -2394,31 +2506,196 @@ BOOST_AUTO_TEST_CASE(select_staking_reward_winner) {
         // The single proof should always be selected, but:
         // 1. The proof is not finalized, and has been registered after the last
         // block was mined.
-        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winners));
 
         // 2. The proof has has been registered after the last block was mined.
         BOOST_CHECK(pm.setFinalized(peerid));
-        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winners));
 
         // 3. The proof has been registered 30min from the previous block time,
         // but the previous block time is in the future.
         now += 20min + 1s;
         SetMockTime(now);
         prevBlock.nTime = (now + 10min).count();
-        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winners));
 
         // 4. The proof has been registered 30min from now, but only 20min from
         // the previous block time.
         now += 10min;
         SetMockTime(now);
         prevBlock.nTime = (now - 10min).count();
-        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winner));
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winners));
 
         // 5. Now the proof has it all
         prevBlock.nTime = now.count();
-        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winner));
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
         // With a single proof, it's easy to determine the winner
-        BOOST_CHECK_EQUAL(FormatScript(winner), FormatScript(payoutScript));
+        BOOST_CHECK_EQUAL(FormatScript(winners[0]), FormatScript(payoutScript));
+
+        // Remove the proof
+        BOOST_CHECK(pm.rejectProof(
+            proof->getId(), avalanche::PeerManager::RejectionMode::INVALIDATE));
+    }
+
+    {
+        proofs.clear();
+        for (size_t i = 0; i < 2; i++) {
+            // Add a couple proofs
+            const CKey key = CKey::MakeCompressedKey();
+            CScript payoutScript = GetScriptForRawPubKey(key.GetPubKey());
+
+            auto proof = buildProofWithAmountAndPayout(PROOF_DUST_THRESHOLD,
+                                                       payoutScript);
+            PeerId peerid = TestPeerManager::registerAndGetPeerId(pm, proof);
+            BOOST_CHECK_NE(peerid, NO_PEER);
+
+            BOOST_CHECK(pm.addNode(NodeId(i), proof->getId()));
+
+            BOOST_CHECK(pm.setFinalized(peerid));
+
+            proofs.push_back(proof);
+        }
+
+        // The proofs has been registered > 30min from the previous block time,
+        // but less than 60min
+        now += 30min + 1s;
+        SetMockTime(now);
+        prevBlock.nTime = now.count();
+
+        // Because they are both recently registered, both proofs are acceptable
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_EQUAL(winners.size(), 2);
+
+        // The proofs has been registered > 60min from the previous block time
+        now += 30min;
+        SetMockTime(now);
+        prevBlock.nTime = now.count();
+
+        // Now only one is acceptable
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_EQUAL(winners.size(), 1);
+
+        // Remove all proofs
+        for (auto &proof : proofs) {
+            BOOST_CHECK(pm.rejectProof(
+                proof->getId(),
+                avalanche::PeerManager::RejectionMode::INVALIDATE));
+        }
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winners));
+    }
+
+    {
+        BOOST_CHECK_EQUAL(TestPeerManager::getPeerCount(pm), 0);
+
+        gArgs.ForceSetArg("-leekuanyewactivationtime", "0");
+
+        std::array<CBlockIndex, 12> blocks;
+        for (size_t i = 1; i < blocks.size(); ++i) {
+            blocks[i].pprev = &blocks[i - 1];
+        }
+        SetMTP(blocks, now.count());
+        prevBlock.pprev = &blocks.back();
+
+        BOOST_CHECK(IsLeeKuanYewEnabled(Params().GetConsensus(), &prevBlock));
+
+        proofs.clear();
+        for (size_t i = 0; i < 4; i++) {
+            // Add 4 proofs, registered at a 30 minutes interval
+            SetMockTime(now + i * 30min);
+
+            const CKey key = CKey::MakeCompressedKey();
+            CScript payoutScript = GetScriptForRawPubKey(key.GetPubKey());
+
+            auto proof = buildProofWithAmountAndPayout(PROOF_DUST_THRESHOLD,
+                                                       payoutScript);
+            PeerId peerid = TestPeerManager::registerAndGetPeerId(pm, proof);
+            BOOST_CHECK_NE(peerid, NO_PEER);
+            BOOST_CHECK(pm.forPeer(proof->getId(), [&](const Peer &peer) {
+                return peer.registration_time == now + i * 30min;
+            }));
+
+            BOOST_CHECK(pm.addNode(NodeId(i), proof->getId()));
+
+            BOOST_CHECK(pm.setFinalized(peerid));
+
+            proofs.push_back(proof);
+        }
+
+        // No proof has been registered before the previous block time
+        SetMockTime(now);
+        prevBlock.nTime = now.count();
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winners));
+
+        // 1 proof has been registered > 30min from the previous block time, but
+        // none > 60 minutes from the previous block time
+        // => we have no winner.
+        now += 30min + 1s;
+        SetMockTime(now);
+        prevBlock.nTime = now.count();
+        BOOST_CHECK(!pm.selectStakingRewardWinner(&prevBlock, winners));
+
+        auto checkRegistrationTime = [&](const CScript &payout) {
+            pm.forEachPeer([&](const Peer &peer) {
+                if (peer.proof->getPayoutScript() == payout) {
+                    BOOST_CHECK_LT(peer.registration_time.count(),
+                                   (now - 60min).count());
+                }
+                return true;
+            });
+        };
+
+        // 1 proof has been registered > 60min but < 90min from the previous
+        // block time and 1 more has been registered > 30 minutes
+        // => we have a winner and one acceptable substitute.
+        now += 30min;
+        SetMockTime(now);
+        prevBlock.nTime = now.count();
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_EQUAL(winners.size(), 2);
+        checkRegistrationTime(winners[0]);
+
+        // 1 proof has been registered > 60min but < 90min from the
+        // previous block time, 1 has been registered > 90 minutes and 1 more
+        // has been registered > 30 minutes
+        // => we have 1 winner and up to 2 acceptable substitutes.
+        now += 30min;
+        SetMockTime(now);
+        prevBlock.nTime = now.count();
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_LE(winners.size(), 3);
+        checkRegistrationTime(winners[0]);
+
+        // 1 proofs has been registered > 60min but < 90min from the
+        // previous block time, 2 has been registered > 90 minutes and 1 more
+        // has been registered > 30 minutes
+        // => we have 1 winner, and up to 2 substitutes.
+        now += 30min;
+        SetMockTime(now);
+        prevBlock.nTime = now.count();
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_LE(winners.size(), 3);
+        checkRegistrationTime(winners[0]);
+
+        // 1 proof has been registered > 60min but < 90min from the
+        // previous block time and 3 more has been registered > 90 minutes
+        // => we have 1 winner, and up to 1 substitute.
+        now += 30min;
+        SetMockTime(now);
+        prevBlock.nTime = now.count();
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_LE(winners.size(), 2);
+        checkRegistrationTime(winners[0]);
+
+        // All proofs has been registered > 90min from the previous block time
+        // => we have 1 winner, and no substitute.
+        now += 30min;
+        SetMockTime(now);
+        prevBlock.nTime = now.count();
+        BOOST_CHECK(pm.selectStakingRewardWinner(&prevBlock, winners));
+        BOOST_CHECK_EQUAL(winners.size(), 1);
+        checkRegistrationTime(winners[0]);
+
+        gArgs.ClearForcedArg("-leekuanyewactivationtime");
     }
 }
 
@@ -2570,38 +2847,6 @@ BOOST_AUTO_TEST_CASE(remote_proof) {
     BOOST_CHECK(TestPeerManager::getRemoteProof(pm, ProofId(uint256(3)), 0));
 }
 
-BOOST_AUTO_TEST_CASE(get_score_from_nodeid) {
-    ChainstateManager &chainman = *Assert(m_node.chainman);
-    avalanche::PeerManager pm(PROOF_DUST_THRESHOLD, chainman);
-    Chainstate &active_chainstate = chainman.ActiveChainstate();
-
-    for (int i = 0; i < 10; i++) {
-        auto proof = buildRandomProof(active_chainstate,
-                                      MIN_VALID_PROOF_SCORE * (i + 1));
-        BOOST_CHECK(pm.registerProof(proof));
-        BOOST_CHECK(pm.addNode(NodeId(i), proof->getId()));
-    }
-
-    for (int i = 0; i < 10; i++) {
-        uint32_t score;
-        BOOST_CHECK(
-            TestPeerManager::getPeerScoreFromNodeId(pm, NodeId(i), score));
-        BOOST_CHECK_EQUAL(score, MIN_VALID_PROOF_SCORE * (i + 1));
-    }
-
-    uint32_t dummy;
-    // Node doesn't exist
-    BOOST_CHECK(!TestPeerManager::getPeerScoreFromNodeId(pm, 10, dummy));
-
-    // Add a pending node
-    auto proof =
-        buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE * 11);
-    BOOST_CHECK(!pm.addNode(10, proof->getId()));
-
-    // Peer doesn't exist
-    BOOST_CHECK(!TestPeerManager::getPeerScoreFromNodeId(pm, 10, dummy));
-}
-
 BOOST_AUTO_TEST_CASE(get_remote_status) {
     ChainstateManager &chainman = *Assert(m_node.chainman);
     avalanche::PeerManager pm(PROOF_DUST_THRESHOLD, chainman);
@@ -2615,8 +2860,8 @@ BOOST_AUTO_TEST_CASE(get_remote_status) {
         !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
              .has_value());
 
-    // 50/50 on the remotes
-    for (NodeId nodeid = 0; nodeid < 10; nodeid++) {
+    // 6/12 (50%) of the stakes
+    for (NodeId nodeid = 0; nodeid < 12; nodeid++) {
         auto proof = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
         BOOST_CHECK(pm.registerProof(proof));
         BOOST_CHECK(pm.addNode(nodeid, proof->getId()));
@@ -2628,18 +2873,38 @@ BOOST_AUTO_TEST_CASE(get_remote_status) {
         !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
              .has_value());
 
-    // 90% on the remotes
-    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, false));
-    for (NodeId nodeid = 1; nodeid < 10; nodeid++) {
+    // 7/12 (~58%) of the stakes
+    for (NodeId nodeid = 0; nodeid < 5; nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, false));
+    }
+    for (NodeId nodeid = 5; nodeid < 12; nodeid++) {
         BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, true));
     }
     BOOST_CHECK(
         TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
             .value());
 
-    // 10% on the remotes
-    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, true));
-    for (NodeId nodeid = 1; nodeid < 10; nodeid++) {
+    // Add our local proof so we have 7/13 (~54% < 55%)
+    auto localProof =
+        buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+    TestPeerManager::setLocalProof(pm, localProof);
+    BOOST_CHECK(pm.registerProof(localProof));
+    BOOST_CHECK(
+        !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
+             .has_value());
+
+    // Remove the local proof to revert back to 7/12 (~58%)
+    pm.rejectProof(localProof->getId());
+    TestPeerManager::setLocalProof(pm, ProofRef());
+    BOOST_CHECK(
+        TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
+            .value());
+
+    // 5/12 (~42%) of the stakes
+    for (NodeId nodeid = 0; nodeid < 5; nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, true));
+    }
+    for (NodeId nodeid = 5; nodeid < 12; nodeid++) {
         BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, false));
     }
     BOOST_CHECK(
@@ -2653,20 +2918,51 @@ BOOST_AUTO_TEST_CASE(get_remote_status) {
     // Update the node's proof
     BOOST_CHECK(pm.addNode(0, bigProof->getId()));
 
-    // 90% on the remotes, but not enough stakes => inconclusive
-    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, false));
-    for (NodeId nodeid = 1; nodeid < 10; nodeid++) {
+    // 7/12 (~58%) of the remotes, but < 10% of the stakes => absent
+    for (NodeId nodeid = 0; nodeid < 5; nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, false));
+    }
+    for (NodeId nodeid = 5; nodeid < 12; nodeid++) {
         BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, true));
     }
     BOOST_CHECK(
         !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
-             .has_value());
+             .value());
 
-    // 10% on the remotes, but not enough stakes => inconclusive
-    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, true));
-    for (NodeId nodeid = 1; nodeid < 10; nodeid++) {
+    // 5/12 (42%) of the remotes, but > 90% of the stakes => present
+    for (NodeId nodeid = 0; nodeid < 5; nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, true));
+    }
+    for (NodeId nodeid = 5; nodeid < 12; nodeid++) {
         BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, false));
     }
+    BOOST_CHECK(
+        TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
+            .value());
+
+    TestPeerManager::clearPeers(pm);
+
+    // Peer 1 has 1 node (id 0)
+    auto proof1 = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+    BOOST_CHECK(pm.registerProof(proof1));
+    BOOST_CHECK(pm.addNode(0, proof1->getId()));
+
+    // Peer 2 has 5 nodes (ids 1 to 5)
+    auto proof2 = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+    BOOST_CHECK(pm.registerProof(proof2));
+    for (NodeId nodeid = 1; nodeid < 6; nodeid++) {
+        BOOST_CHECK(pm.addNode(nodeid, proof2->getId()));
+    }
+
+    // Node 0 is missing proofid 0, nodes 1 to 5 have it
+    BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), 0, false));
+    for (NodeId nodeid = 1; nodeid < 6; nodeid++) {
+        BOOST_CHECK(pm.saveRemoteProof(ProofId(uint256::ZERO), nodeid, true));
+    }
+
+    // At this stage we have 5/6 nodes with the proof, but since all the nodes
+    // advertising the proof are from the same peer, we only 1/2 peers, i.e. 50%
+    // of the stakes.
     BOOST_CHECK(
         !TestPeerManager::getRemotePresenceStatus(pm, ProofId(uint256::ZERO))
              .has_value());

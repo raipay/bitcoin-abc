@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2020 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -144,7 +143,7 @@ class AddrTest(BitcoinTestFramework):
         self.mocktime += 10 * 60
         self.nodes[0].setmocktime(self.mocktime)
         for peer in receivers:
-            peer.sync_send_with_ping()
+            peer.sync_with_ping()
 
     def oversized_addr_test(self):
         self.log.info("Send an addr message that is too large")
@@ -173,7 +172,6 @@ class AddrTest(BitcoinTestFramework):
         msg = self.setup_addr_msg(num_ipv4_addrs)
         with self.nodes[0].assert_debug_log(
             [
-                f"Added {num_ipv4_addrs} addresses from 127.0.0.1: 0 tried",
                 "received: addr (301 bytes) peer=1",
             ]
         ):

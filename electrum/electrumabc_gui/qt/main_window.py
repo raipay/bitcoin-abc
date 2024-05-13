@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #
 # Electrum ABC - lightweight eCash client
 # Copyright (C) 2020 The Electrum ABC developers
@@ -108,6 +107,7 @@ from .password_dialog import (
     PasswordDialog,
 )
 from .paytoedit import PayToEdit
+from .popup_widget import ShowPopupLabel
 from .qrcodewidget import QRCodeWidget, QRDialog
 from .qrreader import QrReaderCameraDialog
 from .qrtextedit import ScanQRTextEdit, ShowQRTextEdit
@@ -988,6 +988,8 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
             # configuration file broadcast the fulcrum donation address
             spv_prefix = "Fulcrum developers"
             host = "https://github.com/cculianu/Fulcrum"
+            # convert to an ecash: address
+            spv_address = "ecash:qplw0d304x9fshz420lkvys2jxup38m9syzms3d4vs"
         else:
             spv_prefix = _("Blockchain Server")
             host = self.network.get_parameters()[0]
@@ -2460,7 +2462,8 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
             if ":" in line and line.lower().startswith(
                 networks.net.CASHADDR_PREFIX + ":"
             ):
-                line = line.split(":", 1)[1]  # strip bitcoincash: prefix
+                # strip ecash: prefix
+                line = line.split(":", 1)[1]
             if "," in line:
                 line = line.split(",", 1)[
                     0
@@ -2496,7 +2499,8 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
         for line in self.payto_e.lines():
             line = line.strip()
             if line.lower().startswith(networks.net.CASHADDR_PREFIX + ":"):
-                line = line.split(":", 1)[1]  # strip "bitcoincash:" prefix
+                # strip "ecash:" prefix
+                line = line.split(":", 1)[1]
             if "," in line:
                 # if address, amount line, strip address out and ignore rest
                 line = line.split(",", 1)[0]
@@ -2893,12 +2897,15 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
         except web.ExtraParametersInURIWarning as e:
             out = e.args[0]  # out dict is in e.args[0]
             extra_params = e.args[1:]
-            self.show_warning(
-                ngettext(
+            ShowPopupLabel(
+                name="`Pay to` error",
+                text=ngettext(
                     "Extra parameter in URI was ignored:\n\n{extra_params}",
                     "Extra parameters in URI were ignored:\n\n{extra_params}",
                     len(extra_params),
-                ).format(extra_params=", ".join(extra_params))
+                ).format(extra_params=", ".join(extra_params)),
+                target=self.payto_e,
+                timeout=5000,
             )
             # fall through ...
         except web.BadURIParameter as e:
@@ -2906,29 +2913,51 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
             self.print_error("Bad URI Parameter:", *[repr(i) for i in e.args])
             if extra_info:
                 extra_info = "\n\n" + extra_info  # prepend newlines
-            self.show_error(
-                _("Bad parameter: {bad_param_name}{extra_info}").format(
+            ShowPopupLabel(
+                name="`Pay to` error",
+                text=_("Bad parameter: {bad_param_name}{extra_info}").format(
                     bad_param_name=e.args[0], extra_info=extra_info
-                )
+                ),
+                target=self.payto_e,
+                timeout=5000,
             )
             return
         except web.DuplicateKeyInURIError as e:
             # this exception always has a translated message as args[0]
             # plus a list of keys as args[1:], see web.parse_URI
-            self.show_error(e.args[0] + ":\n\n" + ", ".join(e.args[1:]))
+            ShowPopupLabel(
+                name="`Pay to` error",
+                text=e.args[0] + ":\n\n" + ", ".join(e.args[1:]),
+                target=self.payto_e,
+                timeout=5000,
+            )
             return
         except Exception as e:
-            self.show_error(_("Invalid bitcoincash URI:") + "\n\n" + str(e))
+            ShowPopupLabel(
+                name="`Pay to` error",
+                text=_("Invalid ecash URI:") + "\n\n" + str(e),
+                target=self.payto_e,
+                timeout=5000,
+            )
             return
         self.show_send_tab()
         r = out.get("r")
-        sig = out.get("sig")
-        name = out.get("name")
-        if r or (name and sig):
+        if r:
             self.prepare_for_payment_request()
             return
-        address = out.get("address")
-        amount = out.get("amount")
+        addresses = out.get("addresses", [])
+        amounts = out.get("amounts", [])
+        if (len(addresses) == 1 and len(amounts) > 1) or (
+            len(addresses) != 1 and len(addresses) != len(amounts)
+        ):
+            ShowPopupLabel(
+                name="`Pay to` error",
+                text=_("Inconsistent number of addresses and amounts in ecash URI:")
+                + f" {len(addresses)} addresses and {len(amounts)} amounts",
+                target=self.payto_e,
+                timeout=5000,
+            )
+            return
         label = out.get("label")
         message = out.get("message")
         op_return = out.get("op_return")
@@ -2937,16 +2966,33 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
         # use label as description (not BIP21 compliant)
         if label and not message:
             message = label
-        if address or URI.strip().lower().split(":", 1)[0] in web.parseable_schemes():
+        if len(amounts) == 1:
+            self.amount_e.setAmount(amounts[0])
+            self.amount_e.textEdited.emit("")
+
+        if len(addresses) == 1:
             # if address, set the payto field to the address.
+            self.payto_e.setText(addresses[0])
+        elif (
+            len(addresses) == 0
+            and URI.strip().lower().split(":", 1)[0] in web.parseable_schemes()
+        ):
             # if *not* address, then we set the payto field to the empty string
             # only IFF it was ecash:, see issue Electron-Cash#1131.
-            self.payto_e.setText(address or "")
+            self.payto_e.setText("")
+        elif len(addresses) > 1:
+            # For multiple outputs, we fill the payto field with the expected CSV
+            # string. Note that amounts are in sats and we convert them to XEC.
+            assert len(addresses) == len(amounts)
+            self.payto_e.setText(
+                "\n".join(
+                    f"{addr}, {format_satoshis_plain(amount, self.get_decimal_point())}"
+                    for addr, amount in zip(addresses, amounts)
+                )
+            )
+
         if message:
             self.message_e.setText(message)
-        if amount:
-            self.amount_e.setAmount(amount)
-            self.amount_e.textEdited.emit("")
         if op_return:
             self.message_opreturn_e.setText(op_return)
             self.message_opreturn_e.setHidden(False)
@@ -2968,6 +3014,28 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
             self.message_opreturn_e.setHidden(True)
             self.opreturn_rawhex_cb.setHidden(True)
             self.opreturn_label.setHidden(True)
+
+        total_amount = sum(amounts)
+        if self.amount_exceeds_warning_threshold(total_amount):
+            # The user is one click away from broadcasting a tx prefilled by a URI.
+            # If the amount is significant, warn them about it.
+            self.show_warning(
+                _(
+                    "The amount field has been populated by a BIP21 payment URI with a "
+                    "value of {amount_and_unit}. Please check the amount and destination "
+                    "carefully before sending the transaction."
+                ).format(amount_and_unit=self.format_amount_and_units(total_amount))
+            )
+
+    def amount_exceeds_warning_threshold(self, amount_sats: int) -> bool:
+        USD_THRESHOLD = 100
+        XEC_THRESHOLD = 3_000_000
+        rate = self.fx.exchange_rate("USD") if self.fx else None
+        sats_per_unit = self.fx.satoshis_per_unit()
+        amount_xec = PyDecimal(amount_sats) / PyDecimal(sats_per_unit)
+        if rate is not None:
+            return amount_xec * rate >= USD_THRESHOLD
+        return amount_xec >= XEC_THRESHOLD
 
     def do_clear(self):
         """Clears the send tab, resetting its UI state to its initiatial state."""
@@ -4395,9 +4463,10 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
                     lines.append(cols)
                 else:
                     if has_fiat_columns and ccy:
-                        item[
-                            "fiat_currency"
-                        ] = ccy  # add the currency to each entry in the json. this wastes space but json is bloated anyway so this won't hurt too much, we hope
+                        # add the currency to each entry in the json. this wastes space
+                        # but json is bloated anyway so this won't hurt too much, we
+                        # hope
+                        item["fiat_currency"] = ccy
                     elif not has_fiat_columns:
                         # No need to include these fields as they will always be 'No Data'
                         item.pop("fiat_value", None)

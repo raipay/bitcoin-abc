@@ -84,6 +84,25 @@ impl LookupColumn for BlockColumn<'_> {
     fn get_data(&self, block_height: BlockHeight) -> Result<Option<SerBlock>> {
         self.get_block(block_height)
     }
+
+    fn get_data_multi(
+        &self,
+        block_heights: impl IntoIterator<Item = Self::SerialNum>,
+    ) -> Result<Vec<Option<Self::Data>>> {
+        let data_ser = self.db.multi_get(
+            self.cf_blk,
+            block_heights.into_iter().map(bh_to_bytes),
+            false,
+        )?;
+        data_ser
+            .into_iter()
+            .map(|data_ser| {
+                data_ser
+                    .map(|data_ser| db_deserialize::<SerBlock>(&data_ser))
+                    .transpose()
+            })
+            .collect::<_>()
+    }
 }
 
 /// Errors for [`BlockWriter`] and [`BlockReader`].
@@ -181,7 +200,7 @@ impl<'a> BlockWriter<'a> {
             CF_BLK,
             rocksdb::Options::default(),
         ));
-        LookupByHash::add_cfs(columns, CF_LOOKUP_BLK_BY_HASH);
+        LookupByHash::add_cfs(columns);
     }
 }
 
@@ -238,8 +257,9 @@ impl<'a> BlockReader<'a> {
 
     /// [`DbBlock`] by height. The genesis block has height 0.
     pub fn by_height(&self, height: BlockHeight) -> Result<Option<DbBlock>> {
-        let Some(block_data) = self.col.get_block(height)?
-            else { return Ok(None) };
+        let Some(block_data) = self.col.get_block(height)? else {
+            return Ok(None);
+        };
         let prev_block_hash = self.get_prev_hash(height)?;
         Ok(Some(DbBlock {
             hash: BlockHash::from(block_data.hash),

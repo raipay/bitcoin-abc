@@ -62,7 +62,9 @@ BOOST_FIXTURE_TEST_SUITE(denialofservice_tests, TestingSetup)
 // test takes advantage of that protection only being applied to nodes which
 // send headers with sufficient work.
 BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction) {
-    const Config &config = GetConfig();
+    LOCK(NetEventsInterface::g_msgproc_mutex);
+
+    const Config &config = m_node.chainman->GetConfig();
 
     ConnmanTestMsg &connman = static_cast<ConnmanTestMsg &>(*m_node.connman);
     // Disable inactivity checks for this test to avoid interference
@@ -95,11 +97,8 @@ BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction) {
     }
 
     // Test starts here
-    {
-        LOCK(dummyNode1.cs_sendProcessing);
-        // should result in getheaders
-        BOOST_CHECK(peerman.SendMessages(config, &dummyNode1));
-    }
+    // should result in getheaders
+    BOOST_CHECK(peerman.SendMessages(config, &dummyNode1));
     {
         LOCK(dummyNode1.cs_vSend);
         BOOST_CHECK(dummyNode1.vSendMsg.size() > 0);
@@ -109,22 +108,17 @@ BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction) {
     int64_t nStartTime = GetTime();
     // Wait 21 minutes
     SetMockTime(nStartTime + 21 * 60);
-    {
-        LOCK(dummyNode1.cs_sendProcessing);
-        // should result in getheaders
-        BOOST_CHECK(peerman.SendMessages(config, &dummyNode1));
-    }
+    // should result in getheaders
+    BOOST_CHECK(peerman.SendMessages(config, &dummyNode1));
+
     {
         LOCK(dummyNode1.cs_vSend);
         BOOST_CHECK(dummyNode1.vSendMsg.size() > 0);
     }
     // Wait 3 more minutes
     SetMockTime(nStartTime + 24 * 60);
-    {
-        LOCK(dummyNode1.cs_sendProcessing);
-        // should result in disconnect
-        BOOST_CHECK(peerman.SendMessages(config, &dummyNode1));
-    }
+    // should result in disconnect
+    BOOST_CHECK(peerman.SendMessages(config, &dummyNode1));
     BOOST_CHECK(dummyNode1.fDisconnect == true);
     SetMockTime(0);
 
@@ -153,7 +147,7 @@ static void AddRandomOutboundPeer(const Config &config,
 }
 
 BOOST_AUTO_TEST_CASE(stale_tip_peer_management) {
-    const Config &config = GetConfig();
+    const Config &config = m_node.chainman->GetConfig();
 
     auto connman =
         std::make_unique<CConnmanTest>(config, 0x1337, 0x1337, *m_node.addrman);
@@ -236,7 +230,9 @@ BOOST_AUTO_TEST_CASE(stale_tip_peer_management) {
 }
 
 BOOST_AUTO_TEST_CASE(peer_discouragement) {
-    const Config &config = GetConfig();
+    LOCK(NetEventsInterface::g_msgproc_mutex);
+
+    const Config &config = m_node.chainman->GetConfig();
 
     auto banman = std::make_unique<BanMan>(
         m_args.GetDataDirBase() / "banlist.dat", config.GetChainParams(),
@@ -259,10 +255,7 @@ BOOST_AUTO_TEST_CASE(peer_discouragement) {
     // Should be discouraged
     peerLogic->UnitTestMisbehaving(dummyNode1.GetId(),
                                    DISCOURAGEMENT_THRESHOLD);
-    {
-        LOCK(dummyNode1.cs_sendProcessing);
-        BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode1));
-    }
+    BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode1));
     BOOST_CHECK(banman->IsDiscouraged(addr1));
     // Different IP, not discouraged
     BOOST_CHECK(!banman->IsDiscouraged(ip(0xa0b0c001 | 0x0000ff00)));
@@ -278,20 +271,14 @@ BOOST_AUTO_TEST_CASE(peer_discouragement) {
     dummyNode2.fSuccessfullyConnected = true;
     peerLogic->UnitTestMisbehaving(dummyNode2.GetId(),
                                    DISCOURAGEMENT_THRESHOLD - 1);
-    {
-        LOCK(dummyNode2.cs_sendProcessing);
-        BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode2));
-    }
+    BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode2));
     // 2 not discouraged yet...
     BOOST_CHECK(!banman->IsDiscouraged(addr2));
     // ... but 1 still should be
     BOOST_CHECK(banman->IsDiscouraged(addr1));
     // 2 reaches discouragement threshold
     peerLogic->UnitTestMisbehaving(dummyNode2.GetId(), 1);
-    {
-        LOCK(dummyNode2.cs_sendProcessing);
-        BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode2));
-    }
+    BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode2));
     BOOST_CHECK(banman->IsDiscouraged(addr1)); // Expect both 1 and 2
     BOOST_CHECK(banman->IsDiscouraged(addr2)); // to be discouraged now
 
@@ -300,7 +287,9 @@ BOOST_AUTO_TEST_CASE(peer_discouragement) {
 }
 
 BOOST_AUTO_TEST_CASE(DoS_bantime) {
-    const Config &config = GetConfig();
+    LOCK(NetEventsInterface::g_msgproc_mutex);
+
+    const Config &config = m_node.chainman->GetConfig();
 
     auto banman = std::make_unique<BanMan>(
         m_args.GetDataDirBase() / "banlist.dat", config.GetChainParams(),
@@ -326,10 +315,7 @@ BOOST_AUTO_TEST_CASE(DoS_bantime) {
     dummyNode.fSuccessfullyConnected = true;
 
     peerLogic->UnitTestMisbehaving(dummyNode.GetId(), DISCOURAGEMENT_THRESHOLD);
-    {
-        LOCK(dummyNode.cs_sendProcessing);
-        BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode));
-    }
+    BOOST_CHECK(peerLogic->SendMessages(config, &dummyNode));
     BOOST_CHECK(banman->IsDiscouraged(addr));
 
     peerLogic->FinalizeNode(config, dummyNode);

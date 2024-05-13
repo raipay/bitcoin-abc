@@ -4,11 +4,12 @@
 
 //! Module for [`handle_subscribe_socket`].
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use abc_rust_error::Result;
 use axum::extract::ws::{self, WebSocket};
 use bitcoinsuite_core::script::ScriptVariant;
+use bitcoinsuite_slp::{lokad_id::LokadId, token_id::TokenId};
 use chronik_indexer::{
     subs::{BlockMsg, BlockMsgType},
     subs_group::{TxMsg, TxMsgType},
@@ -21,8 +22,9 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 
 use crate::{
-    error::report_status_error, parse::parse_script_variant,
-    server::ChronikIndexerRef,
+    error::report_status_error,
+    parse::{parse_lokad_id, parse_script_variant},
+    server::{ChronikIndexerRef, ChronikSettings},
 };
 
 /// Errors for [`ChronikServer`].
@@ -54,22 +56,32 @@ struct WsSub {
 enum WsSubType {
     Blocks,
     Script(ScriptVariant),
+    TokenId(TokenId),
+    LokadId(LokadId),
 }
 
 type SubRecvBlocks = Option<broadcast::Receiver<BlockMsg>>;
 type SubRecvScripts = HashMap<ScriptVariant, broadcast::Receiver<TxMsg>>;
+type SubRecvTokenId = HashMap<TokenId, broadcast::Receiver<TxMsg>>;
+type SubRecvLokadId = HashMap<LokadId, broadcast::Receiver<TxMsg>>;
 
-#[derive(Default)]
 struct SubRecv {
     blocks: SubRecvBlocks,
     scripts: SubRecvScripts,
+    token_ids: SubRecvTokenId,
+    lokad_ids: SubRecvLokadId,
+    ws_ping_interval: Duration,
 }
 
 impl SubRecv {
     async fn recv_action(&mut self) -> Result<WsAction> {
         tokio::select! {
+            biased;
             action = Self::recv_blocks(&mut self.blocks) => action,
             action = Self::recv_scripts(&mut self.scripts) => action,
+            action = Self::recv_token_ids(&mut self.token_ids) => action,
+            action = Self::recv_lokad_ids(&mut self.lokad_ids) => action,
+            action = Self::schedule_ping(self.ws_ping_interval) => action,
         }
     }
 
@@ -90,9 +102,47 @@ impl SubRecv {
                     .values_mut()
                     .map(|receiver| Box::pin(receiver.recv())),
             );
-            let (script_msg, _, _) = script_receivers.await;
-            sub_script_msg_action(script_msg)
+            let (tx_msg, _, _) = script_receivers.await;
+            sub_tx_msg_action(tx_msg)
         }
+    }
+
+    async fn recv_token_ids(
+        token_ids: &mut SubRecvTokenId,
+    ) -> Result<WsAction> {
+        if token_ids.is_empty() {
+            futures::future::pending().await
+        } else {
+            let token_ids_receivers = select_all(
+                token_ids
+                    .values_mut()
+                    .map(|receiver| Box::pin(receiver.recv())),
+            );
+            let (tx_msg, _, _) = token_ids_receivers.await;
+            sub_tx_msg_action(tx_msg)
+        }
+    }
+
+    async fn recv_lokad_ids(
+        lokad_ids: &mut SubRecvLokadId,
+    ) -> Result<WsAction> {
+        if lokad_ids.is_empty() {
+            futures::future::pending().await
+        } else {
+            let lokad_ids_receivers = select_all(
+                lokad_ids
+                    .values_mut()
+                    .map(|receiver| Box::pin(receiver.recv())),
+            );
+            let (tx_msg, _, _) = lokad_ids_receivers.await;
+            sub_tx_msg_action(tx_msg)
+        }
+    }
+
+    async fn schedule_ping(ws_ping_interval: Duration) -> Result<WsAction> {
+        tokio::time::sleep(ws_ping_interval).await;
+        let ping_payload = b"Bitcoin ABC Chronik Indexer".to_vec();
+        Ok(WsAction::Message(ws::Message::Ping(ping_payload)))
     }
 
     async fn handle_sub(&mut self, sub: WsSub, indexer: &ChronikIndexerRef) {
@@ -114,14 +164,44 @@ impl SubRecv {
             WsSubType::Script(script_variant) => {
                 let script = script_variant.to_script();
                 if sub.is_unsub {
-                    log_chronik!("WS unsubscribe from {:?}\n", script_variant);
+                    log_chronik!("WS unsubscribe from {}\n", script_variant);
                     std::mem::drop(self.scripts.remove(&script_variant));
                     subs.subs_script_mut().unsubscribe_from_member(&&script)
                 } else {
-                    log_chronik!("WS subscribe to {:?}\n", script_variant);
+                    log_chronik!("WS subscribe to {}\n", script_variant);
                     let recv =
                         subs.subs_script_mut().subscribe_to_member(&&script);
                     self.scripts.insert(script_variant, recv);
+                }
+            }
+            WsSubType::TokenId(token_id) => {
+                if sub.is_unsub {
+                    log_chronik!("WS unsubscribe from token ID {token_id}\n");
+                    std::mem::drop(self.token_ids.remove(&token_id));
+                    subs.subs_token_id_mut().unsubscribe_from_member(&token_id)
+                } else {
+                    log_chronik!("WS subscribe to token ID {token_id}\n");
+                    let recv =
+                        subs.subs_token_id_mut().subscribe_to_member(&token_id);
+                    self.token_ids.insert(token_id, recv);
+                }
+            }
+            WsSubType::LokadId(lokad_id) => {
+                if sub.is_unsub {
+                    log_chronik!(
+                        "WS unsubscribe from LOKAD ID {}\n",
+                        hex::encode(lokad_id)
+                    );
+                    std::mem::drop(self.lokad_ids.remove(&lokad_id));
+                    subs.subs_lokad_id_mut().unsubscribe_from_member(&lokad_id)
+                } else {
+                    log_chronik!(
+                        "WS subscribe to LOKAD ID {}\n",
+                        hex::encode(lokad_id)
+                    );
+                    let recv =
+                        subs.subs_lokad_id_mut().subscribe_to_member(&lokad_id);
+                    self.lokad_ids.insert(lokad_id, recv);
                 }
             }
         }
@@ -163,6 +243,12 @@ fn sub_client_msg_action(
                             &script.payload,
                         )?)
                     }
+                    Some(SubType::TokenId(token_id)) => WsSubType::TokenId(
+                        token_id.token_id.parse::<TokenId>()?,
+                    ),
+                    Some(SubType::LokadId(lokad_id)) => {
+                        WsSubType::LokadId(parse_lokad_id(&lokad_id.lokad_id)?)
+                    }
                 },
             }))
         }
@@ -179,7 +265,9 @@ fn sub_block_msg_action(
     block_msg: Result<BlockMsg, broadcast::error::RecvError>,
 ) -> Result<WsAction> {
     use proto::{ws_msg::MsgType, BlockMsgType::*};
-    let Ok(block_msg) = block_msg else { return Ok(WsAction::Nothing) };
+    let Ok(block_msg) = block_msg else {
+        return Ok(WsAction::Nothing);
+    };
     let block_msg_type = match block_msg.msg_type {
         BlockMsgType::Connected => BlkConnected,
         BlockMsgType::Disconnected => BlkDisconnected,
@@ -195,15 +283,15 @@ fn sub_block_msg_action(
     Ok(WsAction::Message(msg))
 }
 
-fn sub_script_msg_action(
-    script_msg: Result<TxMsg, broadcast::error::RecvError>,
+fn sub_tx_msg_action(
+    tx_msg: Result<TxMsg, broadcast::error::RecvError>,
 ) -> Result<WsAction> {
     use proto::{ws_msg::MsgType, TxMsgType::*};
-    let script_msg = match script_msg {
-        Ok(script_msg) => script_msg,
+    let tx_msg = match tx_msg {
+        Ok(tx_msg) => tx_msg,
         Err(_) => return Ok(WsAction::Nothing),
     };
-    let tx_msg_type = match script_msg.msg_type {
+    let tx_msg_type = match tx_msg.msg_type {
         TxMsgType::AddedToMempool => TxAddedToMempool,
         TxMsgType::RemovedFromMempool => TxRemovedFromMempool,
         TxMsgType::Confirmed => TxConfirmed,
@@ -211,7 +299,7 @@ fn sub_script_msg_action(
     };
     let msg_type = Some(MsgType::Tx(proto::MsgTx {
         msg_type: tx_msg_type as _,
-        txid: script_msg.txid.to_vec(),
+        txid: tx_msg.txid.to_vec(),
     }));
     let msg_proto = proto::WsMsg { msg_type };
     let msg = ws::Message::Binary(msg_proto.encode_to_vec());
@@ -223,8 +311,16 @@ fn sub_script_msg_action(
 pub async fn handle_subscribe_socket(
     mut socket: WebSocket,
     indexer: ChronikIndexerRef,
+    settings: ChronikSettings,
 ) {
-    let mut recv = SubRecv::default();
+    let mut recv = SubRecv {
+        blocks: Default::default(),
+        scripts: Default::default(),
+        token_ids: Default::default(),
+        lokad_ids: Default::default(),
+        ws_ping_interval: settings.ws_ping_interval,
+    };
+    let mut last_msg = None;
 
     loop {
         let sub_action = tokio::select! {
@@ -233,12 +329,24 @@ pub async fn handle_subscribe_socket(
         };
 
         let subscribe_action = match sub_action {
+            // Deduplicate identical consecutive msgs
+            Ok(WsAction::Message(ws::Message::Binary(msg))) => {
+                if last_msg.as_ref() == Some(&msg) {
+                    WsAction::Nothing
+                } else {
+                    last_msg = Some(msg.clone());
+                    WsAction::Message(ws::Message::Binary(msg))
+                }
+            }
             Ok(subscribe_action) => subscribe_action,
             // Turn Err into Message and reply
             Err(report) => {
                 let (_, error_proto) = report_status_error(report);
+                let msg_proto = proto::WsMsg {
+                    msg_type: Some(proto::ws_msg::MsgType::Error(error_proto)),
+                };
                 WsAction::Message(ws::Message::Binary(
-                    error_proto.encode_to_vec(),
+                    msg_proto.encode_to_vec(),
                 ))
             }
         };

@@ -13,7 +13,7 @@
 #include <avalanche/voterecord.h> // For AVALANCHE_MAX_INFLIGHT_POLL
 #include <blockindex.h>
 #include <blockindexcomparators.h>
-#include <bloom.h>
+#include <common/bloom.h>
 #include <eventloop.h>
 #include <interfaces/chain.h>
 #include <interfaces/handler.h>
@@ -22,6 +22,7 @@
 #include <primitives/transaction.h>
 #include <rwcollection.h>
 #include <util/variant.h>
+#include <validationinterface.h>
 
 #include <boost/multi_index/composite_key.hpp>
 #include <boost/multi_index/hashed_index.hpp>
@@ -269,13 +270,15 @@ class Processor final : public NetEventsInterface {
 
     struct StakingReward {
         int blockheight;
-        CScript winner;
-        std::vector<CScript> acceptableWinners;
+        // Ordered list of acceptable winners, only the first is used for mining
+        std::vector<CScript> winners;
     };
 
     mutable Mutex cs_stakingRewards;
     std::unordered_map<BlockHash, StakingReward, SaltedUint256Hasher>
         stakingRewards GUARDED_BY(cs_stakingRewards);
+
+    const bool m_preConsensus{false};
 
     Processor(Config avaconfig, interfaces::Chain &chain, CConnman *connmanIn,
               ChainstateManager &chainman, CTxMemPool *mempoolIn,
@@ -283,7 +286,8 @@ class Processor final : public NetEventsInterface {
               CKey sessionKeyIn, uint32_t minQuorumTotalScoreIn,
               double minQuorumConnectedScoreRatioIn,
               int64_t minAvaproofsNodeCountIn, uint32_t staleVoteThresholdIn,
-              uint32_t staleVoteFactorIn, Amount stakeUtxoDustThresholdIn);
+              uint32_t staleVoteFactorIn, Amount stakeUtxoDustThresholdIn,
+              bool preConsensus);
 
 public:
     ~Processor();
@@ -295,7 +299,7 @@ public:
                   bilingual_str &error);
 
     bool addToReconcile(const AnyVoteItem &item)
-        EXCLUSIVE_LOCKS_REQUIRED(!cs_peerManager, !cs_finalizedItems);
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_finalizedItems);
     /**
      * Wrapper around the addToReconcile for proofs that adds back the
      * finalization flag to the peer if it is not polled due to being recently
@@ -307,7 +311,7 @@ public:
     int getConfidence(const AnyVoteItem &item) const;
 
     bool isRecentlyFinalized(const uint256 &itemId) const
-        EXCLUSIVE_LOCKS_REQUIRED(!cs_peerManager, !cs_finalizedItems);
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_finalizedItems);
     void clearFinalizedItems() EXCLUSIVE_LOCKS_REQUIRED(!cs_finalizedItems);
 
     // TODO: Refactor the API to remove the dependency on avalanche/protocol.h
@@ -363,10 +367,11 @@ public:
         EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards);
     void cleanupStakingRewards(const int minHeight)
         EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards);
-    bool getStakingRewardWinner(const BlockHash &prevBlockHash,
-                                CScript &winner) const
+    bool getStakingRewardWinners(const BlockHash &prevBlockHash,
+                                 std::vector<CScript> &winners) const
         EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards);
-    bool setStakingRewardWinner(const CBlockIndex *pprev, const CScript &winner)
+    bool setStakingRewardWinners(const CBlockIndex *pprev,
+                                 const std::vector<CScript> &winners)
         EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards);
 
     // Implement NetEventInterface. Only FinalizeNode is of interest.
@@ -388,6 +393,8 @@ public:
 private:
     void updatedBlockTip()
         EXCLUSIVE_LOCKS_REQUIRED(!cs_peerManager, !cs_finalizedItems);
+    void transactionAddedToMempool(const CTransactionRef &tx)
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_finalizedItems);
     void runEventLoop()
         EXCLUSIVE_LOCKS_REQUIRED(!cs_peerManager, !cs_stakingRewards,
                                  !cs_finalizedItems);
@@ -434,7 +441,7 @@ private:
         bool operator()(const CTransactionRef &tx) const;
     };
     bool isWorthPolling(const AnyVoteItem &item) const
-        EXCLUSIVE_LOCKS_REQUIRED(!cs_peerManager, !cs_finalizedItems);
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_finalizedItems);
 
     struct GetLocalAcceptance {
         const Processor &processor;

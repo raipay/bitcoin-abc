@@ -1,16 +1,12 @@
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 import React from 'react';
 import styled from 'styled-components';
-import PropTypes from 'prop-types';
-import { WalletContext } from 'utils/context';
-import OnBoarding from 'components/OnBoarding/OnBoarding';
-import { QRCode } from 'components/Common/QRCode';
-import { LoadingCtn } from 'components/Common/Atoms';
-import BalanceHeader from 'components/Common/BalanceHeader';
-import BalanceHeaderFiat from 'components/Common/BalanceHeaderFiat';
-import { WalletInfoCtn, ZeroBalanceHeader } from 'components/Common/Atoms';
-import WalletLabel from 'components/Common/WalletLabel';
-import { getWalletState } from 'utils/cashMethods';
-import appConfig from 'config/app';
+import { WalletContext } from 'wallet/context';
+import { QRCode } from 'components/Receive/QRCode';
+import useWindowDimensions from 'components/Receive/useWindowDimensions';
 
 const QrCodeCtn = styled.div``;
 
@@ -22,113 +18,47 @@ export const ReceiveCtn = styled.div`
         margin-top: 10px;
     }
     ${QrCodeCtn} {
-        margin-top: 12%;
-        @media (max-width: 1000px) {
-            margin-top: 8%;
-        }
+        padding-top: 12px;
     }
 `;
 
-const ReceiveWithWalletPresent = ({
-    wallet,
-    cashtabSettings,
-    balances,
-    fiatPrice,
-    changeCashtabSettings,
-}) => {
-    return (
-        <ReceiveCtn>
-            <WalletInfoCtn>
-                <WalletLabel
-                    name={wallet.name}
-                    cashtabSettings={cashtabSettings}
-                    changeCashtabSettings={changeCashtabSettings}
-                ></WalletLabel>
-                {!balances.totalBalance ? (
-                    <ZeroBalanceHeader>
-                        You currently have 0 {appConfig.ticker}
-                        <br />
-                        Deposit some funds to use this feature
-                    </ZeroBalanceHeader>
-                ) : (
-                    <>
-                        <BalanceHeader
-                            balance={balances.totalBalance}
-                            ticker={appConfig.ticker}
-                            cashtabSettings={cashtabSettings}
-                        />
+export const Receive = () => {
+    const ContextValue = React.useContext(WalletContext);
+    const { cashtabState } = ContextValue;
+    const { wallets } = cashtabState;
+    const wallet = wallets.length > 0 ? wallets[0] : false;
+    // Get device window width
+    // Size the QR code depending on device width
+    const { width, height } = useWindowDimensions();
 
-                        <BalanceHeaderFiat
-                            balance={balances.totalBalance}
-                            settings={cashtabSettings}
-                            fiatPrice={fiatPrice}
-                        />
-                    </>
-                )}
-            </WalletInfoCtn>
-            {wallet && wallet.Path1899 && (
-                <QrCodeCtn>
+    const getQrCodeWidth = windowWidthPx => {
+        const CASHTAB_FULLSCREEN_WIDTH = 500;
+        if (windowWidthPx > CASHTAB_FULLSCREEN_WIDTH) {
+            // Good width for no scrolling, taking all available space
+            return 420;
+        }
+        // Extension or related
+        /// Weird height to see normally so make this a tightly-focused condition
+        if (width <= 400 && height <= 600) {
+            return 250;
+        }
+        // Otherwise return with constant padding relative to width
+        const CASHTAB_MOBILE_QR_PADDING = 75;
+        return windowWidthPx - CASHTAB_MOBILE_QR_PADDING;
+    };
+    return (
+        <ReceiveCtn title="Receive">
+            {wallet !== false && (
+                <QrCodeCtn title="QR Code">
                     <QRCode
-                        id="borderedQRCode"
-                        address={wallet.Path1899.cashAddress}
+                        address={wallet.paths.get(1899).address}
+                        size={getQrCodeWidth(width)}
+                        logoSizePx={width > 500 ? 48 : 24}
                     />
                 </QrCodeCtn>
             )}
         </ReceiveCtn>
     );
-};
-
-const Receive = () => {
-    const ContextValue = React.useContext(WalletContext);
-    const {
-        wallet,
-        previousWallet,
-        loading,
-        cashtabSettings,
-        changeCashtabSettings,
-        fiatPrice,
-    } = ContextValue;
-    const walletState = getWalletState(wallet);
-    const { balances } = walletState;
-    return (
-        <>
-            {loading ? (
-                <LoadingCtn />
-            ) : (
-                <>
-                    {(wallet && wallet.Path1899) ||
-                    (previousWallet && previousWallet.path1899) ? (
-                        <ReceiveWithWalletPresent
-                            wallet={wallet}
-                            cashtabSettings={cashtabSettings}
-                            balances={balances}
-                            fiatPrice={fiatPrice}
-                            changeCashtabSettings={changeCashtabSettings}
-                        />
-                    ) : (
-                        <OnBoarding />
-                    )}
-                </>
-            )}
-        </>
-    );
-};
-
-ReceiveWithWalletPresent.propTypes = {
-    balances: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
-    fiatPrice: PropTypes.number,
-    wallet: PropTypes.object,
-    cashtabSettings: PropTypes.oneOfType([
-        PropTypes.shape({
-            fiatCurrency: PropTypes.string,
-            sendModal: PropTypes.bool,
-            autoCameraOn: PropTypes.bool,
-            hideMessagesFromUnknownSender: PropTypes.bool,
-            toggleShowHideBalance: PropTypes.bool,
-        }),
-        PropTypes.bool,
-    ]),
-    changeCashtabSettings: PropTypes.func,
 };
 
 export default Receive;

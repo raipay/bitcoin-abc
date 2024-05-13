@@ -13,9 +13,9 @@
 #include <consensus/params.h>
 #include <crypto/common.h> // for ReadLE64
 #include <flatfile.h>
+#include <kernel/cs_main.h>
 #include <primitives/block.h>
 #include <sync.h>
-#include <tinyformat.h>
 #include <uint256.h>
 
 #include <unordered_map>
@@ -42,8 +42,6 @@ static constexpr int64_t TIMESTAMP_WINDOW = MAX_FUTURE_BLOCK_TIME;
  * Ref: https://github.com/bitcoin/bitcoin/pull/1026
  */
 static constexpr int64_t MAX_BLOCK_TIME_GAP = 90 * 60;
-
-extern RecursiveMutex cs_main;
 
 arith_uint256 GetBlockProof(const CBlockIndex &block);
 
@@ -115,7 +113,7 @@ public:
         READWRITE(obj.nNonce);
     }
 
-    BlockHash GetBlockHash() const {
+    BlockHash ConstructBlockHash() const {
         CBlockHeader block;
         block.nVersion = nVersion;
         block.hashPrevBlock = hashPrev;
@@ -126,13 +124,8 @@ public:
         return block.GetHash();
     }
 
-    std::string ToString() const {
-        std::string str = "CDiskBlockIndex(";
-        str += CBlockIndex::ToString();
-        str += strprintf("\n                hashBlock=%s, hashPrev=%s)",
-                         GetBlockHash().ToString(), hashPrev.ToString());
-        return str;
-    }
+    BlockHash GetBlockHash() = delete;
+    std::string ToString() = delete;
 };
 
 /**
@@ -193,13 +186,10 @@ public:
     int Height() const { return int(vChain.size()) - 1; }
 
     /** Set/initialize a chain with a given tip. */
-    void SetTip(CBlockIndex *pindex);
+    void SetTip(CBlockIndex &block);
 
-    /**
-     * Return a CBlockLocator that refers to a block in this chain (by default
-     * the tip).
-     */
-    CBlockLocator GetLocator(const CBlockIndex *pindex = nullptr) const;
+    /** Return a CBlockLocator that refers to the tip of this chain */
+    CBlockLocator GetLocator() const;
 
     /**
      * Find the last common block between this chain and a block index entry.
@@ -212,5 +202,11 @@ public:
      */
     CBlockIndex *FindEarliestAtLeast(int64_t nTime, int height) const;
 };
+
+/** Get a locator for a block index entry. */
+CBlockLocator GetLocator(const CBlockIndex *index);
+
+/** Construct a list of hash entries to put in a locator.  */
+std::vector<BlockHash> LocatorEntries(const CBlockIndex *index);
 
 #endif // BITCOIN_CHAIN_H

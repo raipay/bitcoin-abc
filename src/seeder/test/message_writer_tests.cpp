@@ -23,7 +23,7 @@ static void CheckMessage(CDataStream &expectedMessage, std::string command,
     MessageWriter::WriteMessage(message, command, std::forward<Args>(args)...);
     BOOST_CHECK_EQUAL(message.size(), expectedMessage.size());
     for (size_t i = 0; i < message.size(); i++) {
-        BOOST_CHECK_EQUAL(message[i], expectedMessage[i]);
+        BOOST_CHECK_EQUAL(uint8_t(message[i]), uint8_t(expectedMessage[i]));
     }
 }
 
@@ -48,8 +48,7 @@ BOOST_AUTO_TEST_CASE(simple_header_and_payload_message_writer_test) {
     memcpy(versionhdr.pchChecksum, hash.begin(), CMessageHeader::CHECKSUM_SIZE);
 
     CDataStream expectedVersion(SER_NETWORK, PROTOCOL_VERSION);
-    expectedVersion << versionhdr;
-    expectedVersion += versionPayload;
+    expectedVersion << versionhdr << versionPayload;
 
     CheckMessage(expectedVersion, NetMsgType::VERSION, PROTOCOL_VERSION,
                  serviceFlags, now, addrTo, addrFrom, nonce, user_agent,
@@ -85,8 +84,7 @@ BOOST_AUTO_TEST_CASE(write_getheaders_message_test) {
     memcpy(msgHeader.pchChecksum, hash.begin(), CMessageHeader::CHECKSUM_SIZE);
 
     CDataStream expectedMsg(SER_NETWORK, PROTOCOL_VERSION);
-    expectedMsg << msgHeader;
-    expectedMsg += payload;
+    expectedMsg << msgHeader << payload;
 
     CheckMessage(expectedMsg, NetMsgType::GETHEADERS, locatorhash, uint256());
 }

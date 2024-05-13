@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2023 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -159,7 +158,7 @@ class ChronikSpentByTest(BitcoinTestFramework):
 
         # Block mines tx, tx2 and tx3_conflict
         block = create_block(
-            int(tip, 16), create_coinbase(101, b"\x03" * 33), 1300000500
+            int(tip, 16), create_coinbase(102, b"\x03" * 33), 1300000500
         )
         block.vtx += [tx, tx2, tx3_conflict]
         make_conform_to_ctor(block)

@@ -71,10 +71,10 @@ static bool CheckFilterLookups(BlockFilterIndex &filter_index,
 CBlock BuildChainTestingSetup::CreateBlock(
     const CBlockIndex *prev, const std::vector<CMutableTransaction> &txns,
     const CScript &scriptPubKey) {
-    const Config &config = GetConfig();
+    const Config &config = m_node.chainman->GetConfig();
     std::unique_ptr<CBlockTemplate> pblocktemplate =
         BlockAssembler{config, m_node.chainman->ActiveChainstate(),
-                       *m_node.mempool}
+                       m_node.mempool.get()}
             .CreateNewBlock(scriptPubKey);
     CBlock &block = pblocktemplate->block;
     block.hashPrevBlock = prev->GetBlockHash();
@@ -108,8 +108,7 @@ bool BuildChainTestingSetup::BuildChain(
 
         BlockValidationState state;
         if (!Assert(m_node.chainman)
-                 ->ProcessNewBlockHeaders(GetConfig(), {header}, state,
-                                          &pindex)) {
+                 ->ProcessNewBlockHeaders({header}, true, state, &pindex)) {
             return false;
         }
     }
@@ -198,7 +197,7 @@ BOOST_FIXTURE_TEST_CASE(blockfilter_index_initial_sync,
     for (size_t i = 0; i < 2; i++) {
         const auto &block = chainA[i];
         BOOST_REQUIRE(Assert(m_node.chainman)
-                          ->ProcessNewBlock(GetConfig(), block, true, nullptr));
+                          ->ProcessNewBlock(block, true, true, nullptr));
     }
     for (size_t i = 0; i < 2; i++) {
         const auto &block = chainA[i];
@@ -218,7 +217,7 @@ BOOST_FIXTURE_TEST_CASE(blockfilter_index_initial_sync,
     for (size_t i = 0; i < 3; i++) {
         const auto &block = chainB[i];
         BOOST_REQUIRE(Assert(m_node.chainman)
-                          ->ProcessNewBlock(GetConfig(), block, true, nullptr));
+                          ->ProcessNewBlock(block, true, true, nullptr));
     }
     for (size_t i = 0; i < 3; i++) {
         const auto &block = chainB[i];
@@ -252,7 +251,7 @@ BOOST_FIXTURE_TEST_CASE(blockfilter_index_initial_sync,
     for (size_t i = 2; i < 4; i++) {
         const auto &block = chainA[i];
         BOOST_REQUIRE(Assert(m_node.chainman)
-                          ->ProcessNewBlock(GetConfig(), block, true, nullptr));
+                          ->ProcessNewBlock(block, true, true, nullptr));
     }
 
     // Check that chain A and B blocks can be retrieved.

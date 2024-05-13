@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2017-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -356,25 +355,15 @@ class ConfArgsTest(BitcoinTestFramework):
 
         # Create the directory and ensure the config file now works
         os.mkdir(new_data_dir)
-        self.start_node(0, [f"-conf={conf_file}", "-wallet=w1"])
+        self.start_node(0, [f"-conf={conf_file}"])
         self.stop_node(0)
         assert os.path.exists(os.path.join(new_data_dir, self.chain, "blocks"))
-        if self.is_wallet_compiled():
-            assert os.path.exists(
-                os.path.join(new_data_dir, self.chain, "wallets", "w1")
-            )
 
         # Ensure command line argument overrides datadir in conf
         os.mkdir(new_data_dir_2)
         self.nodes[0].datadir = new_data_dir_2
-        self.start_node(
-            0, [f"-datadir={new_data_dir_2}", f"-conf={conf_file}", "-wallet=w2"]
-        )
+        self.start_node(0, [f"-datadir={new_data_dir_2}", f"-conf={conf_file}"])
         assert os.path.exists(os.path.join(new_data_dir_2, self.chain, "blocks"))
-        if self.is_wallet_compiled():
-            assert os.path.exists(
-                os.path.join(new_data_dir_2, self.chain, "wallets", "w2")
-            )
 
 
 if __name__ == "__main__":

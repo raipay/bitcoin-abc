@@ -1,24 +1,18 @@
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 import React from 'react';
 import styled from 'styled-components';
-import { WalletContext } from 'utils/context';
-import OnBoarding from 'components/OnBoarding/OnBoarding';
+import { WalletContext } from 'wallet/context';
 import { Link } from 'react-router-dom';
-import TokenList from './TokenList';
 import TxHistory from './TxHistory';
 import ApiError from 'components/Common/ApiError';
-import BalanceHeader from 'components/Common/BalanceHeader';
-import BalanceHeaderFiat from 'components/Common/BalanceHeaderFiat';
-import {
-    LoadingCtn,
-    WalletInfoCtn,
-    SidePaddingCtn,
-} from 'components/Common/Atoms';
 import { getWalletState } from 'utils/cashMethods';
-import WalletLabel from 'components/Common/WalletLabel.js';
-import { SmartButton } from 'components/Common/PrimaryButton';
-import { isValidSideshiftObj } from 'utils/validation';
-
-import appConfig from 'config/app';
+import Receive from 'components/Receive/Receive';
+import { Alert } from 'components/Common/Atoms';
+import { getUserLocale } from 'helpers';
+import { getHashes } from 'wallet';
 
 export const Tabs = styled.div`
     margin: auto;
@@ -59,13 +53,12 @@ export const TabLabel = styled.button`
   `}
 `;
 
-export const TabPane = styled.div`
+export const TxHistoryCtn = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     color: ${props => props.theme.contrast};
-    ${({ active }) =>
-        !active &&
-        `    
-        display: none;
-  `}
+    margin-top: 24px;
 `;
 
 export const Links = styled(Link)`
@@ -126,156 +119,58 @@ export const AddrSwitchContainer = styled.div`
     padding: 6px 0 12px 0;
 `;
 
-const CreateToken = styled(Link)`
-    color: ${props => props.theme.contrast};
-    border: 1px solid ${props => props.theme.contrast};
-    padding: 8px 15px;
-    border-radius: 5px;
-    margin-top: 10px;
-    margin-bottom: 20px;
-    display: inline-block;
-    width: 100%;
-    :hover {
-        background: ${props => props.theme.eCashPurple};
-        border-color: ${props => props.theme.eCashPurple};
-        color: ${props => props.theme.contrast};
-    }
-`;
-
-const WalletInfo = () => {
-    const ContextValue = React.useContext(WalletContext);
-    const {
-        wallet,
-        fiatPrice,
-        apiError,
-        cashtabSettings,
-        contactList,
-        cashtabCache,
-        changeCashtabSettings,
-    } = ContextValue;
-    const walletState = getWalletState(wallet);
-    const { balances, parsedTxHistory, tokens } = walletState;
-    const [activeTab, setActiveTab] = React.useState('txHistory');
-    const sideshift = window.sideshift;
-    const hasHistory = parsedTxHistory && parsedTxHistory.length > 0;
-
-    return (
-        <>
-            <WalletInfoCtn>
-                <WalletLabel
-                    name={wallet.name}
-                    cashtabSettings={cashtabSettings}
-                    changeCashtabSettings={changeCashtabSettings}
-                ></WalletLabel>
-                <BalanceHeader
-                    balance={balances.totalBalance}
-                    ticker={appConfig.ticker}
-                    cashtabSettings={cashtabSettings}
-                />
-                <BalanceHeaderFiat
-                    balance={balances.totalBalance}
-                    settings={cashtabSettings}
-                    fiatPrice={fiatPrice}
-                />
-            </WalletInfoCtn>
-            {apiError && <ApiError />}
-
-            <SidePaddingCtn>
-                <Tabs>
-                    <TabLabel
-                        active={activeTab === 'txHistory'}
-                        onClick={() => setActiveTab('txHistory')}
-                    >
-                        Transactions
-                    </TabLabel>
-                    <TabLabel
-                        active={activeTab === 'tokens'}
-                        token={activeTab === 'tokens'}
-                        onClick={() => setActiveTab('tokens')}
-                    >
-                        eTokens
-                    </TabLabel>
-                </Tabs>
-
-                <TabPane active={activeTab === 'txHistory'}>
-                    <TxHistory
-                        txs={
-                            Array.isArray(parsedTxHistory)
-                                ? parsedTxHistory
-                                : []
-                        }
-                        fiatPrice={fiatPrice}
-                        fiatCurrency={
-                            cashtabSettings && cashtabSettings.fiatCurrency
-                                ? cashtabSettings.fiatCurrency
-                                : 'usd'
-                        }
-                        contactList={contactList}
-                        cashtabSettings={cashtabSettings}
-                        cashtabCache={cashtabCache}
-                    />
-                    {!hasHistory && (
-                        <>
-                            <span role="img" aria-label="party emoji">
-                                🎉
-                            </span>
-                            Congratulations on your new wallet!{' '}
-                            <span role="img" aria-label="party emoji">
-                                🎉
-                            </span>
-                            <br /> Start using the wallet immediately to receive{' '}
-                            {appConfig.ticker} payments, or load it up with{' '}
-                            {appConfig.ticker} to send to others
-                            <br />
-                            <br />
-                            {isValidSideshiftObj(sideshift) && (
-                                <SmartButton onClick={() => sideshift.show()}>
-                                    Exchange to XEC via SideShift
-                                </SmartButton>
-                            )}
-                        </>
-                    )}
-                </TabPane>
-                <TabPane active={activeTab === 'tokens'}>
-                    <CreateToken
-                        to={{
-                            pathname: `/tokens`,
-                        }}
-                    >
-                        Create eToken
-                    </CreateToken>
-                    {tokens && tokens.length > 0 ? (
-                        <TokenList wallet={wallet} tokens={tokens} />
-                    ) : (
-                        <p>
-                            Tokens sent to your {appConfig.tokenTicker} address
-                            will appear here
-                        </p>
-                    )}
-                </TabPane>
-            </SidePaddingCtn>
-        </>
-    );
-};
-
 const Home = () => {
     const ContextValue = React.useContext(WalletContext);
-    const { wallet, previousWallet, loading } = ContextValue;
+    const {
+        fiatPrice,
+        apiError,
+        cashtabState,
+        updateCashtabState,
+        chaintipBlockheight,
+    } = ContextValue;
+    const { settings, wallets } = cashtabState;
+    const wallet = wallets.length > 0 ? wallets[0] : false;
+    const hashes = getHashes(wallet);
+    const walletState = getWalletState(wallet);
+    const { parsedTxHistory } = walletState;
+    const hasHistory = parsedTxHistory && parsedTxHistory.length > 0;
+
+    const userLocale = getUserLocale(navigator);
 
     return (
         <>
-            {loading ? (
-                <LoadingCtn />
-            ) : (
-                <>
-                    {(wallet && wallet.Path1899) ||
-                    (previousWallet && previousWallet.path1899) ? (
-                        <WalletInfo />
-                    ) : (
-                        <OnBoarding />
-                    )}
-                </>
-            )}
+            {apiError && <ApiError />}
+            <TxHistoryCtn data-testid="tx-history">
+                <TxHistory
+                    txs={Array.isArray(parsedTxHistory) ? parsedTxHistory : []}
+                    hashes={hashes}
+                    fiatPrice={fiatPrice}
+                    fiatCurrency={
+                        settings && settings.fiatCurrency
+                            ? settings.fiatCurrency
+                            : 'usd'
+                    }
+                    cashtabState={cashtabState}
+                    updateCashtabState={updateCashtabState}
+                    userLocale={userLocale}
+                    chaintipBlockheight={chaintipBlockheight}
+                />
+                {!hasHistory && (
+                    <>
+                        <Alert>
+                            <p>
+                                <b>Backup your wallet</b>
+                            </p>
+                            <p>
+                                Write down your 12-word seed and keep it in a
+                                safe place.{' '}
+                                <em>Do not share your backup with anyone.</em>
+                            </p>
+                        </Alert>
+                        <Receive />
+                    </>
+                )}
+            </TxHistoryCtn>
         </>
     );
 };

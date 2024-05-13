@@ -12,11 +12,15 @@ abc-rust-lint = { path = "../abc-rust-lint" }
 abc-rust-error = { path = "../abc-rust-error" }
 
 bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+bitcoinsuite-slp = { path = "../bitcoinsuite-slp" }
 
 chronik-bridge = { path = "../chronik-bridge" }
 chronik-db = { path = "../chronik-db" }
 chronik-proto = { path = "../chronik-proto" }
 chronik-util = { path = "../chronik-util" }
+
+# Efficient byte strings, with ref counted substrings
+bytes = "1.4"
 
 # Bridge to C++
 cxx = "1.0"

@@ -5,13 +5,23 @@
 'use strict';
 
 // Default settings which can be modified within Cashtab
-export const cashtabSettings = {
-    fiatCurrency: 'usd',
-    sendModal: false,
-    autoCameraOn: true,
-    hideMessagesFromUnknownSenders: false,
-    balanceVisible: true,
-};
+export class CashtabSettings {
+    constructor(
+        fiatCurrency = 'usd',
+        sendModal = false,
+        autoCameraOn = true,
+        hideMessagesFromUnknownSenders = false,
+        balanceVisible = true,
+        minFeeSends = false,
+    ) {
+        this.fiatCurrency = fiatCurrency;
+        this.sendModal = sendModal;
+        this.autoCameraOn = autoCameraOn;
+        this.hideMessagesFromUnknownSenders = hideMessagesFromUnknownSenders;
+        this.balanceVisible = balanceVisible;
+        this.minFeeSends = minFeeSends;
+    }
+}
 
 // Cashtab supported fiat currencies
 export const supportedFiatCurrencies = {
@@ -31,6 +41,7 @@ export const supportedFiatCurrencies = {
     ils: { name: 'Israeli Shekel', symbol: '₪', slug: 'ils' },
     jpy: { name: 'Japanese Yen', symbol: '¥', slug: 'jpy' },
     krw: { name: 'Korean Won', symbol: '₩', slug: 'krw' },
+    myr: { name: 'Malaysian Ringgit', symbol: 'RM', slug: 'myr' },
     ngn: { name: 'Nigerian Naira', symbol: '₦', slug: 'ngn' },
     nzd: { name: 'New Zealand Dollar', symbol: '$', slug: 'nzd' },
     nok: { name: 'Norwegian Krone', symbol: 'kr', slug: 'nok' },
@@ -51,4 +62,5 @@ export const cashtabSettingsValidation = {
     autoCameraOn: [true, false],
     hideMessagesFromUnknownSenders: [true, false],
     balanceVisible: [true, false],
+    minFeeSends: [true, false],
 };

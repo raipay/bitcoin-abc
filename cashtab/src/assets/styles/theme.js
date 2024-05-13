@@ -1,17 +1,23 @@
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 export const theme = {
     eCashBlue: '#00ABE7',
     eCashPurple: '#ff21d0',
     darkBlue: '#273498',
     contrast: '#fff',
+    panel: '#26415a',
     backgroundImage: `url("/cashtab_bg.png")`,
     backgroundColor: '#d5d5d7',
     walletBackground: '#152b45',
     walletInfoContainer: '#255173',
-    footerBackground: '#152b45',
+    headerAndFooterBg: '#152b45',
     navActive: '#00ABE7',
     encryptionRed: '#DC143C',
     genesisGreen: '#00e781',
     aliasGreen: '#0FFF50',
+    separator: 'rgba(255, 255, 255, 0.12)',
     receivedMessage: 'rgba(0,171,231,0.2)',
     sentMessage: 'rgba(255, 255, 255, 0.1)',
     lightWhite: 'rgba(255,255,255,0.4)',
@@ -51,14 +57,17 @@ export const theme = {
             hoverShadow: '0px 3px 10px -5px rgba(0, 0, 0, 0.75)',
         },
         secondary: {
-            background: '#4b67e1',
+            backgroundImage:
+                'linear-gradient(270deg, #ff21d0 0%, #273498 100%)',
             color: '#fff',
-            hoverShadow: '0px 3px 10px -5px rgba(0, 0, 0, 0.75)',
         },
-        alternateSecondary: {
-            background: '#255173',
-            color: '#fff',
-            hoverShadow: '0px 3px 10px -5px rgba(0, 0, 0, 0.75)',
+        modal: {
+            // Some transparency added to ecashPurple for modal 'later'
+            background: '#ff21d080',
+        },
+        disabled: {
+            background: '#4b67e1',
+            color: 'rgba(255,255,255,0.4)',
         },
         styledLink: '#ffffff',
     },

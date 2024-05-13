@@ -7,6 +7,7 @@
 
 #include <blockindex.h>
 #include <chainparamsbase.h>
+#include <config.h>
 #include <consensus/amount.h>
 #include <fs.h>
 #include <key.h>
@@ -16,9 +17,11 @@
 #include <pubkey.h>
 #include <random.h>
 #include <stdexcept>
+#include <txmempool.h>
 #include <util/check.h>
 #include <util/string.h>
 #include <util/system.h>
+#include <util/vector.h>
 
 #include <type_traits>
 #include <vector>
@@ -106,6 +109,8 @@ struct BasicTestingSetup {
     ArgsManager m_args;
 };
 
+CTxMemPool::Options MemPoolOptionsForTest(const node::NodeContext &node);
+
 /**
  * Testing setup that performs all steps up until right before
  * ChainstateManager gets initialized. Meant for testing ChainstateManager
@@ -127,7 +132,7 @@ struct TestingSetup : public ChainTestingSetup {
     bool m_coins_db_in_memory{true};
     bool m_block_tree_db_in_memory{true};
 
-    void LoadVerifyActivateChainstate(const Config &config);
+    void LoadVerifyActivateChainstate();
 
     explicit TestingSetup(const std::string &chainName = CBaseChainParams::MAIN,
                           const std::vector<const char *> &extra_args = {},
@@ -192,28 +197,60 @@ struct TestChain100Setup : public TestingSetup {
 
     ~TestChain100Setup();
 
+    /**
+     * Create transactions spending from m_coinbase_txns. These transactions
+     * will only spend coins that exist in the current chain, but may be
+     * premature coinbase spends, have missing signatures, or violate some other
+     * consensus rules. They should only be used for testing mempool
+     * consistency. All transactions will have some random number of inputs and
+     * outputs (between 1 and 24). Transactions may or may not be dependent upon
+     * each other; if dependencies exit, every parent will always be somewhere
+     * in the list before the child so each transaction can be submitted in the
+     * same order they appear in the list.
+     * @param[in]   submit      When true, submit transactions to the mempool.
+     *                          When false, return them but don't submit them.
+     * @returns A vector of transactions that can be submitted to the mempool.
+     */
+    std::vector<CTransactionRef> PopulateMempool(FastRandomContext &det_rand,
+                                                 size_t num_transactions,
+                                                 bool submit);
+
     // For convenience, coinbase transactions.
     std::vector<CTransactionRef> m_coinbase_txns;
     // private/public key needed to spend coinbase transactions.
     CKey coinbaseKey;
 };
 
-class CTxMemPoolEntry;
+/**
+ * Make a test setup that has disk access to the debug.log file disabled. Can
+ * be used in "hot loops", for example fuzzing or benchmarking.
+ */
+template <class T = const BasicTestingSetup>
+std::unique_ptr<T>
+MakeNoLogFileContext(const std::string &chain_name = CBaseChainParams::REGTEST,
+                     const std::vector<const char *> &extra_args = {}) {
+    const std::vector<const char *> arguments = Cat(
+        {
+            "-nodebuglogfile",
+            "-nodebug",
+        },
+        extra_args);
+
+    return std::make_unique<T>(chain_name, arguments);
+}
 
 struct TestMemPoolEntryHelper {
     // Default values
     Amount nFee;
     int64_t nTime;
     unsigned int nHeight;
-    bool spendsCoinbase;
     unsigned int nSigChecks;
     uint64_t entryId = 0;
 
-    TestMemPoolEntryHelper()
-        : nFee(), nTime(0), nHeight(1), spendsCoinbase(false), nSigChecks(1) {}
+    TestMemPoolEntryHelper() : nFee(), nTime(0), nHeight(1), nSigChecks(1) {}
 
-    CTxMemPoolEntry FromTx(const CMutableTransaction &tx) const;
-    CTxMemPoolEntry FromTx(const CTransactionRef &tx) const;
+    CTxMemPoolEntryRef FromTx(const CMutableTransaction &tx) const;
+    CTxMemPoolEntryRef FromTx(const CTransactionRef &tx) const;
 
     // Change the default value
     TestMemPoolEntryHelper &Fee(Amount _fee) {
@@ -226,10 +263,6 @@ struct TestMemPoolEntryHelper {
     }
     TestMemPoolEntryHelper &Height(unsigned int _height) {
         nHeight = _height;
-        return *this;
-    }
-    TestMemPoolEntryHelper &SpendsCoinbase(bool _flag) {
-        spendsCoinbase = _flag;
         return *this;
     }
     TestMemPoolEntryHelper &SigChecks(unsigned int _nSigChecks) {
@@ -265,6 +298,24 @@ public:
 
 private:
     const std::string m_reason;
+};
+
+// Dummy for subclassing in unittests
+class DummyConfig : public Config {
+public:
+    DummyConfig();
+    explicit DummyConfig(std::string net);
+    bool SetMaxBlockSize(uint64_t maxBlockSize) override { return false; }
+    uint64_t GetMaxBlockSize() const override { return 32'000'000; }
+
+    void SetChainParams(const CChainParams chainParamsIn) override {}
+    const CChainParams &GetChainParams() const override { return *chainParams; }
+
+    void SetCashAddrEncoding(bool) override {}
+    bool UseCashAddrEncoding() const override { return false; }
+
+private:
+    std::unique_ptr<const CChainParams> chainParams;
 };
 
 #endif // BITCOIN_TEST_UTIL_SETUP_COMMON_H

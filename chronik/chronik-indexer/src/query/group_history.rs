@@ -8,7 +8,6 @@ use std::collections::BTreeSet;
 
 use abc_rust_error::Result;
 use bitcoinsuite_core::tx::{Tx, TxId};
-use chronik_bridge::ffi;
 use chronik_db::{
     db::Db,
     group::Group,
@@ -21,7 +20,8 @@ use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
-    query::{make_tx_proto, OutputsSpent},
+    indexer::Node,
+    query::{make_tx_proto, OutputsSpent, TxTokenData},
 };
 
 /// Smallest allowed page size
@@ -44,6 +44,10 @@ pub struct QueryGroupHistory<'a, G: Group> {
     pub mempool_history: &'a MempoolGroupHistory<G>,
     /// Group to query txs by
     pub group: G,
+    /// Access to bitcoind to read txs
+    pub node: &'a Node,
+    /// Whether the SLP/ALP token index is enabled
+    pub is_token_index_enabled: bool,
 }
 
 /// Errors indicating something went wrong with reading txs.
@@ -269,6 +273,8 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                 false,
                 None,
                 self.avalanche,
+                TxTokenData::from_mempool(self.mempool.tokens(), &entry.tx)
+                    .as_ref(),
             ));
         }
 
@@ -351,6 +357,11 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                         false,
                         None,
                         self.avalanche,
+                        TxTokenData::from_mempool(
+                            self.mempool.tokens(),
+                            &entry.tx,
+                        )
+                        .as_ref(),
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?,
@@ -372,24 +383,31 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
         let block = block_reader
             .by_height(block_tx.block_height)?
             .ok_or(MissingDbTxBlock(tx_num))?;
-        let tx = ffi::load_tx(
+        let tx = Tx::from(self.node.bridge.load_tx(
             block.file_num,
             block_tx.entry.data_pos,
             block_tx.entry.undo_pos,
-        )?;
+        )?);
         let outputs_spent = OutputsSpent::query(
             &spent_by_reader,
             &tx_reader,
             self.mempool.spent_by().outputs_spent(&block_tx.entry.txid),
             tx_num,
         )?;
+        let token = TxTokenData::from_db(
+            self.db,
+            tx_num,
+            &tx,
+            self.is_token_index_enabled,
+        )?;
         Ok(make_tx_proto(
-            &Tx::from(tx),
+            &tx,
             &outputs_spent,
             block_tx.entry.time_first_seen,
             block_tx.entry.is_coinbase,
             Some(&block),
             self.avalanche,
+            token.as_ref(),
         ))
     }
 }

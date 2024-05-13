@@ -18,6 +18,7 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/util/setup_common.h>
 
 #include <cstdint>
 #include <limits>
@@ -38,12 +39,13 @@ bool operator==(const Coin &a, const Coin &b) {
 }
 } // namespace
 
-void initialize() {
-    static const auto testing_setup = MakeFuzzingContext<const TestingSetup>();
+void initialize_coins_view() {
+    static const auto testing_setup =
+        MakeNoLogFileContext<const TestingSetup>();
     g_setup = testing_setup.get();
 }
 
-void test_one_input(const std::vector<uint8_t> &buffer) {
+FUZZ_TARGET_INIT(coins_view, initialize_coins_view) {
     FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
     CCoinsView backend_coins_view;
     CCoinsViewCache coins_view_cache{&backend_coins_view};
@@ -51,10 +53,11 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     Coin random_coin;
     CMutableTransaction random_mutable_transaction;
     while (fuzzed_data_provider.ConsumeBool()) {
-        switch (fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 9)) {
-            case 0: {
+        CallOneOf(
+            fuzzed_data_provider,
+            [&] {
                 if (random_coin.IsSpent()) {
-                    break;
+                    return;
                 }
                 Coin coin = random_coin;
                 bool expected_code_path = false;
@@ -73,65 +76,52 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     }
                 }
                 assert(expected_code_path);
-                break;
-            }
-            case 1: {
-                (void)coins_view_cache.Flush();
-                break;
-            }
-            case 2: {
+            },
+            [&] { (void)coins_view_cache.Flush(); },
+            [&] {
                 coins_view_cache.SetBestBlock(
-                    BlockHash(ConsumeUInt256(fuzzed_data_provider)));
-                break;
-            }
-            case 3: {
+                    BlockHash{ConsumeUInt256(fuzzed_data_provider)});
+            },
+            [&] {
                 Coin move_to;
                 (void)coins_view_cache.SpendCoin(
                     random_out_point,
                     fuzzed_data_provider.ConsumeBool() ? &move_to : nullptr);
-                break;
-            }
-            case 4: {
-                coins_view_cache.Uncache(random_out_point);
-                break;
-            }
-            case 5: {
+            },
+            [&] { coins_view_cache.Uncache(random_out_point); },
+            [&] {
                 if (fuzzed_data_provider.ConsumeBool()) {
                     backend_coins_view = CCoinsView{};
                 }
                 coins_view_cache.SetBackend(backend_coins_view);
-                break;
-            }
-            case 6: {
+            },
+            [&] {
                 const std::optional<COutPoint> opt_out_point =
                     ConsumeDeserializable<COutPoint>(fuzzed_data_provider);
                 if (!opt_out_point) {
-                    break;
+                    return;
                 }
                 random_out_point = *opt_out_point;
-                break;
-            }
-            case 7: {
+            },
+            [&] {
                 const std::optional<Coin> opt_coin =
                     ConsumeDeserializable<Coin>(fuzzed_data_provider);
                 if (!opt_coin) {
-                    break;
+                    return;
                 }
                 random_coin = *opt_coin;
-                break;
-            }
-            case 8: {
+            },
+            [&] {
                 const std::optional<CMutableTransaction>
                     opt_mutable_transaction =
                         ConsumeDeserializable<CMutableTransaction>(
                             fuzzed_data_provider);
                 if (!opt_mutable_transaction) {
-                    break;
+                    return;
                 }
                 random_mutable_transaction = *opt_mutable_transaction;
-                break;
-            }
-            case 9: {
+            },
+            [&] {
                 CCoinsMap coins_map;
                 while (fuzzed_data_provider.ConsumeBool()) {
                     CCoinsCacheEntry coins_cache_entry;
@@ -143,7 +133,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                         const std::optional<Coin> opt_coin =
                             ConsumeDeserializable<Coin>(fuzzed_data_provider);
                         if (!opt_coin) {
-                            break;
+                            return;
                         }
                         coins_cache_entry.coin = *opt_coin;
                     }
@@ -155,7 +145,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     coins_view_cache.BatchWrite(
                         coins_map,
                         fuzzed_data_provider.ConsumeBool()
-                            ? BlockHash(ConsumeUInt256(fuzzed_data_provider))
+                            ? BlockHash{ConsumeUInt256(fuzzed_data_provider)}
                             : coins_view_cache.GetBestBlock());
                     expected_code_path = true;
                 } catch (const std::logic_error &e) {
@@ -166,9 +156,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     }
                 }
                 assert(expected_code_path);
-                break;
-            }
-        }
+            });
     }
 
     {
@@ -231,8 +219,9 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     }
 
     if (fuzzed_data_provider.ConsumeBool()) {
-        switch (fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 3)) {
-            case 0: {
+        CallOneOf(
+            fuzzed_data_provider,
+            [&] {
                 const CTransaction transaction{random_mutable_transaction};
                 bool is_spent = false;
                 for (const CTxOut &tx_out : transaction.vout) {
@@ -245,7 +234,7 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     // coins.cpp:69: void CCoinsViewCache::AddCoin(const
                     // COutPoint &, Coin &&, bool): Assertion `!coin.IsSpent()'
                     // failed.
-                    break;
+                    return;
                 }
                 bool expected_code_path = false;
                 const int height{
@@ -265,17 +254,15 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     }
                 }
                 assert(expected_code_path);
-                break;
-            }
-            case 1: {
+            },
+            [&] {
                 uint32_t flags =
                     fuzzed_data_provider.ConsumeIntegral<uint32_t>();
                 (void)AreInputsStandard(
                     CTransaction{random_mutable_transaction}, coins_view_cache,
                     flags);
-                break;
-            }
-            case 2: {
+            },
+            [&] {
                 TxValidationState state;
                 Amount tx_fee_out;
                 const CTransaction transaction{random_mutable_transaction};
@@ -285,7 +272,6 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     // Consensus::CheckTxInputs(const CTransaction &,
                     // TxValidationState &, const CCoinsViewCache &, int,
                     // CAmount &): Assertion `!coin.IsSpent()' failed.
-                    break;
                 }
                 try {
                     (void)Consensus::CheckTxInputs(
@@ -296,8 +282,6 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     assert(MoneyRange(tx_fee_out));
                 } catch (const std::runtime_error &) {
                 }
-                break;
-            }
-        }
+            });
     }
 }

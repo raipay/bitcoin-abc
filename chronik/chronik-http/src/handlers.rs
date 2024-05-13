@@ -3,12 +3,16 @@
 use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use abc_rust_error::{Report, Result};
-use chronik_indexer::indexer::ChronikIndexer;
+use bitcoinsuite_slp::token_id::TokenId;
+use chronik_indexer::indexer::{ChronikIndexer, Node};
 use chronik_proto::proto;
 use hyper::Uri;
 use thiserror::Error;
 
-use crate::{error::ReportError, parse::parse_script_variant_hex};
+use crate::{
+    error::ReportError,
+    parse::{parse_lokad_id_hex, parse_script_variant_hex},
+};
 
 /// Errors for HTTP handlers.
 #[derive(Debug, Error, PartialEq)]
@@ -38,7 +42,9 @@ fn get_param<T: FromStr>(
 where
     T::Err: Display,
 {
-    let Some(param) = params.get(param_name) else { return Ok(None) };
+    let Some(param) = params.get(param_name) else {
+        return Ok(None);
+    };
     Ok(Some(param.parse::<T>().map_err(|err| InvalidParam {
         param_name: param_name.to_string(),
         param_value: param.to_string(),
@@ -56,8 +62,9 @@ pub async fn handle_block_txs(
     hash_or_height: String,
     query_params: &HashMap<String, String>,
     indexer: &ChronikIndexer,
+    node: &Node,
 ) -> Result<proto::TxHistoryPage> {
-    let blocks = indexer.blocks();
+    let blocks = indexer.blocks(node);
     let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
     let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
     blocks.block_txs(hash_or_height, page_num as usize, page_size as usize)
@@ -70,9 +77,10 @@ pub async fn handle_script_confirmed_txs(
     payload: &str,
     query_params: &HashMap<String, String>,
     indexer: &ChronikIndexer,
+    node: &Node,
 ) -> Result<proto::TxHistoryPage> {
     let script_variant = parse_script_variant_hex(script_type, payload)?;
-    let script_history = indexer.script_history()?;
+    let script_history = indexer.script_history(node)?;
     let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
     let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
     let script = script_variant.to_script();
@@ -87,24 +95,26 @@ pub async fn handle_script_history(
     payload: &str,
     query_params: &HashMap<String, String>,
     indexer: &ChronikIndexer,
+    node: &Node,
 ) -> Result<proto::TxHistoryPage> {
     let script_variant = parse_script_variant_hex(script_type, payload)?;
-    let script_history = indexer.script_history()?;
+    let script_history = indexer.script_history(node)?;
     let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
     let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
     let script = script_variant.to_script();
     script_history.rev_history(&script, page_num as usize, page_size as usize)
 }
 
-/// Return a page of the confirmed txs of the given script.
+/// Return a page of the unconfirmed txs of the given script.
 /// Scripts are identified by script_type and payload.
 pub async fn handle_script_unconfirmed_txs(
     script_type: &str,
     payload: &str,
     indexer: &ChronikIndexer,
+    node: &Node,
 ) -> Result<proto::TxHistoryPage> {
     let script_variant = parse_script_variant_hex(script_type, payload)?;
-    let script_history = indexer.script_history()?;
+    let script_history = indexer.script_history(node)?;
     let script = script_variant.to_script();
     script_history.unconfirmed_txs(&script)
 }
@@ -124,4 +134,113 @@ pub async fn handle_script_utxos(
         script: script.bytecode().to_vec(),
         utxos,
     })
+}
+
+/// Return a page of the confirmed txs of the given token ID.
+pub async fn handle_token_id_confirmed_txs(
+    token_id_hex: &str,
+    query_params: &HashMap<String, String>,
+    indexer: &ChronikIndexer,
+    node: &Node,
+) -> Result<proto::TxHistoryPage> {
+    let token_id = token_id_hex.parse::<TokenId>()?;
+    let token_id_history = indexer.token_id_history(node);
+    let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
+    let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
+    token_id_history.confirmed_txs(
+        token_id,
+        page_num as usize,
+        page_size as usize,
+    )
+}
+
+/// Return a page of the tx history of the given token ID, in reverse
+/// chronological order, i.e. the latest transaction first and then going back
+/// in time.
+pub async fn handle_token_id_history(
+    token_id_hex: &str,
+    query_params: &HashMap<String, String>,
+    indexer: &ChronikIndexer,
+    node: &Node,
+) -> Result<proto::TxHistoryPage> {
+    let token_id = token_id_hex.parse::<TokenId>()?;
+    let token_id_history = indexer.token_id_history(node);
+    let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
+    let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
+    token_id_history.rev_history(
+        token_id,
+        page_num as usize,
+        page_size as usize,
+    )
+}
+
+/// Return a page of the unconfirmed txs of the given token ID.
+pub async fn handle_token_id_unconfirmed_txs(
+    token_id_hex: &str,
+    indexer: &ChronikIndexer,
+    node: &Node,
+) -> Result<proto::TxHistoryPage> {
+    let token_id = token_id_hex.parse::<TokenId>()?;
+    let token_id_history = indexer.token_id_history(node);
+    token_id_history.unconfirmed_txs(token_id)
+}
+
+/// Return the UTXOs of the given token ID.
+pub async fn handle_token_id_utxos(
+    token_id_hex: &str,
+    indexer: &ChronikIndexer,
+) -> Result<proto::Utxos> {
+    let token_id = token_id_hex.parse::<TokenId>()?;
+    let token_id_utxos = indexer.token_id_utxos();
+    let utxos = token_id_utxos.utxos(token_id)?;
+    Ok(proto::Utxos { utxos })
+}
+
+/// Return a page of the confirmed txs of the given LOKAD ID.
+pub async fn handle_lokad_id_confirmed_txs(
+    lokad_id_hex: &str,
+    query_params: &HashMap<String, String>,
+    indexer: &ChronikIndexer,
+    node: &Node,
+) -> Result<proto::TxHistoryPage> {
+    let lokad_id = parse_lokad_id_hex(lokad_id_hex)?;
+    let lokad_id_history = indexer.lokad_id_history(node);
+    let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
+    let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
+    lokad_id_history.confirmed_txs(
+        lokad_id,
+        page_num as usize,
+        page_size as usize,
+    )
+}
+
+/// Return a page of the tx history of the given LOKAD ID, in reverse
+/// chronological order, i.e. the latest transaction first and then going back
+/// in time.
+pub async fn handle_lokad_id_history(
+    lokad_id_hex: &str,
+    query_params: &HashMap<String, String>,
+    indexer: &ChronikIndexer,
+    node: &Node,
+) -> Result<proto::TxHistoryPage> {
+    let lokad_id = parse_lokad_id_hex(lokad_id_hex)?;
+    let lokad_id_history = indexer.lokad_id_history(node);
+    let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
+    let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
+    lokad_id_history.rev_history(
+        lokad_id,
+        page_num as usize,
+        page_size as usize,
+    )
+}
+
+/// Return a page of the unconfirmed txs of the given LOKAD ID.
+pub async fn handle_lokad_id_unconfirmed_txs(
+    lokad_id_hex: &str,
+    indexer: &ChronikIndexer,
+    node: &Node,
+) -> Result<proto::TxHistoryPage> {
+    let lokad_id = parse_lokad_id_hex(lokad_id_hex)?;
+    let lokad_id_history = indexer.lokad_id_history(node);
+    lokad_id_history.unconfirmed_txs(lokad_id)
 }

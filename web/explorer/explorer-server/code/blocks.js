@@ -12,6 +12,12 @@ const renderInt = number => {
 const renderAge = timestamp => moment(timestamp * 1000).fromNow();
 const renderTemplate = height =>
     '<a href="/block-height/' + height + '">' + renderInt(height) + '</a>';
+const renderFinal = isFinal => {
+    if (isFinal) {
+        return 'Yes';
+    }
+    return 'No';
+};
 const renderHash = (hash, _type, _row, meta) => {
     const api = new $.fn.dataTable.Api(meta.settings);
     const isHidden = !api.column(4).responsiveHidden();
@@ -97,6 +103,7 @@ const dataTable = () => {
 
     $('#blocks-table').DataTable({
         searching: false,
+        retrieve: true,
         lengthMenu: [50, 100, 250, 500, 1000],
         pageLength: DEFAULT_ROWS_PER_PAGE,
         language: {
@@ -123,6 +130,12 @@ const dataTable = () => {
                 data: 'height',
                 render: renderTemplate,
                 orderSequence: ['desc', 'asc'],
+            },
+            {
+                name: 'final',
+                data: 'isFinal',
+                orderable: false,
+                render: renderFinal,
             },
             {
                 data: 'hash',

@@ -11,6 +11,7 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/util/setup_common.h>
 
 #include <cstdint>
 #include <limits>
@@ -29,11 +30,11 @@ ConsumeBanTimeOffset(FuzzedDataProvider &fuzzed_data_provider) noexcept {
 }
 } // namespace
 
-void initialize() {
-    static const auto testing_setup = MakeFuzzingContext<>();
+void initialize_banman() {
+    static const auto testing_setup = MakeNoLogFileContext<>();
 }
 
-void test_one_input(const std::vector<uint8_t> &buffer) {
+FUZZ_TARGET_INIT(banman, initialize_banman) {
     FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
     const fs::path banlist_file = gArgs.GetDataDirNet() / "fuzzed_banlist.dat";
     fs::remove(banlist_file);
@@ -42,53 +43,31 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
         BanMan ban_man{banlist_file, chainparams, nullptr,
                        ConsumeBanTimeOffset(fuzzed_data_provider)};
         while (fuzzed_data_provider.ConsumeBool()) {
-            switch (fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 11)) {
-                case 0: {
+            CallOneOf(
+                fuzzed_data_provider,
+                [&] {
                     ban_man.Ban(ConsumeNetAddr(fuzzed_data_provider),
                                 ConsumeBanTimeOffset(fuzzed_data_provider),
                                 fuzzed_data_provider.ConsumeBool());
-                    break;
-                }
-                case 1: {
+                },
+                [&] {
                     ban_man.Ban(ConsumeSubNet(fuzzed_data_provider),
                                 ConsumeBanTimeOffset(fuzzed_data_provider),
                                 fuzzed_data_provider.ConsumeBool());
-                    break;
-                }
-                case 2: {
-                    ban_man.ClearBanned();
-                    break;
-                }
-                case 4: {
-                    ban_man.IsBanned(ConsumeNetAddr(fuzzed_data_provider));
-                    break;
-                }
-                case 5: {
-                    ban_man.IsBanned(ConsumeSubNet(fuzzed_data_provider));
-                    break;
-                }
-                case 6: {
-                    ban_man.Unban(ConsumeNetAddr(fuzzed_data_provider));
-                    break;
-                }
-                case 7: {
-                    ban_man.Unban(ConsumeSubNet(fuzzed_data_provider));
-                    break;
-                }
-                case 8: {
+                },
+                [&] { ban_man.ClearBanned(); }, [] {},
+                [&] { ban_man.IsBanned(ConsumeNetAddr(fuzzed_data_provider)); },
+                [&] { ban_man.IsBanned(ConsumeSubNet(fuzzed_data_provider)); },
+                [&] { ban_man.Unban(ConsumeNetAddr(fuzzed_data_provider)); },
+                [&] { ban_man.Unban(ConsumeSubNet(fuzzed_data_provider)); },
+                [&] {
                     banmap_t banmap;
                     ban_man.GetBanned(banmap);
-                    break;
-                }
-                case 9: {
-                    ban_man.DumpBanlist();
-                    break;
-                }
-                case 11: {
+                },
+                [&] { ban_man.DumpBanlist(); }, [] {},
+                [&] {
                     ban_man.Discourage(ConsumeNetAddr(fuzzed_data_provider));
-                    break;
-                }
-            }
+                });
         }
     }
     fs::remove(fs::PathToString(banlist_file));

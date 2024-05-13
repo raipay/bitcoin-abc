@@ -18,10 +18,12 @@
         },
         "black": {
             "type": "black",
-            "version": ">=22.8.0",
-            "include": "(\\.py$)",
+            "version": ">=24.0.0",
+            "include": [
+                "(\\.py$)",
+                "(^electrum/electrum-abc$)"
+            ],
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^contrib/apple-sdk-tools/)",
                 "(^electrum/electrumabc_gui/qt/icons.py)",
                 "(\\_pb2.py$)"
@@ -30,9 +32,11 @@
         "flake8": {
             "type": "flake8",
             "version": ">=5.0",
-            "include": "(\\.py$)",
+            "include": [
+                "(\\.py$)",
+                "(^electrum/electrum-abc$)"
+            ],
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^contrib/apple-sdk-tools/)",
                 "(^electrum/electrumabc_gui/qt/icons.py)",
                 "(\\_pb2.py$)"
@@ -89,7 +93,6 @@
                 "(^build-aux/m4/)",
                 "(^depends/)",
                 "(^doc/release-notes/)",
-                "(^contrib/gitian-builder/)",
                 "(^src/(qt/locale|secp256k1|univalue|leveldb)/)",
                 "(^test/lint/dictionary/)",
                 "(^web/e.cash/public/animations/)",
@@ -146,13 +149,8 @@
                 "(^src/compat/assumptions.h$)"
             ]
         },
-        "lint-source-filename": {
-            "type": "lint-source-filename",
-            "include": "(^(src|chronik)/.*\\.(h|c|cpp)$)",
-            "exclude": [
-                "(^src/(secp256k1|univalue|leveldb)/)",
-                "(^src/bench/nanobench.h$)"
-            ]
+        "check-files": {
+            "type": "check-files"
         },
         "lint-boost-dependencies": {
             "type": "lint-boost-dependencies",
@@ -162,25 +160,7 @@
             "type": "lint-python-encoding",
             "include": "(\\.py$)",
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^contrib/apple-sdk-tools/)"
-            ]
-        },
-        "lint-python-shebang": {
-            "type": "lint-python-shebang",
-            "include": "(\\.py$)",
-            "exclude": [
-                "(__init__\\.py$)",
-                "(^contrib/gitian-builder/)",
-                "(^contrib/apple-sdk-tools/)",
-                "(^electrum/electrumabc.*)"
-            ]
-        },
-        "lint-bash-shebang": {
-            "type": "lint-bash-shebang",
-            "include": "(\\.(sh|bash)$)",
-            "exclude": [
-                "(^contrib/gitian-builder/)"
             ]
         },
         "shellcheck": {
@@ -192,7 +172,6 @@
             ],
             "include": "(\\.(sh|bash)$)",
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^src/(secp256k1|univalue)/)",
                 "(^electrum/)"
             ]
@@ -201,7 +180,6 @@
             "type": "lint-shell-locale",
             "include": "(\\.(sh|bash)$)",
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^src/(secp256k1|univalue)/)",
                 "(^cmake/utils/log-and-print-on-failure.sh)"
             ]
@@ -238,7 +216,6 @@
             "type": "lint-whitespace",
             "include": "(\\.(ac|am|cmake|conf|in|include|json|m4|md|openrc|php|pl|rs|sh|txt|yml)$)",
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^src/(secp256k1|univalue|leveldb)/)",
                 "(^src/bench/nanobench.h$)"
             ]
@@ -261,14 +238,15 @@
             "include": [
                 "(\\.md$)"
             ],
-            "exclude": "(^contrib/gitian-builder/)"
+            "exclude": [
+                "(^modules/docs/chronik.e.cash/)"
+            ]
         },
         "lint-python-mypy": {
             "type": "lint-python-mypy",
             "version": ">=0.910",
             "include": "(\\.py$)",
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^contrib/apple-sdk-tools/)",
                 "(^contrib/macdeploy/)",
                 "(^electrum/)"
@@ -283,7 +261,6 @@
             "type": "lint-python-mutable-default",
             "include": "(\\.py$)",
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^contrib/apple-sdk-tools/)"
             ]
         },
@@ -305,9 +282,11 @@
         "lint-python-isort": {
             "type": "lint-python-isort",
             "version": ">=5.6.4",
-            "include": "(\\.py$)",
+            "include": [
+                "(\\.py$)",
+                "(^electrum/electrum-abc$)"
+            ],
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^contrib/apple-sdk-tools/)",
                 "(^electrum/electrumabc_gui/qt/icons.py)",
                 "(\\_pb2.py$)"
@@ -335,7 +314,6 @@
             "version": ">=0.78",
             "include": "(\\.py$)",
             "exclude": [
-                "(^contrib/gitian-builder/)",
                 "(^contrib/apple-sdk-tools/)",
                 "(^electrum/)"
             ]

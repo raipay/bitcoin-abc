@@ -14,9 +14,13 @@ use rocksdb::{ColumnFamilyDescriptor, IteratorMode};
 use thiserror::Error;
 
 use crate::{
-    groups::{ScriptHistoryWriter, ScriptUtxoWriter},
+    groups::{
+        LokadIdHistoryWriter, ScriptHistoryWriter, ScriptUtxoWriter,
+        TokenIdHistoryWriter, TokenIdUtxoWriter,
+    },
     io::{
-        BlockStatsWriter, BlockWriter, MetadataWriter, SpentByWriter, TxWriter,
+        token::TokenWriter, BlockStatsWriter, BlockWriter, MetadataWriter,
+        SpentByWriter, TxWriter,
     },
 };
 
@@ -31,6 +35,10 @@ pub const CF_BLK_STATS: &str = "blk_stats";
 /// Column family for the block height of the first tx_num of that block. Used
 /// to get the block height of a tx.
 pub const CF_FIRST_TX_BY_BLK: &str = "first_tx_by_blk";
+/// Column family to store tx history by LOKAD ID.
+pub const CF_LOKAD_ID_HISTORY: &str = "lokad_id_history";
+/// Column family to store number of txs by LOKAD ID.
+pub const CF_LOKAD_ID_HISTORY_NUM_TXS: &str = "lokad_id_history_num_txs";
 /// Column family to lookup a block by its hash.
 pub const CF_LOOKUP_BLK_BY_HASH: &str = "lookup_blk_by_hash";
 /// Column family to lookup a tx by its hash.
@@ -43,8 +51,20 @@ pub const CF_SCRIPT_HISTORY: &str = "script_history";
 pub const CF_SCRIPT_HISTORY_NUM_TXS: &str = "script_history_num_txs";
 /// Column family for utxos by script.
 pub const CF_SCRIPT_UTXO: &str = "script_utxo";
+/// Column family to store tx history by token ID.
+pub const CF_TOKEN_ID_HISTORY: &str = "token_id_history";
+/// Column family to store number of txs by token ID.
+pub const CF_TOKEN_ID_HISTORY_NUM_TXS: &str = "token_id_history_num_txs";
+/// Column family for utxos by token ID.
+pub const CF_TOKEN_ID_UTXO: &str = "token_id_utxo";
 /// Column family to store which outputs have been spent by which tx inputs.
 pub const CF_SPENT_BY: &str = "spent_by";
+/// Column family for genesis info by token_tx_num
+pub const CF_TOKEN_GENESIS_INFO: &str = "token_genesis_info";
+/// Column family for TokenMeta by token_tx_num
+pub const CF_TOKEN_META: &str = "token_meta";
+/// Column family for token tx data by tx
+pub const CF_TOKEN_TX: &str = "token_tx";
 /// Column family for the tx data.
 pub const CF_TX: &str = "tx";
 
@@ -84,6 +104,10 @@ impl Db {
         ScriptHistoryWriter::add_cfs(&mut cfs);
         ScriptUtxoWriter::add_cfs(&mut cfs);
         SpentByWriter::add_cfs(&mut cfs);
+        TokenWriter::add_cfs(&mut cfs);
+        TokenIdHistoryWriter::add_cfs(&mut cfs);
+        TokenIdUtxoWriter::add_cfs(&mut cfs);
+        LokadIdHistoryWriter::add_cfs(&mut cfs);
         Self::open_with_cfs(path, cfs)
     }
 
@@ -168,9 +192,25 @@ impl Db {
             .map(|result| Ok(result.map_err(RocksDb)?))
     }
 
+    pub(crate) fn full_iterator(
+        &self,
+        cf: &CF,
+    ) -> impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>)>> + '_ {
+        self.db
+            .full_iterator_cf(cf, IteratorMode::Start)
+            .map(|result| Ok(result.map_err(RocksDb)?))
+    }
+
+    pub(crate) fn estimate_num_keys(&self, cf: &CF) -> Result<Option<u64>> {
+        Ok(self
+            .db
+            .property_int_value_cf(cf, "rocksdb.estimate-num-keys")
+            .map_err(RocksDb)?)
+    }
+
     /// Writes the batch to the Db atomically.
     pub fn write_batch(&self, write_batch: WriteBatch) -> Result<()> {
-        self.db.write(write_batch).map_err(RocksDb)?;
+        self.db.write_without_wal(write_batch).map_err(RocksDb)?;
         Ok(())
     }
 

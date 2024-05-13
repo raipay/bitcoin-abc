@@ -9,6 +9,7 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/util/setup_common.h>
 
 #include <cstdint>
 #include <vector>
@@ -17,12 +18,13 @@ namespace {
 const TestingSetup *g_setup;
 } // namespace
 
-void initialize() {
-    static const auto testing_setup = MakeFuzzingContext<const TestingSetup>();
+void initialize_connman() {
+    static const auto testing_setup =
+        MakeNoLogFileContext<const TestingSetup>();
     g_setup = testing_setup.get();
 }
 
-void test_one_input(const std::vector<uint8_t> &buffer) {
+FUZZ_TARGET_INIT(connman, initialize_connman) {
     const Config &config = GetConfig();
     FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
     CConnman connman{config, fuzzed_data_provider.ConsumeIntegral<uint64_t>(),
@@ -34,73 +36,59 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
     CSubNet random_subnet;
     std::string random_string;
     while (fuzzed_data_provider.ConsumeBool()) {
-        switch (fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 19)) {
-            case 0:
-                random_netaddr = ConsumeNetAddr(fuzzed_data_provider);
-                break;
-            case 1:
-                random_subnet = ConsumeSubNet(fuzzed_data_provider);
-                break;
-            case 2:
+        CallOneOf(
+            fuzzed_data_provider,
+            [&] { random_netaddr = ConsumeNetAddr(fuzzed_data_provider); },
+            [&] { random_subnet = ConsumeSubNet(fuzzed_data_provider); },
+            [&] {
                 random_string =
                     fuzzed_data_provider.ConsumeRandomLengthString(64);
-                break;
-            case 3:
-                connman.AddNode(random_string);
-                break;
-            case 4:
+            },
+            [&] { connman.AddNode(random_string); },
+            [&] {
                 connman.CheckIncomingNonce(
                     fuzzed_data_provider.ConsumeIntegral<uint64_t>());
-                break;
-            case 5:
+            },
+            [&] {
                 connman.DisconnectNode(
                     fuzzed_data_provider.ConsumeIntegral<NodeId>());
-                break;
-            case 6:
-                connman.DisconnectNode(random_netaddr);
-                break;
-            case 7:
-                connman.DisconnectNode(random_string);
-                break;
-            case 8:
-                connman.DisconnectNode(random_subnet);
-                break;
-            case 9:
-                connman.ForEachNode([](auto) {});
-                break;
-            case 10:
+            },
+            [&] { connman.DisconnectNode(random_netaddr); },
+            [&] { connman.DisconnectNode(random_string); },
+            [&] { connman.DisconnectNode(random_subnet); },
+            [&] { connman.ForEachNode([](auto) {}); },
+            [&] {
                 (void)connman.ForNode(
                     fuzzed_data_provider.ConsumeIntegral<NodeId>(),
                     [&](auto) { return fuzzed_data_provider.ConsumeBool(); });
-                break;
-            case 11:
+            },
+            [&] {
                 (void)connman.GetAddresses(
                     fuzzed_data_provider.ConsumeIntegral<size_t>(),
                     fuzzed_data_provider.ConsumeIntegral<size_t>(),
                     std::nullopt);
-                break;
-            case 12: {
+            },
+            [&] {
                 (void)connman.GetAddresses(
                     random_node, fuzzed_data_provider.ConsumeIntegral<size_t>(),
                     fuzzed_data_provider.ConsumeIntegral<size_t>());
-                break;
-            }
-            case 13:
+            },
+            [&] {
                 (void)connman.GetDeterministicRandomizer(
                     fuzzed_data_provider.ConsumeIntegral<uint64_t>());
-                break;
-            case 14:
+            },
+            [&] {
                 (void)connman.GetNodeCount(
                     fuzzed_data_provider.PickValueInArray(
                         {CConnman::CONNECTIONS_NONE, CConnman::CONNECTIONS_IN,
                          CConnman::CONNECTIONS_OUT,
                          CConnman::CONNECTIONS_ALL}));
-                break;
-            case 15:
+            },
+            [&] {
                 (void)connman.OutboundTargetReached(
                     fuzzed_data_provider.ConsumeBool());
-                break;
-            case 16: {
+            },
+            [&] {
                 CSerializedNetMsg serialized_net_msg;
                 serialized_net_msg.m_type =
                     fuzzed_data_provider.ConsumeRandomLengthString(
@@ -109,19 +97,17 @@ void test_one_input(const std::vector<uint8_t> &buffer) {
                     ConsumeRandomLengthByteVector(fuzzed_data_provider);
                 connman.PushMessage(&random_node,
                                     std::move(serialized_net_msg));
-                break;
-            }
-            case 17:
-                connman.RemoveAddedNode(random_string);
-                break;
-            case 18:
+            },
+            [&] { connman.RemoveAddedNode(random_string); },
+            [&] {
                 connman.SetNetworkActive(fuzzed_data_provider.ConsumeBool());
-                break;
-            case 19:
+            },
+            [&] {
                 connman.SetTryNewOutboundPeer(
                     fuzzed_data_provider.ConsumeBool());
-                break;
-        }
+                connman.SetTryNewOutboundPeer(
+                    fuzzed_data_provider.ConsumeBool());
+            });
     }
     (void)connman.GetAddedNodeInfo();
     (void)connman.GetExtraFullOutboundCount();

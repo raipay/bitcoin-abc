@@ -12,6 +12,8 @@
 struct BlockHash;
 struct TxId;
 
+static constexpr bool DEFAULT_TXINDEX{false};
+
 /**
  * TxIndex is used to look up transactions included in the blockchain by ID.
  * The index is written to a LevelDB database and records the filesystem
@@ -23,6 +25,8 @@ protected:
 
 private:
     const std::unique_ptr<DB> m_db;
+
+    bool AllowPrune() const override { return false; }
 
 protected:
     bool WriteBlock(const CBlock &block, const CBlockIndex *pindex) override;

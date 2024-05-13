@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #
 # Electrum ABC - lightweight eCash client
 # Copyright (C) 2020 The Electrum ABC developers
@@ -25,9 +24,6 @@
 # SOFTWARE.
 from __future__ import annotations
 
-# Importing concurrent.futures (in addition to concurrent) is needed for python 3.7.
-# It is no longer needed for python 3.8+.
-import concurrent
 import concurrent.futures
 import importlib.util
 import json
@@ -144,16 +140,16 @@ class Plugins(DaemonThread):
         ut_prefix = "_untranslated_"
         for key in ("fullname", "description"):
             ut_key = ut_prefix + key
-            ut_val = val = d.get(
-                ut_key
-            )  # first see if saved original untranslated metadata is available
+            # first see if saved original untranslated metadata is available
+            ut_val = val = d.get(ut_key)
             if val is None:
                 ut_val = val = d.get(key)
                 if not val:
                     continue
             delim = d.get(key + "_delimiter", " ")
             if isinstance(val, (list, tuple)):
-                val = delim.join([_(x) for x in val])  # retranslate each list item
+                # retranslate each list item
+                val = delim.join([_(x) for x in val])
             elif isinstance(val, str):
                 val = _(val)  # retranslate
             if not isinstance(val, str):
@@ -162,10 +158,11 @@ class Plugins(DaemonThread):
                     f" instead got {type(val)}"
                 )
             else:
-                d[key] = val  # rewrite translated string
-                d[
-                    ut_key
-                ] = ut_val  # save untranslated metadata for later so that this function may be called again from GUI
+                # rewrite translated string
+                d[key] = val
+                # save untranslated metadata for later so that this function may be
+                # called again from GUI
+                d[ut_key] = ut_val
 
     def load_internal_plugins(self):
         for loader, name, ispkg in pkgutil.iter_modules(

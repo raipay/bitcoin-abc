@@ -163,8 +163,38 @@ module.exports = {
             });
         }
 
-        // At this point, if you haven't found the miner, you won't
         if (!minerInfo) {
+            // Test for the "last push" potential pool miner
+            // Probably a pool because
+            // - Different output script for each block
+            // - Coinbase script follows a pattern
+            //   - 36 characters
+            //   - then an accurate ascii push for the last string
+            // Even if not a pool, it's more useful to identify miners who fit this pattern
+            // by this push than by nothing at all
+            // e.g. the genesis block fits this pattern
+            const UNKNOWN_POOL_PAD_CHARS = 36;
+            try {
+                const lastPushdataAndPush = testedCoinbaseScript.slice(
+                    UNKNOWN_POOL_PAD_CHARS,
+                );
+                const { data } = consumeNextPush({
+                    remainingHex: lastPushdataAndPush,
+                });
+                if (containsOnlyPrintableAscii(data)) {
+                    return `unknown, ${Buffer.from(data, 'hex').toString(
+                        'ascii',
+                    )}`;
+                }
+            } catch (err) {
+                console.log(
+                    `Error parsing unknown miner as last push pool`,
+                    err,
+                );
+                // Don't know this miner
+                return 'unknown';
+            }
+            // Don't know this miner
             return 'unknown';
         }
 
@@ -207,6 +237,11 @@ module.exports = {
                     // If this is IceBerg, identify uniquely
                     // Iceberg is probably a solo miner using CK Pool software
                     return `IceBerg`;
+                }
+
+                if (infoAscii === 'mined by iceberg') {
+                    // If the miner self identifies as iceberg, go with it
+                    return `iceberg`;
                 }
 
                 // Return your improved 'miner' info
@@ -557,6 +592,36 @@ module.exports = {
                     // A buy or sell signal tx will have '01' at stackArray[1] and stackArray[2] and
                     // token id at stackArray[3]
                     tokenId = stackArray[3];
+                }
+                break;
+            }
+            case opReturn.knownApps.payButton.prefix: {
+                app = opReturn.knownApps.payButton.app;
+                // PayButton v0
+                // https://github.com/Bitcoin-ABC/bitcoin-abc/blob/master/doc/standards/paybutton.md
+                // <lokad> <OP_0> <data> <nonce>
+                // The data could be interesting, ignore the rest
+                if (stackArray.length >= 3) {
+                    // Version byte is at index 1
+                    const payButtonTxVersion = stackArray[1];
+                    if (payButtonTxVersion !== '00') {
+                        msg = `Unsupported version: 0x${payButtonTxVersion}`;
+                    } else {
+                        const dataPush = stackArray[2];
+                        if (dataPush === '00') {
+                            // Per spec, PayButton txs with no data push OP_0 in this position
+                            msg = 'no data';
+                        } else {
+                            // Data is utf8 encoded
+                            msg = prepareStringForTelegramHTML(
+                                Buffer.from(stackArray[2], 'hex').toString(
+                                    'utf8',
+                                ),
+                            );
+                        }
+                    }
+                } else {
+                    msg = '[off spec]';
                 }
                 break;
             }
@@ -964,6 +1029,10 @@ module.exports = {
             default:
                 msg += `Unknown memo action`;
         }
+        // Test for msgs that are intended for non-XEC audience
+        if (msg.includes('BCH')) {
+            msg = `[check memo.cash for msg]`;
+        }
         return { app, msg };
     },
     /**
@@ -1249,7 +1318,6 @@ module.exports = {
      * Build a string formatted for Telegram's API using HTML encoding
      * @param {object} parsedBlock
      * @param {array or false} coingeckoPrices if no coingecko API error
-     * @param {string | false} avalanchePeerName avalanche peername of staking rwd winner if available
      * @param {Map or false} tokenInfoMap if no chronik API error
      * @param {Map or false} addressInfoMap if no chronik API error
      * @returns {function} splitOverflowTgMsg(tgMsg)
@@ -1257,7 +1325,6 @@ module.exports = {
     getBlockTgMessage: function (
         parsedBlock,
         coingeckoPrices,
-        avalanchePeerName,
         tokenInfoMap,
         outputScriptInfoMap,
     ) {
@@ -1267,6 +1334,7 @@ module.exports = {
         // Define newsworthy types of txs in parsedTxs
         // These arrays will be used to present txs in batches by type
         const genesisTxTgMsgLines = [];
+        let cashtabTokenRewards = 0;
         const tokenSendTxTgMsgLines = [];
         const tokenBurnTxTgMsgLines = [];
         const opReturnTxTgMsgLines = [];
@@ -1315,6 +1383,10 @@ module.exports = {
                     }
                     case opReturn.knownApps.alias.app: {
                         appEmoji = emojis.alias;
+                        break;
+                    }
+                    case opReturn.knownApps.payButton.app: {
+                        appEmoji = emojis.payButton;
                         break;
                     }
                     case opReturn.knownApps.cashtabMsg.app: {
@@ -1434,6 +1506,21 @@ module.exports = {
                         undecimalizedTokenReceivedAmount.toString(),
                         decimals,
                     );
+
+                // Special handling for Cashtab rewards
+                if (
+                    // CACHET token id
+                    tokenId ===
+                        'aed861a31b96934b88c0252ede135cb9700d7649f69191235087a3030e553cb1' &&
+                    // outputScript of token-server
+                    xecSendingOutputScripts.values().next().value ===
+                        '76a914821407ac2993f8684227004f4086082f3f801da788ac'
+                ) {
+                    cashtabTokenRewards += 1;
+                    // No further parsing for this tx
+                    continue;
+                }
+
                 tokenSendMsg = `${emojis.tokenSend} <a href="${config.blockExplorer}/tx/${txid}">${decimalizedTokenReceivedAmount}</a> <a href="${config.blockExplorer}/tx/${tokenId}">${tokenTicker}</a>`;
 
                 tokenSendTxTgMsgLines.push(tokenSendMsg);
@@ -1607,6 +1694,21 @@ module.exports = {
             } | ${miner}`,
         );
 
+        // Halving countdown
+        const HALVING_HEIGHT = 840000;
+        const blocksLeft = HALVING_HEIGHT - height;
+        if (blocksLeft > 0) {
+            // countdown
+            tgMsg.push(
+                `⏰ ${blocksLeft.toLocaleString()} block${
+                    blocksLeft !== 1 ? 's' : ''
+                } until eCash halving`,
+            );
+        }
+        if (height === HALVING_HEIGHT) {
+            tgMsg.push(`🎉🎉🎉 eCash block reward reduced by 50% 🎉🎉🎉`);
+        }
+
         // Staker
         // Staking rewards to <staker>
         if (staker) {
@@ -1617,9 +1719,7 @@ module.exports = {
                     coingeckoPrices,
                 )} to <a href="${config.blockExplorer}/address/${
                     staker.staker
-                }">${returnAddressPreview(staker.staker)}</a>${
-                    avalanchePeerName ? ` | ${avalanchePeerName}` : ''
-                }`,
+                }">${returnAddressPreview(staker.staker)}</a>`,
             );
         }
 
@@ -1651,8 +1751,23 @@ module.exports = {
             tgMsg = tgMsg.concat(genesisTxTgMsgLines);
         }
 
-        // eToken Send txs
+        // Cashtab rewards
+        if (cashtabTokenRewards > 0) {
+            tgMsg.push('');
+
+            // 1 Cashtab CACHET reward:
+            // or
+            // <n> Cashtab CACHET rewards:
+            tgMsg.push(
+                `<b>${cashtabTokenRewards} Cashtab <a href="${
+                    config.blockExplorer
+                }/tx/aed861a31b96934b88c0252ede135cb9700d7649f69191235087a3030e553cb1">CACHET</a> reward${
+                    cashtabTokenRewards > 1 ? `s` : ''
+                }</b>`,
+            );
+        }
         if (tokenSendTxTgMsgLines.length > 0) {
+            // eToken Send txs
             // Line break for new section
             tgMsg.push('');
 

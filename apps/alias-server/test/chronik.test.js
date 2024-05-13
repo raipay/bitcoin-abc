@@ -13,7 +13,7 @@ const {
     unconfirmedTxs,
     unconfirmedTxsAfterConfirmation,
 } = require('./mocks/txHistoryMocks');
-const { MockChronikClient } = require('../../mock-chronik-client');
+const { MockChronikClient } = require('../../../modules/mock-chronik-client');
 
 // todo make txsperpage a param and test different values
 describe('alias-server chronik.js', () => {
@@ -33,7 +33,7 @@ describe('alias-server chronik.js', () => {
         );
         mockedChronik.setScript(type, hash);
         // Set the mock tx history
-        mockedChronik.setTxHistory(allTxHistoryFromChronik);
+        mockedChronik.setTxHistory(type, hash, allTxHistoryFromChronik);
 
         const result = await getUnprocessedTxHistory(
             mockedChronik,
@@ -61,7 +61,7 @@ describe('alias-server chronik.js', () => {
         );
         mockedChronik.setScript(type, hash);
         // Set the mock tx history
-        mockedChronik.setTxHistory(allTxHistory);
+        mockedChronik.setTxHistory(type, hash, allTxHistory);
 
         const result = await getUnprocessedTxHistory(
             mockedChronik,
@@ -88,7 +88,7 @@ describe('alias-server chronik.js', () => {
         );
         mockedChronik.setScript(type, hash);
         // Set the mock tx history
-        mockedChronik.setTxHistory(allTxHistory);
+        mockedChronik.setTxHistory(type, hash, allTxHistory);
 
         const result = await getUnprocessedTxHistory(
             mockedChronik,

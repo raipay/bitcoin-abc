@@ -1898,10 +1898,9 @@ BOOST_AUTO_TEST_CASE(block_vote_finalization_tip) {
     // Create a couple concurrent chain tips
     CBlockIndex *tip = provider.buildVoteItem();
 
-    const auto &config = GetConfig();
     auto &activeChainstate = m_node.chainman->ActiveChainstate();
     BlockValidationState state;
-    activeChainstate.InvalidateBlock(config, state, tip);
+    activeChainstate.InvalidateBlock(state, tip);
 
     // Use another script to make sure we don't generate the same block again
     CBlock altblock = CreateAndProcessBlock({}, CScript() << OP_TRUE);
@@ -1917,7 +1916,7 @@ BOOST_AUTO_TEST_CASE(block_vote_finalization_tip) {
         LOCK(cs_main);
         activeChainstate.ResetBlockFailureFlags(tip);
     }
-    activeChainstate.ActivateBestChain(config, state);
+    activeChainstate.ActivateBestChain(state);
 
     BOOST_CHECK(addToReconcile(tip));
     BOOST_CHECK(addToReconcile(alttip));
@@ -2107,7 +2106,7 @@ BOOST_AUTO_TEST_CASE(vote_map_comparator) {
                     std::get<const CTransactionRef>(it->first)->GetId());
                 BOOST_CHECK(iter.has_value());
 
-                CFeeRate currentFeeRate = (*iter)->GetModifiedFeeRate();
+                CFeeRate currentFeeRate = (**iter)->GetModifiedFeeRate();
 
                 BOOST_CHECK(currentFeeRate < lastFeeRate);
                 lastFeeRate = currentFeeRate;
@@ -2178,8 +2177,8 @@ BOOST_AUTO_TEST_CASE(vote_map_tx_comparator) {
             auto iter = mempool->GetIter(tx->GetId());
             BOOST_CHECK(iter.has_value());
 
-            BOOST_CHECK((*iter)->GetModifiedFeeRate() <= lastFeeRate);
-            lastFeeRate = (*iter)->GetModifiedFeeRate();
+            BOOST_CHECK((**iter)->GetModifiedFeeRate() <= lastFeeRate);
+            lastFeeRate = (**iter)->GetModifiedFeeRate();
             it++;
         }
 
@@ -2198,7 +2197,6 @@ BOOST_AUTO_TEST_CASE(vote_map_tx_comparator) {
 }
 
 BOOST_AUTO_TEST_CASE(block_reconcile_initial_vote) {
-    const auto &config = GetConfig();
     auto &chainman = Assert(m_node.chainman);
     Chainstate &chainstate = chainman->ActiveChainstate();
 
@@ -2210,9 +2208,10 @@ BOOST_AUTO_TEST_CASE(block_reconcile_initial_vote) {
     CBlockIndex *blockindex;
     {
         LOCK(cs_main);
-        BOOST_CHECK(chainstate.AcceptBlock(config, block, state,
+        BOOST_CHECK(chainstate.AcceptBlock(block, state,
                                            /*fRequested=*/true, /*dbp=*/nullptr,
-                                           /*fNewBlock=*/nullptr));
+                                           /*fNewBlock=*/nullptr,
+                                           /*min_pow_checked=*/true));
 
         blockindex = chainman->m_blockman.LookupBlockIndex(blockhash);
         BOOST_CHECK(blockindex);
@@ -2226,7 +2225,7 @@ BOOST_AUTO_TEST_CASE(block_reconcile_initial_vote) {
     BOOST_CHECK(!g_avalanche->isAccepted(blockindex));
 
     // Call ActivateBestChain to connect the new block
-    BOOST_CHECK(chainstate.ActivateBestChain(config, state, block));
+    BOOST_CHECK(chainstate.ActivateBestChain(state, block));
     // It is a valid block so the tip is updated
     BOOST_CHECK_EQUAL(chainstate.m_chain.Tip(), blockindex);
 
@@ -2252,13 +2251,13 @@ BOOST_AUTO_TEST_CASE(compute_staking_rewards) {
     // Pick in the middle
     BlockHash prevBlockHash{uint256::ZERO};
 
-    CScript winner;
+    std::vector<CScript> winners;
 
-    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(!m_processor->getStakingRewardWinners(prevBlockHash, winners));
 
     // Null index
     BOOST_CHECK(!m_processor->computeStakingReward(nullptr));
-    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(!m_processor->getStakingRewardWinners(prevBlockHash, winners));
 
     CBlockIndex prevBlock;
     prevBlock.phashBlock = &prevBlockHash;
@@ -2267,7 +2266,7 @@ BOOST_AUTO_TEST_CASE(compute_staking_rewards) {
 
     // No quorum
     BOOST_CHECK(!m_processor->computeStakingReward(&prevBlock));
-    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(!m_processor->getStakingRewardWinners(prevBlockHash, winners));
 
     setArg("-avaminquorumstake", "0");
     setArg("-avaminquorumconnectedstakeratio", "0");
@@ -2298,7 +2297,7 @@ BOOST_AUTO_TEST_CASE(compute_staking_rewards) {
 
     // Proofs are too recent so we still have no winner
     BOOST_CHECK(!m_processor->computeStakingReward(&prevBlock));
-    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(!m_processor->getStakingRewardWinners(prevBlockHash, winners));
 
     // Make sure we picked a payout script from one of our proofs
     auto winnerExists = [&](const CScript &expectedWinner) {
@@ -2319,13 +2318,13 @@ BOOST_AUTO_TEST_CASE(compute_staking_rewards) {
 
     // Now we successfully inserted a winner in our map
     BOOST_CHECK(m_processor->computeStakingReward(&prevBlock));
-    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHash, winner));
-    BOOST_CHECK(winnerExists(winner));
+    BOOST_CHECK(m_processor->getStakingRewardWinners(prevBlockHash, winners));
+    BOOST_CHECK(winnerExists(winners[0]));
 
     // Subsequent calls are a no-op
     BOOST_CHECK(m_processor->computeStakingReward(&prevBlock));
-    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHash, winner));
-    BOOST_CHECK(winnerExists(winner));
+    BOOST_CHECK(m_processor->getStakingRewardWinners(prevBlockHash, winners));
+    BOOST_CHECK(winnerExists(winners[0]));
 
     CBlockIndex prevBlockHigh = prevBlock;
     BlockHash prevBlockHashHigh =
@@ -2333,35 +2332,37 @@ BOOST_AUTO_TEST_CASE(compute_staking_rewards) {
     prevBlockHigh.phashBlock = &prevBlockHashHigh;
     prevBlockHigh.nHeight = 101;
     BOOST_CHECK(m_processor->computeStakingReward(&prevBlockHigh));
-    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHashHigh, winner));
-    BOOST_CHECK(winnerExists(winner));
+    BOOST_CHECK(
+        m_processor->getStakingRewardWinners(prevBlockHashHigh, winners));
+    BOOST_CHECK(winnerExists(winners[0]));
 
     // No impact on previous winner so far
-    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHash, winner));
-    BOOST_CHECK(winnerExists(winner));
+    BOOST_CHECK(m_processor->getStakingRewardWinners(prevBlockHash, winners));
+    BOOST_CHECK(winnerExists(winners[0]));
 
     // Cleanup to height 101
     m_processor->cleanupStakingRewards(101);
 
     // Now the previous winner has been cleared
-    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(!m_processor->getStakingRewardWinners(prevBlockHash, winners));
 
     // But the last one remain
-    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHashHigh, winner));
-    BOOST_CHECK(winnerExists(winner));
+    BOOST_CHECK(
+        m_processor->getStakingRewardWinners(prevBlockHashHigh, winners));
+    BOOST_CHECK(winnerExists(winners[0]));
 
     // We can add it again
     BOOST_CHECK(m_processor->computeStakingReward(&prevBlock));
-    BOOST_CHECK(m_processor->getStakingRewardWinner(prevBlockHash, winner));
-    BOOST_CHECK(winnerExists(winner));
+    BOOST_CHECK(m_processor->getStakingRewardWinners(prevBlockHash, winners));
+    BOOST_CHECK(winnerExists(winners[0]));
 
     // Cleanup to higher height
     m_processor->cleanupStakingRewards(200);
 
     // No winner anymore
-    BOOST_CHECK(!m_processor->getStakingRewardWinner(prevBlockHash, winner));
+    BOOST_CHECK(!m_processor->getStakingRewardWinners(prevBlockHash, winners));
     BOOST_CHECK(
-        !m_processor->getStakingRewardWinner(prevBlockHashHigh, winner));
+        !m_processor->getStakingRewardWinners(prevBlockHashHigh, winners));
 }
 
 BOOST_AUTO_TEST_CASE(local_proof_status) {

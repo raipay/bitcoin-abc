@@ -5,7 +5,7 @@ export LC_ALL=C.UTF-8
 set -euxo pipefail
 
 TOPLEVEL=$(git rev-parse --show-toplevel)
-CMAKE_FLAGS="-DBUILD_BITCOIN_CHRONIK=ON" "${TOPLEVEL}"/contrib/devtools/build_cmake.sh
+CMAKE_FLAGS="-DBUILD_BITCOIN_CHRONIK=ON -DBUILD_BITCOIN_CHRONIK_PLUGINS=ON" "${TOPLEVEL}"/contrib/devtools/build_cmake.sh
 pushd "${BUILD_DIR}"
 ninja check-functional-extended
 TIMING_SRC_FILE="${TOPLEVEL}"/test/functional/timing.json
@@ -14,7 +14,7 @@ popd
 
 # Check that all tests are included in timing.json
 pushd "${TOPLEVEL}"/test/functional
-NON_TESTS=$(python3 -c 'from test_runner import NON_SCRIPTS; print(" ".join(NON_SCRIPTS))')
+NON_TESTS=$(python3 -c 'from test_runner import NON_TESTS; print(" ".join(NON_TESTS))')
 export NON_TESTS
 EXTRA_PRIVILEGES_TESTS=$(python3 -c 'from test_runner import EXTRA_PRIVILEGES_TESTS; print(" ".join(EXTRA_PRIVILEGES_TESTS))')
 export EXTRA_PRIVILEGES_TESTS

@@ -6,15 +6,17 @@
 #define BITCOIN_NODE_BLOCKSTORAGE_H
 
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 #include <chain.h>
+#include <chainparams.h>
 #include <fs.h>
+#include <kernel/blockmanager_opts.h>
+#include <kernel/cs_main.h>
 #include <protocol.h> // For CMessageHeader::MessageStartChars
 #include <sync.h>
 #include <txdb.h>
-
-extern RecursiveMutex cs_main;
 
 class ArgsManager;
 class BlockValidationState;
@@ -44,19 +46,22 @@ static const unsigned int UNDOFILE_CHUNK_SIZE = 0x100000; // 1 MiB
 /** The maximum size of a blk?????.dat file (since 0.8) */
 static const unsigned int MAX_BLOCKFILE_SIZE = 0x8000000; // 128 MiB
 
-extern std::atomic_bool fImporting;
+/** Size of header written by WriteBlockToDisk before a serialized CBlock */
+static constexpr size_t BLOCK_SERIALIZATION_HEADER_SIZE =
+    CMessageHeader::MESSAGE_START_SIZE + sizeof(unsigned int);
+
 extern std::atomic_bool fReindex;
-/** Pruning-related variables and constants */
-/** True if we're running in -prune mode. */
-extern bool fPruneMode;
-/** Number of MiB of block files that we're trying to stay below. */
-extern uint64_t nPruneTarget;
 
 // Because validation code takes pointers to the map's CBlockIndex objects, if
 // we ever switch to another associative container, we need to either use a
 // container that has stable addressing (true of all std associative
 // containers), or make the key a `std::unique_ptr<CBlockIndex>`
 using BlockMap = std::unordered_map<BlockHash, CBlockIndex, BlockHasher>;
+
+struct PruneLockInfo {
+    //! Height of earliest block that should be kept and not pruned
+    int height_first{std::numeric_limits<int>::max()};
+};
 
 /**
  * Maintains a tree of blocks (stored in `m_block_index`) which is consulted
@@ -70,13 +75,16 @@ class BlockManager {
     friend ChainstateManager;
 
 private:
+    const CChainParams &GetParams() const { return m_opts.chainparams; }
+    const Consensus::Params &GetConsensus() const {
+        return m_opts.chainparams.GetConsensus();
+    }
     /**
      * Load the blocktree off disk and into memory. Populate certain metadata
      * per index entry (nStatus, nChainWork, nTimeMax, etc.) as well as
      * peripheral collections like m_dirty_blockindex.
      */
-    bool LoadBlockIndex(const Consensus::Params &consensus_params)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+    bool LoadBlockIndex() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     void FlushBlockFile(bool fFinalize = false, bool finalize_undo = false);
     void FlushUndoFile(int block_file, bool finalize = false);
     bool FindBlockPos(FlatFilePos &pos, unsigned int nAddSize,
@@ -127,13 +135,34 @@ private:
      */
     bool m_check_for_pruning = false;
 
+    const bool m_prune_mode;
+
     /** Dirty block index entries. */
     std::set<CBlockIndex *> m_dirty_blockindex;
 
     /** Dirty block file entries. */
     std::set<int> m_dirty_fileinfo;
 
+    /**
+     * Map from external index name to oldest block that must not be pruned.
+     *
+     * @note Internally, only blocks at height
+     *     (height_first - PRUNE_LOCK_BUFFER - 1) and below will be pruned,
+     *     but callers should avoid assuming any particular buffer size.
+     */
+    std::unordered_map<std::string, PruneLockInfo>
+        m_prune_locks GUARDED_BY(::cs_main);
+
+    const kernel::BlockManagerOpts m_opts;
+
 public:
+    using Options = kernel::BlockManagerOpts;
+
+    explicit BlockManager(Options opts)
+        : m_prune_mode{opts.prune_target > 0}, m_opts{std::move(opts)} {};
+
+    std::atomic<bool> m_importing{false};
+
     BlockMap m_block_index GUARDED_BY(cs_main);
 
     std::vector<CBlockIndex *> GetAllBlockIndices()
@@ -150,6 +179,13 @@ public:
 
     bool WriteBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     bool LoadBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    /**
+     * Remove any pruned block & undo files that are still on disk.
+     * This could happen on some systems if the file was still being read while
+     * unlinked, or if we crash before unlinking.
+     */
+    void ScanAndUnlinkAlreadyPrunedFiles() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
     CBlockIndex *AddToBlockIndex(const CBlockHeader &block,
                                  CBlockIndex *&best_header)
@@ -171,14 +207,27 @@ public:
     CBlockFileInfo *GetBlockFileInfo(size_t n);
 
     bool WriteUndoDataForBlock(const CBlockUndo &blockundo,
-                               BlockValidationState &state, CBlockIndex *pindex,
-                               const CChainParams &chainparams)
+                               BlockValidationState &state, CBlockIndex &block)
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
+    /**
+     * Store block on disk. If dbp is not nullptr, then it provides the known
+     * position of the block within a block file on disk.
+     */
     FlatFilePos SaveBlockToDisk(const CBlock &block, int nHeight,
-                                CChain &active_chain,
-                                const CChainParams &chainparams,
-                                const FlatFilePos *dbp);
+                                CChain &active_chain, const FlatFilePos *dbp);
+
+    /** Whether running in -prune mode. */
+    [[nodiscard]] bool IsPruneMode() const { return m_prune_mode; }
+
+    /** Attempt to stay below this number of bytes of block files. */
+    [[nodiscard]] uint64_t GetPruneTarget() const {
+        return m_opts.prune_target;
+    }
+    static constexpr auto PRUNE_TARGET_MANUAL{
+        std::numeric_limits<uint64_t>::max()};
+
+    [[nodiscard]] bool LoadingBlocks() const { return m_importing || fReindex; }
 
     /**
      * Calculate the amount of disk space the block & undo files currently use
@@ -195,6 +244,11 @@ public:
     //! Check whether the block associated with this index entry is pruned or
     //! not.
     bool IsBlockPruned(const CBlockIndex *pblockindex)
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    //! Create or update a prune lock identified by its name
+    void UpdatePruneLock(const std::string &name,
+                         const PruneLockInfo &lock_info)
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 };
 
@@ -227,8 +281,9 @@ bool UndoReadFromDisk(CBlockUndo &blockundo, const CBlockIndex *pindex);
 bool ReadTxFromDisk(CMutableTransaction &tx, const FlatFilePos &pos);
 bool ReadTxUndoFromDisk(CTxUndo &tx, const FlatFilePos &pos);
 
-void ThreadImport(const Config &config, ChainstateManager &chainman,
-                  std::vector<fs::path> vImportFiles, const ArgsManager &args);
+void ThreadImport(ChainstateManager &chainman,
+                  std::vector<fs::path> vImportFiles, const ArgsManager &args,
+                  const fs::path &mempool_path);
 } // namespace node
 
 #endif // BITCOIN_NODE_BLOCKSTORAGE_H

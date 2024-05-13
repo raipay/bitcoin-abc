@@ -60,19 +60,20 @@ bool VerifyWallets(interfaces::Chain &chain) {
         options.require_existing = true;
         options.verify = false;
         if (MakeWalletDatabase("", options, status, error_string)) {
-            gArgs.LockSettings([&](util::Settings &settings) {
-                util::SettingsValue wallets(util::SettingsValue::VARR);
-                // Default wallet name is ""
-                wallets.push_back("");
-                settings.rw_settings["wallet"] = wallets;
-            });
+            util::SettingsValue wallets(util::SettingsValue::VARR);
+            wallets.push_back(""); // Default wallet name is ""
+            // Pass write=false because no need to write file and probably
+            // better not to. If unnamed wallet needs to be added next startup
+            // and the setting is empty, this code will just run again.
+            chain.updateRwSetting("wallet", wallets, /* write= */ false);
         }
     }
 
     // Keep track of each wallet absolute path to detect duplicates.
     std::set<fs::path> wallet_paths;
 
-    for (const auto &wallet_file : gArgs.GetArgs("-wallet")) {
+    for (const auto &wallet : chain.getSettingsList("wallet")) {
+        const auto &wallet_file = wallet.get_str();
         const fs::path path = fsbridge::AbsPathJoin(
             GetWalletDir(), fs::PathFromString(wallet_file));
 
@@ -84,11 +85,18 @@ bool VerifyWallets(interfaces::Chain &chain) {
 
         DatabaseOptions options;
         DatabaseStatus status;
+        options.require_existing = true;
         options.verify = true;
         bilingual_str error_string;
         if (!MakeWalletDatabase(wallet_file, options, status, error_string)) {
-            chain.initError(error_string);
-            return false;
+            if (status == DatabaseStatus::FAILED_NOT_FOUND) {
+                chain.initWarning(Untranslated(
+                    strprintf("Skipping -wallet path that doesn't exist. %s\n",
+                              error_string.original)));
+            } else {
+                chain.initError(error_string);
+                return false;
+            }
         }
     }
 
@@ -98,18 +106,23 @@ bool VerifyWallets(interfaces::Chain &chain) {
 bool LoadWallets(interfaces::Chain &chain) {
     try {
         std::set<fs::path> wallet_paths;
-        for (const std::string &name : gArgs.GetArgs("-wallet")) {
+        for (const auto &wallet : chain.getSettingsList("wallet")) {
+            const auto &name = wallet.get_str();
             if (!wallet_paths.insert(fs::PathFromString(name)).second) {
                 continue;
             }
             DatabaseOptions options;
             DatabaseStatus status;
+            options.require_existing = true;
             // No need to verify, assuming verified earlier in VerifyWallets()
             options.verify = false;
             bilingual_str error;
             std::vector<bilingual_str> warnings;
             std::unique_ptr<WalletDatabase> database =
                 MakeWalletDatabase(name, options, status, error);
+            if (!database && status == DatabaseStatus::FAILED_NOT_FOUND) {
+                continue;
+            }
             std::shared_ptr<CWallet> pwallet =
                 database
                     ? CWallet::Create(chain, name, std::move(database),

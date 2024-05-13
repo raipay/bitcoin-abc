@@ -6,6 +6,7 @@
 #ifndef BITCOIN_VALIDATIONINTERFACE_H
 #define BITCOIN_VALIDATIONINTERFACE_H
 
+#include <kernel/cs_main.h>
 #include <primitives/transaction.h> // CTransaction(Ref)
 #include <sync.h>
 #include <coins.h>
@@ -13,7 +14,6 @@
 #include <functional>
 #include <memory>
 
-extern RecursiveMutex cs_main;
 class BlockValidationState;
 class CBlock;
 class CBlockIndex;

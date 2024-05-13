@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #
 # Electron Cash - A Bitcoin Cash SPV Wallet
 #
@@ -71,9 +70,8 @@ class ExpiringCache:
         res = self.d.get(key)
         if res is not None:
             # cache hit
-            res[
-                0
-            ] = _ExpiringCacheMgr.tick  # update tick access time for this cache hit
+            # update tick access time for this cache hit
+            res[0] = _ExpiringCacheMgr.tick
             return res[1]
         # cache miss
         return default

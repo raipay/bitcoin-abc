@@ -1,21 +1,40 @@
+// Copyright (c) 2024 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
 import * as React from 'react';
 import PropTypes from 'prop-types';
-import { formatTokenBalance } from 'utils/formatting';
-import { BalanceHeaderWrap } from 'components/Common/Atoms';
+import styled from 'styled-components';
 
-const BalanceHeaderToken = ({ balance, ticker, tokenDecimals }) => {
+const TokenBalance = styled.div`
+    color: ${props => props.theme.contrast};
+    width: 100%;
+    font-size: 28px;
+    font-weight: bold;
+    padding: 12px;
+    line-height: 1.4em;
+    @media (max-width: 768px) {
+        font-size: 24px;
+    }
+`;
+
+const BalanceHeaderToken = ({
+    formattedDecimalizedTokenBalance,
+    name,
+    ticker,
+}) => {
     return (
-        <BalanceHeaderWrap>
-            {formatTokenBalance(balance, tokenDecimals)} {ticker}
-        </BalanceHeaderWrap>
+        <TokenBalance>
+            {formattedDecimalizedTokenBalance} {name} ({ticker})
+        </TokenBalance>
     );
 };
 
 // balance may be a string (XEC balance) or a BigNumber object (token balance)
 BalanceHeaderToken.propTypes = {
-    balance: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+    formattedDecimalizedTokenBalance: PropTypes.string,
+    name: PropTypes.string,
     ticker: PropTypes.string,
-    tokenDecimals: PropTypes.number,
 };
 
 export default BalanceHeaderToken;

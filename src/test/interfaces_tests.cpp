@@ -117,13 +117,13 @@ BOOST_AUTO_TEST_CASE(findAncestorByHash) {
 
 BOOST_AUTO_TEST_CASE(findCommonAncestor) {
     auto &chain = m_node.chain;
-    const CChain &active =
-        WITH_LOCK(Assert(m_node.chainman)->GetMutex(),
-                  return Assert(m_node.chainman)->ActiveChain());
+    const CChain &active{
+        *WITH_LOCK(Assert(m_node.chainman)->GetMutex(),
+                   return &Assert(m_node.chainman)->ActiveChain())};
     auto *orig_tip = active.Tip();
     for (int i = 0; i < 10; ++i) {
         BlockValidationState state;
-        m_node.chainman->ActiveChainstate().InvalidateBlock(GetConfig(), state,
+        m_node.chainman->ActiveChainstate().InvalidateBlock(state,
                                                             active.Tip());
     }
     BOOST_CHECK_EQUAL(active.Height(), orig_tip->nHeight - 10);

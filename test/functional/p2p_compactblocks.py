@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2016-2019 The Bitcoin Core developers
 # Copyright (c) 2017 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
@@ -657,6 +656,29 @@ class CompactBlocksTest(BitcoinTestFramework):
             )
             assert "blocktxn" not in test_node.last_message
 
+    def test_low_work_compactblocks(self, test_node):
+        # A compactblock with insufficient work won't get its header included
+        node = self.nodes[0]
+        hashPrevBlock = int(node.getblockhash(node.getblockcount() - 150), 16)
+        block = self.build_block_on_tip(node)
+        block.hashPrevBlock = hashPrevBlock
+        block.solve()
+
+        comp_block = HeaderAndShortIDs()
+        comp_block.initialize_from_block(block)
+        with self.nodes[0].assert_debug_log(
+            ["Ignoring low-work compact block from peer 0"]
+        ):
+            test_node.send_and_ping(msg_cmpctblock(comp_block.to_p2p()))
+
+        tips = node.getchaintips()
+        found = False
+        for x in tips:
+            if x["hash"] == block.hash:
+                found = True
+                break
+        assert not found
+
     def test_compactblocks_not_at_tip(self, test_node):
         node = self.nodes[0]
         # Test that requesting old compactblocks doesn't work.
@@ -867,54 +889,45 @@ class CompactBlocksTest(BitcoinTestFramework):
         # We will need UTXOs to construct transactions in later tests.
         self.make_utxos()
 
-        self.log.info("Running tests:")
-
-        self.log.info("\tTesting SENDCMPCT p2p message... ")
+        self.log.info("Testing SENDCMPCT p2p message... ")
         self.test_sendcmpct(self.test_node)
-        self.sync_blocks()
 
-        self.log.info("\tTesting compactblock construction...")
+        self.log.info("Testing compactblock construction...")
         self.test_compactblock_construction(self.test_node)
-        self.sync_blocks()
 
-        self.log.info("\tTesting compactblock requests... ")
+        self.log.info("Testing compactblock requests... ")
         self.test_compactblock_requests(self.test_node)
-        self.sync_blocks()
 
-        self.log.info("\tTesting getblocktxn requests...")
+        self.log.info("Testing getblocktxn requests...")
         self.test_getblocktxn_requests(self.test_node)
-        self.sync_blocks()
 
-        self.log.info("\tTesting getblocktxn handler...")
+        self.log.info("Testing getblocktxn handler...")
         self.test_getblocktxn_handler(self.test_node)
-        self.sync_blocks()
 
-        self.log.info(
-            "\tTesting compactblock requests/announcements not at chain tip..."
-        )
+        self.log.info("Testing compactblock requests/announcements not at chain tip...")
         self.test_compactblocks_not_at_tip(self.test_node)
-        self.sync_blocks()
 
-        self.log.info("\tTesting handling of incorrect blocktxn responses...")
+        self.log.info("Testing handling of low-work compact blocks...")
+        self.test_low_work_compactblocks(self.test_node)
+
+        self.log.info("Testing handling of incorrect blocktxn responses...")
         self.test_incorrect_blocktxn_response(self.test_node)
-        self.sync_blocks()
 
         # End-to-end block relay tests
-        self.log.info("\tTesting end-to-end block relay...")
+        self.log.info("Testing end-to-end block relay...")
         self.request_cb_announcements(self.test_node)
         self.request_cb_announcements(self.additional_test_node)
         self.test_end_to_end_block_relay([self.test_node, self.additional_test_node])
 
-        self.log.info("\tTesting handling of invalid compact blocks...")
+        self.log.info("Testing handling of invalid compact blocks...")
         self.test_invalid_tx_in_compactblock(self.additional_test_node)
 
-        self.log.info("\tTesting reconstructing compact blocks from all peers...")
+        self.log.info("Testing reconstructing compact blocks from all peers...")
         self.test_compactblock_reconstruction_multiple_peers(
             self.test_node, self.additional_test_node
         )
-        self.sync_blocks()
 
-        self.log.info("\tTesting invalid index in cmpctblock message...")
+        self.log.info("Testing invalid index in cmpctblock message...")
         self.test_invalid_cmpctblock_message()
 
         self.log.info("Testing high-bandwidth mode states via getpeerinfo...")
