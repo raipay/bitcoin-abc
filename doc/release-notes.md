@@ -19,3 +19,4 @@ At the MTP time of `1715774400` (May 15, 2024 12:00:00 UTC), the following
 changes will become activated:
  - Bump automatic replay protection to the next upgrade, timestamp `1731672000`
    (November 15, 2024 12:00:00 UTC).
+ - Add a new checkpoint after the May 15th, 2024 eCash network upgrade
