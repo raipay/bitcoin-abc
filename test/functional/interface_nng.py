@@ -4,16 +4,22 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the NNG interface."""
 
-from io import BytesIO
 import asyncio
+from io import BytesIO
 
 from test_framework.blocktools import create_block, create_coinbase
+from test_framework.messages import (
+    XEC,
+    CBlockHeader,
+    COutPoint,
+    CTransaction,
+    CTxIn,
+    CTxOut,
+)
+from test_framework.script import OP_EQUAL, OP_HASH160, OP_RETURN, CScript
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.messages import CTransaction, CTxIn, COutPoint, CTxOut, XEC, CBlockHeader
-from test_framework.script import CScript, OP_HASH160, OP_EQUAL, OP_RETURN
 from test_framework.txtools import pad_tx
 from test_framework.util import assert_equal
-
 
 RPC_URL = "tcp://127.0.0.1:52783"
 PUB_URL = "tcp://127.0.0.1:52784"
@@ -61,7 +67,8 @@ class NngInterfaceTest(BitcoinTestFramework):
         asyncio.get_event_loop().run_until_complete(self._nng_test())
 
     async def _nng_test(self):
-        import pynng, flatbuffers
+        import flatbuffers
+        import pynng
 
         node = self.nodes[0]
         node.setmocktime(self.TIMESTAMP)
@@ -84,16 +91,16 @@ class NngInterfaceTest(BitcoinTestFramework):
         self._test_invalid_params(node)
 
     def _make_get_block_request_fbb(self, *, height=None, blockhash=None):
+        import flatbuffers
         from NngInterface import (
+            BlockHash,
+            BlockHeight,
+            BlockIdentifier,
+            GetBlockRequest,
+            Hash,
             RpcCall,
             RpcRequest,
-            GetBlockRequest,
-            BlockIdentifier,
-            BlockHeight,
-            BlockHash,
-            Hash,
         )
-        import flatbuffers
         fbb = flatbuffers.Builder()
         if height is not None:
             BlockHeight.Start(fbb)
@@ -118,15 +125,15 @@ class NngInterfaceTest(BitcoinTestFramework):
         return bytes(fbb.Output())
 
     def _make_get_block_range_request_fbb(self, start_height, num_blocks):
+        import flatbuffers
         from NngInterface import (
+            BlockHash,
+            BlockHeight,
+            BlockIdentifier,
+            GetBlockRangeRequest,
             RpcCall,
             RpcRequest,
-            GetBlockRangeRequest,
-            BlockIdentifier,
-            BlockHeight,
-            BlockHash,
         )
-        import flatbuffers
         fbb = flatbuffers.Builder()
         GetBlockRangeRequest.Start(fbb)
         GetBlockRangeRequest.AddStartHeight(fbb, start_height)
@@ -140,12 +147,8 @@ class NngInterfaceTest(BitcoinTestFramework):
         return bytes(fbb.Output())
 
     def _make_get_block_slice_request_fbb(self, file_num, data_pos, num_bytes):
-        from NngInterface import (
-            RpcCall,
-            RpcRequest,
-            GetBlockSliceRequest,
-        )
         import flatbuffers
+        from NngInterface import GetBlockSliceRequest, RpcCall, RpcRequest
         fbb = flatbuffers.Builder()
         GetBlockSliceRequest.Start(fbb)
         GetBlockSliceRequest.AddFileNum(fbb, file_num)
@@ -160,12 +163,8 @@ class NngInterfaceTest(BitcoinTestFramework):
         return bytes(fbb.Output())
 
     def _make_get_undo_slice_request_fbb(self, file_num, undo_pos, num_bytes):
-        from NngInterface import (
-            RpcCall,
-            RpcRequest,
-            GetUndoSliceRequest,
-        )
         import flatbuffers
+        from NngInterface import GetUndoSliceRequest, RpcCall, RpcRequest
         fbb = flatbuffers.Builder()
         GetUndoSliceRequest.Start(fbb)
         GetUndoSliceRequest.AddFileNum(fbb, file_num)
@@ -180,12 +179,8 @@ class NngInterfaceTest(BitcoinTestFramework):
         return bytes(fbb.Output())
 
     def _make_get_mempool_request_fbs(self):
-        from NngInterface import (
-            RpcCall,
-            RpcRequest,
-            GetMempoolRequest,
-        )
         import flatbuffers
+        from NngInterface import GetMempoolRequest, RpcCall, RpcRequest
         fbb = flatbuffers.Builder()
         GetMempoolRequest.Start(fbb)
         get_mempool_request = GetMempoolRequest.End(fbb)
@@ -246,6 +241,7 @@ class NngInterfaceTest(BitcoinTestFramework):
 
     async def _test_genesis(self, node, rpc_sock):
         from NngInterface import GetBlockResponse
+
         # Assert genesis block matches RPC's
         rpc_genesis_blockhash = node.getblockhash(0)
         rpc_genesis_block = node.getblock(rpc_genesis_blockhash, 2)
@@ -304,10 +300,8 @@ class NngInterfaceTest(BitcoinTestFramework):
         await self._recv_response(rpc_sock, expect_error='Invalid block slice')
 
     async def _test_send_tx(self, node, rpc_sock):
-        from NngInterface import (
-            GetBlockResponse,
-            GetMempoolResponse,
-        )
+        from NngInterface import GetBlockResponse, GetMempoolResponse
+
         # Generate block and query it
         hashes = self.generatetoaddress(node, self.NUM_GENERATED_COINS, self.anyone_addr)
         self.coin_blocks = hashes[1:]
@@ -533,7 +527,9 @@ class NngInterfaceTest(BitcoinTestFramework):
         pub_sock.unsubscribe('mempooltxadd')
 
     async def _test_transaction_removed_from_mempool_conflict(self, node, pub_sock):
-        from NngInterface.TransactionRemovedFromMempool import TransactionRemovedFromMempool
+        from NngInterface.TransactionRemovedFromMempool import (
+            TransactionRemovedFromMempool,
+        )
         pub_sock.subscribe('mempooltxrem')
         self.generatetoaddress(node, 1, self.burn_addr)  # empty out mempool from previous test
         await self._check_timeout(pub_sock.arecv_msg(), timeout=0.1) # should not send an eviction message
@@ -560,7 +556,9 @@ class NngInterfaceTest(BitcoinTestFramework):
         pub_sock.unsubscribe('mempooltxrem')
 
     async def _test_transaction_removed_from_mempool_expiry(self, node, pub_sock):
-        from NngInterface.TransactionRemovedFromMempool import TransactionRemovedFromMempool
+        from NngInterface.TransactionRemovedFromMempool import (
+            TransactionRemovedFromMempool,
+        )
         pub_sock.subscribe('mempooltxrem')
         self.generatetoaddress(node, 1, self.burn_addr)  # empty out mempool from previous test
         await self._check_timeout(pub_sock.arecv_msg(), timeout=0.1) # should not send an eviction message

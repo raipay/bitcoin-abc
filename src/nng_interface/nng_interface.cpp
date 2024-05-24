@@ -14,8 +14,8 @@
 #include <node/ui_interface.h>
 #include <timedata.h>
 #include <undo.h>
-#include <util/translation.h>
 #include <util/time.h>
+#include <util/translation.h>
 #include <validation.h>
 #include <validationinterface.h>
 
@@ -482,7 +482,8 @@ NngRpcErrorCode
 NngRpcServer::GetBlockSlice(flatbuffers::FlatBufferBuilder &fbb,
                             const NngInterface::GetBlockSliceRequest *request) {
     const FlatFilePos filePos(request->file_num(), request->data_pos());
-    CAutoFile file(node::OpenBlockFile(filePos, true), SER_DISK, CLIENT_VERSION);
+    CAutoFile file(node::OpenBlockFile(filePos, true), SER_DISK,
+                   CLIENT_VERSION);
     std::vector<uint8_t> data(request->num_bytes());
     try {
         file.read(MakeWritableByteSpan(data));
@@ -579,17 +580,19 @@ private:
         BroadcastMessage(MSG_UPDATEBLKTIP, fbb);
     }
 
-    void TransactionAddedToMempool(const CTransactionRef &ptx,
-                                   std::shared_ptr<const std::vector<Coin>> spent_coins,
-                                   uint64_t mempool_sequence) override {
+    void TransactionAddedToMempool(
+        const CTransactionRef &ptx,
+        std::shared_ptr<const std::vector<Coin>> spent_coins,
+        uint64_t mempool_sequence) override {
         if (!IsMessageEnabled(MSG_MEMPOOLTXADD)) {
             return;
         }
         flatbuffers::FlatBufferBuilder fbb;
         fbb.Finish(NngInterface::CreateTransactionAddedToMempool(
-            fbb, NngInterface::CreateMempoolTx(
-                     fbb, CreateFbsTxMempool(fbb, ptx, *spent_coins),
-                     TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime()))));
+            fbb,
+            NngInterface::CreateMempoolTx(
+                fbb, CreateFbsTxMempool(fbb, ptx, *spent_coins),
+                TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime()))));
         BroadcastMessage(MSG_MEMPOOLTXADD, fbb);
     }
 
