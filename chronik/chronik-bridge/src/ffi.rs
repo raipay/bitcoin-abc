@@ -128,7 +128,8 @@ mod ffi_inner {
 
     #[allow(missing_debug_implementations)]
     unsafe extern "C++" {
-        include!("blockindex.h");
+        //include!("blockindex.h");
+        include!("chain.h");
         include!("chronik-cpp/chronik_bridge.h");
         include!("coins.h");
         include!("node/context.h");
@@ -136,8 +137,8 @@ mod ffi_inner {
         include!("primitives/transaction.h");
         include!("undo.h");
 
-        /// node::NodeContext from node/context.h
-        #[namespace = "node"]
+        /// NodeContext from node/context.h
+        #[namespace = ""]
         type NodeContext;
 
         /// ::CBlockIndex from blockindex.h

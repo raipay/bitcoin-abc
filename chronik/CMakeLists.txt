@@ -176,7 +176,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 endif()
 
 # Rocksdb requires "atomic"
-include(AddCompilerFlags)
+include(../cmake/modules/AddCompilerFlags.cmake)
 custom_check_linker_flag(LINKER_HAS_ATOMIC "-latomic")
 if(LINKER_HAS_ATOMIC)
     target_link_libraries(chronik atomic)

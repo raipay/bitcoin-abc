@@ -72,7 +72,8 @@ mod ffi_inner {
     }
 
     unsafe extern "C++" {
-        include!("blockindex.h");
+        //include!("blockindex.h");
+        include!("chain.h");
         include!("chronik-cpp/chronik_validationinterface.h");
         include!("coins.h");
         include!("config.h");
@@ -102,7 +103,7 @@ mod ffi_inner {
         type CTransaction = chronik_bridge::ffi::CTransaction;
 
         /// NodeContext from node/context.h
-        #[namespace = "node"]
+        #[namespace = ""]
         type NodeContext = chronik_bridge::ffi::NodeContext;
 
         /// Bridge to bitcoind to access the node

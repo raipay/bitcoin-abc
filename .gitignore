@@ -53,6 +53,7 @@ src/qt/bitcoin-qt.includes
 *.patch
 !depends/patches/**/*.patch
 !contrib/guix/**/*.patch
+!external/**/*.patch
 
 # Compilation and Qt preprocessor part
 *.qm

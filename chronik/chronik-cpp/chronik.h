@@ -9,9 +9,9 @@
 #include <vector>
 
 class Config;
-namespace node {
+//namespace node {
 struct NodeContext;
-} // namespace node
+//} // namespace node
 
 namespace chronik {
 
@@ -28,7 +28,7 @@ static const size_t DEFAULT_TX_NUM_CACHE_BUCKETS = 10;
 static const size_t DEFAULT_TX_NUM_CACHE_BUCKET_SIZE = 100'000;
 
 // Registers Chronik indexer as ValidationInterface, listens to HTTP queries
-bool Start(const Config &config, const node::NodeContext &node, bool fWipe);
+bool Start(const Config &config, const NodeContext &node, bool fWipe);
 
 // Unregisters Chronik indexer as ValidationInterface, stops the HTTP server
 void Stop();

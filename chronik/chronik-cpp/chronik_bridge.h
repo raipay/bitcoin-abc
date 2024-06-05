@@ -20,9 +20,9 @@ namespace Consensus {
 struct Params;
 } // namespace Consensus
 
-namespace node {
+//namespace node {
 struct NodeContext;
-} // namespace node
+//} // namespace node
 class uint256;
 
 namespace chronik_bridge {
@@ -50,10 +50,10 @@ void log_print_chronik(const rust::Str logging_function,
  * Bridge to bitcoind to access the node.
  */
 class ChronikBridge {
-    const node::NodeContext &m_node;
+    const NodeContext &m_node;
 
 public:
-    ChronikBridge(const node::NodeContext &node);
+    ChronikBridge(const NodeContext &node);
 
     const CBlockIndex &get_chain_tip() const;
 
@@ -82,7 +82,7 @@ public:
     bool shutdown_requested() const;
 };
 
-std::unique_ptr<ChronikBridge> make_bridge(const node::NodeContext &node);
+std::unique_ptr<ChronikBridge> make_bridge(const NodeContext &node);
 
 Tx bridge_tx(const CTransaction &tx, const std::vector<Coin> &spent_coins);
 

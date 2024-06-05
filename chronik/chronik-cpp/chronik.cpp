@@ -5,13 +5,14 @@
 #include <chainparams.h>
 #include <chainparamsbase.h>
 #include <chrono>
-#include <common/args.h>
+//#include <common/args.h>
 #include <config.h>
 #include <logging.h>
 #include <node/context.h>
-#include <node/ui_interface.h>
+#include <ui_interface.h>
+#include <util/system.h>
 #include <util/time.h>
-#include <util/translation.h>
+//#include <util/translation.h>
 
 #include <chronik-cpp/chronik.h>
 #include <chronik-cpp/chronik_validationinterface.h>
@@ -22,11 +23,11 @@ namespace chronik {
 // Duration between WebSocket pings initiated by Chronik.
 // 45s has been empirically established as a reliable duration for both browser
 // and NodeJS WebSockets.
-static constexpr std::chrono::seconds WS_PING_INTERVAL_DEFAULT{45s};
+static constexpr uint64_t WS_PING_INTERVAL_DEFAULT = 45;
 
 // Ping duration is just 5s on regtest to speed up ping tests and make
 // functional tests more reliable.
-static constexpr std::chrono::seconds WS_PING_INTERVAL_REGTEST{5s};
+static constexpr uint64_t WS_PING_INTERVAL_REGTEST = 5;
 
 template <typename T, typename C> rust::Vec<T> ToRustVec(const C &container) {
     rust::Vec<T> vec;
@@ -35,7 +36,7 @@ template <typename T, typename C> rust::Vec<T> ToRustVec(const C &container) {
     return vec;
 }
 
-bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
+bool Start(const Config &config, const NodeContext &node, bool fWipe) {
     const bool is_pause_allowed = gArgs.GetBoolArg("-chronikallowpause", false);
     const CChainParams &params = config.GetChainParams();
     if (is_pause_allowed && !params.IsTestChain()) {
@@ -44,7 +45,7 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
     }
     return chronik_bridge::setup_chronik(
         {
-            .datadir_net = gArgs.GetDataDirNet().u8string(),
+            .datadir_net = GetDataDir(true).string(),
             .hosts = ToRustVec<rust::String>(gArgs.IsArgSet("-chronikbind")
                                                  ? gArgs.GetArgs("-chronikbind")
                                                  : DEFAULT_BINDS),
@@ -57,15 +58,15 @@ bool Start(const Config &config, const node::NodeContext &node, bool fWipe) {
             .enable_perf_stats = gArgs.GetBoolArg("-chronikperfstats", false),
             .ws_ping_interval_secs =
                 params.NetworkIDString() == CBaseChainParams::REGTEST
-                    ? uint64_t(count_seconds(WS_PING_INTERVAL_REGTEST))
-                    : uint64_t(count_seconds(WS_PING_INTERVAL_DEFAULT)),
+                    ? WS_PING_INTERVAL_REGTEST
+                    : WS_PING_INTERVAL_DEFAULT,
             .enable_cors = gArgs.GetBoolArg("-chronikcors", false),
             .tx_num_cache =
                 {
                     .num_buckets =
-                        (size_t)gArgs.GetIntArg("-chroniktxnumcachebuckets",
+                        (size_t)gArgs.GetArg("-chroniktxnumcachebuckets",
                                                 DEFAULT_TX_NUM_CACHE_BUCKETS),
-                    .bucket_size = (size_t)gArgs.GetIntArg(
+                    .bucket_size = (size_t)gArgs.GetArg(
                         "-chroniktxnumcachebucketsize",
                         DEFAULT_TX_NUM_CACHE_BUCKET_SIZE),
                 },
