@@ -4,7 +4,7 @@
 
 import { assert, expect, use } from 'chai';
 import chaiAsPromised from 'chai-as-promised';
-import { ChronikClientNode } from 'chronik-client';
+import { ChronikClientNode, PluginEntries } from 'chronik-client';
 import {
     ALL_BIP143,
     Ecc,
@@ -14,12 +14,17 @@ import {
     Script,
     TxBuilder,
     TxOutput,
+    Writer,
+    WriterBytes,
+    WriterLength,
     fromHex,
     initWasm,
     shaRmd160,
     slpGenesis,
     slpSend,
+    strToBytes,
     toHex,
+    writeTxOutput,
 } from 'ecash-lib';
 import { TestRunner } from 'ecash-lib/dist/test/testRunner.js';
 import { parseAgoraTx } from '../src/ad.js';
@@ -55,7 +60,7 @@ describe('SLP', () => {
 
     before(async () => {
         await initWasm();
-        runner = await TestRunner.setup();
+        runner = await TestRunner.setup('setup_scripts/ecash-agora_base');
         chronik = runner.chronik;
         ecc = runner.ecc;
         await runner.setupCoins(NUM_COINS, COIN_VALUE);
@@ -270,6 +275,7 @@ describe('SLP', () => {
         ).txs;
         expect(agoraTxs.length).to.be.equal(1);
         const agoraTx = agoraTxs[0];
+
         expect(agoraTx.inputs.length).to.be.equal(1);
         const parsedAd = parseAgoraTx(agoraTx);
         if (parsedAd === undefined) {
@@ -297,6 +303,56 @@ describe('SLP', () => {
                 },
             },
         });
+
+        const serAgoraEnforcedOutputs = (oneshot: AgoraOneshot) => {
+            const serEnforcedOutputs = (writer: Writer) => {
+                for (const output of oneshot.enforcedOutputs.slice(1)) {
+                    writeTxOutput(output, writer);
+                }
+            };
+            const writerLength = new WriterLength();
+            serEnforcedOutputs(writerLength);
+            const writer = new WriterBytes(writerLength.length);
+            serEnforcedOutputs(writer);
+            return writer.data;
+        };
+
+        const pubkeyPrefix = toHex(strToBytes('P'));
+        const tokenIdPrefix = toHex(strToBytes('T'));
+        const groupPrefix = toHex(strToBytes('G'));
+        const pluginOutputs: PluginEntries = {
+            agora: {
+                data: [
+                    toHex(strToBytes('ONESHOT')),
+                    toHex(serAgoraEnforcedOutputs(agoraOneshot)),
+                ],
+                groups: [
+                    pubkeyPrefix + toHex(agoraOneshot.cancelPk),
+                    tokenIdPrefix + childTokenId,
+                    groupPrefix + tokenId,
+                ],
+            },
+        };
+        expect(agoraTx.outputs[1].plugins).to.deep.equal(pluginOutputs);
+
+        {
+            const utxos = await chronik
+                .plugin('agora')
+                .utxos(tokenIdPrefix + childTokenId);
+            expect(utxos.groupHex).to.be.equal(tokenIdPrefix + childTokenId);
+            expect(utxos.pluginName).to.be.equal('agora');
+            expect(utxos.utxos[0].outpoint.txid).to.be.equal(offerTxid);
+            expect(utxos.utxos[0].plugins).to.be.deep.equal(pluginOutputs);
+        }
+        {
+            const utxos = await chronik
+                .plugin('agora')
+                .utxos(pubkeyPrefix + toHex(sellerPk));
+            expect(utxos.groupHex).to.be.equal(pubkeyPrefix + toHex(sellerPk));
+            expect(utxos.pluginName).to.be.equal('agora');
+            expect(utxos.utxos[0].outpoint.txid).to.be.equal(offerTxid);
+            expect(utxos.utxos[0].plugins).to.be.deep.equal(pluginOutputs);
+        }
 
         // 6. Buyer attempts to buy the NFT using 79999 sats, which is rejected
         const buyerSatsTxid = await runner.sendToScript(90000, buyerP2pkh);
@@ -407,8 +463,10 @@ describe('SLP', () => {
             await chronik.lokadId(toHex(AGORA_LOKAD_ID)).history()
         ).txs;
         expect(newAgoraTxs.length).to.equal(2);
+        newAgoraTxs.sort(
+            (a, b) => +!a.outputs[1].spentBy - +!b.outputs[1].spentBy,
+        );
         const parsedAds = newAgoraTxs.map(parseAgoraTx);
-        parsedAds.sort((a, b) => +!a?.spentBy - +!b?.spentBy);
         expect(parsedAds).to.deep.equal([
             {
                 type: 'ONESHOT',
@@ -453,6 +511,42 @@ describe('SLP', () => {
             },
         ]);
         const newParsedAd = parsedAds[1]!;
+
+        const newPluginOutputs: PluginEntries = {
+            agora: {
+                data: [
+                    toHex(strToBytes('ONESHOT')),
+                    toHex(serAgoraEnforcedOutputs(newAgoraOneshot)),
+                ],
+                groups: [
+                    pubkeyPrefix + toHex(newAgoraOneshot.cancelPk),
+                    tokenIdPrefix + childTokenId,
+                    groupPrefix + tokenId,
+                ],
+            },
+        };
+        expect(newAgoraTxs[1].outputs[1].plugins).to.deep.equal(
+            newPluginOutputs,
+        );
+
+        {
+            const utxos = await chronik
+                .plugin('agora')
+                .utxos(tokenIdPrefix + childTokenId);
+            expect(utxos.groupHex).to.be.equal(tokenIdPrefix + childTokenId);
+            expect(utxos.pluginName).to.be.equal('agora');
+            expect(utxos.utxos[0].outpoint.txid).to.be.equal(newOfferTxid);
+            expect(utxos.utxos[0].plugins).to.be.deep.equal(newPluginOutputs);
+        }
+        {
+            const utxos = await chronik
+                .plugin('agora')
+                .utxos(pubkeyPrefix + toHex(sellerPk));
+            expect(utxos.groupHex).to.be.equal(pubkeyPrefix + toHex(sellerPk));
+            expect(utxos.pluginName).to.be.equal('agora');
+            expect(utxos.utxos[0].outpoint.txid).to.be.equal(newOfferTxid);
+            expect(utxos.utxos[0].plugins).to.be.deep.equal(newPluginOutputs);
+        }
 
         // 9. Buyer successfully accepts advertized NFT offer for 70000 sats
         const txBuildAcceptSuccess = new TxBuilder({
