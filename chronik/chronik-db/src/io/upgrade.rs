@@ -173,7 +173,7 @@ impl<'a> UpgradeWriter<'a> {
                 [COMP_PK_SIZE, pubkey @ .., OP_CHECKSIG]
                     if pubkey.len() == PubKey::SIZE =>
                 {
-                    if !with_bug && (pubkey[0] == 0x02 || pubkey[0] == 0x03) {
+                    if !with_bug && pubkey[0] != 0x02 && pubkey[0] != 0x03 {
                         return None;
                     }
                     Some(pubkey.try_into().unwrap())
@@ -181,7 +181,7 @@ impl<'a> UpgradeWriter<'a> {
                 [UNCOMP_PK_SIZE, pubkey @ .., OP_CHECKSIG]
                     if pubkey.len() == UncompressedPubKey::SIZE =>
                 {
-                    if !with_bug && pubkey[0] == 0x04 {
+                    if !with_bug && pubkey[0] != 0x04 {
                         return None;
                     }
                     let mut bytes = [0; 33];
