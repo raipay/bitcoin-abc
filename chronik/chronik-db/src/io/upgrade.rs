@@ -137,6 +137,48 @@ impl<'a> UpgradeWriter<'a> {
 
         Ok(())
     }
+
+    /// Fix incorrectly compressed P2PK scripts
+    pub fn fix_p2pk_compression(
+        &self,
+        _load_tx: impl Fn(u32, u32, u32) -> Result<Tx>,
+        shutdown_requested: impl Fn() -> bool,
+    ) -> Result<()> {
+        // Iterate over all scripts in the DB
+        let iterator = self.db.full_iterator(self.cf_script_history_num_txs);
+
+        let mut num_scanned = 0;
+        let mut num_txs = 0;
+        let mut num_uncompressed_pk_txs = 0;
+        log!("Fixing P2PK scripts");
+        for entry in iterator {
+            num_scanned += 1;
+            if num_scanned % 1000000 == 0 {
+                if shutdown_requested() {
+                    log!("Cancelled upgrade\n");
+                    return Ok(());
+                }
+                log!("Scanned {num_scanned} scripts\n");
+            }
+            let (key, _) = entry?;
+
+            if key.len() != 33 {
+                continue;
+            }
+            if key[0] == 0x02 || key[0] == 0x03 {
+                continue;
+            }
+            num_txs += 1;
+            if key[0] == 0x04 || key[0] == 0x05 {
+                num_uncompressed_pk_txs += 1;
+            }
+        }
+
+        log!("num_txs = {num_txs}\n");
+        log!("num_uncompressed_pk_txs = {num_uncompressed_pk_txs}\n");
+
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for UpgradeWriter<'_> {

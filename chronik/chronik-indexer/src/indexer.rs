@@ -273,6 +273,7 @@ impl ChronikIndexer {
             params.enable_token_index,
             &load_tx,
         )?;
+
         let plugin_name_map = update_plugins_index(
             &db,
             &params.plugin_ctx,
@@ -308,6 +309,15 @@ impl ChronikIndexer {
         &mut self,
         bridge: &ffi::ChronikBridge,
     ) -> Result<()> {
+        {
+            let upgrade_write = UpgradeWriter::new(&self.db)?;
+            upgrade_write.fix_p2pk_compression(
+                |a, b, c| {
+                    bridge.load_tx(a, b, c).map_err(Into::into).map(Tx::from)
+                },
+                || bridge.shutdown_requested(),
+            )?;
+        }
         let block_reader = BlockReader::new(&self.db)?;
         let indexer_tip = block_reader.tip()?;
         let Ok(node_tip_index) = bridge.get_chain_tip() else {
