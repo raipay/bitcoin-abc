@@ -198,6 +198,7 @@ impl<'a> UpgradeWriter<'a> {
         let mut num_uncompressed_pk_txs = 0;
         let mut scripts_not_to_upgrade = HashSet::new();
         let mut scripts_to_upgrade = HashSet::new();
+        let mut txs_to_upgrade = HashSet::new();
         log!("Fixing P2PK scripts");
         for entry in iterator {
             let (key, _) = entry?;
@@ -280,6 +281,7 @@ impl<'a> UpgradeWriter<'a> {
                         } else {
                             // Buggy compression
                             scripts_to_upgrade.insert(output.script);
+                            txs_to_upgrade.insert(tx_entry.txid);
                         }
                     }
                 }
@@ -297,6 +299,7 @@ impl<'a> UpgradeWriter<'a> {
             .intersection(&scripts_not_to_upgrade)
             .count();
         log!("num_scripts_both = {}\n", num_scripts_both);
+        log!("txs_to_upgrade = {txs_to_upgrade:?}\n");
 
         Ok(())
     }
