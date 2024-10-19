@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use abc_rust_error::Result;
 use bitcoinsuite_core::{
     script::{
+        compress_script_variant,
         opcode::{OP_CHECKSIG, OP_RETURN},
         write_var_int, PubKey, UncompressedPubKey,
         COMPRESS_NUM_SPECIAL_SCRIPTS,
@@ -15,34 +16,56 @@ use bitcoinsuite_core::{
 };
 use bitcoinsuite_slp::slp::consts::{SLP_LOKAD_ID, TOKEN_TYPE_V2};
 use bytes::{BufMut, BytesMut};
-use chronik_util::log;
+use chronik_util::{log, log_chronik};
 use rocksdb::WriteBatch;
+use thiserror::Error;
 
 use crate::{
-    db::{Db, CF, CF_SCRIPT_HISTORY_NUM_TXS},
+    db::{
+        Db, CF, CF_SCRIPT_HISTORY, CF_SCRIPT_HISTORY_NUM_TXS, CF_SCRIPT_UTXO,
+    },
     groups::ScriptHistoryReader,
     index_tx::prepare_indexed_txs,
     io::{
+        key_for_member_page,
         token::{
             TokenIndexError::{BlockNotFound, TokenTxNumNotFound},
             TokenReader, TokenWriter,
         },
         BlockReader, TxReader,
+        UpgradeError::*,
     },
 };
 
 /// Perform upgrades in the DB.
 pub struct UpgradeWriter<'a> {
     db: &'a Db,
+    cf_script_utxo: &'a CF,
+    cf_script_history: &'a CF,
     cf_script_history_num_txs: &'a CF,
+}
+
+/// Error indicating something went wrong with upgrading the DB.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum UpgradeError {
+    /// Ambiguous P2PK script upgrade
+    #[error(
+        "Upgrade failed: {0} ambiguous scripts to upgrade (should be \
+         impossible), use -chronikreindex to fix or contact the devs"
+    )]
+    AmbiguousP2pkScriptUpgrade(usize),
 }
 
 impl<'a> UpgradeWriter<'a> {
     /// Create a new UpgradeWriter pointing to the Db
     pub fn new(db: &'a Db) -> Result<Self> {
+        let cf_script_utxo = db.cf(CF_SCRIPT_UTXO)?;
+        let cf_script_history = db.cf(CF_SCRIPT_HISTORY)?;
         let cf_script_history_num_txs = db.cf(CF_SCRIPT_HISTORY_NUM_TXS)?;
         Ok(UpgradeWriter {
             db,
+            cf_script_utxo,
+            cf_script_history,
             cf_script_history_num_txs,
         })
     }
@@ -155,12 +178,10 @@ impl<'a> UpgradeWriter<'a> {
         let tx_reader = TxReader::new(self.db)?;
 
         // Iterate over all scripts in the DB
-        let iterator = self.db.iterator(
-            self.cf_script_history_num_txs,
-            &[0x04],
-            rocksdb::Direction::Forward,
-        );
+        let iterator = self.db.full_iterator(self.cf_script_history_num_txs);
 
+        // Compress the script as P2PK (otherwise return None), either with the
+        // bug enabled or disabled.
         fn compress_p2pk_script(
             uncompressed_script: &[u8],
             with_bug: bool,
@@ -193,39 +214,41 @@ impl<'a> UpgradeWriter<'a> {
             }
         }
 
+        let mut reached_uncompressed_pks = false;
         let mut num_scanned = 0;
-        let mut num_txs = 0;
-        let mut num_uncompressed_pk_txs = 0;
         let mut scripts_not_to_upgrade = HashSet::new();
         let mut scripts_to_upgrade = HashSet::new();
         let mut txs_to_upgrade = HashSet::new();
-        log!("Fixing P2PK scripts");
+        log!("Fixing P2PK scripts\n");
         for entry in iterator {
             let (key, _) = entry?;
             num_scanned += 1;
-            if num_scanned % 10000 == 0 {
-                log!("{}\n", hex::encode(&key));
+            // Before keys start with 0x04, we encounter scripts very rarely.
+            // After, they are quite frequent, so we log more often so it
+            // doesn't seem like the upgrade got stuck.
+            if (!reached_uncompressed_pks && num_scanned % 1000000 == 0)
+                || (reached_uncompressed_pks && num_scanned % 10000 == 0)
+            {
                 log!(
-                    "Scanned {num_scanned} scripts (num_txs = {num_txs}, num_uncompressed_pk_txs = {num_uncompressed_pk_txs}, not to upgrade = {}, to upgrade = {})\n",
-                    scripts_not_to_upgrade.len(),
+                    "Scanned {num_scanned} scripts, found {} to upgrade\n",
                     scripts_to_upgrade.len(),
                 );
             }
-            if num_scanned % 100 == 0 && shutdown_requested() {
+            if !reached_uncompressed_pks && key[0] == 0x04 {
+                reached_uncompressed_pks = true;
+            }
+            if num_scanned % 1000 == 0 && shutdown_requested() {
                 log!("Cancelled upgrade\n");
                 return Ok(());
             }
 
             if key.len() != 33 {
+                // Only 33 byte long keys are affected
                 continue;
             }
             if key[0] == 0x02 || key[0] == 0x03 {
                 // These are definitely correct
                 continue;
-            }
-            num_txs += 1;
-            if key[0] == 0x04 || key[0] == 0x05 {
-                num_uncompressed_pk_txs += 1;
             }
 
             let (num_pages, _) =
@@ -238,7 +261,8 @@ impl<'a> UpgradeWriter<'a> {
                 else {
                     break;
                 };
-                // Iterate through all txs of the P2PK
+
+                // Iterate through all txs of the Script
                 for tx_num in txs {
                     // Load tx from the node
                     let block_tx = tx_reader
@@ -254,21 +278,16 @@ impl<'a> UpgradeWriter<'a> {
                         tx_entry.undo_pos,
                     )?);
 
-                    let all_outputs = tx
-                        .inputs
-                        .into_iter()
-                        .filter_map(|tx_input| {
-                            tx_input.coin.map(|coin| coin.output)
-                        })
-                        .chain(tx.outputs);
-
-                    for output in all_outputs {
+                    // Iterate all outputs. We skip iterating inputs, as scripts
+                    // for which the compression is buggy are unspendable.
+                    for output in tx.outputs {
                         let with_bug = compress_p2pk_script(
                             output.script.bytecode(),
                             true,
                         );
                         let Some(with_bug) = with_bug else { continue };
                         if key.as_ref() != with_bug.as_ref() {
+                            // Not the script we were looking for
                             continue;
                         }
                         let without_bug = compress_p2pk_script(
@@ -288,18 +307,62 @@ impl<'a> UpgradeWriter<'a> {
             }
         }
 
-        log!("num_txs = {num_txs}\n");
-        log!("num_uncompressed_pk_txs = {num_uncompressed_pk_txs}\n");
-        log!(
-            "scripts_not_to_upgrade.len() = {}\n",
-            scripts_not_to_upgrade.len()
-        );
-        log!("scripts_to_upgrade.len() = {}\n", scripts_to_upgrade.len());
+        for &txid in &txs_to_upgrade {
+            log_chronik!("Tx {txid} has incorrectly compressed P2PK script\n");
+        }
+
+        log!("Upgrading {} scripts\n", scripts_to_upgrade.len());
+        log_chronik!("Skipping upgrade on {} scripts\n", scripts_not_to_upgrade.len());
         let num_scripts_both = scripts_to_upgrade
             .intersection(&scripts_not_to_upgrade)
             .count();
-        log!("num_scripts_both = {}\n", num_scripts_both);
-        log!("txs_to_upgrade = {txs_to_upgrade:?}\n");
+        log_chronik!("There's {num_scripts_both} ambiguous scripts\n");
+
+        if num_scripts_both > 0 {
+            // Should be impossible; but we better handle the error.
+            return Err(AmbiguousP2pkScriptUpgrade(num_scripts_both).into());
+        }
+
+        let mut batch = WriteBatch::default();
+        for script in &scripts_to_upgrade {
+            let with_bug = compress_p2pk_script(script.bytecode(), true)
+                .expect("Impossible");
+            let script_variant = script.variant();
+            let without_bug = compress_script_variant(&script_variant);
+            let (num_pages, _) =
+                script_history_reader.member_num_pages_and_txs(&with_bug)?;
+            if let Some(value) = self.db.get(self.cf_script_utxo, with_bug)? {
+                batch.delete_cf(self.cf_script_utxo, with_bug);
+                batch.put_cf(self.cf_script_utxo, &without_bug, value);
+            }
+            if let Some(value) =
+                self.db.get(self.cf_script_history_num_txs, with_bug)?
+            {
+                batch.delete_cf(self.cf_script_history_num_txs, with_bug);
+                batch.put_cf(
+                    self.cf_script_history_num_txs,
+                    &without_bug,
+                    value,
+                );
+            }
+            for page_num in 0..num_pages as u32 {
+                let key_with_bug = key_for_member_page(&with_bug, page_num);
+                let key_without_bug =
+                    key_for_member_page(&without_bug, page_num);
+                if let Some(value) =
+                    self.db.get(self.cf_script_history, &key_with_bug)?
+                {
+                    batch.delete_cf(self.cf_script_history, &key_with_bug);
+                    batch.put_cf(
+                        self.cf_script_history,
+                        &key_without_bug,
+                        value,
+                    );
+                }
+            }
+        }
+
+        log!("Writing {} updates to fix P2PK compression\n", batch.len());
 
         Ok(())
     }
