@@ -155,7 +155,11 @@ impl<'a> UpgradeWriter<'a> {
         let tx_reader = TxReader::new(self.db)?;
 
         // Iterate over all scripts in the DB
-        let iterator = self.db.full_iterator(self.cf_script_history_num_txs);
+        let iterator = self.db.iterator(
+            self.cf_script_history_num_txs,
+            &[0x04],
+            rocksdb::Direction::Forward,
+        );
 
         fn compress_p2pk_script(
             uncompressed_script: &[u8],
@@ -196,8 +200,10 @@ impl<'a> UpgradeWriter<'a> {
         let mut scripts_to_upgrade = HashSet::new();
         log!("Fixing P2PK scripts");
         for entry in iterator {
+            let (key, _) = entry?;
             num_scanned += 1;
-            if num_scanned % 1000000 == 0 {
+            if num_scanned % 10000 == 0 {
+                log!("{}\n", hex::encode(&key));
                 log!(
                     "Scanned {num_scanned} scripts (num_txs = {num_txs}, num_uncompressed_pk_txs = {num_uncompressed_pk_txs}, not to upgrade = {}, to upgrade = {})\n",
                     scripts_not_to_upgrade.len(),
@@ -208,7 +214,6 @@ impl<'a> UpgradeWriter<'a> {
                 log!("Cancelled upgrade\n");
                 return Ok(());
             }
-            let (key, _) = entry?;
 
             if key.len() != 33 {
                 continue;
