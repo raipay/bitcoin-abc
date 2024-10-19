@@ -198,11 +198,15 @@ impl<'a> UpgradeWriter<'a> {
         for entry in iterator {
             num_scanned += 1;
             if num_scanned % 1000000 == 0 {
-                if shutdown_requested() {
-                    log!("Cancelled upgrade\n");
-                    return Ok(());
-                }
-                log!("Scanned {num_scanned} scripts\n");
+                log!(
+                    "Scanned {num_scanned} scripts (num_txs = {num_txs}, num_uncompressed_pk_txs = {num_uncompressed_pk_txs}, not to upgrade = {}, to upgrade = {})\n",
+                    scripts_not_to_upgrade.len(),
+                    scripts_to_upgrade.len(),
+                );
+            }
+            if num_scanned % 100 == 0 && shutdown_requested() {
+                log!("Cancelled upgrade\n");
+                return Ok(());
             }
             let (key, _) = entry?;
 
