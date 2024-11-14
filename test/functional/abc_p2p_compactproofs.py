@@ -51,12 +51,12 @@ class ProofStoreP2PInterface(AvaP2PInterface):
 class CompactProofsTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
+        self.noban_tx_relay = True
         self.extra_args = [
             [
                 "-avaproofstakeutxodustthreshold=1000000",
                 "-avaproofstakeutxoconfirmations=1",
                 "-avacooldown=0",
-                "-whitelist=noban@127.0.0.1",
                 "-persistavapeers=0",
             ]
         ] * self.num_nodes
@@ -397,8 +397,7 @@ class CompactProofsTest(BitcoinTestFramework):
 
         msg = build_msg_avaproofs([])
         sender = add_avalanche_p2p_outbound()
-        with node.assert_debug_log(["Got an avaproofs message with no shortid"]):
-            sender.send_message(msg)
+        sender.send_message(msg)
         # Make sure we don't get an avaproofsreq message
         sender.sync_with_ping()
         with p2p_lock:

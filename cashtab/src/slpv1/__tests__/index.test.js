@@ -8,10 +8,9 @@ import {
     getSlpBurnTargetOutputs,
     getAllSendUtxos,
     getSendTokenInputs,
-    getExplicitBurnTargetOutputs,
     getMintBatons,
     getMintTargetOutputs,
-    getMaxMintAmount,
+    getMaxDecimalizedSlpQty,
     getNftParentGenesisTargetOutputs,
     getNftParentMintTargetOutputs,
     getNftParentFanInputs,
@@ -20,64 +19,122 @@ import {
     getNftChildGenesisTargetOutputs,
     getNft,
     getNftChildSendTargetOutputs,
+    isTokenDustChangeOutput,
+    getAgoraAdFuelSats,
 } from 'slpv1';
 import vectors from '../fixtures/vectors';
-import { SEND_DESTINATION_ADDRESS } from '../fixtures/vectors';
+import { SEND_DESTINATION_ADDRESS, MOCK_TOKEN_ID } from '../fixtures/vectors';
+import {
+    AgoraOneshot,
+    AgoraOneshotAdSignatory,
+    AgoraPartial,
+    AgoraPartialAdSignatory,
+} from 'ecash-agora';
+import {
+    initWasm,
+    slpSend,
+    SLP_NFT1_CHILD,
+    shaRmd160,
+    Script,
+    fromHex,
+    SLP_FUNGIBLE,
+} from 'ecash-lib';
 import appConfig from 'config/app';
 
+const MOCK_WALLET_HASH = fromHex('12'.repeat(20));
+const MOCK_PK = fromHex(
+    '03000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+);
+const BASE_PARAMS_SLP_PARTIAL = {
+    makerPk: MOCK_PK,
+    tokenId: MOCK_TOKEN_ID,
+    tokenProtocol: 'SLP',
+    enforcedLockTime: 500000001,
+    dustAmount: 546,
+};
+
 describe('slpv1 methods', () => {
+    let MOCK_AGORA_P2SH, MOCK_ONESHOT, MOCK_PARTIAL, MOCK_PARTIAL_P2SH;
+    beforeAll(async () => {
+        // Initialize web assembly
+        await initWasm();
+
+        MOCK_ONESHOT = new AgoraOneshot({
+            enforcedOutputs: [
+                {
+                    value: 0,
+                    script: slpSend(MOCK_TOKEN_ID, SLP_NFT1_CHILD, [0, 1]),
+                },
+                {
+                    value: 10000, // list price satoshis
+                    script: Script.p2pkh(MOCK_WALLET_HASH),
+                },
+            ],
+            cancelPk: MOCK_PK,
+        });
+        MOCK_AGORA_P2SH = Script.p2sh(
+            shaRmd160(MOCK_ONESHOT.script().bytecode),
+        );
+        MOCK_PARTIAL = new AgoraPartial({
+            truncTokens: 1000n,
+            numTokenTruncBytes: 0,
+            tokenScaleFactor: 1000000n,
+            scaledTruncTokensPerTruncSat: 1000000n,
+            numSatsTruncBytes: 0,
+            minAcceptedScaledTruncTokens: 1000000n,
+            ...BASE_PARAMS_SLP_PARTIAL,
+            tokenType: SLP_FUNGIBLE,
+            scriptLen: 0x7f,
+        });
+        MOCK_PARTIAL_P2SH = Script.p2sh(
+            shaRmd160(MOCK_PARTIAL.script().bytecode),
+        );
+    });
     describe('Generating etoken genesis tx target outputs', () => {
         const { expectedReturns, expectedErrors } =
             vectors.getSlpGenesisTargetOutput;
 
         // Successfully created targetOutputs
         expectedReturns.forEach(expectedReturn => {
-            const { description, genesisConfig, targetOutputs } =
-                expectedReturn;
+            const {
+                description,
+                genesisInfo,
+                initialQuantity,
+                mintBatonOutIdx,
+                targetOutputs,
+            } = expectedReturn;
             it(`getSlpGenesisTargetOutput: ${description}`, () => {
-                // Output value should be zero for OP_RETURN
-                const calculatedTargetOutputs =
-                    getSlpGenesisTargetOutput(genesisConfig);
-
-                // We expect 2 outputs or 3 outputs
-                expect(calculatedTargetOutputs.length >= 2).toBe(true);
-
-                // The output at the 0-index is the OP_RETURN
-                expect(calculatedTargetOutputs[0].value).toBe(0);
-                expect(calculatedTargetOutputs[0].script.toString('hex')).toBe(
-                    targetOutputs[0].script,
-                );
-                // The output at the 1-index is dust to given address
-                expect(calculatedTargetOutputs[1]).toStrictEqual({
-                    value: appConfig.dustSats,
-                });
-                if (calculatedTargetOutputs.length > 2) {
-                    // If we have a mint baton
-
-                    // We will only have 3 outputs in this case
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect(calculatedTargetOutputs.length).toBe(3);
-
-                    // The mint baton is at index 2
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect(calculatedTargetOutputs[2]).toStrictEqual({
-                        value: appConfig.dustSats,
-                    });
-                }
+                expect(
+                    getSlpGenesisTargetOutput(
+                        genesisInfo,
+                        initialQuantity,
+                        mintBatonOutIdx,
+                    ),
+                ).toStrictEqual(targetOutputs);
             });
         });
 
         // Error cases
         expectedErrors.forEach(expectedError => {
-            const { description, genesisConfig, errorMsg } = expectedError;
+            const {
+                description,
+                genesisInfo,
+                initialQuantity,
+                mintBatonOutIdx,
+                errorMsg,
+            } = expectedError;
             it(`getSlpGenesisTargetOutput throws error for: ${description}`, () => {
-                expect(() => getSlpGenesisTargetOutput(genesisConfig)).toThrow(
-                    errorMsg,
-                );
+                expect(() =>
+                    getSlpGenesisTargetOutput(
+                        genesisInfo,
+                        initialQuantity,
+                        mintBatonOutIdx,
+                    ),
+                ).toThrow(errorMsg);
             });
         });
     });
-    describe('Get all slpv1 SEND utxos from a mixed utxo set from ChronikClientNode', () => {
+    describe('Get all slpv1 SEND utxos from a mixed utxo set from ChronikClient', () => {
         const { expectedReturns } = vectors.getAllSendUtxos;
         expectedReturns.forEach(expectedReturn => {
             const { description, utxos, tokenId, tokenUtxos } = expectedReturn;
@@ -88,15 +145,15 @@ describe('slpv1 methods', () => {
             });
         });
     });
-    describe('Get slpv1 send token inputs and outputs from in-node chronik-client', () => {
+    describe('Get slpv1 send token inputs and outputs', () => {
         const { expectedReturns, expectedErrors } = vectors.getSendTokenInputs;
         expectedReturns.forEach(expectedReturn => {
             const {
                 description,
                 allSendUtxos,
                 sendQty,
-                decimals,
                 tokenId,
+                decimals,
                 tokenInputs,
                 sendAmounts,
                 targetOutputs,
@@ -111,132 +168,13 @@ describe('slpv1 methods', () => {
                 expect(calcTokenInputs.tokenInputs).toStrictEqual(tokenInputs);
                 expect(calcTokenInputs.sendAmounts).toStrictEqual(sendAmounts);
             });
-            it(`getSlpSendTargetOutputs with in-node inputs: ${description}`, () => {
-                const calculatedTargetOutputs = getSlpSendTargetOutputs(
-                    { tokenInputs, sendAmounts },
-                    SEND_DESTINATION_ADDRESS,
-                );
-
-                // We will always have the OP_RETURN output at index 0
-                expect(calculatedTargetOutputs[0].value).toBe(0);
-                expect(calculatedTargetOutputs[0].script.toString('hex')).toBe(
-                    targetOutputs[0].script,
-                );
-
-                // We will always have the destination output at index 1
-                expect(calculatedTargetOutputs[1].value).toBe(
-                    appConfig.dustSats,
-                );
-                expect(calculatedTargetOutputs[1].address).toBe(
-                    SEND_DESTINATION_ADDRESS,
-                );
-
-                // If there is a change output it is at index 2
-                if (typeof calculatedTargetOutputs[2] !== 'undefined') {
-                    // If we are here, assert the length must be 3
-
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect(calculatedTargetOutputs.length).toBe(3);
-
-                    // assert the expected change output
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect(calculatedTargetOutputs[2].value).toBe(
-                        appConfig.dustSats,
-                    );
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect('address' in calculatedTargetOutputs[2]).toBe(false);
-                } else {
-                    // If we are here, assert the length must be 2
-
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect(calculatedTargetOutputs.length).toBe(2);
-                }
-            });
-        });
-        expectedErrors.forEach(expectedError => {
-            const {
-                description,
-                allSendUtxos,
-                tokenId,
-                sendQty,
-                decimals,
-                errorMsg,
-            } = expectedError;
-            it(`getSlpBurnTargetOutput throws error for: ${description}`, () => {
-                expect(() =>
-                    getSendTokenInputs(
-                        allSendUtxos,
-                        tokenId,
-                        sendQty,
-                        decimals,
+            it(`getSlpSendTargetOutputs: ${description}`, () => {
+                expect(
+                    getSlpSendTargetOutputs(
+                        { tokenInputs, sendAmounts },
+                        SEND_DESTINATION_ADDRESS,
                     ),
-                ).toThrow(errorMsg);
-            });
-        });
-    });
-    describe('Get slpv1 send input utxos from in-node chronik-client', () => {
-        const { expectedReturns, expectedErrors } = vectors.getSendTokenInputs;
-        expectedReturns.forEach(expectedReturn => {
-            const {
-                description,
-                allSendUtxos,
-                sendQty,
-                tokenId,
-                decimals,
-                tokenInputs,
-                sendAmounts,
-                targetOutputs,
-            } = expectedReturn;
-            it(`getSendTokenInputs with in-node chronik utxos: ${description}`, () => {
-                const calcTokenInputs = getSendTokenInputs(
-                    allSendUtxos,
-                    tokenId,
-                    sendQty,
-                    decimals,
-                );
-                expect(calcTokenInputs.tokenInputs).toStrictEqual(tokenInputs);
-                expect(calcTokenInputs.sendAmounts).toStrictEqual(sendAmounts);
-            });
-            it(`getSlpSendTargetOutputs with in-node inputs: ${description}`, () => {
-                const calculatedTargetOutputs = getSlpSendTargetOutputs(
-                    { tokenInputs, sendAmounts },
-                    SEND_DESTINATION_ADDRESS,
-                );
-
-                // We will always have the OP_RETURN output at index 0
-                expect(calculatedTargetOutputs[0].value).toBe(0);
-                expect(calculatedTargetOutputs[0].script.toString('hex')).toBe(
-                    targetOutputs[0].script,
-                );
-
-                // We will always have the destination output at index 1
-                expect(calculatedTargetOutputs[1].value).toBe(
-                    appConfig.dustSats,
-                );
-                expect(calculatedTargetOutputs[1].address).toBe(
-                    SEND_DESTINATION_ADDRESS,
-                );
-
-                // If there is a change output it is at index 2
-                if (typeof calculatedTargetOutputs[2] !== 'undefined') {
-                    // If we are here, assert the length must be 3
-
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect(calculatedTargetOutputs.length).toBe(3);
-
-                    // assert the expected change output
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect(calculatedTargetOutputs[2].value).toBe(
-                        appConfig.dustSats,
-                    );
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect('address' in calculatedTargetOutputs[2]).toBe(false);
-                } else {
-                    // If we are here, assert the length must be 2
-
-                    // eslint-disable-next-line jest/no-conditional-expect
-                    expect(calculatedTargetOutputs.length).toBe(2);
-                }
+                ).toStrictEqual(targetOutputs);
             });
         });
         expectedErrors.forEach(expectedError => {
@@ -272,7 +210,7 @@ describe('slpv1 methods', () => {
                 tokenId,
                 decimals,
                 tokenInputInfo,
-                outputScriptHex,
+                targetOutputs,
             } = expectedReturn;
 
             it(`getSlpBurnTargetOutputs: ${description}`, () => {
@@ -288,62 +226,10 @@ describe('slpv1 methods', () => {
                     tokenInputInfo.sendAmounts,
                 );
 
-                const targetOutput = getSlpBurnTargetOutputs(
-                    calculatedTokenInputInfo,
-                );
-
-                // We will always have the OP_RETURN output at index 0
-                expect(targetOutput[0].value).toBe(0);
-                expect(targetOutput[0].script.toString('hex')).toBe(
-                    outputScriptHex,
-                );
-
-                // BURN txs always have 2 outputs
-                expect(targetOutput.length).toBe(2);
-                // assert the expected change output
-                expect(targetOutput[1].value).toBe(appConfig.dustSats);
-                expect('address' in targetOutput[1]).toBe(false);
+                expect(
+                    getSlpBurnTargetOutputs(calculatedTokenInputInfo),
+                ).toStrictEqual(targetOutputs);
             });
-        });
-    });
-    describe('Generating explicit etoken burn tx target output from in-node utxos', () => {
-        const { expectedReturns } = vectors.explicitBurns;
-
-        expectedReturns.forEach(expectedReturn => {
-            const { description, burnUtxos, decimals, outputScriptHex } =
-                expectedReturn;
-            it(`getExplicitBurnTargetOutputs: ${description}`, () => {
-                const targetOutputs = getExplicitBurnTargetOutputs(
-                    burnUtxos,
-                    decimals,
-                );
-                // We get an array of length 1
-                expect(targetOutputs.length).toBe(1);
-                // Output value should be zero for OP_RETURN
-                expect(targetOutputs[0].value).toBe(0);
-                // Test vs hex string as cannot store buffer type in vectors
-                expect(targetOutputs[0].script.toString('hex')).toBe(
-                    outputScriptHex,
-                );
-            });
-        });
-
-        // We expect an error if in-node utxos are used in a call without specifying the decimals param
-        it(`getExplicitBurnTargetOutputs throws error if called with in-node utxos and no specified decimals`, () => {
-            expect(() =>
-                getExplicitBurnTargetOutputs([
-                    {
-                        value: 546,
-                        token: {
-                            tokenId:
-                                '3333333333333333333333333333333333333333333333333333333333333333',
-                            amount: '100',
-                        },
-                    },
-                ]),
-            ).toThrow(
-                'Invalid decimals -1 for tokenId 3333333333333333333333333333333333333333333333333333333333333333. Decimals must be an integer 0-9.',
-            );
         });
     });
     describe('Get slpv1 mint baton(s)', () => {
@@ -359,38 +245,52 @@ describe('slpv1 methods', () => {
         const { expectedReturns, expectedErrors } =
             vectors.getMintTargetOutputs;
         expectedReturns.forEach(vector => {
-            const { description, tokenId, decimals, mintQty, script } = vector;
+            const {
+                description,
+                tokenId,
+                decimals,
+                mintQty,
+                tokenProtocolNumber,
+                targetOutputs,
+            } = vector;
             it(`getMintTargetOutputs: ${description}`, () => {
-                const mintTargetOutputs = getMintTargetOutputs(
-                    tokenId,
-                    decimals,
-                    mintQty,
-                );
-                expect(mintTargetOutputs[0].script.toString('hex')).toBe(
-                    script,
-                );
-                expect(mintTargetOutputs.length).toBe(3);
-                expect(mintTargetOutputs.splice(1, 3)).toStrictEqual([
-                    { value: appConfig.dustSats },
-                    { value: appConfig.dustSats },
-                ]);
+                expect(
+                    getMintTargetOutputs(
+                        tokenId,
+                        decimals,
+                        mintQty,
+                        tokenProtocolNumber,
+                    ),
+                ).toStrictEqual(targetOutputs);
             });
         });
         expectedErrors.forEach(vector => {
-            const { description, tokenId, decimals, mintQty, error } = vector;
+            const {
+                description,
+                tokenId,
+                decimals,
+                mintQty,
+                tokenProtocolNumber,
+                error,
+            } = vector;
             it(`getMintTargetOutputs throws error for: ${description}`, () => {
                 expect(() =>
-                    getMintTargetOutputs(tokenId, decimals, mintQty),
+                    getMintTargetOutputs(
+                        tokenId,
+                        decimals,
+                        mintQty,
+                        tokenProtocolNumber,
+                    ),
                 ).toThrow(error);
             });
         });
     });
-    describe('Gets max mint amount, decimalized', () => {
-        const { expectedReturns } = vectors.getMaxMintAmount;
+    describe('Gets max mint/send/burn SLP amount, decimalized', () => {
+        const { expectedReturns } = vectors.getMaxDecimalizedSlpQty;
         expectedReturns.forEach(vector => {
             const { description, decimals, returned } = vector;
-            it(`getMaxMintAmount: ${description}`, () => {
-                expect(getMaxMintAmount(decimals)).toBe(returned);
+            it(`getMaxDecimalizedSlpQty: ${description}`, () => {
+                expect(getMaxDecimalizedSlpQty(decimals)).toBe(returned);
             });
         });
     });
@@ -400,21 +300,40 @@ describe('slpv1 methods', () => {
 
         // Successfully created targetOutputs
         expectedReturns.forEach(expectedReturn => {
-            const { description, genesisConfig, targetOutputs } =
-                expectedReturn;
+            const {
+                description,
+                genesisInfo,
+                initialQuantity,
+                mintBatonOutIdx,
+                targetOutputs,
+            } = expectedReturn;
             it(`getNftParentGenesisTargetOutputs: ${description}`, () => {
-                expect(getNftParentGenesisTargetOutputs(genesisConfig)).toEqual(
-                    targetOutputs,
-                );
+                expect(
+                    getNftParentGenesisTargetOutputs(
+                        genesisInfo,
+                        initialQuantity,
+                        mintBatonOutIdx,
+                    ),
+                ).toStrictEqual(targetOutputs);
             });
         });
 
         // Error cases
         expectedErrors.forEach(expectedError => {
-            const { description, genesisConfig, errorMsg } = expectedError;
+            const {
+                description,
+                genesisInfo,
+                initialQuantity,
+                mintBatonOutIdx,
+                errorMsg,
+            } = expectedError;
             it(`getNftParentGenesisTargetOutputs throws error for: ${description}`, () => {
                 expect(() =>
-                    getNftParentGenesisTargetOutputs(genesisConfig),
+                    getNftParentGenesisTargetOutputs(
+                        genesisInfo,
+                        initialQuantity,
+                        mintBatonOutIdx,
+                    ),
                 ).toThrow(errorMsg);
             });
         });
@@ -428,9 +347,9 @@ describe('slpv1 methods', () => {
             const { description, tokenId, mintQty, targetOutputs } =
                 expectedReturn;
             it(`getNftParentMintTargetOutputs: ${description}`, () => {
-                expect(getNftParentMintTargetOutputs(tokenId, mintQty)).toEqual(
-                    targetOutputs,
-                );
+                expect(
+                    getNftParentMintTargetOutputs(tokenId, mintQty),
+                ).toStrictEqual(targetOutputs);
             });
         });
 
@@ -463,7 +382,7 @@ describe('slpv1 methods', () => {
         expectedReturns.forEach(expectedReturn => {
             const { description, fanInputs, returned } = expectedReturn;
             it(`getNftParentFanTxTargetOutputs: ${description}`, () => {
-                expect(getNftParentFanTxTargetOutputs(fanInputs)).toEqual(
+                expect(getNftParentFanTxTargetOutputs(fanInputs)).toStrictEqual(
                     returned,
                 );
             });
@@ -492,12 +411,11 @@ describe('slpv1 methods', () => {
     describe('Get targetOutputs for an NFT1 child genesis tx', () => {
         const { expectedReturns } = vectors.getNftChildGenesisTargetOutputs;
         expectedReturns.forEach(expectedReturn => {
-            const { description, childGenesisConfig, returned } =
-                expectedReturn;
+            const { description, genesisInfo, returned } = expectedReturn;
             it(`getNftChildGenesisTargetOutputs: ${description}`, () => {
                 expect(
-                    getNftChildGenesisTargetOutputs(childGenesisConfig),
-                ).toEqual(returned);
+                    getNftChildGenesisTargetOutputs(genesisInfo),
+                ).toStrictEqual(returned);
             });
         });
     });
@@ -518,8 +436,147 @@ describe('slpv1 methods', () => {
             it(`getNftChildSendTargetOutputs: ${description}`, () => {
                 expect(
                     getNftChildSendTargetOutputs(tokenId, destinationAddress),
-                ).toEqual(returned);
+                ).toStrictEqual(returned);
             });
+        });
+    });
+    describe('isTokenDustChangeOutput correctly identifies a token dust change output', () => {
+        const { expectedReturns } = vectors.isTokenDustChangeOutput;
+        expectedReturns.forEach(expectedReturn => {
+            const { description, targetOutput, returned } = expectedReturn;
+            it(`isTokenDustChangeOutput: ${description}`, () => {
+                expect(isTokenDustChangeOutput(targetOutput)).toStrictEqual(
+                    returned,
+                );
+            });
+        });
+    });
+    describe('getAgoraAdFuelSats correctly determines one-input fee for an agora offer tx', () => {
+        const MOCK_WALLET_SK = fromHex('33'.repeat(32));
+        const SATS_PER_KB_MIN = 1000;
+        const SATS_PER_KB_ALT = 2000;
+
+        it(`getAgoraAdFuelSats for minimum eCash fee NFT listing`, () => {
+            expect(
+                getAgoraAdFuelSats(
+                    MOCK_ONESHOT.adScript(),
+                    AgoraOneshotAdSignatory(MOCK_WALLET_SK),
+                    [
+                        {
+                            value: 0,
+                            script: slpSend(MOCK_TOKEN_ID, SLP_NFT1_CHILD, [1]),
+                        },
+                        {
+                            value: appConfig.dustSats,
+                            script: MOCK_AGORA_P2SH,
+                        },
+                    ],
+                    SATS_PER_KB_MIN,
+                ),
+            ).toEqual(314);
+        });
+        it(`getAgoraAdFuelSats for a different fee level NFT listing`, () => {
+            expect(
+                getAgoraAdFuelSats(
+                    MOCK_ONESHOT.adScript(),
+                    AgoraOneshotAdSignatory(MOCK_WALLET_SK),
+                    // Note: for NFT listings, the offerOutputs parameter is more or less constant,
+                    // at least in Cashtab
+                    // maybe you could have a case where sendAmounts array is not [1], mb you have a weird
+                    // NFT with "change" ... will not see this in Cashtab
+                    // So, arguably this function could be a constant. However, we will extend to support
+                    // partial agora offers, and we may change how these offers are made in the future
+                    // Also note... if you set this to a variable in this test, you get failures because
+                    // of the way ecash-lib copies objects and jest not liking it
+                    [
+                        {
+                            value: 0,
+                            script: slpSend(MOCK_TOKEN_ID, SLP_NFT1_CHILD, [1]),
+                        },
+                        {
+                            value: appConfig.dustSats,
+                            script: MOCK_AGORA_P2SH,
+                        },
+                    ],
+                    SATS_PER_KB_ALT,
+                ),
+            ).toEqual(628);
+        });
+        it(`getAgoraAdFuelSats for minimum eCash fee SLP partial listing and no token change`, () => {
+            const tokenSendAmount = 10000;
+            expect(
+                getAgoraAdFuelSats(
+                    MOCK_PARTIAL.adScript(),
+                    AgoraPartialAdSignatory(MOCK_WALLET_SK),
+                    [
+                        {
+                            value: 0,
+                            script: slpSend(MOCK_TOKEN_ID, SLP_FUNGIBLE, [
+                                tokenSendAmount,
+                            ]),
+                        },
+                        {
+                            value: appConfig.dustSats,
+                            script: MOCK_PARTIAL_P2SH,
+                        },
+                    ],
+                    SATS_PER_KB_MIN,
+                ),
+            ).toEqual(368);
+        });
+        it(`getAgoraAdFuelSats for minimum eCash fee SLP partial listing and a token change output`, () => {
+            // Not expected for this use case to come up in Cashtab, but we demonstrate that the fee
+            // increases with an additional output as expected
+            const tokenSendAmount = 9900;
+            const tokenChangeAmount = 100;
+            expect(
+                getAgoraAdFuelSats(
+                    MOCK_PARTIAL.adScript(),
+                    AgoraPartialAdSignatory(MOCK_WALLET_SK),
+                    [
+                        {
+                            value: 0,
+                            script: slpSend(MOCK_TOKEN_ID, SLP_FUNGIBLE, [
+                                tokenSendAmount,
+                                tokenChangeAmount,
+                            ]),
+                        },
+                        {
+                            value: appConfig.dustSats,
+                            script: MOCK_PARTIAL_P2SH,
+                        },
+                        {
+                            value: appConfig.dustSats,
+                            script: Script.fromAddress(
+                                SEND_DESTINATION_ADDRESS,
+                            ),
+                        },
+                    ],
+                    SATS_PER_KB_MIN,
+                ),
+            ).toEqual(411);
+        });
+        it(`getAgoraAdFuelSats for alternate eCash fee SLP partial listing and no token change`, () => {
+            const tokenSendAmount = 10000;
+            expect(
+                getAgoraAdFuelSats(
+                    MOCK_PARTIAL.adScript(),
+                    AgoraPartialAdSignatory(MOCK_WALLET_SK),
+                    [
+                        {
+                            value: 0,
+                            script: slpSend(MOCK_TOKEN_ID, SLP_FUNGIBLE, [
+                                tokenSendAmount,
+                            ]),
+                        },
+                        {
+                            value: appConfig.dustSats,
+                            script: MOCK_PARTIAL_P2SH,
+                        },
+                    ],
+                    SATS_PER_KB_ALT,
+                ),
+            ).toEqual(736);
         });
     });
 });

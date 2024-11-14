@@ -5,6 +5,7 @@
 #include <qt/bitcoin.h>
 
 #include <chainparams.h>
+#include <common/args.h>
 #include <config.h>
 #include <httprpc.h>
 #include <init.h>
@@ -25,7 +26,7 @@
 #include <qt/utilitydialog.h>
 #include <qt/winshutdownmonitor.h>
 #include <uint256.h>
-#include <util/system.h>
+#include <util/exception.h>
 #include <util/threadnames.h>
 #include <util/translation.h>
 #include <validation.h>
@@ -166,6 +167,72 @@ static void initTranslations(QTranslator &qtTranslatorBase,
     if (translator.load(lang_territory, ":/translations/")) {
         QApplication::installTranslator(&translator);
     }
+}
+
+static std::string JoinErrors(const std::vector<std::string> &errors) {
+    return Join(errors, "\n",
+                [](const std::string &error) { return "- " + error; });
+}
+
+static bool InitSettings() {
+    gArgs.EnsureDataDir();
+    if (!gArgs.GetSettingsPath()) {
+        // Do nothing if settings file disabled.
+        return true;
+    }
+
+    std::vector<std::string> errors;
+    if (!gArgs.ReadSettingsFile(&errors)) {
+        bilingual_str error = _("Settings file could not be read");
+        InitError(Untranslated(
+            strprintf("%s:\n%s\n", error.original, JoinErrors(errors))));
+
+        QMessageBox messagebox(
+            QMessageBox::Critical, PACKAGE_NAME,
+            QString::fromStdString(strprintf("%s.", error.translated)),
+            QMessageBox::Reset | QMessageBox::Abort);
+        // Explanatory text shown on startup when the settings file cannot
+        // be read. Prompts user to make a choice between resetting or aborting.
+        messagebox.setInformativeText(
+            QObject::tr("Do you want to reset settings to default values, or "
+                        "to abort without making changes?"));
+        messagebox.setDetailedText(QString::fromStdString(JoinErrors(errors)));
+        messagebox.setTextFormat(Qt::PlainText);
+        messagebox.setDefaultButton(QMessageBox::Reset);
+        switch (messagebox.exec()) {
+            case QMessageBox::Reset:
+                break;
+            case QMessageBox::Abort:
+                return false;
+            default:
+                assert(false);
+        }
+    }
+
+    errors.clear();
+    if (!gArgs.WriteSettingsFile(&errors)) {
+        bilingual_str error = _("Settings file could not be written");
+        InitError(Untranslated(
+            strprintf("%s:\n%s\n", error.original, JoinErrors(errors))));
+
+        QMessageBox messagebox(
+            QMessageBox::Critical, PACKAGE_NAME,
+            QString::fromStdString(strprintf("%s.", error.translated)),
+            QMessageBox::Ok);
+        // Explanatory text shown on startup when the settings file could
+        // not be written. Prompts user to check that we have the ability to
+        // write to the file. Explains that the user has the option of running
+        // without a settings file.
+        messagebox.setInformativeText(
+            QObject::tr("A fatal error occurred. Check that settings file is "
+                        "writable, or try running with -nosettings."));
+        messagebox.setDetailedText(QString::fromStdString(JoinErrors(errors)));
+        messagebox.setTextFormat(Qt::PlainText);
+        messagebox.setDefaultButton(QMessageBox::Ok);
+        messagebox.exec();
+        return false;
+    }
+    return true;
 }
 
 /* qDebug() message handler --> debug.log */
@@ -526,7 +593,7 @@ static void SetupUIArgs(ArgsManager &argsman) {
 
 int GuiMain(int argc, char *argv[]) {
 #ifdef WIN32
-    util::WinCmdLineArgs winArgs;
+    common::WinCmdLineArgs winArgs;
     std::tie(argc, argv) = winArgs.get();
 #endif
     SetupEnvironment();
@@ -621,7 +688,7 @@ int GuiMain(int argc, char *argv[]) {
     /// 6. Determine availability of data directory and parse
     /// bitcoin.conf
     /// - Do not call gArgs.GetDataDirNet() before this step finishes.
-    if (!CheckDataDirOption()) {
+    if (!CheckDataDirOption(gArgs)) {
         InitError(strprintf(
             Untranslated("Specified data directory \"%s\" does not exist.\n"),
             gArgs.GetArg("-datadir", "")));
@@ -664,11 +731,7 @@ int GuiMain(int argc, char *argv[]) {
     // Parse URIs on command line -- this can affect Params()
     PaymentServer::ipcParseCommandLine(argc, argv);
 #endif
-    if (!gArgs.InitSettings(error)) {
-        InitError(Untranslated(error));
-        QMessageBox::critical(nullptr, PACKAGE_NAME,
-                              QObject::tr("Error initializing settings: %1")
-                                  .arg(QString::fromStdString(error)));
+    if (!InitSettings()) {
         return EXIT_FAILURE;
     }
 

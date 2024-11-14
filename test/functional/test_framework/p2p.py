@@ -90,6 +90,16 @@ P2P_SERVICES = NODE_NETWORK
 P2P_SUBVERSION = "/python-p2p-tester:0.0.3/"
 # Value for relay that this test framework sends in its `version` message
 P2P_VERSION_RELAY = 1
+# Delay after receiving a tx inv before requesting transactions from
+# non-preferred peers, in seconds
+NONPREF_PEER_TX_DELAY = 2
+# Delay for requesting transactions in seconds
+TXID_RELAY_DELAY = 2
+# Delay for requesting transactions if the peer has
+# MAX_PEER_TX_REQUEST_IN_FLIGHT or more requests
+OVERLOADED_PEER_TX_DELAY = 2
+# How long to wait before downloading a transaction from an additional peer
+GETDATA_TX_INTERVAL = 60
 
 MESSAGEMAP = {
     b"addr": msg_addr,
@@ -558,6 +568,7 @@ class P2PInterface(P2PConnection):
         if self.support_addrv2:
             self.send_message(msg_sendaddrv2())
         self.nServices = message.nServices
+        self.relay = message.relay
         self.send_message(msg_getaddr())
 
     # Connection helper methods

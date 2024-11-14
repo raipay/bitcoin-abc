@@ -20,6 +20,7 @@
 #include <logging.h>
 #include <net_permissions.h>
 #include <netaddress.h>
+#include <netbase.h>
 #include <nodeid.h>
 #include <protocol.h>
 #include <pubkey.h>
@@ -50,11 +51,6 @@ class Config;
 class CNode;
 class CScheduler;
 struct bilingual_str;
-
-/** Default for -whitelistrelay. */
-static const bool DEFAULT_WHITELISTRELAY = true;
-/** Default for -whitelistforcerelay. */
-static const bool DEFAULT_WHITELISTFORCERELAY = false;
 
 /**
  * Time after which to disconnect, after waiting for a ping response (or
@@ -300,14 +296,16 @@ struct CNodeStats {
     int nVersion;
     std::string cleanSubVer;
     bool fInbound;
+    // We requested high bandwidth connection to peer
     bool m_bip152_highbandwidth_to;
+    // Peer requested high bandwidth connection
     bool m_bip152_highbandwidth_from;
     int m_starting_height;
     uint64_t nSendBytes;
     mapMsgCmdSize mapSendBytesPerMsgCmd;
     uint64_t nRecvBytes;
     mapMsgCmdSize mapRecvBytesPerMsgCmd;
-    NetPermissionFlags m_permissionFlags;
+    NetPermissionFlags m_permission_flags;
     std::chrono::microseconds m_last_ping_time;
     std::chrono::microseconds m_min_ping_time;
     // Our address, as reported by the peer
@@ -452,6 +450,11 @@ public:
                              std::vector<uint8_t> &header) override;
 };
 
+struct CNodeOptions {
+    NetPermissionFlags permission_flags = NetPermissionFlags::None;
+    bool prefer_evict = false;
+};
+
 /** Information about a peer */
 class CNode {
     friend class CConnman;
@@ -461,6 +464,7 @@ public:
     std::unique_ptr<TransportDeserializer> m_deserializer;
     std::unique_ptr<TransportSerializer> m_serializer;
 
+    const NetPermissionFlags m_permission_flags{NetPermissionFlags::None};
     // socket
     SOCKET hSocket GUARDED_BY(cs_hSocket);
     /** Total size of all vSendMsg entries. */
@@ -504,9 +508,9 @@ public:
     Mutex m_subver_mutex;
     std::string cleanSubVer GUARDED_BY(m_subver_mutex){};
     // This peer is preferred for eviction.
-    bool m_prefer_evict{false};
+    const bool m_prefer_evict{false};
     bool HasPermission(NetPermissionFlags permission) const {
-        return NetPermissions::HasFlag(m_permissionFlags, permission);
+        return NetPermissions::HasFlag(m_permission_flags, permission);
     }
     std::atomic_bool fSuccessfullyConnected{false};
     // Setting fDisconnect to true will cause the node to be disconnected the
@@ -601,10 +605,8 @@ public:
     std::atomic_bool m_has_all_wanted_services{false};
 
     /**
-     * Whether we should relay transactions to this peer (their version
-     * message did not include fRelay=false and this is not a block-relay-only
-     * connection). This only changes from false to true. It will never change
-     * back to false. Used only in inbound eviction logic.
+     * Whether we should relay transactions to this peer. This only changes
+     * from false to true. It will never change back to false.
      */
     std::atomic_bool m_relays_txs{false};
 
@@ -695,7 +697,7 @@ public:
           uint64_t nKeyedNetGroupIn, uint64_t nLocalHostNonceIn,
           uint64_t nLocalExtraEntropyIn, const CAddress &addrBindIn,
           const std::string &addrNameIn, ConnectionType conn_type_in,
-          bool inbound_onion);
+          bool inbound_onion, CNodeOptions &&node_opts = {});
     ~CNode();
     CNode(const CNode &) = delete;
     CNode &operator=(const CNode &) = delete;
@@ -766,7 +768,6 @@ private:
     const ConnectionType m_conn_type;
     std::atomic<int> m_greatest_common_version{INIT_PROTO_VERSION};
 
-    NetPermissionFlags m_permissionFlags{NetPermissionFlags::None};
     // Used only by SocketHandler thread
     std::list<CNetMessage> vRecvMsg;
 
@@ -844,13 +845,6 @@ struct CConnmanTest;
 class NetEventsInterface;
 class CConnman {
 public:
-    enum NumConnections {
-        CONNECTIONS_NONE = 0,
-        CONNECTIONS_IN = (1U << 0),
-        CONNECTIONS_OUT = (1U << 1),
-        CONNECTIONS_ALL = (CONNECTIONS_IN | CONNECTIONS_OUT),
-    };
-
     struct Options {
         ServiceFlags nLocalServices = NODE_NONE;
         int nMaxConnections = 0;
@@ -867,7 +861,8 @@ public:
         uint64_t nMaxOutboundLimit = 0;
         int64_t m_peer_connect_timeout = DEFAULT_PEER_CONNECT_TIMEOUT;
         std::vector<std::string> vSeedNodes;
-        std::vector<NetWhitelistPermissions> vWhitelistedRange;
+        std::vector<NetWhitelistPermissions> vWhitelistedRangeIncoming;
+        std::vector<NetWhitelistPermissions> vWhitelistedRangeOutgoing;
         std::vector<NetWhitebindPermissions> vWhiteBinds;
         std::vector<CService> vBinds;
         std::vector<CService> onion_binds;
@@ -878,6 +873,8 @@ public:
         std::vector<std::string> m_specified_outgoing;
         std::vector<std::string> m_added_nodes;
         bool m_i2p_accept_incoming = true;
+        bool whitelist_forcerelay = DEFAULT_WHITELISTFORCERELAY;
+        bool whitelist_relay = DEFAULT_WHITELISTRELAY;
     };
 
     void Init(const Options &connOptions)
@@ -911,12 +908,15 @@ public:
             LOCK(cs_totalBytesSent);
             nMaxOutboundLimit = connOptions.nMaxOutboundLimit;
         }
-        vWhitelistedRange = connOptions.vWhitelistedRange;
+        vWhitelistedRangeIncoming = connOptions.vWhitelistedRangeIncoming;
+        vWhitelistedRangeOutgoing = connOptions.vWhitelistedRangeOutgoing;
         {
             LOCK(m_added_nodes_mutex);
             m_added_nodes = connOptions.m_added_nodes;
         }
         m_onion_binds = connOptions.onion_binds;
+        whitelist_forcerelay = connOptions.whitelist_forcerelay;
+        whitelist_relay = connOptions.whitelist_relay;
     }
 
     CConnman(const Config &configIn, uint64_t seed0, uint64_t seed1,
@@ -1031,7 +1031,7 @@ public:
      */
     bool AddConnection(const std::string &address, ConnectionType conn_type);
 
-    size_t GetNodeCount(NumConnections num) const;
+    size_t GetNodeCount(ConnectionDirection) const;
     void GetNodeStats(std::vector<CNodeStats> &vstats) const;
     bool DisconnectNode(const std::string &node);
     bool DisconnectNode(const CSubNet &subnet);
@@ -1118,12 +1118,12 @@ private:
      * Create a `CNode` object from a socket that has just been accepted and add
      * the node to the `m_nodes` member.
      * @param[in] hSocket Connected socket to communicate with the peer.
-     * @param[in] permissionFlags The peer's permissions.
+     * @param[in] permission_flags The peer's permissions.
      * @param[in] addr_bind The address and port at our side of the connection.
      * @param[in] addr The address and port at the peer's side of the connection
      */
     void CreateNodeFromAcceptedSocket(SOCKET hSocket,
-                                      NetPermissionFlags permissionFlags,
+                                      NetPermissionFlags permission_flags,
                                       const CAddress &addr_bind,
                                       const CAddress &addr);
 
@@ -1131,12 +1131,59 @@ private:
     void NotifyNumConnectionsChanged();
     /** Return true if the peer is inactive and should be disconnected. */
     bool InactivityCheck(const CNode &node) const;
-    bool GenerateSelectSet(std::set<SOCKET> &recv_set,
+
+    /**
+     * Generate a collection of sockets to check for IO readiness.
+     * @param[in] nodes Select from these nodes' sockets.
+     * @param[out] recv_set Sockets to check for read readiness.
+     * @param[out] send_set Sockets to check for write readiness.
+     * @param[out] error_set Sockets to check for errors.
+     * @return true if at least one socket is to be checked
+     *     (the returned set is not empty)
+     */
+    bool GenerateSelectSet(const std::vector<CNode *> &nodes,
+                           std::set<SOCKET> &recv_set,
                            std::set<SOCKET> &send_set,
                            std::set<SOCKET> &error_set);
-    void SocketEvents(std::set<SOCKET> &recv_set, std::set<SOCKET> &send_set,
+
+    /**
+     * Check which sockets are ready for IO.
+     * @param[in] nodes Select from these nodes' sockets.
+     * @param[out] recv_set Sockets which are ready for read.
+     * @param[out] send_set Sockets which are ready for write.
+     * @param[out] error_set Sockets which have errors.
+     * This calls `GenerateSelectSet()` to gather a list of sockets to check.
+     */
+    void SocketEvents(const std::vector<CNode *> &nodes,
+                      std::set<SOCKET> &recv_set, std::set<SOCKET> &send_set,
                       std::set<SOCKET> &error_set);
+
+    /**
+     * Check connected and listening sockets for IO readiness and process them
+     * accordingly.
+     */
     void SocketHandler() EXCLUSIVE_LOCKS_REQUIRED(!mutexMsgProc);
+
+    /**
+     * Do the read/write for connected sockets that are ready for IO.
+     * @param[in] nodes Nodes to process. The socket of each node is checked
+     * against `recv_set`, `send_set` and `error_set`.
+     * @param[in] recv_set Sockets that are ready for read.
+     * @param[in] send_set Sockets that are ready for send.
+     * @param[in] error_set Sockets that have an exceptional condition (error).
+     */
+    void SocketHandlerConnected(const std::vector<CNode *> &nodes,
+                                const std::set<SOCKET> &recv_set,
+                                const std::set<SOCKET> &send_set,
+                                const std::set<SOCKET> &error_set)
+        EXCLUSIVE_LOCKS_REQUIRED(!mutexMsgProc);
+
+    /**
+     * Accept incoming connections, one from each read-ready listening socket.
+     * @param[in] recv_set Sockets that are ready for read.
+     */
+    void SocketHandlerListening(const std::set<SOCKET> &recv_set);
+
     void ThreadSocketHandler() EXCLUSIVE_LOCKS_REQUIRED(!mutexMsgProc);
     void ThreadDNSAddressSeed()
         EXCLUSIVE_LOCKS_REQUIRED(!m_addr_fetches_mutex, !m_nodes_mutex);
@@ -1157,8 +1204,9 @@ private:
     bool AttemptToEvictConnection();
     CNode *ConnectNode(CAddress addrConnect, const char *pszDest,
                        bool fCountFailure, ConnectionType conn_type);
-    void AddWhitelistPermissionFlags(NetPermissionFlags &flags,
-                                     const CNetAddr &addr) const;
+    void AddWhitelistPermissionFlags(
+        NetPermissionFlags &flags, const CNetAddr &addr,
+        const std::vector<NetWhitelistPermissions> &ranges) const;
 
     void DeleteNode(CNode *pnode);
 
@@ -1198,7 +1246,9 @@ private:
 
     // Whitelisted ranges. Any node connecting from these is automatically
     // whitelisted (as well as those connecting to whitelisted binds).
-    std::vector<NetWhitelistPermissions> vWhitelistedRange;
+    std::vector<NetWhitelistPermissions> vWhitelistedRangeIncoming;
+    // Whitelisted ranges for outgoing connections.
+    std::vector<NetWhitelistPermissions> vWhitelistedRangeOutgoing;
 
     unsigned int nSendBufferMaxSize{0};
     unsigned int nReceiveFloodSize{0};
@@ -1338,6 +1388,51 @@ private:
      * an address and port that are designated for incoming Tor connections.
      */
     std::vector<CService> m_onion_binds;
+
+    /**
+     * flag for adding 'forcerelay' permission to whitelisted inbound
+     * and manual peers with default permissions.
+     */
+    bool whitelist_forcerelay;
+
+    /**
+     * flag for adding 'relay' permission to whitelisted inbound
+     * and manual peers with default permissions.
+     */
+    bool whitelist_relay;
+
+    /**
+     * RAII helper to atomically create a copy of `m_nodes` and add a reference
+     * to each of the nodes. The nodes are released when this object is
+     * destroyed.
+     */
+    class NodesSnapshot {
+    public:
+        explicit NodesSnapshot(const CConnman &connman, bool shuffle) {
+            {
+                LOCK(connman.m_nodes_mutex);
+                m_nodes_copy = connman.m_nodes;
+                for (auto &node : m_nodes_copy) {
+                    node->AddRef();
+                }
+            }
+            if (shuffle) {
+                Shuffle(m_nodes_copy.begin(), m_nodes_copy.end(),
+                        FastRandomContext{});
+            }
+        }
+
+        ~NodesSnapshot() {
+            for (auto &node : m_nodes_copy) {
+                node->Release();
+            }
+        }
+
+        const std::vector<CNode *> &Nodes() const { return m_nodes_copy; }
+
+    private:
+        std::vector<CNode *> m_nodes_copy;
+    };
 
     friend struct ::CConnmanTest;
     friend struct ConnmanTestMsg;

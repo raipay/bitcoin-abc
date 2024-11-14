@@ -24,6 +24,7 @@
 #include <timedata.h>
 #include <util/strencodings.h>
 #include <util/string.h>
+#include <util/time.h>
 #include <util/translation.h>
 #include <validation.h>
 #include <version.h>
@@ -48,7 +49,7 @@ static RPCHelpMan getconnectioncount() {
             NodeContext &node = EnsureAnyNodeContext(request.context);
             const CConnman &connman = EnsureConnman(node);
 
-            return int(connman.GetNodeCount(CConnman::CONNECTIONS_ALL));
+            return connman.GetNodeCount(ConnectionDirection::Both);
         },
     };
 }
@@ -248,7 +249,7 @@ static RPCHelpMan getpeerinfo() {
                 obj.pushKV("lastrecv", count_seconds(stats.m_last_recv));
                 obj.pushKV("last_transaction",
                            count_seconds(stats.m_last_tx_time));
-                if (g_avalanche) {
+                if (node.avalanche) {
                     obj.pushKV("last_proof",
                                count_seconds(stats.m_last_proof_time));
                 }
@@ -299,7 +300,7 @@ static RPCHelpMan getpeerinfo() {
                 }
                 UniValue permissions(UniValue::VARR);
                 for (const auto &permission :
-                     NetPermissions::ToStrings(stats.m_permissionFlags)) {
+                     NetPermissions::ToStrings(stats.m_permission_flags)) {
                     permissions.push_back(permission);
                 }
                 obj.pushKV("permissions", permissions);
@@ -433,9 +434,7 @@ static RPCHelpMan addconnection() {
             }
 
             NodeContext &node = EnsureAnyNodeContext(request.context);
-            const ArgsManager &args{EnsureArgsman(node)};
 
-            RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VSTR});
             const std::string address = request.params[0].get_str();
             const std::string conn_type_in{
                 TrimString(request.params[1].get_str())};
@@ -449,7 +448,7 @@ static RPCHelpMan addconnection() {
             } else if (conn_type_in == "feeler") {
                 conn_type = ConnectionType::FEELER;
             } else if (conn_type_in == "avalanche") {
-                if (!g_avalanche || !isAvalancheEnabled(args)) {
+                if (!node.avalanche) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER,
                                        "Error: avalanche outbound requested "
                                        "but avalanche is not enabled.");
@@ -514,7 +513,7 @@ static RPCHelpMan disconnectnode() {
                                             (address_arg.isStr() &&
                                              address_arg.get_str().empty()))) {
                 /* handle disconnect-by-id */
-                NodeId nodeid = (NodeId)id_arg.get_int64();
+                NodeId nodeid = (NodeId)id_arg.getInt<int64_t>();
                 success = connman.DisconnectNode(nodeid);
             } else {
                 throw JSONRPCError(
@@ -801,12 +800,12 @@ static RPCHelpMan getnetworkinfo() {
             obj.pushKV("timeoffset", GetTimeOffset());
             if (node.connman) {
                 obj.pushKV("networkactive", node.connman->GetNetworkActive());
-                obj.pushKV("connections", int(node.connman->GetNodeCount(
-                                              CConnman::CONNECTIONS_ALL)));
-                obj.pushKV("connections_in", int(node.connman->GetNodeCount(
-                                                 CConnman::CONNECTIONS_IN)));
-                obj.pushKV("connections_out", int(node.connman->GetNodeCount(
-                                                  CConnman::CONNECTIONS_OUT)));
+                obj.pushKV("connections", node.connman->GetNodeCount(
+                                              ConnectionDirection::Both));
+                obj.pushKV("connections_in",
+                           node.connman->GetNodeCount(ConnectionDirection::In));
+                obj.pushKV("connections_out", node.connman->GetNodeCount(
+                                                  ConnectionDirection::Out));
             }
             obj.pushKV("networks", GetNetworksInfo());
             if (node.mempool) {
@@ -906,7 +905,7 @@ static RPCHelpMan setban() {
                 // Use standard bantime if not specified.
                 int64_t banTime = 0;
                 if (!request.params[2].isNull()) {
-                    banTime = request.params[2].get_int64();
+                    banTime = request.params[2].getInt<int64_t>();
                 }
 
                 bool absolute = false;
@@ -1079,8 +1078,9 @@ static RPCHelpMan getnodeaddresses() {
             NodeContext &node = EnsureAnyNodeContext(request.context);
             const CConnman &connman = EnsureConnman(node);
 
-            const int count{
-                request.params[0].isNull() ? 1 : request.params[0].get_int()};
+            const int count{request.params[0].isNull()
+                                ? 1
+                                : request.params[0].getInt<int>()};
             if (count < 0) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER,
                                    "Address count out of range");
@@ -1154,7 +1154,7 @@ static RPCHelpMan addpeeraddress() {
 
             const std::string &addr_string{request.params[0].get_str()};
             const uint16_t port{
-                static_cast<uint16_t>(request.params[1].get_int())};
+                static_cast<uint16_t>(request.params[1].getInt<int>())};
             const bool tried{request.params[2].isTrue()};
 
             UniValue obj(UniValue::VOBJ);
@@ -1163,7 +1163,7 @@ static RPCHelpMan addpeeraddress() {
 
             if (LookupHost(addr_string, net_addr, false)) {
                 CAddress address{{net_addr, port}, ServiceFlags(NODE_NETWORK)};
-                address.nTime = AdjustedTime();
+                address.nTime = Now<NodeSeconds>();
                 // The source address is set equal to the address. This is
                 // equivalent to the peer announcing itself.
                 if (node.addrman->Add({address}, address)) {

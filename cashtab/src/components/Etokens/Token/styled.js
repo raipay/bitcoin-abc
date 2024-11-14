@@ -4,6 +4,15 @@
 
 import styled from 'styled-components';
 
+export const TokenScreenWrapper = styled.div`
+    color: ${props => props.theme.contrast};
+    width: 100%;
+    h2 {
+        margin: 0 0 20px;
+        margin-top: 10px;
+    }
+`;
+
 export const InfoModalParagraph = styled.p`
     color: ${props => props.theme.contrast};
     text-align: left;
@@ -44,7 +53,11 @@ export const TokenStatsTable = styled.div`
     width: 100%;
     color: ${props => props.theme.contrast};
     gap: 12px;
-    margin-bottom: 12px;
+    background-color: ${props => props.theme.modal.background};
+    border-radius: 20px 20px 0 0;
+    padding: 20px;
+    border: 1px solid ${props => props.theme.lightGrey};
+    border-bottom: none;
 `;
 export const TokenStatsRow = styled.div`
     width: 100%;
@@ -153,6 +166,16 @@ export const NftRow = styled.div`
 export const NftTokenIdAndCopyIcon = styled.div`
     display: flex;
     align-items: center;
+    svg {
+        width: 18px;
+        height: 18px;
+        :hover {
+            g {
+                fill: ${props => props.theme.eCashPurple};
+            }
+            fill: ${props => props.theme.eCashPurple};
+        }
+    }
 `;
 export const NftCol = styled.div`
     display: flex;
@@ -174,4 +197,37 @@ export const NftCollectionTitle = styled.div`
     font-size: 18px;
     color: ${props => props.theme.contrast};
     word-break: break-all;
+`;
+
+export const ListPricePreview = styled.div`
+    text-align: center;
+    color: ${props => props.theme.contrast};
+`;
+export const AgoraPreviewParagraph = styled.p`
+    color: ${props => props.theme.contrast};
+`;
+export const AgoraPreviewTable = styled.div`
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+    font-size: 12px;
+    color: ${props => props.theme.contrast};
+`;
+export const AgoraPreviewRow = styled.div`
+    display: flex;
+    justify-content: center;
+    gap: 3px;
+    align-items: center;
+    width: 100%;
+    flex-direction: row;
+`;
+export const AgoraPreviewCol = styled.div`
+    display: flex;
+    flex-direction: column;
+`;
+export const AgoraPreviewLabel = styled.div`
+    display: flex;
+    flex-direction: column;
+    font-weight: bold;
+    text-align: right;
 `;

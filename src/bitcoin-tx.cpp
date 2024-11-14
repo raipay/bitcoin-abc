@@ -9,21 +9,23 @@
 #include <chainparams.h>
 #include <clientversion.h>
 #include <coins.h>
+#include <common/args.h>
+#include <common/system.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <core_io.h>
 #include <currencyunit.h>
-#include <fs.h>
 #include <key_io.h>
 #include <primitives/transaction.h>
 #include <rpc/util.h>
 #include <script/script.h>
 #include <script/sign.h>
 #include <script/signingprovider.h>
+#include <util/exception.h>
+#include <util/fs.h>
 #include <util/moneystr.h>
 #include <util/strencodings.h>
 #include <util/string.h>
-#include <util/system.h>
 #include <util/translation.h>
 
 #include <univalue.h>
@@ -44,6 +46,8 @@ static void SetupBitcoinTxArgs(ArgsManager &argsman) {
     SetupHelpOptions(argsman);
 
     SetupCurrencyUnitOptions(argsman);
+    argsman.AddArg("-version", "Print version and exit", ArgsManager::ALLOW_ANY,
+                   OptionsCategory::OPTIONS);
     argsman.AddArg("-create", "Create new, empty TX.", ArgsManager::ALLOW_ANY,
                    OptionsCategory::OPTIONS);
     argsman.AddArg("-json", "Select JSON output", ArgsManager::ALLOW_ANY,
@@ -129,17 +133,23 @@ static int AppInitRawTx(int argc, char *argv[]) {
 
     fCreateBlank = gArgs.GetBoolArg("-create", false);
 
-    if (argc < 2 || HelpRequested(gArgs)) {
+    if (argc < 2 || HelpRequested(gArgs) || gArgs.IsArgSet("-version")) {
         // First part of help message is specific to this utility
-        std::string strUsage =
-            PACKAGE_NAME " bitcoin-tx utility version " + FormatFullVersion() +
-            "\n\n" +
-            "Usage:  bitcoin-tx [options] <hex-tx> [commands]  Update "
-            "hex-encoded bitcoin transaction\n" +
-            "or:     bitcoin-tx [options] -create [commands]   Create "
-            "hex-encoded bitcoin transaction\n" +
-            "\n";
-        strUsage += gArgs.GetHelpMessage();
+        std::string strUsage = PACKAGE_NAME " bitcoin-tx utility version " +
+                               FormatFullVersion() + "\n";
+
+        if (gArgs.IsArgSet("-version")) {
+            strUsage += FormatParagraph(LicenseInfo());
+        } else {
+            strUsage +=
+                "\n"
+                "Usage:  bitcoin-tx [options] <hex-tx> [commands]  Update "
+                "hex-encoded bitcoin transaction\n"
+                "or:     bitcoin-tx [options] -create [commands]   Create "
+                "hex-encoded bitcoin transaction\n"
+                "\n";
+            strUsage += gArgs.GetHelpMessage();
+        }
 
         tfm::format(std::cout, "%s", strUsage);
 
@@ -626,7 +636,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
 
         TxId txid(hash);
 
-        const int nOut = prevOut["vout"].get_int();
+        const int nOut = prevOut["vout"].getInt<int>();
         if (nOut < 0) {
             throw std::runtime_error("vout cannot be negative");
         }

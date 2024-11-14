@@ -11,13 +11,15 @@ from test_framework.address import (
     SCRIPTSIG_OP_TRUE,
 )
 from test_framework.blocktools import (
+    COINBASE_MATURITY,
     create_block,
     create_coinbase,
     make_conform_to_ctor,
 )
+from test_framework.hash import hash160
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.p2p import P2PDataStore
-from test_framework.script import OP_EQUAL, OP_HASH160, CScript, hash160
+from test_framework.script import OP_EQUAL, OP_HASH160, CScript
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
 from test_framework.util import assert_equal
@@ -44,7 +46,9 @@ class ChronikSpentByTest(BitcoinTestFramework):
         coinblock = node.getblock(coinblockhash)
         cointx = coinblock["tx"][0]
 
-        tip = self.generatetoaddress(node, 100, ADDRESS_ECREG_UNSPENDABLE)[-1]
+        tip = self.generatetoaddress(
+            node, COINBASE_MATURITY, ADDRESS_ECREG_UNSPENDABLE
+        )[-1]
 
         coinvalue = 5000000000
         send_values = [coinvalue - 10000, 1000, 1000, 1000]

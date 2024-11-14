@@ -1,5 +1,34 @@
 # Release notes
 
+## Release 5.3.0
+
+- Fix the fiat price cache file not being created when a fiat currency
+  is selected for the first time (D16663).
+- Use libsecp256k1 for elliptic curve point addition (D16684).
+- Make libsecp256k1 a mandatory dependency, remove the slow pure-python
+  fallback code (D16689, D16690, D16705).
+- Update protobuf files to make it possible to run Electrum ABC from
+  sources with a newer protobuf version than the one specified in the
+  requirements (D16702).
+
+
+## Release 5.2.14
+
+- Fix a potential OOM crash when opening a BIP72 URI pointing to a very
+  large file. Electrum ABC will stop downloading the payment request if
+  it exceeds a maximum size of 50kB (D16415).
+- Support the latest version 0.13.9 of the trezor library (D16406).
+- Fix decoding of transaction inputs with non-multisig p2sh scriptsigs
+  (D16391).
+
+
+## Release 5.2.13
+
+- Fix support for recent versions  (> 2.4.1) of the Ledger apps (D16362).
+- Fix an error on Windows when the application is started while it is
+  already running in another process (D16327).
+
+
 ## Release 5.2.12
 
 - Disable "Generate Key" button in the Delegation editor for non-HD and

@@ -7,16 +7,17 @@
 
 #include <clientversion.h>
 #include <coins.h>
+#include <common/system.h>
 #include <config.h>
 #include <consensus/consensus.h>
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
+#include <logging.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
 #include <reverse_iterator.h>
 #include <undo.h>
 #include <util/moneystr.h>
-#include <util/system.h>
 #include <util/time.h>
 #include <validationinterface.h>
 #include <version.h>
@@ -114,8 +115,11 @@ void CTxMemPool::UpdateForRemoveFromMempool(const setEntries &entriesToRemove) {
 }
 
 CTxMemPool::CTxMemPool(const Options &opts)
-    : m_check_ratio(opts.check_ratio), m_max_size_bytes{opts.max_size_bytes},
-      m_expiry{opts.expiry}, m_min_relay_feerate{opts.min_relay_feerate},
+    : m_check_ratio(opts.check_ratio),
+      m_orphanage(std::make_unique<TxOrphanage>()),
+      m_conflicting(std::make_unique<TxConflicting>()),
+      m_max_size_bytes{opts.max_size_bytes}, m_expiry{opts.expiry},
+      m_min_relay_feerate{opts.min_relay_feerate},
       m_dust_relay_feerate{opts.dust_relay_feerate},
       m_permit_bare_multisig{opts.permit_bare_multisig},
       m_max_datacarrier_bytes{opts.max_datacarrier_bytes},
@@ -165,10 +169,10 @@ void CTxMemPool::addUnchecked(CTxMemPoolEntryRef entry) {
     // further updated.)
     cachedInnerUsage += entry->DynamicMemoryUsage();
 
-    const CTransaction &tx = entry->GetTx();
+    const CTransactionRef tx = entry->GetSharedTx();
     std::set<TxId> setParentTransactions;
-    for (const CTxIn &in : tx.vin) {
-        mapNextTx.insert(std::make_pair(&in.prevout, &tx));
+    for (const CTxIn &in : tx->vin) {
+        mapNextTx.insert(std::make_pair(&in.prevout, tx));
         setParentTransactions.insert(in.prevout.GetTxId());
     }
     // Don't bother worrying about child transactions of this one. It is
@@ -395,7 +399,7 @@ void CTxMemPool::check(const CCoinsViewCache &active_coins_tip,
             auto prevoutNextIt = mapNextTx.find(txin.prevout);
             assert(prevoutNextIt != mapNextTx.end());
             assert(prevoutNextIt->first == &txin.prevout);
-            assert(prevoutNextIt->second == &tx);
+            assert(prevoutNextIt->second.get() == &tx);
         }
         auto comp = [](const auto &a, const auto &b) -> bool {
             return a.get()->GetTx().GetId() == b.get()->GetTx().GetId();
@@ -447,7 +451,7 @@ void CTxMemPool::check(const CCoinsViewCache &active_coins_tip,
     for (auto &[_, nextTx] : mapNextTx) {
         txiter it = mapTx.find(nextTx->GetId());
         assert(it != mapTx.end());
-        assert(&(*it)->GetTx() == nextTx);
+        assert((*it)->GetSharedTx() == nextTx);
     }
 
     assert(totalTxSize == checkTotal);
@@ -564,7 +568,7 @@ void CTxMemPool::ClearPrioritisation(const TxId &txid) {
     mapDeltas.erase(txid);
 }
 
-const CTransaction *CTxMemPool::GetConflictTx(const COutPoint &prevout) const {
+CTransactionRef CTxMemPool::GetConflictTx(const COutPoint &prevout) const {
     const auto it = mapNextTx.find(prevout);
     return it == mapNextTx.end() ? nullptr : it->second;
 }
@@ -619,6 +623,7 @@ bool CCoinsViewMemPool::GetCoin(const COutPoint &outpoint, Coin &coin) const {
     if (ptx) {
         if (outpoint.GetN() < ptx->vout.size()) {
             coin = Coin(ptx->vout[outpoint.GetN()], MEMPOOL_HEIGHT, false);
+            m_non_base_coins.emplace(outpoint);
             return true;
         }
         return false;
@@ -630,7 +635,12 @@ void CCoinsViewMemPool::PackageAddTransaction(const CTransactionRef &tx) {
     for (uint32_t n = 0; n < tx->vout.size(); ++n) {
         m_temp_added.emplace(COutPoint(tx->GetId(), n),
                              Coin(tx->vout[n], MEMPOOL_HEIGHT, false));
+        m_non_base_coins.emplace(COutPoint(tx->GetId(), n));
     }
+}
+void CCoinsViewMemPool::Reset() {
+    m_temp_added.clear();
+    m_non_base_coins.clear();
 }
 
 size_t CTxMemPool::DynamicMemoryUsage() const {

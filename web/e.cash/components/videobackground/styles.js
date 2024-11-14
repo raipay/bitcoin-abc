@@ -8,12 +8,15 @@ export const VideoCtn = styled.div`
     height: 100%;
     position: absolute;
     z-index: 0;
+    top: 0;
+    left: 0;
     video {
         height: 100%;
         width: 100%;
         object-fit: cover;
         position: absolute;
         margin: auto;
+        left: 0;
         z-index: -100;
         ${props => props.theme.filters.grayscale};
     }

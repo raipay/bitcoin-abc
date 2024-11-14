@@ -7,7 +7,7 @@ import PropTypes from 'prop-types';
 import styled from 'styled-components';
 import ScanQRCode from './ScanQRCode';
 import appConfig from 'config/app';
-import { supportedFiatCurrencies } from 'config/cashtabSettings';
+import { supportedFiatCurrencies } from 'config/CashtabSettings';
 
 const CashtabInputWrapper = styled.div`
     box-sizing: border-box;
@@ -95,11 +95,11 @@ const OnMaxBtn = styled.button`
     cursor: ${props => (props.disabled ? 'not-allowed' : 'pointer')};
     color: ${props =>
         props.invalid ? props.theme.forms.error : props.theme.contrast};
-    border-radius 0 9px 9px 0;
-    background-color: ${props => props.theme.forms.selectionBackground};    
+    border-radius: 0 9px 9px 0;
+    background-color: ${props => props.theme.forms.selectionBackground};
     border-left: none !important;
     font-size: 18px;
-    padding: 16px;    
+    padding: 16px;
 `;
 
 const OnMaxBtnToken = styled(OnMaxBtn)`
@@ -126,6 +126,12 @@ const CurrencyDropdown = styled.select`
 const SendXecDropdown = styled(CurrencyDropdown)`
     width: 100px;
 `;
+
+const SellPriceDropdown = styled(CurrencyDropdown)`
+    width: 100px;
+    border-radius: 0 9px 9px 0;
+`;
+
 const CurrencyOption = styled.option`
     text-align: left;
     background-color: ${props => props.theme.forms.selectionBackground};
@@ -433,6 +439,61 @@ SendTokenInput.propTypes = {
     handleOnMax: PropTypes.func,
 };
 
+export const ListPriceInput = ({
+    name = 'listPriceInput',
+    placeholder = 'listPriceInput',
+    value = 0,
+    inputDisabled = false,
+    selectValue = '',
+    selectDisabled = false,
+    fiatCode = 'USD',
+    error = false,
+    handleInput,
+    handleSelect,
+}) => {
+    return (
+        <CashtabInputWrapper>
+            <InputRow invalid={typeof error === 'string'}>
+                <LeftInput
+                    name={name}
+                    placeholder={placeholder}
+                    type="number"
+                    value={value}
+                    onChange={e => handleInput(e)}
+                    disabled={inputDisabled}
+                />
+                <SellPriceDropdown
+                    data-testid="currency-select-dropdown"
+                    value={selectValue}
+                    onChange={e => handleSelect(e)}
+                    disabled={selectDisabled}
+                >
+                    <CurrencyOption data-testid="xec-option" value="XEC">
+                        XEC
+                    </CurrencyOption>
+                    <CurrencyOption data-testid="fiat-option" value={fiatCode}>
+                        {fiatCode}
+                    </CurrencyOption>
+                </SellPriceDropdown>
+            </InputRow>
+            <ErrorMsg>{typeof error === 'string' ? error : ''}</ErrorMsg>
+        </CashtabInputWrapper>
+    );
+};
+
+ListPriceInput.propTypes = {
+    name: PropTypes.string,
+    placeholder: PropTypes.string,
+    value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    inputDisabled: PropTypes.bool,
+    selectValue: PropTypes.string,
+    selectDisabled: PropTypes.bool,
+    fiatCode: PropTypes.string,
+    error: PropTypes.oneOfType([PropTypes.string, PropTypes.bool]),
+    handleInput: PropTypes.func,
+    handleSelect: PropTypes.func,
+};
+
 export const AliasInput = ({
     name = '',
     placeholder = '',
@@ -471,32 +532,95 @@ AliasInput.propTypes = {
 };
 
 const CashtabSlider = styled.input`
-    width: 100%;
+    width: ${props => (props.fixedWidth ? '256px' : '100%')};
+    accent-color: ${props =>
+        props.isInvalid ? props.theme.encryptionRed : props.theme.eCashBlue};
 `;
-export const Slider = ({ name, value, min, max, step, handleSlide }) => {
+const SliderInput = styled.input`
+    ${props => props.disabled && `cursor: not-allowed`};
+    background-color: ${props => props.theme.forms.selectionBackground};
+    font-size: 14px;
+    padding: 6px 3px;
+    border-radius: 9px;
+    border: none;
+    width: 100%;
+    color: ${props => props.theme.forms.text};
+    :focus-visible {
+        outline: none;
+    }
+`;
+export const SliderLabel = styled.span`
+    color: ${props => props.theme.contrast};
+    width: 50%;
+    text-align: right;
+    line-height: 14px;
+`;
+export const LabelAndInputFlex = styled.div`
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: 3px;
+`;
+export const Slider = ({
+    name,
+    value,
+    error,
+    min,
+    max,
+    step,
+    handleSlide,
+    fixedWidth,
+    allowTypedInput,
+    label,
+}) => {
     return (
-        <CashtabSlider
-            type="range"
-            name={name}
-            value={value}
-            min={min}
-            max={max}
-            step={step}
-            aria-labelledby={name}
-            onChange={e => {
-                handleSlide(e.target.value);
-            }}
-        />
+        <CashtabInputWrapper>
+            <CashtabSlider
+                type="range"
+                name={name}
+                value={value}
+                min={min}
+                max={max}
+                step={step}
+                aria-labelledby={name}
+                onChange={handleSlide}
+                isInvalid={typeof error === 'string'}
+                fixedWidth={fixedWidth}
+            />
+            {allowTypedInput && (
+                <LabelAndInputFlex>
+                    {typeof label === 'string' && (
+                        <SliderLabel>
+                            {label}
+                            {':'}
+                        </SliderLabel>
+                    )}
+                    <SliderInput
+                        name={`${name}-typed`}
+                        value={value}
+                        placeholder={typeof label === 'string' ? label : name}
+                        invalid={typeof error === 'string'}
+                        onChange={handleSlide}
+                    ></SliderInput>
+                </LabelAndInputFlex>
+            )}
+            <ErrorMsg>{typeof error === 'string' ? error : ''}</ErrorMsg>
+        </CashtabInputWrapper>
     );
 };
 Slider.propTypes = {
     name: PropTypes.string,
     placeholder: PropTypes.string,
-    value: PropTypes.number,
-    min: PropTypes.number,
-    max: PropTypes.number,
-    step: PropTypes.number,
+    value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    error: PropTypes.oneOfType([PropTypes.string, PropTypes.bool]),
+    min: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    max: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    step: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     handleSlide: PropTypes.func,
+    fixedWidth: PropTypes.bool,
+    allowTypedInput: PropTypes.bool,
+    label: PropTypes.string,
 };
 
 const InputFile = styled.input`

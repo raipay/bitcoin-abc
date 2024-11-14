@@ -7,7 +7,7 @@
 #ifndef BITCOIN_INIT_H
 #define BITCOIN_INIT_H
 
-#include <util/system.h>
+#include <common/system.h>
 
 #include <memory>
 #include <string>
@@ -89,8 +89,5 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
  * Register all arguments with the ArgsManager
  */
 void SetupServerArgs(node::NodeContext &node);
-
-/** Returns licensing information (for -version) */
-std::string LicenseInfo();
 
 #endif // BITCOIN_INIT_H

@@ -10,6 +10,7 @@
 #include <memusage.h>
 #include <primitives/blockhash.h>
 #include <serialize.h>
+#include <support/allocators/pool.h>
 #include <util/hasher.h>
 
 #include <cassert>
@@ -120,8 +121,23 @@ struct CCoinsCacheEntry {
         : coin(std::move(coin_)), flags(flag) {}
 };
 
-typedef std::unordered_map<COutPoint, CCoinsCacheEntry, SaltedOutpointHasher>
-    CCoinsMap;
+/**
+ * PoolAllocator's MAX_BLOCK_SIZE_BYTES parameter here uses sizeof the data, and
+ * adds the size of 4 pointers. We do not know the exact node size used in the
+ * std::unordered_node implementation because it is implementation defined. Most
+ * implementations have an overhead of 1 or 2 pointers, so nodes can be
+ * connected in a linked list, and in some cases the hash value is stored as
+ * well. Using an additional sizeof(void*)*4 for MAX_BLOCK_SIZE_BYTES should
+ * thus be sufficient so that all implementations can allocate the nodes from
+ * the PoolAllocator.
+ */
+using CCoinsMap = std::unordered_map<
+    COutPoint, CCoinsCacheEntry, SaltedOutpointHasher, std::equal_to<COutPoint>,
+    PoolAllocator<std::pair<const COutPoint, CCoinsCacheEntry>,
+                  sizeof(std::pair<const COutPoint, CCoinsCacheEntry>) +
+                      sizeof(void *) * 4>>;
+
+using CCoinsMapMemoryResource = CCoinsMap::allocator_type::ResourceType;
 
 /** Cursor for iterating over CoinsView state */
 class CCoinsViewCursor {
@@ -168,7 +184,8 @@ public:
 
     //! Do a bulk modification (multiple Coin changes + BestBlock change).
     //! The passed mapCoins can be modified.
-    virtual bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock);
+    virtual bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
+                            bool erase = true);
 
     //! Get a cursor to iterate over the whole state
     virtual CCoinsViewCursor *Cursor() const;
@@ -192,7 +209,8 @@ public:
     BlockHash GetBestBlock() const override;
     std::vector<BlockHash> GetHeadBlocks() const override;
     void SetBackend(CCoinsView &viewIn);
-    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) override;
+    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
+                    bool erase = true) override;
     CCoinsViewCursor *Cursor() const override;
     size_t EstimateSize() const override;
 };
@@ -201,19 +219,23 @@ public:
  * CCoinsView that adds a memory cache for transactions to another CCoinsView
  */
 class CCoinsViewCache : public CCoinsViewBacked {
+private:
+    const bool m_deterministic;
+
 protected:
     /**
      * Make mutable so that we can "fill the cache" even from Get-methods
      * declared as "const".
      */
     mutable BlockHash hashBlock;
+    mutable CCoinsMapMemoryResource m_cache_coins_memory_resource{};
     mutable CCoinsMap cacheCoins;
 
     /* Cached dynamic memory usage for the inner Coin objects. */
     mutable size_t cachedCoinsUsage;
 
 public:
-    CCoinsViewCache(CCoinsView *baseIn);
+    CCoinsViewCache(CCoinsView *baseIn, bool deterministic = false);
 
     /**
      * By deleting the copy constructor, we prevent accidentally using it when
@@ -226,7 +248,8 @@ public:
     bool HaveCoin(const COutPoint &outpoint) const override;
     BlockHash GetBestBlock() const override;
     void SetBestBlock(const BlockHash &hashBlock);
-    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) override;
+    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
+                    bool erase = true) override;
     CCoinsViewCursor *Cursor() const override {
         throw std::logic_error(
             "CCoinsViewCache cursor iteration not supported.");
@@ -274,12 +297,21 @@ public:
     bool SpendCoin(const COutPoint &outpoint, Coin *moveto = nullptr);
 
     /**
-     * Push the modifications applied to this cache to its base.
-     * Failure to call this method before destruction will cause the changes to
-     * be forgotten. If false is returned, the state of this cache (and its
-     * backing view) will be undefined.
+     * Push the modifications applied to this cache to its base and wipe local
+     * state. Failure to call this method or Sync() before destruction will
+     * cause the changes to be forgotten. If false is returned, the state of
+     * this cache (and its backing view) will be undefined.
      */
     bool Flush();
+
+    /**
+     * Push the modifications applied to this cache to its base while retaining
+     * the contents of this cache (except for spent coins, which we erase).
+     * Failure to call this method or Flush() before destruction will cause the
+     * changes to be forgotten. If false is returned, the state of this cache
+     * (and its backing view) will be undefined.
+     */
+    bool Sync();
 
     /**
      * Removes the UTXO with the given outpoint from the cache, if it is not
@@ -304,6 +336,9 @@ public:
     //! See:
     //! https://stackoverflow.com/questions/42114044/how-to-release-unordered-map-memory
     void ReallocateCache();
+
+    //! Run an internal sanity check on the cache data structure.
+    void SanityCheck() const;
 
 private:
     /**

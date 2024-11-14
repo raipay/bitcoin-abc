@@ -20,7 +20,7 @@ MAX_SEEDS_PER_ASN = {
     "ipv6": 10,
 }
 
-MIN_BLOCKS = 830000
+MIN_BLOCKS = 864000
 
 PATTERN_IPV4 = re.compile(r"^((\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})):(\d+)$")
 PATTERN_IPV6 = re.compile(r"^\[([0-9a-z:]+)\]:(\d+)$")
@@ -28,7 +28,7 @@ PATTERN_ONION = re.compile(r"^([abcdefghijklmnopqrstuvwxyz234567]{16}\.onion):(\
 
 # Used to only select nodes with a user agent string compatible with the
 # eCash network.
-PATTERN_AGENT = re.compile(r"^(/Bitcoin ABC:0\.(28|29)\.(.+)/)")
+PATTERN_AGENT = re.compile(r"^(/Bitcoin ABC:0\.(29|30)\.(.+)/)")
 
 
 def parseline(line: str) -> Union[dict, None]:
@@ -193,7 +193,7 @@ def filterbyasn(ips: List[Dict], max_per_asn: Dict, max_per_net: int) -> List[Di
         if i % 10 == 0:
             # give progress update
             print(
-                f"{i:6d}/{len(ips_ipv46)} [{100*i/len(ips_ipv46):04.1f}%]\r",
+                f"{i:6d}/{len(ips_ipv46)} [{100 * i / len(ips_ipv46):04.1f}%]\r",
                 file=sys.stderr,
                 end="",
                 flush=True,

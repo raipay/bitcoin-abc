@@ -7,26 +7,27 @@
 
 #include <blockindex.h>
 #include <chainparamsbase.h>
+#include <common/args.h>
 #include <config.h>
 #include <consensus/amount.h>
-#include <fs.h>
 #include <key.h>
 #include <node/caches.h>
 #include <node/context.h>
 #include <primitives/transaction.h>
 #include <pubkey.h>
-#include <random.h>
 #include <stdexcept>
 #include <txmempool.h>
 #include <util/check.h>
+#include <util/fs.h>
 #include <util/string.h>
-#include <util/system.h>
 #include <util/vector.h>
 
 #include <type_traits>
 #include <vector>
 
+class CFeeRate;
 class Config;
+class FastRandomContext;
 
 // Enable BOOST_CHECK_EQUAL for enum class types
 template <typename T>
@@ -34,58 +35,6 @@ std::ostream &operator<<(
     typename std::enable_if<std::is_enum<T>::value, std::ostream>::type &stream,
     const T &e) {
     return stream << static_cast<typename std::underlying_type<T>::type>(e);
-}
-
-/**
- * This global and the helpers that use it are not thread-safe.
- *
- * If thread-safety is needed, the global could be made thread_local (given
- * that thread_local is supported on all architectures we support) or a
- * per-thread instance could be used in the multi-threaded test.
- */
-extern FastRandomContext g_insecure_rand_ctx;
-
-/**
- * Flag to make GetRand in random.h return the same number
- */
-extern bool g_mock_deterministic_tests;
-
-enum class SeedRand {
-    ZEROS, //!< Seed with a compile time constant of zeros
-    SEED,  //!< Call the Seed() helper
-};
-
-/**
- * Seed the given random ctx or use the seed passed in via an
- * environment var
- */
-void Seed(FastRandomContext &ctx);
-
-static inline void SeedInsecureRand(SeedRand seed = SeedRand::SEED) {
-    if (seed == SeedRand::ZEROS) {
-        g_insecure_rand_ctx = FastRandomContext(/* deterministic */ true);
-    } else {
-        Seed(g_insecure_rand_ctx);
-    }
-}
-
-static inline uint32_t InsecureRand32() {
-    return g_insecure_rand_ctx.rand32();
-}
-static inline uint160 InsecureRand160() {
-    return g_insecure_rand_ctx.rand160();
-}
-static inline uint256 InsecureRand256() {
-    return g_insecure_rand_ctx.rand256();
-}
-static inline uint64_t InsecureRandBits(int bits) {
-    return g_insecure_rand_ctx.randbits(bits);
-}
-static inline uint64_t InsecureRandRange(uint64_t range) {
-    return g_insecure_rand_ctx.randrange(range);
-}
-static inline bool InsecureRandBool() {
-    return g_insecure_rand_ctx.randbool();
 }
 
 static constexpr Amount CENT(COIN / 100);
@@ -214,6 +163,20 @@ struct TestChain100Setup : public TestingSetup {
     std::vector<CTransactionRef> PopulateMempool(FastRandomContext &det_rand,
                                                  size_t num_transactions,
                                                  bool submit);
+
+    /**
+     * Mock the mempool minimum feerate by adding a transaction and calling
+     * TrimToSize(0), simulating the mempool "reaching capacity" and evicting by
+     * descendant feerate. Note that this clears the mempool, and the new
+     * minimum feerate will depend on the maximum feerate of transactions
+     * removed, so this must be called while the mempool is empty.
+     *
+     * @param target_feerate    The new mempool minimum feerate after this
+     *                          function returns. Must be above
+     *                          max(incremental feerate, min relay feerate), or
+     *                          1 sat/B with default settings.
+     */
+    void MockMempoolMinFee(const CFeeRate &target_feerate);
 
     // For convenience, coinbase transactions.
     std::vector<CTransactionRef> m_coinbase_txns;

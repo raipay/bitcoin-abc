@@ -12,6 +12,7 @@ from test_framework.address import (
     SCRIPTSIG_OP_TRUE,
 )
 from test_framework.avatools import AvaP2PInterface, can_find_inv_in_poll
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.p2p import P2PDataStore
 from test_framework.script import OP_CHECKSIG, CScript
@@ -54,7 +55,7 @@ class ChronikWsOrdering(BitcoinTestFramework):
         coinblock = node.getblock(coinblockhash)
         cointxid = coinblock["tx"][0]
 
-        block_hashes = self.generatetoaddress(node, 100, ADDRESS_ECREG_UNSPENDABLE)
+        self.generatetoaddress(node, COINBASE_MATURITY, ADDRESS_ECREG_UNSPENDABLE)
 
         coinvalue = 5000000000
         balance = coinvalue
@@ -86,12 +87,15 @@ class ChronikWsOrdering(BitcoinTestFramework):
                 )
             )
 
-        def ws_block_msg(block_hash: str, block_height: int, msg_type):
+        def ws_block_msg(
+            block_hash: str, block_height: int, block_timestamp: int, msg_type
+        ):
             return pb.WsMsg(
                 block=pb.MsgBlock(
                     msg_type=msg_type,
                     block_hash=bytes.fromhex(block_hash)[::-1],
                     block_height=block_height,
+                    block_timestamp=block_timestamp,
                 )
             )
 
@@ -132,7 +136,8 @@ class ChronikWsOrdering(BitcoinTestFramework):
             return node.isfinalblock(blockhash)
 
         self.wait_until(is_quorum_established)
-        self.wait_until(lambda: is_finalblock(block_hashes[-1]))
+        tip = node.getbestblockhash()
+        self.wait_until(lambda: is_finalblock(tip))
 
         # Subscribe to all scripts in the test, and to blocks
         ws = chronik.ws(timeout=240)
@@ -151,10 +156,13 @@ class ChronikWsOrdering(BitcoinTestFramework):
         assert not node.isfinalblock(finalized_blockhash)
         assert not node.isfinaltransaction(cb_txid, finalized_blockhash)
         finalized_height = node.getblock(finalized_blockhash, 1)["height"]
+        block_timestamp = node.getblock(finalized_blockhash, 1)["time"]
 
         assert_equal(
             ws.recv(),
-            ws_block_msg(finalized_blockhash, finalized_height, pb.BLK_CONNECTED),
+            ws_block_msg(
+                finalized_blockhash, finalized_height, block_timestamp, pb.BLK_CONNECTED
+            ),
         )
 
         with node.assert_debug_log(
@@ -164,7 +172,9 @@ class ChronikWsOrdering(BitcoinTestFramework):
 
         assert_equal(
             ws.recv(),
-            ws_block_msg(finalized_blockhash, finalized_height, pb.BLK_FINALIZED),
+            ws_block_msg(
+                finalized_blockhash, finalized_height, block_timestamp, pb.BLK_FINALIZED
+            ),
         )
 
         assert node.isfinaltransaction(cb_txid, finalized_blockhash)
@@ -192,11 +202,14 @@ class ChronikWsOrdering(BitcoinTestFramework):
         # Mine all txs in a block
         next_blockhash = self.generatetoaddress(node, 1, ADDRESS_ECREG_UNSPENDABLE)[0]
         assert_equal(node.getblockcount(), finalized_height + 1)
+        block_timestamp = node.getblock(next_blockhash, 1)["time"]
 
         # BLK_CONNECTED always comes first
         assert_equal(
             ws.recv(),
-            ws_block_msg(next_blockhash, finalized_height + 1, pb.BLK_CONNECTED),
+            ws_block_msg(
+                next_blockhash, finalized_height + 1, block_timestamp, pb.BLK_CONNECTED
+            ),
         )
 
         # Then come the TX_CONFIRMED msgs, but in indeterministic order.
@@ -226,7 +239,9 @@ class ChronikWsOrdering(BitcoinTestFramework):
         # BLK_FINALIZED always comes first
         assert_equal(
             ws.recv(),
-            ws_block_msg(next_blockhash, finalized_height + 1, pb.BLK_FINALIZED),
+            ws_block_msg(
+                next_blockhash, finalized_height + 1, block_timestamp, pb.BLK_FINALIZED
+            ),
         )
         # TX_FINALIZED come next
         actual_ws_msgs = [ws.recv() for i in range(len(p2sh_txids) + 3)]

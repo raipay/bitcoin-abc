@@ -4,24 +4,25 @@
 
 #include <avalanche/peermanager.h>
 
-#include <arith_uint256.h>
 #include <avalanche/avalanche.h>
 #include <avalanche/delegation.h>
+#include <avalanche/stakecontender.h>
 #include <avalanche/validation.h>
 #include <cashaddrenc.h>
+#include <common/args.h>
 #include <consensus/activation.h>
 #include <logging.h>
 #include <random.h>
 #include <scheduler.h>
+#include <threadsafety.h>
 #include <uint256.h>
 #include <util/fastrange.h>
-#include <util/system.h>
+#include <util/fs_helpers.h>
 #include <util/time.h>
 #include <validation.h> // For ChainstateManager
 
 #include <algorithm>
 #include <cassert>
-#include <cmath>
 #include <limits>
 
 namespace avalanche {
@@ -570,6 +571,23 @@ std::unordered_set<ProofRef, SaltedProofHasher> PeerManager::updatedBlockTip() {
                          p.proof->getId().GetHex(), state.ToString());
             }
         }
+
+        // Disable thread safety analysis here because it does not play nicely
+        // with the lambda
+        danglingProofPool.forEachProof(
+            [&](const ProofRef &proof) NO_THREAD_SAFETY_ANALYSIS {
+                AssertLockHeld(cs_main);
+                ProofValidationState state;
+                if (!proof->verify(stakeUtxoDustThreshold, chainman, state)) {
+                    invalidProofIds.push_back(proof->getId());
+
+                    LogPrint(
+                        BCLog::AVALANCHE,
+                        "Invalidating dangling proof %s: verification failed "
+                        "(%s)\n",
+                        proof->getId().GetHex(), state.ToString());
+                }
+            });
     }
 
     // Remove the invalid proofs before the immature rescan. This makes it
@@ -676,6 +694,11 @@ PeerManager::getRemoteProofs(const NodeId nodeid) const {
     }
 
     return nodeRemoteProofs;
+}
+
+bool PeerManager::isRemoteProof(const ProofId &proofid) const {
+    auto &view = remoteProofs.get<by_proofid>();
+    return view.count(proofid) > 0;
 }
 
 bool PeerManager::removePeer(const PeerId peerid) {
@@ -969,8 +992,9 @@ void PeerManager::removeUnbroadcastProof(const ProofId &proofid) {
     m_unbroadcast_proofids.erase(proofid);
 }
 
-bool PeerManager::selectStakingRewardWinner(const CBlockIndex *pprev,
-                                            std::vector<CScript> &winners) {
+bool PeerManager::selectStakingRewardWinner(
+    const CBlockIndex *pprev,
+    std::vector<std::pair<ProofId, CScript>> &winners) {
     if (!pprev) {
         return false;
     }
@@ -981,17 +1005,12 @@ bool PeerManager::selectStakingRewardWinner(const CBlockIndex *pprev,
     // previous block or lacking node connected.
     // The previous block time is capped to now for the unlikely event the
     // previous block time is in the future.
-    std::chrono::seconds registrationDelay =
+    auto registrationDelay = std::chrono::duration_cast<std::chrono::seconds>(
+        4 * Peer::DANGLING_TIMEOUT);
+    auto maxRegistrationDelay =
         std::chrono::duration_cast<std::chrono::seconds>(
-            IsLeeKuanYewEnabled(chainman.GetConsensus(), pprev)
-                ? 4 * Peer::DANGLING_TIMEOUT
-                : 2 * Peer::DANGLING_TIMEOUT);
-    std::chrono::seconds maxRegistrationDelay =
-        std::chrono::duration_cast<std::chrono::seconds>(
-            IsLeeKuanYewEnabled(chainman.GetConsensus(), pprev)
-                ? 6 * Peer::DANGLING_TIMEOUT
-                : 4 * Peer::DANGLING_TIMEOUT);
-    std::chrono::seconds minRegistrationDelay =
+            6 * Peer::DANGLING_TIMEOUT);
+    auto minRegistrationDelay =
         std::chrono::duration_cast<std::chrono::seconds>(
             2 * Peer::DANGLING_TIMEOUT);
 
@@ -1029,12 +1048,7 @@ bool PeerManager::selectStakingRewardWinner(const CBlockIndex *pprev,
                 continue;
             }
 
-            uint256 proofRewardHash;
-            CHash256()
-                .Write(prevblockhash)
-                .Write(peer.getProofId())
-                .Finalize(proofRewardHash);
-
+            StakeContenderId proofRewardHash(prevblockhash, peer.getProofId());
             if (proofRewardHash == uint256::ZERO) {
                 // This either the result of an incredibly unlikely lucky hash,
                 // or a the hash is getting abused. In this case, skip the
@@ -1046,18 +1060,9 @@ bool PeerManager::selectStakingRewardWinner(const CBlockIndex *pprev,
                 continue;
             }
 
-            // To make sure the selection is properly weighted according to the
-            // proof score, we normalize the proofRewardHash to a number between
-            // 0 and 1, then take the logarithm and divide by the weight. Since
-            // it is scale-independent, we can simplify by removing constants
-            // and use base 2 logarithm.
-            // Inspired by: https://stackoverflow.com/a/30226926.
-            double proofRewardRank =
-                (256.0 -
-                 std::log2(UintToArith256(proofRewardHash).getdouble())) /
-                peer.getScore();
-
             // The best ranking is the lowest ranking value
+            double proofRewardRank =
+                proofRewardHash.ComputeProofRewardRank(peer.getScore());
             if (proofRewardRank < bestRewardRank) {
                 bestRewardRank = proofRewardRank;
                 selectedProof = peer.proof;
@@ -1106,22 +1111,34 @@ bool PeerManager::selectStakingRewardWinner(const CBlockIndex *pprev,
     // Find the winner
     for (const ProofRef &proof : selectedProofs) {
         if (proof->getId() == firstCompliantProof->getId()) {
-            winners.push_back(proof->getPayoutScript());
+            winners.push_back({proof->getId(), proof->getPayoutScript()});
         }
     }
     // Add the others (if any) after the winner
     for (const ProofRef &proof : selectedProofs) {
         if (proof->getId() != firstCompliantProof->getId()) {
-            winners.push_back(proof->getPayoutScript());
+            winners.push_back({proof->getId(), proof->getPayoutScript()});
         }
     }
 
     return true;
 }
 
+bool PeerManager::setFlaky(const ProofId &proofid) {
+    return manualFlakyProofids.insert(proofid).second;
+}
+
+bool PeerManager::unsetFlaky(const ProofId &proofid) {
+    return manualFlakyProofids.erase(proofid) > 0;
+}
+
 bool PeerManager::isFlaky(const ProofId &proofid) const {
     if (localProof && proofid == localProof->getId()) {
         return false;
+    }
+
+    if (manualFlakyProofids.count(proofid) > 0) {
+        return true;
     }
 
     // If we are missing connection to this proof, consider flaky

@@ -13,6 +13,10 @@ mod ffi_inner {
     /// Params for setting up Chronik
     #[derive(Debug)]
     pub struct SetupParams {
+        /// Which net this Chronik instance is running on
+        pub net: Net,
+        /// Where the data of the blockchain is stored, independent of network
+        pub datadir: String,
         /// Where the data of the blockchain is stored, dependent on network
         /// (mainnet, testnet, regtest)
         pub datadir_net: String,
@@ -26,6 +30,8 @@ mod ffi_inner {
         pub enable_token_index: bool,
         /// Whether Chronik should index transactions by LOKAD ID
         pub enable_lokad_id_index: bool,
+        /// Whether Chronik should index scripts by script hash
+        pub enable_scripthash_index: bool,
         /// Whether pausing Chronik indexing is allowed
         pub is_pause_allowed: bool,
         /// Whether to output Chronik performance statistics into a perf/
@@ -48,12 +54,20 @@ mod ffi_inner {
         pub bucket_size: usize,
     }
 
+    /// Net we're running on
+    #[derive(Clone, Copy, Debug)]
+    pub enum Net {
+        /// Mainnet
+        Mainnet,
+        /// Testnet
+        Testnet,
+        /// Regtest
+        Regtest,
+    }
+
     extern "Rust" {
         type Chronik;
-        fn setup_chronik(
-            params: SetupParams,
-            node: &NodeContext,
-        ) -> bool;
+        fn setup_chronik(params: SetupParams, node: &NodeContext) -> bool;
 
         fn handle_tx_added_to_mempool(
             &self,
@@ -69,6 +83,11 @@ mod ffi_inner {
             bindex: &CBlockIndex,
         );
         fn handle_block_finalized(&self, bindex: &CBlockIndex);
+        fn handle_block_invalidated(
+            &self,
+            block: &CBlock,
+            bindex: &CBlockIndex,
+        );
     }
 
     unsafe extern "C++" {

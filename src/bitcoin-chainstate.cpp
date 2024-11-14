@@ -12,9 +12,11 @@
 // It is part of the libbitcoinkernel project.
 
 #include <kernel/chainparams.h>
+#include <kernel/chainstatemanager_opts.h>
 #include <kernel/validation_cache_sizes.h>
 
 #include <chainparams.h>
+#include <common/args.h>
 #include <config.h>
 #include <consensus/validation.h>
 #include <core_io.h>
@@ -25,14 +27,16 @@
 #include <scheduler.h>
 #include <script/scriptcache.h>
 #include <script/sigcache.h>
-#include <util/system.h>
 #include <util/thread.h>
+#include <util/translation.h>
 #include <validation.h>
 #include <validationinterface.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <iosfwd>
+#include <memory>
 
 int main(int argc, char *argv[]) {
     // SETUP: Argument parsing and handling
@@ -88,14 +92,38 @@ int main(int argc, char *argv[]) {
 
     GetMainSignals().RegisterBackgroundSignalScheduler(scheduler);
 
+    class KernelNotifications : public kernel::Notifications {
+    public:
+        void blockTip(SynchronizationState, CBlockIndex &) override {
+            std::cout << "Block tip changed" << std::endl;
+        }
+        void headerTip(SynchronizationState, int64_t height, int64_t timestamp,
+                       bool presync) override {
+            std::cout << "Header tip changed: " << height << ", " << timestamp
+                      << ", " << presync << std::endl;
+        }
+        void progress(const bilingual_str &title, int progress_percent,
+                      bool resume_possible) override {
+            std::cout << "Progress: " << title.original << ", "
+                      << progress_percent << ", " << resume_possible
+                      << std::endl;
+        }
+        void warning(const std::string &warning) override {
+            std::cout << "Warning: " << warning << std::endl;
+        }
+    };
+    auto notifications = std::make_unique<KernelNotifications>();
+
     // SETUP: Chainstate
     const ChainstateManager::Options chainman_opts{
         .config = config,
         .datadir = gArgs.GetDataDirNet(),
         .adjusted_time_callback = NodeClock::now,
+        .notifications = *notifications,
     };
     const node::BlockManager::Options blockman_opts{
         .chainparams = chainman_opts.config.GetChainParams(),
+        .blocks_dir = gArgs.GetBlocksDirPath(),
     };
     ChainstateManager chainman{chainman_opts, blockman_opts};
 

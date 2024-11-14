@@ -9,6 +9,7 @@ import PrimaryButton from 'components/Common/Buttons';
 import { toast } from 'react-toastify';
 import { token as tokenConfig } from 'config/token';
 import { InlineLoader } from 'components/Common/Spinner';
+import { load } from 'recaptcha-v3';
 
 const Rewards = () => {
     const ContextValue = React.useContext(WalletContext);
@@ -44,12 +45,22 @@ const Rewards = () => {
         }
     };
     const handleClaim = async () => {
+        // Get a recaptcha score
+        const recaptcha = await load(process.env.REACT_APP_RECAPTCHA_SITE_KEY);
+        const token = await recaptcha.execute('claimcachet');
         // Hit token-server API for rewards
         let claimResponse;
         try {
             claimResponse = await (
                 await fetch(
                     `${tokenConfig.rewardsServerBaseUrl}/claim/${address}`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ token }),
+                    },
                 )
             ).json();
             // Could help in debugging from user reports
@@ -159,21 +170,25 @@ const Rewards = () => {
 
     return (
         <Wrapper title="Rewards">
-            <PrimaryButton disabled={!isEligible} onClick={handleClaim}>
-                {isEligible === null ? (
-                    <center>
-                        <InlineLoader />
-                    </center>
-                ) : isEligible ? (
-                    'Claim Reward'
-                ) : timeRemainingMs !== null ? (
-                    `Come back in ${hours}:${minutes}:${seconds}`
-                ) : (
-                    <center>
-                        <InlineLoader />
-                    </center>
-                )}
-            </PrimaryButton>
+            {process.env.REACT_APP_TESTNET !== 'true' ? (
+                <PrimaryButton disabled={!isEligible} onClick={handleClaim}>
+                    {isEligible === null ? (
+                        <center>
+                            <InlineLoader />
+                        </center>
+                    ) : isEligible ? (
+                        'Claim Reward'
+                    ) : timeRemainingMs !== null ? (
+                        `Come back in ${hours}:${minutes}:${seconds}`
+                    ) : (
+                        <center>
+                            <InlineLoader />
+                        </center>
+                    )}
+                </PrimaryButton>
+            ) : (
+                <p>Token Rewards are not enabled for Testnet</p>
+            )}
         </Wrapper>
     );
 };

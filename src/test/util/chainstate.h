@@ -7,11 +7,11 @@
 
 #include <clientversion.h>
 #include <config.h>
-#include <fs.h>
 #include <node/context.h>
 #include <node/utxo_snapshot.h>
 #include <rpc/blockchain.h>
 #include <test/util/setup_common.h>
+#include <util/fs.h>
 #include <validation.h>
 
 #include <univalue.h>
@@ -95,7 +95,8 @@ static bool CreateAndActivateUTXOSnapshot(TestingSetup *fixture,
         // support resetting the chainstate while preserving the block index.
         // We call CheckBlockIndex() explicitly below, after ActivateSnapshot.
         if (!node.chainman->ActiveChainstate().ActivateBestChain(
-                state, /*pblock=*/nullptr, /*skip_checkblockindex=*/true)) {
+                state, /*pblock=*/nullptr, /*avalanche=*/nullptr,
+                /*skip_checkblockindex=*/true)) {
             throw std::runtime_error(
                 strprintf("ActivateBestChain failed. (%s)", state.ToString()));
         }

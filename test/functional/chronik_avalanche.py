@@ -9,6 +9,7 @@ from test_framework.address import (
     SCRIPTSIG_OP_TRUE,
 )
 from test_framework.avatools import can_find_inv_in_poll, get_ava_p2p_interface
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.script import OP_RETURN, CScript
 from test_framework.test_framework import BitcoinTestFramework
@@ -21,6 +22,7 @@ class ChronikAvalancheTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 1
+        self.noban_tx_relay = True
         self.extra_args = [
             [
                 "-avaproofstakeutxodustthreshold=1000000",
@@ -29,7 +31,6 @@ class ChronikAvalancheTest(BitcoinTestFramework):
                 "-avaminquorumstake=0",
                 "-avaminavaproofsnodecount=0",
                 "-chronik",
-                "-whitelist=noban@127.0.0.1",
                 "-persistavapeers=0",
             ],
         ]
@@ -63,7 +64,7 @@ class ChronikAvalancheTest(BitcoinTestFramework):
 
         # Mature coin
         self.generatetoaddress(
-            node, 100, ADDRESS_ECREG_UNSPENDABLE, sync_fun=self.no_op
+            node, COINBASE_MATURITY, ADDRESS_ECREG_UNSPENDABLE, sync_fun=self.no_op
         )
 
         # Pick one node from the quorum for polling.

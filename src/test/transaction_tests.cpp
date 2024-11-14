@@ -6,6 +6,7 @@
 #include <chainparams.h> // For CChainParams
 #include <checkqueue.h>
 #include <clientversion.h>
+#include <common/system.h>
 #include <config.h>
 #include <consensus/amount.h>
 #include <consensus/tx_check.h>
@@ -23,13 +24,13 @@
 #include <streams.h>
 #include <util/strencodings.h>
 #include <util/string.h>
-#include <util/system.h>
 #include <validation.h>
 
 #include <test/data/tx_invalid.json.h>
 #include <test/data/tx_valid.json.h>
 #include <test/jsonutil.h>
 #include <test/scriptflags.h>
+#include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <test/util/transaction_utils.h>
 
@@ -50,7 +51,7 @@ BOOST_FIXTURE_TEST_SUITE(transaction_tests, BasicTestingSetup)
 static COutPoint buildOutPoint(const UniValue &vinput) {
     TxId txid;
     txid.SetHex(vinput[0].get_str());
-    return COutPoint(txid, vinput[1].get_int());
+    return COutPoint(txid, vinput[1].getInt<int>());
 }
 
 BOOST_AUTO_TEST_CASE(tx_valid) {
@@ -63,9 +64,7 @@ BOOST_AUTO_TEST_CASE(tx_valid) {
     //
     // verifyFlags is a comma separated list of script verification flags to
     // apply, or "NONE"
-    UniValue tests = read_json(
-        std::string(json_tests::tx_valid,
-                    json_tests::tx_valid + sizeof(json_tests::tx_valid)));
+    UniValue tests = read_json(json_tests::tx_valid);
 
     ScriptError err;
     for (size_t idx = 0; idx < tests.size(); idx++) {
@@ -97,7 +96,7 @@ BOOST_AUTO_TEST_CASE(tx_valid) {
                     ParseScript(vinput[2].get_str());
                 if (vinput.size() >= 4) {
                     mapprevOutValues[outpoint] =
-                        vinput[3].get_int64() * SATOSHI;
+                        vinput[3].getInt<int64_t>() * SATOSHI;
                 }
             }
             if (!fValid) {
@@ -163,9 +162,7 @@ BOOST_AUTO_TEST_CASE(tx_invalid) {
     //
     // verifyFlags is a comma separated list of script verification flags to
     // apply, or "NONE"
-    UniValue tests = read_json(
-        std::string(json_tests::tx_invalid,
-                    json_tests::tx_invalid + sizeof(json_tests::tx_invalid)));
+    UniValue tests = read_json(json_tests::tx_invalid);
 
     // Initialize to ScriptError::OK. The tests expect err to be changed to a
     // value other than ScriptError::OK.
@@ -199,7 +196,7 @@ BOOST_AUTO_TEST_CASE(tx_invalid) {
                     ParseScript(vinput[2].get_str());
                 if (vinput.size() >= 4) {
                     mapprevOutValues[outpoint] =
-                        vinput[3].get_int64() * SATOSHI;
+                        vinput[3].getInt<int64_t>() * SATOSHI;
                 }
             }
             if (!fValid) {

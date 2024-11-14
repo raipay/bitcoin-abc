@@ -4,7 +4,7 @@
 
 // Test vectors for validation functions
 import appConfig from 'config/app';
-import { CashtabSettings } from 'config/cashtabSettings';
+import CashtabSettings from 'config/CashtabSettings';
 import CashtabCache from 'config/CashtabCache';
 import {
     mockCashtabCache,
@@ -709,6 +709,132 @@ export default {
                     queryString: { value: 'amount=125', error: false },
                 },
             },
+            // no op_return_raw, additional outputs
+            {
+                description:
+                    'Valid primary address & amount, valid secondary addr & amount',
+                addressInput:
+                    'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv?amount=110&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5&amount=5.50',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
+                        error: false,
+                        isAlias: false,
+                    },
+                    amount: { value: '110', error: false },
+                    parsedAdditionalXecOutputs: {
+                        error: false,
+                        value: [
+                            [
+                                'ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5',
+                                '5.50',
+                            ],
+                        ],
+                    },
+                    queryString: {
+                        value: 'amount=110&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5&amount=5.50',
+                        error: false,
+                    },
+                },
+            },
+            {
+                description:
+                    'Valid primary address & amount, invalid secondary addr',
+                addressInput:
+                    'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv?amount=110&addr=someinvalidaddress&amount=5.50',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
+                        error: false,
+                        isAlias: false,
+                    },
+                    amount: { value: '110', error: false },
+                    parsedAdditionalXecOutputs: {
+                        error: `Invalid address "someinvalidaddress"`,
+                        value: null,
+                    },
+                    queryString: {
+                        value: 'amount=110&addr=someinvalidaddress&amount=5.50',
+                        error: false,
+                    },
+                },
+            },
+            {
+                description:
+                    'Valid primary address & amount, invalid secondary amount',
+                addressInput:
+                    'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv?amount=110&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5&amount=5.123',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
+                        error: false,
+                        isAlias: false,
+                    },
+                    amount: { value: '110', error: false },
+                    parsedAdditionalXecOutputs: {
+                        error: `Invalid amount 5.123 for address ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5: XEC transactions do not support more than 2 decimal places`,
+                        value: null,
+                    },
+                    queryString: {
+                        value: 'amount=110&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5&amount=5.123',
+                        error: false,
+                    },
+                },
+            },
+            {
+                description:
+                    'Valid primary address & amount, valid secondary addr & amount, but the secondary amount param does not directly follow the secondary addr param',
+                addressInput:
+                    'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv?amount=110&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5&op_return_raw=0401020304&amount=5.50',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
+                        error: false,
+                        isAlias: false,
+                    },
+                    amount: { value: '110', error: false },
+                    parsedAdditionalXecOutputs: {
+                        error: `No amount key for addr ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5`,
+                        value: null,
+                    },
+                    queryString: {
+                        value: 'amount=110&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5&op_return_raw=0401020304&amount=5.50',
+                        error: false,
+                    },
+                },
+            },
+            {
+                description:
+                    'Valid primary address & amount, valid secondary addr, but no corresponding amount param',
+                addressInput:
+                    'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv?amount=110&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
+                        error: false,
+                        isAlias: false,
+                    },
+                    amount: { value: '110', error: false },
+                    parsedAdditionalXecOutputs: {
+                        error: `No amount key for addr ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5`,
+                        value: null,
+                    },
+                    queryString: {
+                        value: 'amount=110&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5',
+                        error: false,
+                    },
+                },
+            },
 
             // opreturn param only
             {
@@ -801,7 +927,40 @@ export default {
                     },
                 },
             },
-
+            // Both op_return_raw and amount params, with an additional output
+            {
+                description:
+                    'Valid amount and op_return_raw params and valid second output',
+                addressInput:
+                    'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv?amount=110&op_return_raw=0470617977202562dd05deda1c101b10562527bcd6bec20268fb94eed01843ba049cd774bec1&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5&amount=5.50',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
+                        error: false,
+                        isAlias: false,
+                    },
+                    amount: { value: '110', error: false },
+                    op_return_raw: {
+                        value: '0470617977202562dd05deda1c101b10562527bcd6bec20268fb94eed01843ba049cd774bec1',
+                        error: false,
+                    },
+                    parsedAdditionalXecOutputs: {
+                        error: false,
+                        value: [
+                            [
+                                'ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5',
+                                '5.50',
+                            ],
+                        ],
+                    },
+                    queryString: {
+                        value: 'amount=110&op_return_raw=0470617977202562dd05deda1c101b10562527bcd6bec20268fb94eed01843ba049cd774bec1&addr=ecash:qp4dxtmjlkc6upn29hh9pr2u8rlznwxeqqy0qkrjp5&amount=5.50',
+                        error: false,
+                    },
+                },
+            },
             {
                 description: 'invalid querystring (unsupported params)',
                 addressInput:
@@ -822,7 +981,8 @@ export default {
             },
             // Querystring errors where no params can be returned
             {
-                description: 'Invalid queryString, repeated param',
+                description:
+                    'Invalid queryString, repeated amount param without corresponding address',
                 addressInput:
                     'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?amount=123.45&amount=678.9',
                 balanceSats: 50000000,
@@ -833,9 +993,13 @@ export default {
                         error: false,
                         isAlias: false,
                     },
+                    amount: {
+                        value: null,
+                        error: 'Duplicated amount param without matching address',
+                    },
                     queryString: {
                         value: 'amount=123.45&amount=678.9',
-                        error: 'bip21 parameters may not appear more than once',
+                        error: 'The amount param appears without a corresponding addr param',
                     },
                 },
             },
@@ -851,9 +1015,13 @@ export default {
                         error: false,
                         isAlias: false,
                     },
+                    op_return_raw: {
+                        error: 'Duplicated op_return_raw param',
+                        value: null,
+                    },
                     queryString: {
                         value: 'op_return_raw=042e786563000474657374150095e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d&op_return_raw=042e786563000474657374150095e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d',
-                        error: `bip21 parameters may not appear more than once`,
+                        error: `The op_return_raw param may not appear more than once`,
                     },
                 },
             },
@@ -1776,6 +1944,40 @@ export default {
                 decimals: 0,
                 returned: true,
             },
+            {
+                description:
+                    'We accept the max supported list, send, or burn amount for a 0-decimal token',
+                amount: '18446744073709551615',
+                tokenBalance: '19000000000000000000',
+                decimals: 0,
+                returned: true,
+            },
+            {
+                description:
+                    'We accept the max supported list, send, or burn amount for a 9-decimal token',
+                amount: '18446744073.709551615',
+                tokenBalance: '19000000000',
+                decimals: 9,
+                returned: true,
+            },
+            {
+                description:
+                    'We reject one token satoshi more less than the max supported list, send, or burn amount for a 0-decimal token',
+                amount: '18446744073709551616',
+                tokenBalance: '19000000000000000000',
+                decimals: 0,
+                returned:
+                    'Amount 18446744073709551616 exceeds max supported SLP qty for this token in one tx (18446744073709551615)',
+            },
+            {
+                description:
+                    'We reject one token satoshi more less than the max supported list, send, or burn amount for a 9-decimal token',
+                amount: '18446744073.709551616',
+                tokenBalance: '19000000000',
+                decimals: 9,
+                returned:
+                    'Amount 18446744073.709551616 exceeds max supported SLP qty for this token in one tx (18446744073.709551615)',
+            },
         ],
     },
     isValidTokenMintAmount: {
@@ -2115,6 +2317,370 @@ export default {
                 name: 'thisnameistwentyfivechars',
                 wallets: [],
                 returned: `Wallet name cannot exceed ${appConfig.localStorageMaxCharacters} characters`,
+            },
+        ],
+    },
+    getXecListPriceError: {
+        expectedReturns: [
+            {
+                description: 'Accepts dust if price is in XEC',
+                xecListPrice: '5.46',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                returned: false,
+            },
+            {
+                description:
+                    'Rejects input of one satoshi less than dust if price is in XEC',
+                xecListPrice: '5.45',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                returned: 'List price cannot be less than dust (5.46 XEC).',
+            },
+            {
+                description: 'Accepts dust if price is in fiat',
+                xecListPrice: '5.46',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                returned: false,
+            },
+            {
+                description:
+                    'Rejects input of one satoshi less than dust if price is in fiat',
+                xecListPrice: '5.45',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                returned: 'List price cannot be less than dust (5.46 XEC).',
+            },
+            {
+                description:
+                    'Accepts a price with 2-decimal places for XEC input',
+                xecListPrice: '111.12',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                returned: false,
+            },
+            {
+                description:
+                    'Accepts a price with 2-decimal places for fiat input',
+                xecListPrice: '111.12',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                returned: false,
+            },
+            {
+                description:
+                    'Accepts a price with 0-decimal places but a decimal point anyway for XEC input',
+                xecListPrice: '111.',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                returned: false,
+            },
+            {
+                description:
+                    'Accepts a price with 0-decimal places but a decimal point anyway for fiat input',
+                xecListPrice: '111.',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                returned: false,
+            },
+            {
+                description: `Rejects input of greater than ${appConfig.cashDecimals} decimal places for XEC input`,
+                xecListPrice: '111.123',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                returned: `List price supports up to ${appConfig.cashDecimals} decimal places.`,
+            },
+            {
+                description: `Rejects input of greater than ${appConfig.cashDecimals} decimal places for fiat input`,
+                xecListPrice: '111.123',
+                selectedCurrency: 'USD',
+                fiatPrice: 1,
+                returned: `List price supports up to ${appConfig.cashDecimals} decimal places.`,
+            },
+            {
+                description: 'Rejects negative number for XEC input',
+                xecListPrice: '-33',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                returned: 'List price must be a number greater than 5.46 XEC.',
+            },
+            {
+                description: 'Rejects negative number for fiat input',
+                xecListPrice: '-33',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                returned: 'List price must be a number greater than 5.46 XEC.',
+            },
+            {
+                description: 'Rejects non-number input for XEC',
+                xecListPrice: 'abc',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                returned: 'List price must be a number greater than 5.46 XEC.',
+            },
+            {
+                description: 'Rejects non-number input for fiat',
+                xecListPrice: 'abc',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                returned: 'List price must be a number greater than 5.46 XEC.',
+            },
+            {
+                description: 'Rejects empty input for XEC',
+                xecListPrice: '',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                returned: 'List price is required.',
+            },
+            {
+                description: 'Rejects empty input for fiat',
+                xecListPrice: '',
+                selectedCurrency: 'GBP',
+                fiatPrice: 1,
+                returned: 'List price is required.',
+            },
+            {
+                description: 'Rejects fiat input if fiatPrice is null',
+                xecListPrice: '100',
+                selectedCurrency: 'GBP',
+                fiatPrice: null,
+                returned:
+                    'Cannot input price in GBP while fiat price is unavailable.',
+            },
+        ],
+    },
+    getAgoraPartialListPriceError: {
+        expectedReturns: [
+            {
+                description:
+                    'Accepts price if minimum token accept costs exactly dust, xec price',
+                xecListPrice: '5.46',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: false,
+            },
+            {
+                description:
+                    'Rejects price if minimum token accept costs 1 nanosatoshi less than dust, xec price',
+                xecListPrice: '5.45999999999',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned:
+                    'Minimum buy costs 5.45999999999 XEC, must be at least 5.46 XEC',
+            },
+            {
+                description:
+                    'Accepts price if minimum token accept costs exactly dust, fiat price',
+                xecListPrice: '5.46',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: false,
+            },
+            {
+                description:
+                    'Rejects price if minimum token accept costs 1 nanosatoshi less than dust, fiat price',
+                xecListPrice: '5.45999999999',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned:
+                    'Minimum buy costs 5.45999999999 XEC, must be at least 5.46 XEC',
+            },
+            {
+                description: 'Accepts the lowest possible price for XEC input',
+                xecListPrice: '0.00000000001', // 1 nanosatoshi
+                selectedCurrency: 'XEC',
+                minBuyTokenQty: 5.46 * 1e11,
+                fiatPrice: null,
+                tokenDecimals: 0,
+                returned: false,
+            },
+            {
+                description:
+                    'Rejects the the lowest possible price for XEC input if token decimals means the price per token satoshi is less than 1 nanosatoshi of XEC',
+                xecListPrice: '0.00000000001', // 1 nanosatoshi
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                minBuyTokenQty: 5.46 * 1e11,
+                tokenDecimals: 1,
+                returned:
+                    'Price cannot be lower than 1 nanosatoshi per 1 token satoshi',
+            },
+            {
+                description: 'Accepts the lowest possible price for fiat input',
+                xecListPrice: '0.00000000001', // 1 nanosatoshi
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                minBuyTokenQty: 5.46 * 1e11,
+                tokenDecimals: 0,
+                returned: false,
+            },
+            {
+                description:
+                    'Rejects the the lowest possible price for fiat input if token decimals means the price per token satoshi is less than 1 nanosatoshi of XEC',
+                xecListPrice: '0.00000000001', // 1 nanosatoshi
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                minBuyTokenQty: 5.46 * 1e11,
+                tokenDecimals: 1,
+                returned:
+                    'Price cannot be lower than 1 nanosatoshi per 1 token satoshi',
+            },
+            {
+                description:
+                    'Accepts a price with 0-decimal places but a decimal point anyway for XEC input',
+                xecListPrice: '111.',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: false,
+            },
+            {
+                description:
+                    'Accepts a price with 0-decimal places but a decimal point anyway for fiat input',
+                xecListPrice: '111.',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: false,
+            },
+            {
+                description: `Rejects input of greater than 11 decimal places for XEC input`,
+                xecListPrice: '111.123456789012',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: `List price supports up to 11 decimal places.`,
+            },
+            {
+                description: `Rejects input of greater than 11 decimal places for fiat input`,
+                xecListPrice: '111.123456789012',
+                selectedCurrency: 'USD',
+                fiatPrice: 1,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: `List price supports up to 11 decimal places.`,
+            },
+            {
+                description: 'Rejects negative number for XEC input',
+                xecListPrice: '-33',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: 'List price must be a number',
+            },
+            {
+                description: 'Rejects negative number for fiat input',
+                xecListPrice: '-33',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: 'List price must be a number',
+            },
+            {
+                description: 'Rejects non-number input for XEC',
+                xecListPrice: 'abc',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: 'List price must be a number',
+            },
+            {
+                description: 'Rejects non-number input for fiat',
+                xecListPrice: 'abc',
+                selectedCurrency: 'CAD',
+                fiatPrice: 1,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: 'List price must be a number',
+            },
+            {
+                description: 'Rejects empty input for XEC',
+                xecListPrice: '',
+                selectedCurrency: 'XEC',
+                fiatPrice: null,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: 'List price is required.',
+            },
+            {
+                description: 'Rejects empty input for fiat',
+                xecListPrice: '',
+                selectedCurrency: 'GBP',
+                fiatPrice: 1,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned: 'List price is required.',
+            },
+            {
+                description: 'Rejects fiat input if fiatPrice is null',
+                xecListPrice: '100',
+                selectedCurrency: 'GBP',
+                fiatPrice: null,
+                minBuyTokenQty: 1,
+                tokenDecimals: 0,
+                returned:
+                    'Cannot input price in GBP while fiat price is unavailable.',
+            },
+        ],
+    },
+    getAgoraPartialAcceptTokenQtyError: {
+        expectedReturns: [
+            {
+                description:
+                    'User is trying to purchase a qty of tokens such that remaining qty is less than min',
+                acceptTokenQty: 100n,
+                offerMinAcceptTokenQty: 10n,
+                offerMaxAcceptTokenQty: 105n,
+                decimals: 0,
+                returned: 'Must accept <= 95 or the full offer',
+            },
+            {
+                description: 'Error msg is formatted to decimals of the token',
+                acceptTokenQty: 100000000000n,
+                offerMinAcceptTokenQty: 10123456789n,
+                offerMaxAcceptTokenQty: 105000000000n,
+                decimals: 9,
+                returned: 'Must accept <= 94.876543211 or the full offer',
+            },
+            {
+                description: 'The exact threshold is ok',
+                acceptTokenQty: 94876543211n,
+                offerMinAcceptTokenQty: 10123456789n,
+                offerMaxAcceptTokenQty: 10500000000n,
+                decimals: 9,
+                returned: false,
+            },
+            {
+                description: 'The full offer is ok',
+                acceptTokenQty: 105000000000n,
+                offerMinAcceptTokenQty: 10123456789n,
+                offerMaxAcceptTokenQty: 105000000000n,
+                decimals: 9,
+                returned: false,
+            },
+            {
+                description:
+                    'One token satoshi less than the full offer is not ok',
+                acceptTokenQty: 104999999999n,
+                offerMinAcceptTokenQty: 10123456789n,
+                offerMaxAcceptTokenQty: 105000000000n,
+                decimals: 9,
+                returned: 'Must accept <= 94.876543211 or the full offer',
             },
         ],
     },

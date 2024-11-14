@@ -2,15 +2,15 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <common/args.h>
 #include <dbwrapper.h>
 #include <index/blockfilterindex.h>
 #include <node/blockstorage.h>
 #include <primitives/blockhash.h>
-#include <util/system.h>
+#include <util/fs_helpers.h>
+#include <validation.h>
 
 #include <map>
-
-using node::UndoReadFromDisk;
 
 /**
  * The index database stores three items for each block: the disk location of
@@ -235,7 +235,7 @@ bool BlockFilterIndex::WriteBlock(const CBlock &block,
     uint256 prev_header;
 
     if (pindex->nHeight > 0) {
-        if (!UndoReadFromDisk(block_undo, pindex)) {
+        if (!m_chainstate->m_blockman.UndoReadFromDisk(block_undo, *pindex)) {
             return false;
         }
 

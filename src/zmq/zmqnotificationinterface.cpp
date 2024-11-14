@@ -8,8 +8,9 @@
 
 #include <zmq.h>
 
+#include <common/args.h>
+#include <logging.h>
 #include <primitives/block.h>
-#include <util/system.h>
 
 CZMQNotificationInterface::CZMQNotificationInterface() : pcontext(nullptr) {}
 
@@ -26,14 +27,18 @@ CZMQNotificationInterface::GetActiveNotifiers() const {
     return result;
 }
 
-CZMQNotificationInterface *CZMQNotificationInterface::Create() {
+std::unique_ptr<CZMQNotificationInterface> CZMQNotificationInterface::Create(
+    std::function<bool(CBlock &, const CBlockIndex &)> get_block_by_index) {
     std::map<std::string, CZMQNotifierFactory> factories;
     factories["pubhashblock"] =
         CZMQAbstractNotifier::Create<CZMQPublishHashBlockNotifier>;
     factories["pubhashtx"] =
         CZMQAbstractNotifier::Create<CZMQPublishHashTransactionNotifier>;
     factories["pubrawblock"] =
-        CZMQAbstractNotifier::Create<CZMQPublishRawBlockNotifier>;
+        [&get_block_by_index]() -> std::unique_ptr<CZMQAbstractNotifier> {
+        return std::make_unique<CZMQPublishRawBlockNotifier>(
+            get_block_by_index);
+    };
     factories["pubrawtx"] =
         CZMQAbstractNotifier::Create<CZMQPublishRawTransactionNotifier>;
     factories["pubsequence"] =
@@ -60,7 +65,7 @@ CZMQNotificationInterface *CZMQNotificationInterface::Create() {
         notificationInterface->notifiers = std::move(notifiers);
 
         if (notificationInterface->Initialize()) {
-            return notificationInterface.release();
+            return notificationInterface;
         }
     }
 
@@ -205,4 +210,4 @@ void CZMQNotificationInterface::BlockDisconnected(
         });
 }
 
-CZMQNotificationInterface *g_zmq_notification_interface = nullptr;
+std::unique_ptr<CZMQNotificationInterface> g_zmq_notification_interface;

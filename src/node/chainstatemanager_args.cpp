@@ -5,13 +5,13 @@
 #include <node/chainstatemanager_args.h>
 
 #include <arith_uint256.h>
+#include <common/args.h>
 #include <kernel/chainstatemanager_opts.h>
 #include <node/coins_view_args.h>
 #include <node/database_args.h>
 #include <tinyformat.h>
 #include <uint256.h>
 #include <util/strencodings.h>
-#include <util/system.h>
 #include <util/translation.h>
 #include <validation.h>
 
@@ -51,6 +51,10 @@ ApplyArgsManOptions(const ArgsManager &args, ChainstateManager::Options &opts) {
     ReadDatabaseArgs(args, opts.block_tree_db);
     ReadDatabaseArgs(args, opts.coins_db);
     ReadCoinsViewArgs(args, opts.coins_view);
+
+    if (auto value{args.GetBoolArg("-persistrecentheaderstime")}) {
+        opts.store_recent_headers_time = *value;
+    }
 
     return std::nullopt;
 }

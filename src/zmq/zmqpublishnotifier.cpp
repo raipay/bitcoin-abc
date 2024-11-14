@@ -6,13 +6,14 @@
 
 #include <chain.h>
 #include <chainparams.h>
+#include <common/system.h>
 #include <config.h>
+#include <logging.h>
 #include <node/blockstorage.h>
 #include <primitives/blockhash.h>
 #include <primitives/txid.h>
 #include <rpc/server.h>
 #include <streams.h>
-#include <util/system.h>
 #include <zmq/zmqutil.h>
 
 #include <zmq.h>
@@ -22,8 +23,6 @@
 #include <map>
 #include <string>
 #include <utility>
-
-using node::ReadBlockFromDisk;
 
 static std::multimap<std::string, CZMQAbstractPublishNotifier *>
     mapPublishNotifiers;
@@ -212,11 +211,9 @@ bool CZMQPublishRawBlockNotifier::NotifyBlock(const CBlockIndex *pindex) {
     LogPrint(BCLog::ZMQ, "zmq: Publish rawblock %s to %s\n",
              pindex->GetBlockHash().GetHex(), this->address);
 
-    const Config &config = GetConfig();
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION | RPCSerializationFlags());
     CBlock block;
-    if (!ReadBlockFromDisk(block, pindex,
-                           config.GetChainParams().GetConsensus())) {
+    if (!m_get_block_by_index(block, *pindex)) {
         zmqError("Can't read block from disk");
         return false;
     }

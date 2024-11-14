@@ -11,6 +11,7 @@ from enum import Enum
 from io import BytesIO
 from struct import pack, unpack
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import BLOCK_HEADER_SIZE
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -43,6 +44,7 @@ class RESTTest(BitcoinTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 2
         self.extra_args = [["-rest"], []]
+        self.noban_tx_relay = True
         self.supports_cli = False
 
     def skip_test_if_missing_module(self):
@@ -90,7 +92,7 @@ class RESTTest(BitcoinTestFramework):
         not_related_address = "2MxqoHEdNQTyYeX1mHcbrrpzgojbosTpCvJ"
 
         self.generate(self.nodes[0], 1)
-        self.generatetoaddress(self.nodes[1], 100, not_related_address)
+        self.generatetoaddress(self.nodes[1], COINBASE_MATURITY, not_related_address)
 
         assert_equal(self.nodes[0].getbalance(), 50000000)
 

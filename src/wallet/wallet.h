@@ -7,9 +7,11 @@
 #ifndef BITCOIN_WALLET_WALLET_H
 #define BITCOIN_WALLET_WALLET_H
 
+#include <common/system.h>
 #include <consensus/amount.h>
 #include <interfaces/chain.h>
 #include <interfaces/handler.h>
+#include <logging.h>
 #include <outputtype.h>
 #include <primitives/blockhash.h>
 #include <psbt.h>
@@ -17,7 +19,6 @@
 #include <util/message.h>
 #include <util/strencodings.h>
 #include <util/string.h>
-#include <util/system.h>
 #include <util/translation.h>
 #include <util/ui_change_type.h>
 #include <validationinterface.h>
@@ -1013,7 +1014,9 @@ public:
     //! external.
     void SetupLegacyScriptPubKeyMan();
 
-    const CKeyingMaterial &GetEncryptionKey() const override;
+    bool WithEncryptionKey(
+        const std::function<bool(const CKeyingMaterial &)> &cb) const override;
+
     bool HasEncryptionKeys() const override;
 
     /** Get last block processed height */

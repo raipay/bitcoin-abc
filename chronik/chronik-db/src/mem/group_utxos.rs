@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use abc_rust_error::Result;
 use bitcoinsuite_core::tx::{OutPoint, TxId};
@@ -16,7 +16,7 @@ use crate::{
 /// Store the mempool UTXOs of the group.
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct MempoolGroupUtxos<G: Group> {
-    utxos: HashMap<Vec<u8>, BTreeSet<OutPoint>>,
+    utxos: BTreeMap<Vec<u8>, BTreeSet<OutPoint>>,
     group: G,
 }
 
@@ -57,7 +57,7 @@ impl<G: Group> MempoolGroupUtxos<G> {
     /// Create a new [`MempoolGroupUtxos`].
     pub fn new(group: G) -> Self {
         MempoolGroupUtxos {
-            utxos: HashMap::new(),
+            utxos: BTreeMap::new(),
             group,
         }
     }
@@ -193,6 +193,18 @@ impl<G: Group> MempoolGroupUtxos<G> {
         self.utxos.get(member_ser)
     }
 
+    /// Iterate over all group members with a given prefix, starting from some
+    /// given prefix
+    pub fn prefix_iterator<'a>(
+        &'a self,
+        member_prefix: &'a [u8],
+        member_start: Vec<u8>,
+    ) -> impl Iterator<Item = (&Vec<u8>, &BTreeSet<OutPoint>)> + 'a {
+        self.utxos
+            .range(member_start..)
+            .take_while(|(key, _)| key.starts_with(member_prefix))
+    }
+
     fn ensure_entry(&mut self, member_ser: &[u8]) -> &mut BTreeSet<OutPoint> {
         if !self.utxos.contains_key(member_ser) {
             self.utxos.insert(member_ser.to_vec(), BTreeSet::new());
@@ -216,16 +228,13 @@ impl<G: Group> MempoolGroupUtxos<G> {
             },
             None => UtxoDoesntExistForRemoval(*outpoint),
         };
-        let utxos = self
-            .utxos
-            .get_mut(member_ser.as_ref())
-            .ok_or_else(make_err)?;
+        let utxos = self.utxos.get_mut(member_ser).ok_or_else(make_err)?;
         if !utxos.remove(outpoint) {
             return Err(make_err());
         }
         if utxos.is_empty() {
             // Clean up if there's no utxos for this member anymore
-            self.utxos.remove(member_ser.as_ref()).unwrap();
+            self.utxos.remove(member_ser).unwrap();
         }
         Ok(())
     }

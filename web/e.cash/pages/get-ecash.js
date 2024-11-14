@@ -118,16 +118,6 @@ function GetEcash(props) {
                         />
                     </SwapZoneCtn>
                 </TileSection>
-                <DescriptionBox>
-                    <div>
-                        <H3 text="Services" id="services" />
-                        <p>Check out eCash service partners.</p>
-                    </div>
-                    <ImgCtn height="600px">
-                        <AnimateImage image={services} speed={0.5} reverse />
-                    </ImgCtn>
-                </DescriptionBox>
-                <TileSection title="Services" items={props.services} />
                 <ImageTextCtn>
                     <div>
                         <H3 text="Mining" id="mining" />
@@ -136,7 +126,7 @@ function GetEcash(props) {
                             more join our ever expanding community of miners.
                         </p>
                         <Button
-                            text="Get Started"
+                            text="Mine eCash"
                             link="/mining"
                             corner="bottomRight"
                             color="accent"

@@ -4,12 +4,12 @@
 
 #include <util/settings.h>
 
-#include <fs.h>
+#include <common/system.h>
 #include <test/util/setup_common.h>
 #include <test/util/str.h>
+#include <util/fs.h>
 #include <util/strencodings.h>
 #include <util/string.h>
-#include <util/system.h>
 
 #include <univalue.h>
 
@@ -36,7 +36,7 @@ inline std::ostream &
 operator<<(std::ostream &os,
            const std::pair<std::string, util::SettingsValue> &kv) {
     util::SettingsValue out(util::SettingsValue::VOBJ);
-    out.__pushKV(kv.first, kv.second);
+    out.pushKVEnd(kv.first, kv.second);
     os << out.write();
     return os;
 }

@@ -10,6 +10,7 @@
 #include <avalanche/proof.h>
 #include <avalanche/proofbuilder.h>
 #include <avalanche/validation.h>
+#include <common/args.h>
 #include <config.h>
 #include <core_io.h>
 #include <index/txindex.h>
@@ -38,12 +39,9 @@ static RPCHelpMan getavalanchekey() {
         RPCExamples{HelpExampleRpc("getavalanchekey", "")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
-
-            return HexStr(g_avalanche->getSessionPubKey());
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            const avalanche::Processor &avalanche = EnsureAvalanche(node);
+            return HexStr(avalanche.getSessionPubKey());
         },
     };
 }
@@ -60,22 +58,23 @@ static CPubKey ParsePubKey(const UniValue &param) {
     return HexToPubKey(keyHex);
 }
 
-static bool registerProofIfNeeded(avalanche::ProofRef proof,
+static bool registerProofIfNeeded(const avalanche::Processor &avalanche,
+                                  avalanche::ProofRef proof,
                                   avalanche::ProofRegistrationState &state) {
-    auto localProof = g_avalanche->getLocalProof();
+    auto localProof = avalanche.getLocalProof();
     if (localProof && localProof->getId() == proof->getId()) {
         return true;
     }
 
-    return g_avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
-        return pm.getProof(proof->getId()) ||
-               pm.registerProof(std::move(proof), state);
+    return avalanche.withPeerManager([&](avalanche::PeerManager &pm) {
+        return pm.getProof(proof->getId()) || pm.registerProof(proof, state);
     });
 }
 
-static bool registerProofIfNeeded(avalanche::ProofRef proof) {
+static bool registerProofIfNeeded(const avalanche::Processor &avalanche,
+                                  avalanche::ProofRef proof) {
     avalanche::ProofRegistrationState state;
-    return registerProofIfNeeded(std::move(proof), state);
+    return registerProofIfNeeded(avalanche, std::move(proof), state);
 }
 
 static void verifyDelegationOrThrow(avalanche::Delegation &dg,
@@ -100,9 +99,9 @@ static void verifyProofOrThrow(const NodeContext &node, avalanche::Proof &proof,
     }
 
     Amount stakeUtxoDustThreshold = avalanche::PROOF_DUST_THRESHOLD;
-    if (g_avalanche) {
+    if (node.avalanche) {
         // If Avalanche is enabled, use the configured dust threshold
-        g_avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
+        node.avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
             stakeUtxoDustThreshold = pm.getStakeUtxoDustThreshold();
         });
     }
@@ -138,19 +137,13 @@ static RPCHelpMan addavalanchenode() {
             HelpExampleRpc("addavalanchenode", "5, \"<pubkey>\", \"<proof>\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            RPCTypeCheck(request.params,
-                         {UniValue::VNUM, UniValue::VSTR, UniValue::VSTR});
-
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
-
-            const NodeId nodeid = request.params[0].get_int64();
+            const NodeId nodeid = request.params[0].getInt<int64_t>();
             CPubKey key = ParsePubKey(request.params[1]);
 
             auto proof = RCUPtr<avalanche::Proof>::make();
             NodeContext &node = EnsureAnyNodeContext(request.context);
+            const avalanche::Processor &avalanche = EnsureAvalanche(node);
+
             verifyProofOrThrow(node, *proof, request.params[2].get_str());
 
             const avalanche::ProofId &proofid = proof->getId();
@@ -178,7 +171,7 @@ static RPCHelpMan addavalanchenode() {
                 }
             }
 
-            if (!registerProofIfNeeded(proof)) {
+            if (!registerProofIfNeeded(avalanche, proof)) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER,
                                    "The proof has conflicting utxos");
             }
@@ -197,15 +190,14 @@ static RPCHelpMan addavalanchenode() {
                     strprintf("The node does not exist: %d", nodeid));
             }
 
-            return g_avalanche->withPeerManager(
-                [&](avalanche::PeerManager &pm) {
-                    if (!pm.addNode(nodeid, proofid)) {
-                        return false;
-                    }
+            return avalanche.withPeerManager([&](avalanche::PeerManager &pm) {
+                if (!pm.addNode(nodeid, proofid)) {
+                    return false;
+                }
 
-                    pm.addUnbroadcastProof(proofid);
-                    return true;
-                });
+                pm.addUnbroadcastProof(proofid);
+                return true;
+            });
         },
     };
 }
@@ -260,11 +252,8 @@ static RPCHelpMan buildavalancheproof() {
                                    "0 1234567800 \"<master>\" []")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            RPCTypeCheck(request.params, {UniValue::VNUM, UniValue::VNUM,
-                                          UniValue::VSTR, UniValue::VARR});
-
-            const uint64_t sequence = request.params[0].get_int64();
-            const int64_t expiration = request.params[1].get_int64();
+            const uint64_t sequence = request.params[0].getInt<int64_t>();
+            const int64_t expiration = request.params[1].getInt<int64_t>();
 
             CKey masterKey = DecodeSecret(request.params[2].get_str());
             if (!masterKey.IsValid()) {
@@ -297,13 +286,13 @@ static RPCHelpMan buildavalancheproof() {
                         {"privatekey", UniValue::VSTR},
                     });
 
-                int nOut = stake.find_value("vout").get_int();
+                int nOut = stake.find_value("vout").getInt<int>();
                 if (nOut < 0) {
                     throw JSONRPCError(RPC_DESERIALIZATION_ERROR,
                                        "vout cannot be negative");
                 }
 
-                const int height = stake.find_value("height").get_int();
+                const int height = stake.find_value("height").getInt<int>();
                 if (height < 1) {
                     throw JSONRPCError(RPC_DESERIALIZATION_ERROR,
                                        "height must be positive");
@@ -420,8 +409,6 @@ static RPCHelpMan decodeavalancheproof() {
                     HelpExampleRpc("decodeavalancheproof", "\"<hex proof>\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            RPCTypeCheck(request.params, {UniValue::VSTR});
-
             avalanche::Proof proof;
             bilingual_str error;
             if (!avalanche::Proof::FromHex(proof, request.params[0].get_str(),
@@ -495,14 +482,6 @@ static RPCHelpMan delegateavalancheproof() {
                            "\"<limitedproofid>\" \"<privkey>\" \"<pubkey>\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            RPCTypeCheck(request.params,
-                         {UniValue::VSTR, UniValue::VSTR, UniValue::VSTR});
-
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
-
             avalanche::LimitedProofId limitedProofId{
                 ParseHashV(request.params[0], "limitedproofid")};
 
@@ -602,8 +581,6 @@ static RPCHelpMan decodeavalanchedelegation() {
                                    "\"<hex delegation>\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            RPCTypeCheck(request.params, {UniValue::VSTR});
-
             avalanche::Delegation delegation;
             bilingual_str error;
             if (!avalanche::Delegation::FromHex(
@@ -734,27 +711,25 @@ static RPCHelpMan getavalancheinfo() {
                     HelpExampleRpc("getavalancheinfo", "")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
 
             UniValue ret(UniValue::VOBJ);
-            ret.pushKV("ready_to_poll", g_avalanche->isQuorumEstablished());
+            ret.pushKV("ready_to_poll", avalanche.isQuorumEstablished());
 
-            auto localProof = g_avalanche->getLocalProof();
+            auto localProof = avalanche.getLocalProof();
             if (localProof != nullptr) {
                 UniValue local(UniValue::VOBJ);
-                const bool verified = g_avalanche->withPeerManager(
+                const bool verified = avalanche.withPeerManager(
                     [&](const avalanche::PeerManager &pm) {
                         const avalanche::ProofId &proofid = localProof->getId();
                         return pm.isBoundToPeer(proofid);
                     });
                 local.pushKV("verified", verified);
-                const bool sharing = g_avalanche->canShareLocalProof();
+                const bool sharing = avalanche.canShareLocalProof();
                 if (!verified) {
                     avalanche::ProofRegistrationState state =
-                        g_avalanche->getLocalProofRegistrationState();
+                        avalanche.getLocalProofRegistrationState();
                     // If the local proof is not registered but the state is
                     // valid, no registration attempt occurred yet.
                     local.pushKV("verification_status",
@@ -777,7 +752,7 @@ static RPCHelpMan getavalancheinfo() {
                 ret.pushKV("local", local);
             }
 
-            g_avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
+            avalanche.withPeerManager([&](avalanche::PeerManager &pm) {
                 UniValue network(UniValue::VOBJ);
 
                 uint64_t proofCount{0};
@@ -893,12 +868,8 @@ static RPCHelpMan getavalanchepeerinfo() {
                     HelpExampleRpc("getavalanchepeerinfo", "\"proofid\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            RPCTypeCheck(request.params, {UniValue::VSTR});
-
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
 
             auto peerToUniv = [](const avalanche::PeerManager &pm,
                                  const avalanche::Peer &peer) {
@@ -922,7 +893,7 @@ static RPCHelpMan getavalanchepeerinfo() {
 
             UniValue ret(UniValue::VARR);
 
-            g_avalanche->withPeerManager([&](const avalanche::PeerManager &pm) {
+            avalanche.withPeerManager([&](const avalanche::PeerManager &pm) {
                 // If a proofid is provided, only return the associated peer
                 if (!request.params[0].isNull()) {
                     const avalanche::ProofId proofid =
@@ -934,7 +905,8 @@ static RPCHelpMan getavalanchepeerinfo() {
                     }
 
                     pm.forPeer(proofid, [&](const avalanche::Peer &peer) {
-                        return ret.push_back(peerToUniv(pm, peer));
+                        ret.push_back(peerToUniv(pm, peer));
+                        return true;
                     });
 
                     return;
@@ -988,13 +960,11 @@ static RPCHelpMan getavalancheproofs() {
                     HelpExampleRpc("getavalancheproofs", "")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            const avalanche::Processor &avalanche = EnsureAvalanche(node);
 
             UniValue ret(UniValue::VOBJ);
-            g_avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
+            avalanche.withPeerManager([&](avalanche::PeerManager &pm) {
                 auto appendProofIds = [&ret](const avalanche::ProofPool &pool,
                                              const std::string &key) {
                     UniValue arrOut(UniValue::VARR);
@@ -1018,10 +988,9 @@ static RPCHelpMan getavalancheproofs() {
 static RPCHelpMan getstakingreward() {
     return RPCHelpMan{
         "getstakingreward",
-        "Return a list of possible staking reward winners based on the previous "
-        "block hash.\n"
-        "If -deprecatedrpc=getstakingreward is set it returns a single payout "
-        "script instead of an array.\n",
+        "Return a list of possible staking reward winners based on the "
+        "previous "
+        "block hash.\n",
         {
             {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
              "The previous block hash, hex encoded."},
@@ -1029,38 +998,17 @@ static RPCHelpMan getstakingreward() {
              "Whether to recompute the staking reward winner if there is a "
              "cached value."},
         },
-        // Deprecated in 0.28.11
-        IsDeprecatedRPCEnabled(gArgs, "getstakingreward")?
-        RPCResult{
-            RPCResult::Type::OBJ,
-                "payoutscript",
-                "The winning proof payout script",
-                {
-                    {RPCResult::Type::STR, "asm", "Decoded payout script"},
-                    {RPCResult::Type::STR_HEX, "hex",
-                    "Raw payout script in hex format"},
-                    {RPCResult::Type::STR, "type",
-                    "The output type (e.g. " + GetAllOutputTypes() + ")"},
-                    {RPCResult::Type::NUM, "reqSigs",
-                    "The required signatures"},
-                    {RPCResult::Type::ARR,
-                    "addresses",
-                    "",
-                    {
-                        {RPCResult::Type::STR, "address", "eCash address"},
-                    }},
-                },
-            }
-        :
         RPCResult{
             RPCResult::Type::ARR,
             "",
             "",
             {
                 {RPCResult::Type::OBJ,
-                 "payoutscript",
-                 "The winning proof payout script",
+                 "winner",
+                 "The winning proof",
                  {
+                     {RPCResult::Type::STR_HEX, "proofid",
+                      "The winning proofid"},
                      {RPCResult::Type::STR, "asm", "Decoded payout script"},
                      {RPCResult::Type::STR_HEX, "hex",
                       "Raw payout script in hex format"},
@@ -1081,7 +1029,7 @@ static RPCHelpMan getstakingreward() {
             const JSONRPCRequest &request) -> UniValue {
             const NodeContext &node = EnsureAnyNodeContext(request.context);
             ChainstateManager &chainman = EnsureChainman(node);
-            const ArgsManager &args{EnsureAnyArgsman(request.context)};
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
 
             const BlockHash blockhash(
                 ParseHashV(request.params[0], "blockhash"));
@@ -1110,10 +1058,10 @@ static RPCHelpMan getstakingreward() {
             if (!request.params[1].isNull() && request.params[1].get_bool()) {
                 // Force recompute the staking reward winner by first erasing
                 // the cached entry if any
-                g_avalanche->eraseStakingRewardWinner(blockhash);
+                avalanche.eraseStakingRewardWinner(blockhash);
             }
 
-            if (!g_avalanche->computeStakingReward(pprev)) {
+            if (!avalanche.computeStakingReward(pprev)) {
                 throw JSONRPCError(
                     RPC_INTERNAL_ERROR,
                     strprintf("Unable to determine a staking reward winner "
@@ -1121,9 +1069,8 @@ static RPCHelpMan getstakingreward() {
                               blockhash.ToString()));
             }
 
-            std::vector<CScript> winnerPayoutScripts;
-            if (!g_avalanche->getStakingRewardWinners(blockhash,
-                                                      winnerPayoutScripts)) {
+            std::vector<std::pair<avalanche::ProofId, CScript>> winners;
+            if (!avalanche.getStakingRewardWinners(blockhash, winners)) {
                 throw JSONRPCError(
                     RPC_INTERNAL_ERROR,
                     strprintf("Unable to retrieve the staking reward winner "
@@ -1131,19 +1078,16 @@ static RPCHelpMan getstakingreward() {
                               blockhash.ToString()));
             }
 
-            UniValue winners(UniValue::VARR);
-            for (auto &winnerPayoutScript : winnerPayoutScripts) {
-                UniValue stakingRewardsPayoutScriptObj(UniValue::VOBJ);
-                ScriptPubKeyToUniv(winnerPayoutScript,
-                                   stakingRewardsPayoutScriptObj,
+            UniValue winnersArr(UniValue::VARR);
+            for (auto &winner : winners) {
+                UniValue stakingRewardsObj(UniValue::VOBJ);
+                ScriptPubKeyToUniv(winner.second, stakingRewardsObj,
                                    /*fIncludeHex=*/true);
-                if (IsDeprecatedRPCEnabled(args, "getstakingreward")) {
-                    return stakingRewardsPayoutScriptObj;
-                }
-                winners.push_back(stakingRewardsPayoutScriptObj);
+                stakingRewardsObj.pushKV("proofid", winner.first.GetHex());
+                winnersArr.push_back(stakingRewardsObj);
             }
 
-            return winners;
+            return winnersArr;
         },
     };
 }
@@ -1168,6 +1112,7 @@ static RPCHelpMan setstakingreward() {
             const JSONRPCRequest &request) -> UniValue {
             const NodeContext &node = EnsureAnyNodeContext(request.context);
             ChainstateManager &chainman = EnsureChainman(node);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
 
             const BlockHash blockhash(
                 ParseHashV(request.params[0], "blockhash"));
@@ -1195,7 +1140,7 @@ static RPCHelpMan setstakingreward() {
 
             const std::vector<uint8_t> data =
                 ParseHex(request.params[1].get_str());
-            const CScript payoutScript(data.begin(), data.end());
+            CScript payoutScript(data.begin(), data.end());
 
             std::vector<CScript> payoutScripts;
 
@@ -1203,7 +1148,16 @@ static RPCHelpMan setstakingreward() {
                 // Append mode, initialize our list with the current winners
                 // and the new one will be added to the back of that list. If
                 // there is no winner the list will remain empty.
-                g_avalanche->getStakingRewardWinners(blockhash, payoutScripts);
+                avalanche.getStakingRewardWinners(blockhash, payoutScripts);
+            }
+
+            if (std::find(payoutScripts.begin(), payoutScripts.end(),
+                          payoutScript) != payoutScripts.end()) {
+                throw JSONRPCError(
+                    RPC_INTERNAL_ERROR,
+                    strprintf(
+                        "Staking rewards winner is already set for block %s\n",
+                        blockhash.ToString()));
             }
 
             payoutScripts.push_back(std::move(payoutScript));
@@ -1211,7 +1165,7 @@ static RPCHelpMan setstakingreward() {
             // This will return true upon insertion or false upon replacement.
             // We want to convey the success of the RPC, so we always return
             // true.
-            g_avalanche->setStakingRewardWinners(pprev, payoutScripts);
+            avalanche.setStakingRewardWinners(pprev, payoutScripts);
             return true;
         },
     };
@@ -1246,13 +1200,11 @@ static RPCHelpMan getremoteproofs() {
         RPCExamples{HelpExampleRpc("getremoteproofs", "<nodeid>")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            const avalanche::Processor &avalanche = EnsureAvalanche(node);
 
-            const NodeId nodeid = request.params[0].get_int64();
-            auto remoteProofs = g_avalanche->withPeerManager(
+            const NodeId nodeid = request.params[0].getInt<int64_t>();
+            auto remoteProofs = avalanche.withPeerManager(
                 [nodeid](const avalanche::PeerManager &pm) {
                     return pm.getRemoteProofs(nodeid);
                 });
@@ -1302,10 +1254,8 @@ static RPCHelpMan getrawavalancheproof() {
         RPCExamples{HelpExampleRpc("getrawavalancheproof", "<proofid>")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            const avalanche::Processor &avalanche = EnsureAvalanche(node);
 
             const avalanche::ProofId proofid =
                 avalanche::ProofId::fromHex(request.params[0].get_str());
@@ -1314,7 +1264,7 @@ static RPCHelpMan getrawavalancheproof() {
             bool isBoundToPeer = false;
             bool conflicting = false;
             bool finalized = false;
-            auto proof = g_avalanche->withPeerManager(
+            auto proof = avalanche.withPeerManager(
                 [&](const avalanche::PeerManager &pm) {
                     isImmature = pm.isImmature(proofid);
                     isBoundToPeer = pm.isBoundToPeer(proofid);
@@ -1361,15 +1311,13 @@ static RPCHelpMan invalidateavalancheproof() {
         RPCExamples{HelpExampleRpc("invalidateavalancheproof", "<proofid>")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
 
             const avalanche::ProofId proofid =
                 avalanche::ProofId::fromHex(request.params[0].get_str());
 
-            g_avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
+            avalanche.withPeerManager([&](avalanche::PeerManager &pm) {
                 if (!pm.exists(proofid) && !pm.isDangling(proofid)) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER,
                                        "Proof not found");
@@ -1385,12 +1333,12 @@ static RPCHelpMan invalidateavalancheproof() {
                 pm.setInvalid(proofid);
             });
 
-            if (g_avalanche->isRecentlyFinalized(proofid)) {
+            if (avalanche.isRecentlyFinalized(proofid)) {
                 // If the proof was previously finalized, clear the status.
                 // Because there is no way to selectively delete an entry from a
                 // Bloom filter, we have to clear the whole filter which could
                 // cause extra voting rounds.
-                g_avalanche->clearFinalizedItems();
+                avalanche.clearFinalizedItems();
             }
 
             return true;
@@ -1412,12 +1360,10 @@ static RPCHelpMan isfinalblock() {
                     HelpExampleCli("isfinalblock", "<block hash>")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
 
-            if (!g_avalanche->isQuorumEstablished()) {
+            if (!avalanche.isQuorumEstablished()) {
                 throw JSONRPCError(RPC_MISC_ERROR,
                                    "Avalanche is not ready to poll yet.");
             }
@@ -1460,14 +1406,11 @@ static RPCHelpMan isfinaltransaction() {
                     HelpExampleCli("isfinaltransaction", "<txid> <blockhash>")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
-
             const NodeContext &node = EnsureAnyNodeContext(request.context);
             ChainstateManager &chainman = EnsureChainman(node);
             const CTxMemPool &mempool = EnsureMemPool(node);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
+
             const TxId txid = TxId(ParseHashV(request.params[0], "txid"));
             CBlockIndex *pindex = nullptr;
 
@@ -1490,10 +1433,9 @@ static RPCHelpMan isfinaltransaction() {
 
             BlockHash hash_block;
             const CTransactionRef tx = GetTransaction(
-                pindex, &mempool, txid, config.GetChainParams().GetConsensus(),
-                hash_block);
+                pindex, &mempool, txid, hash_block, chainman.m_blockman);
 
-            if (!g_avalanche->isQuorumEstablished()) {
+            if (!avalanche.isQuorumEstablished()) {
                 throw JSONRPCError(RPC_MISC_ERROR,
                                    "Avalanche is not ready to poll yet.");
             }
@@ -1559,13 +1501,10 @@ static RPCHelpMan reconsideravalancheproof() {
         RPCExamples{HelpExampleRpc("reconsideravalancheproof", "<proof hex>")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
-
             auto proof = RCUPtr<avalanche::Proof>::make();
+
             NodeContext &node = EnsureAnyNodeContext(request.context);
+            const avalanche::Processor &avalanche = EnsureAvalanche(node);
 
             // Verify the proof. Note that this is redundant with the
             // verification done when adding the proof to the pool, but we get a
@@ -1575,7 +1514,7 @@ static RPCHelpMan reconsideravalancheproof() {
             // There is no way to selectively clear the invalidation status of
             // a single proof, so we clear the whole Bloom filter. This could
             // cause extra voting rounds.
-            g_avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
+            avalanche.withPeerManager([&](avalanche::PeerManager &pm) {
                 if (pm.isInvalid(proof->getId())) {
                     pm.clearAllInvalid();
                 }
@@ -1585,14 +1524,14 @@ static RPCHelpMan reconsideravalancheproof() {
             // proof verification has already been done, a failure likely
             // indicates that there already is a proof with conflicting utxos.
             avalanche::ProofRegistrationState state;
-            if (!registerProofIfNeeded(proof, state)) {
+            if (!registerProofIfNeeded(avalanche, proof, state)) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER,
                                    strprintf("%s (%s)\n",
                                              state.GetRejectReason(),
                                              state.GetDebugMessage()));
             }
 
-            return g_avalanche->withPeerManager(
+            return avalanche.withPeerManager(
                 [&](const avalanche::PeerManager &pm) {
                     return pm.isBoundToPeer(proof->getId());
                 });
@@ -1613,13 +1552,10 @@ static RPCHelpMan sendavalancheproof() {
         RPCExamples{HelpExampleRpc("sendavalancheproof", "<proof>")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (!g_avalanche) {
-                throw JSONRPCError(RPC_INTERNAL_ERROR,
-                                   "Avalanche is not initialized");
-            }
-
             auto proof = RCUPtr<avalanche::Proof>::make();
+
             NodeContext &node = EnsureAnyNodeContext(request.context);
+            const avalanche::Processor &avalanche = EnsureAvalanche(node);
 
             // Verify the proof. Note that this is redundant with the
             // verification done when adding the proof to the pool, but we get a
@@ -1631,14 +1567,14 @@ static RPCHelpMan sendavalancheproof() {
             // indicates that there already is a proof with conflicting utxos.
             const avalanche::ProofId &proofid = proof->getId();
             avalanche::ProofRegistrationState state;
-            if (!registerProofIfNeeded(proof, state)) {
+            if (!registerProofIfNeeded(avalanche, proof, state)) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER,
                                    strprintf("%s (%s)\n",
                                              state.GetRejectReason(),
                                              state.GetDebugMessage()));
             }
 
-            g_avalanche->withPeerManager([&](avalanche::PeerManager &pm) {
+            avalanche.withPeerManager([&](avalanche::PeerManager &pm) {
                 pm.addUnbroadcastProof(proofid);
             });
 
@@ -1664,8 +1600,6 @@ static RPCHelpMan verifyavalancheproof() {
         RPCExamples{HelpExampleRpc("verifyavalancheproof", "\"<proof>\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            RPCTypeCheck(request.params, {UniValue::VSTR});
-
             avalanche::Proof proof;
             verifyProofOrThrow(EnsureAnyNodeContext(request.context), proof,
                                request.params[0].get_str());
@@ -1689,8 +1623,6 @@ static RPCHelpMan verifyavalanchedelegation() {
         RPCExamples{HelpExampleRpc("verifyavalanchedelegation", "\"<proof>\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            RPCTypeCheck(request.params, {UniValue::VSTR});
-
             avalanche::Delegation delegation;
             CPubKey dummy;
             verifyDelegationOrThrow(delegation, request.params[0].get_str(),
@@ -1699,6 +1631,124 @@ static RPCHelpMan verifyavalanchedelegation() {
             return true;
         },
     };
+}
+
+static RPCHelpMan setflakyproof() {
+    return RPCHelpMan{
+        "setflakyproof",
+        "Add or remove a proofid from the flaky list. This means that an "
+        "additional staking reward winner will be accepted if this proof is "
+        "the selected one.\n",
+        {
+            {"proofid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The avalanche proof id."},
+            {"flaky", RPCArg::Type::BOOL, RPCArg::Optional::NO,
+             "Whether to add (true) or remove (false) the proof from the flaky "
+             "list"},
+        },
+        RPCResult{RPCResult::Type::BOOL, "success",
+                  "Whether the addition/removal is successful."},
+        RPCExamples{HelpExampleRpc("setflakyproof", "\"<proofid>\" true")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
+            ChainstateManager &chainman = EnsureChainman(node);
+
+            const auto proofid =
+                avalanche::ProofId::fromHex(request.params[0].get_str());
+            const bool addNotRemove = request.params[1].get_bool();
+
+            if (avalanche.withPeerManager(
+                    [&proofid, addNotRemove](avalanche::PeerManager &pm) {
+                        if (addNotRemove) {
+                            return pm.setFlaky(proofid);
+                        }
+                        return pm.unsetFlaky(proofid);
+                    })) {
+                const CBlockIndex *pprev =
+                    WITH_LOCK(cs_main, return chainman.ActiveTip());
+                // Force recompute the staking reward winner by first erasing
+                // the cached entry if any
+                avalanche.eraseStakingRewardWinner(pprev->GetBlockHash());
+                return avalanche.computeStakingReward(pprev);
+            }
+
+            return false;
+        }};
+}
+
+static RPCHelpMan getflakyproofs() {
+    return RPCHelpMan{
+        "getflakyproofs",
+        "List the flaky proofs (set via setflakyproof).\n",
+        {},
+        RPCResult{
+            RPCResult::Type::ARR,
+            "flaky_proofs",
+            "",
+            {{
+                RPCResult::Type::OBJ,
+                "proof",
+                "",
+                {{
+                    {RPCResult::Type::STR_HEX, "proofid",
+                     "The hex encoded proof identifier."},
+                    {RPCResult::Type::STR_AMOUNT, "staked_amount",
+                     "The proof stake amount, only present if the proof is "
+                     "known."},
+                    {RPCResult::Type::OBJ,
+                     "payout",
+                     "The proof payout script, only present if the proof is "
+                     "known.",
+                     {
+                         {RPCResult::Type::STR, "asm", "Decoded payout script"},
+                         {RPCResult::Type::STR_HEX, "hex",
+                          "Raw payout script in hex format"},
+                         {RPCResult::Type::STR, "type",
+                          "The output type (e.g. " + GetAllOutputTypes() + ")"},
+                         {RPCResult::Type::NUM, "reqSigs",
+                          "The required signatures"},
+                         {RPCResult::Type::ARR,
+                          "addresses",
+                          "",
+                          {
+                              {RPCResult::Type::STR, "address",
+                               "eCash address"},
+                          }},
+                     }},
+                }},
+            }},
+        },
+        RPCExamples{HelpExampleRpc("getflakyproofs", "")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
+
+            UniValue flakyProofs(UniValue::VARR);
+            avalanche.withPeerManager([&flakyProofs](
+                                          avalanche::PeerManager &pm) {
+                pm.forEachFlakyProof([&](const avalanche::ProofId &proofid) {
+                    UniValue flakyProof(UniValue::VOBJ);
+                    flakyProof.pushKV("proofid", proofid.GetHex());
+
+                    const auto proof = pm.getProof(proofid);
+                    if (proof) {
+                        flakyProof.pushKV("staked_amount",
+                                          proof->getStakedAmount());
+                        UniValue payout(UniValue::VOBJ);
+                        ScriptPubKeyToUniv(proof->getPayoutScript(), payout,
+                                           /*fIncludeHex=*/true);
+                        flakyProof.pushKV("payout", payout);
+                    }
+
+                    flakyProofs.push_back(flakyProof);
+                });
+            });
+
+            return flakyProofs;
+        }};
 }
 
 void RegisterAvalancheRPCCommands(CRPCTable &t) {
@@ -1726,6 +1776,8 @@ void RegisterAvalancheRPCCommands(CRPCTable &t) {
         { "avalanche",         sendavalancheproof,        },
         { "avalanche",         verifyavalancheproof,      },
         { "avalanche",         verifyavalanchedelegation, },
+        { "avalanche",         setflakyproof,             },
+        { "avalanche",         getflakyproofs,            },
     };
     // clang-format on
 

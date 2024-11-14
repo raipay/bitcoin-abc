@@ -9,6 +9,7 @@
 #include <consensus/params.h>
 #include <node/blockstorage.h>
 #include <node/caches.h>
+#include <util/fs.h>
 #include <validation.h>
 
 namespace node {
@@ -33,7 +34,7 @@ static ChainstateLoadResult CompleteChainstateInitialization(
         // If we're reindexing in prune mode, wipe away unusable block
         // files and all undo data files
         if (options.prune) {
-            CleanupBlockRevFiles();
+            chainman.m_blockman.CleanupBlockRevFiles();
         }
     }
 
@@ -282,8 +283,9 @@ VerifyLoadedChainstate(ChainstateManager &chainman,
             }
 
             VerifyDBResult result =
-                CVerifyDB().VerifyDB(*chainstate, chainstate->CoinsDB(),
-                                     options.check_level, options.check_blocks);
+                CVerifyDB(chainman.GetNotifications())
+                    .VerifyDB(*chainstate, chainstate->CoinsDB(),
+                              options.check_level, options.check_blocks);
             switch (result) {
                 case VerifyDBResult::SUCCESS:
                 case VerifyDBResult::SKIPPED_MISSING_BLOCKS:

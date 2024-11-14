@@ -4,25 +4,34 @@
 
 //! Module for [`QueryGroupHistory`], to query the tx history of a group.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use abc_rust_error::Result;
-use bitcoinsuite_core::tx::{OutPoint, TxId};
+use bitcoinsuite_core::{
+    hash::Hashed,
+    script::Script,
+    tx::{OutPoint, TxId},
+};
 use bitcoinsuite_slp::verify::SpentToken;
+use bytes::Bytes;
+use chronik_db::group::GroupMember;
+use chronik_db::io::GroupHistoryReader;
 use chronik_db::{
     db::Db,
     group::{Group, UtxoData, UtxoDataOutput, UtxoDataValue},
     io::{BlockHeight, GroupUtxoReader, TxNum, TxReader},
     mem::{Mempool, MempoolGroupUtxos},
+    plugins::PluginsReader,
 };
+use chronik_plugin::data::PluginNameMap;
 use chronik_proto::proto;
 use thiserror::Error;
 
 use crate::{
     avalanche::Avalanche,
     query::{
-        make_outpoint_proto, make_utxo_token_proto, read_db_token_output,
-        QueryGroupUtxosError::*,
+        make_outpoint_proto, make_plugins_proto, make_utxo_token_proto,
+        read_db_token_output, QueryGroupUtxosError::*,
     },
 };
 
@@ -49,6 +58,10 @@ where
     pub utxo_mapper: U,
     /// Whether the SLP/ALP token index is enabled
     pub is_token_index_enabled: bool,
+    /// Whether the script hash index is enabled
+    pub is_scripthash_index_enabled: bool,
+    /// Map plugin name <-> plugin idx of all loaded plugins
+    pub plugin_name_map: &'a PluginNameMap,
 }
 
 /// Data of a UTXO to be mapped to protobuf.
@@ -64,6 +77,8 @@ pub struct UtxoExtra {
     pub is_final: bool,
     /// Token data attached to the UTXO
     pub token: Option<SpentToken>,
+    /// Plugin protobuf output
+    pub plugin: Option<HashMap<String, proto::PluginEntry>>,
 }
 
 /// Helper to turn [`UtxoData`] and [`UtxoExtra`] to a protobuf struct.
@@ -96,6 +111,7 @@ impl UtxoProtobuf for UtxoProtobufValue {
                 .token
                 .as_ref()
                 .map(|token| make_utxo_token_proto(&token.token)),
+            plugins: extra.plugin.unwrap_or_default(),
         }
     }
 }
@@ -120,6 +136,7 @@ impl UtxoProtobuf for UtxoProtobufOutput {
                 .token
                 .as_ref()
                 .map(|token| make_utxo_token_proto(&token.token)),
+            plugins: extra.plugin.unwrap_or_default(),
         }
     }
 }
@@ -141,6 +158,14 @@ pub enum QueryGroupUtxosError {
          but the output doesn't"
     )]
     MempoolTxOutputsOutOfBounds(OutPoint),
+
+    /// Script hash not found
+    #[error("404: Script hash {0:?} not found")]
+    ScriptHashNotFound(String),
+
+    /// Script hash index not enabled
+    #[error("400: Script hash index disabled")]
+    ScriptHashIndexDisabled,
 }
 
 impl<'a, G, U> QueryGroupUtxos<'a, G, U>
@@ -148,6 +173,42 @@ where
     G: Group,
     U: UtxoProtobuf<UtxoData = G::UtxoData>,
 {
+    /// Return a script given a script or a script hash. This should only be
+    /// called when G is ScriptGroup
+    pub fn script(
+        &self,
+        member: GroupMember<Script>,
+        decompress_script_fn: fn(&[u8]) -> Result<Vec<u8>>,
+    ) -> Result<Script> {
+        let history_reader: GroupHistoryReader<'_, G> =
+            GroupHistoryReader::new(self.db)?;
+        match member {
+            GroupMember::Member(member) => Ok(member),
+            GroupMember::MemberHash(member_hash) => {
+                if !self.is_scripthash_index_enabled {
+                    return Err(ScriptHashIndexDisabled.into());
+                }
+                let mempool_script_ser = self
+                    .mempool
+                    .script_history()
+                    .member_ser_by_member_hash(member_hash);
+                let script_ser_db;
+                let script_ser = match mempool_script_ser {
+                    Some(script_ser) => script_ser,
+                    None => {
+                        script_ser_db = history_reader
+                            .member_ser_by_member_hash(member_hash)?
+                            .ok_or_else(|| {
+                                ScriptHashNotFound(member_hash.hex_be())
+                            })?;
+                        &script_ser_db
+                    }
+                };
+                Ok(Script::new(Bytes::from(decompress_script_fn(script_ser)?)))
+            }
+        }
+    }
+
     /// Return the UTXOs of the given member, from both DB and mempool.
     ///
     /// UTXOs are sorted this way:
@@ -158,6 +219,7 @@ where
     pub fn utxos(&self, member: G::Member<'_>) -> Result<Vec<U::Proto>> {
         let tx_reader = TxReader::new(self.db)?;
         let utxo_reader = GroupUtxoReader::<G>::new(self.db)?;
+        let plugins_reader = PluginsReader::new(self.db)?;
         let member_ser = self.group.ser_member(&member);
 
         // Read UTXO entries from DB and mempool
@@ -175,8 +237,14 @@ where
         let mut utxos =
             Vec::with_capacity(db_utxos.len() + mempool_utxos.len());
 
+        let db_plugin_outputs = plugins_reader.plugin_db_outputs(
+            db_utxos.iter().map(|db_utxo| db_utxo.outpoint),
+        )?;
+
         // Read + add DB UTXOs
-        for db_utxo in db_utxos {
+        for (db_utxo, db_plugin_output) in
+            db_utxos.into_iter().zip(db_plugin_outputs)
+        {
             let tx_num = db_utxo.outpoint.tx_num;
             let out_idx = db_utxo.outpoint.out_idx;
 
@@ -210,6 +278,12 @@ where
                         out_idx,
                         self.is_token_index_enabled,
                     )?,
+                    plugin: db_plugin_output.map(|db_plugin_output| {
+                        make_plugins_proto(
+                            &db_plugin_output,
+                            self.plugin_name_map,
+                        )
+                    }),
                 },
             ));
         }
@@ -226,6 +300,12 @@ where
                 .get(mempool_outpoint.out_idx as usize)
                 .ok_or(MempoolTxOutputsOutOfBounds(mempool_outpoint))?;
             let token = self.mempool.tokens().spent_token(&mempool_outpoint)?;
+            let plugin_output =
+                self.mempool.plugins().plugin_output(&mempool_outpoint).map(
+                    |plugin_output| {
+                        make_plugins_proto(plugin_output, self.plugin_name_map)
+                    },
+                );
             utxos.push(U::map_proto(
                 U::UtxoData::from_output(output),
                 UtxoExtra {
@@ -234,6 +314,7 @@ where
                     is_coinbase: false,
                     is_final: false,
                     token,
+                    plugin: plugin_output,
                 },
             ));
         }

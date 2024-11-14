@@ -8,14 +8,11 @@ import mnemonic
 
 # electrumabc
 from electrumabc import networks
-from electrumabc.bitcoin import (
-    Hash,
-    ScriptType,
-    SignatureType,
-    hash_160,
-    serialize_xpub,
-)
+from electrumabc.bip32 import serialize_xpub
+from electrumabc.bitcoin import ScriptType
 from electrumabc.constants import PROJECT_NAME
+from electrumabc.crypto import Hash, hash_160
+from electrumabc.ecc import SignatureType
 from electrumabc.i18n import _
 from electrumabc.keystore import HardwareKeyStore
 from electrumabc.mnemo import (

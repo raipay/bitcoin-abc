@@ -5,6 +5,7 @@
 import struct
 import time
 
+from test_framework.cdefs import DEFAULT_MAX_BLOCK_SIZE, LEGACY_MAX_BLOCK_SIZE
 from test_framework.messages import (
     MAX_HEADERS_RESULTS,
     MAX_INV_SIZE,
@@ -67,6 +68,7 @@ class InvalidMessagesTest(BitcoinTestFramework):
         self.test_oversized_inv_msg()
         self.test_oversized_getdata_msg()
         self.test_oversized_headers_msg()
+        self.test_oversized_block_msg()
         self.test_resource_exhaustion()
 
     def test_buffer(self):
@@ -277,17 +279,98 @@ class InvalidMessagesTest(BitcoinTestFramework):
             self.nodes[0].add_p2p_connection(P2PInterface()).send_and_ping(msg)
         self.nodes[0].disconnect_p2ps()
 
+    def test_not_oversized_msg(self, msg_type, msg_size):
+        self.log.info(
+            f"Test {msg_type.decode('ascii')} message of size {msg_size} is accepted"
+        )
+
+        msg = msg_unrecognized(str_data=b"\xff" * (msg_size - 5))
+        msg.msgtype = msg_type
+        assert len(msg.serialize()) == msg_size
+
+        conn = self.nodes[0].add_p2p_connection(P2PDataStore())
+        with self.nodes[0].assert_debug_log(
+            [f"received: {msg_type.decode('ascii')} ({msg_size} bytes)"]
+        ):
+            conn.send_and_ping(msg)
+        self.nodes[0].disconnect_p2ps()
+
+    def test_not_oversized_msg_boundaries(self, msg_type):
+        # These additional tests ensure the message type would not be rejected as oversized on sensitive boundaries
+        block_size = LEGACY_MAX_BLOCK_SIZE + 1
+        self.restart_node(
+            0,
+            extra_args=self.extra_args[0]
+            + [f"-excessiveblocksize={block_size}", f"-blockmaxsize={block_size}"],
+        )
+
+        self.test_not_oversized_msg(msg_type, MAX_PROTOCOL_MESSAGE_LENGTH - 1)
+        self.test_not_oversized_msg(msg_type, LEGACY_MAX_BLOCK_SIZE * 2 + 1)
+        self.test_not_oversized_msg(msg_type, LEGACY_MAX_BLOCK_SIZE + 1)
+
     def test_oversized_inv_msg(self):
         size = MAX_INV_SIZE + 1
-        self.test_oversized_msg(msg_inv([CInv(MSG_TX, 1)] * size), size)
+        msg = msg_inv([CInv(MSG_TX, 1)] * size)
+        self.test_oversized_msg(msg, size)
+        self.test_not_oversized_msg_boundaries(msg.msgtype)
+        self.restart_node(0)
 
     def test_oversized_getdata_msg(self):
         size = MAX_INV_SIZE + 1
-        self.test_oversized_msg(msg_getdata([CInv(MSG_TX, 1)] * size), size)
+        msg = msg_getdata([CInv(MSG_TX, 1)] * size)
+        self.test_oversized_msg(msg, size)
+        self.test_not_oversized_msg_boundaries(msg.msgtype)
+        self.restart_node(0)
 
     def test_oversized_headers_msg(self):
         size = MAX_HEADERS_RESULTS + 1
-        self.test_oversized_msg(msg_headers([CBlockHeader()] * size), size)
+        msg = msg_headers([CBlockHeader()] * size)
+        self.test_oversized_msg(msg, size)
+        self.test_not_oversized_msg_boundaries(msg.msgtype)
+        self.restart_node(0)
+
+    def test_oversized_block_msg(self):
+        self.log.info("Test that block messages are limited to 2 * excessiveblocksize")
+
+        def test_oversized_block_msg(size):
+            msg = msg_unrecognized(str_data="b" * (size - 5))
+            msg.msgtype = b"block"
+            assert len(msg.serialize()) == size
+
+            self.log.info(f"Test block message of size {size} disconnects peer")
+            conn = self.nodes[0].add_p2p_connection(P2PDataStore())
+            with self.nodes[0].assert_debug_log(["Oversized header detected"]):
+                conn.send_raw_message(conn.build_message(msg))
+                conn.wait_for_disconnect()
+            self.nodes[0].disconnect_p2ps()
+
+        # Test default
+        test_oversized_block_msg(DEFAULT_MAX_BLOCK_SIZE * 2 + 1)
+        self.test_not_oversized_msg(b"block", DEFAULT_MAX_BLOCK_SIZE * 2)
+
+        # Test largest block that is smaller than max protocol message size
+        size = int(MAX_PROTOCOL_MESSAGE_LENGTH / 2 - 1)
+        self.restart_node(
+            0,
+            extra_args=self.extra_args[0]
+            # blockmaxsize must be lowered for the node to start
+            + [f"-excessiveblocksize={size}", f"-blockmaxsize={size}"],
+        )
+        test_oversized_block_msg(size * 2 + 1)
+        self.test_not_oversized_msg(b"block", size * 2)
+
+        # Test barely larger than double minimum block size
+        size = int(LEGACY_MAX_BLOCK_SIZE + 1)
+        self.restart_node(
+            0,
+            extra_args=self.extra_args[0]
+            # blockmaxsize must be lowered for the node to start
+            + [f"-excessiveblocksize={size}", f"-blockmaxsize={size}"],
+        )
+        test_oversized_block_msg(size * 2 + 1)
+        self.test_not_oversized_msg(b"block", size * 2)
+
+        self.restart_node(0)
 
     def test_resource_exhaustion(self):
         self.log.info("Test node stays up despite many large junk messages")

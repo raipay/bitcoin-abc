@@ -4,10 +4,17 @@
 
 //! Module for [`Mempool`], to index mempool txs.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap},
+};
 
 use abc_rust_error::Result;
-use bitcoinsuite_core::tx::{Tx, TxId};
+use bitcoinsuite_core::tx::{OutPoint, Tx, TxId};
+use chronik_plugin::{
+    context::PluginContext,
+    data::{PluginNameMap, PluginOutput},
+};
 use thiserror::Error;
 
 use crate::{
@@ -18,6 +25,7 @@ use crate::{
         ScriptGroup, TokenIdGroup, TokenIdGroupAux,
     },
     mem::{MempoolSpentBy, MempoolTokens},
+    plugins::MempoolPlugins,
 };
 
 /// Mempool of the indexer. This stores txs from the node again, but having a
@@ -33,6 +41,7 @@ pub struct Mempool {
     token_id_history: MempoolTokenIdHistory,
     token_id_utxos: MempoolTokenIdUtxos,
     lokad_id_history: MempoolLokadIdHistory,
+    plugins: MempoolPlugins,
     is_token_index_enabled: bool,
     is_lokad_id_index_enabled: bool,
 }
@@ -44,6 +53,8 @@ pub struct MempoolResult<'m> {
     pub mempool_tx: Cow<'m, MempoolTx>,
     /// [`TokenIdGroupAux`] generated while indexing the mempool tx
     pub token_id_aux: TokenIdGroupAux,
+    /// Aux data for plugins generated while indexing the mempool tx
+    pub plugin_outputs: BTreeMap<OutPoint, PluginOutput>,
 }
 
 /// Transaction in the mempool.
@@ -85,6 +96,7 @@ impl Mempool {
             token_id_history: MempoolTokenIdHistory::new(TokenIdGroup),
             token_id_utxos: MempoolTokenIdUtxos::new(TokenIdGroup),
             lokad_id_history: MempoolLokadIdHistory::new(LokadIdGroup),
+            plugins: MempoolPlugins::new(),
             is_token_index_enabled: enable_token_index,
             is_lokad_id_index_enabled,
         }
@@ -95,6 +107,8 @@ impl Mempool {
         &mut self,
         db: &Db,
         mempool_tx: MempoolTx,
+        plugin_ctx: &PluginContext,
+        plugin_name_map: &PluginNameMap,
     ) -> Result<MempoolResult<'_>> {
         let txid = mempool_tx.tx.txid();
         self.script_history.insert(&mempool_tx, &());
@@ -122,12 +136,27 @@ impl Mempool {
         if self.is_lokad_id_index_enabled {
             self.lokad_id_history.insert(&mempool_tx, &());
         }
+        let plugin_outputs = self.plugins.insert(
+            db,
+            &mempool_tx,
+            |txid| self.txs.contains_key(txid),
+            if self.is_token_index_enabled {
+                self.tokens
+                    .token_tx(mempool_tx.tx.txid_ref())
+                    .zip(self.tokens.tx_token_inputs(mempool_tx.tx.txid_ref()))
+            } else {
+                None
+            },
+            plugin_ctx,
+            plugin_name_map,
+        )?;
         if self.txs.insert(txid, mempool_tx).is_some() {
             return Err(DuplicateTx(txid).into());
         }
         Ok(MempoolResult {
             mempool_tx: Cow::Borrowed(&self.txs[&txid]),
             token_id_aux,
+            plugin_outputs,
         })
     }
 
@@ -158,12 +187,16 @@ impl Mempool {
         } else {
             token_id_aux = TokenIdGroupAux::default();
         }
+        let plugin_outputs = self
+            .plugins
+            .remove(&mempool_tx, |txid| self.txs.contains_key(txid))?;
         if self.is_lokad_id_index_enabled {
             self.lokad_id_history.remove(&mempool_tx, &());
         }
         Ok(MempoolResult {
             mempool_tx: Cow::Owned(mempool_tx),
             token_id_aux,
+            plugin_outputs,
         })
     }
 
@@ -180,6 +213,7 @@ impl Mempool {
                 self.token_id_utxos.remove_mined(&mempool_tx, &token_id_aux);
                 self.tokens.remove(txid);
             }
+            self.plugins.remove_mined(&mempool_tx)?;
             if self.is_lokad_id_index_enabled {
                 self.lokad_id_history.remove(&mempool_tx, &());
             }
@@ -226,5 +260,10 @@ impl Mempool {
     /// Tx history of LOKAD IDs in the mempool.
     pub fn lokad_id_history(&self) -> &MempoolLokadIdHistory {
         &self.lokad_id_history
+    }
+
+    /// Plugin data of txs in the mempool.
+    pub fn plugins(&self) -> &MempoolPlugins {
+        &self.plugins
     }
 }

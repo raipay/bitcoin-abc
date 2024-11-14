@@ -6,11 +6,12 @@
 #include <txdb.h>
 
 #include <chain.h>
+#include <common/system.h>
+#include <logging.h>
 #include <node/ui_interface.h>
 #include <pow/pow.h>
 #include <random.h>
 #include <shutdown.h>
-#include <util/system.h>
 #include <util/translation.h>
 #include <util/vector.h>
 #include <version.h>
@@ -115,7 +116,8 @@ std::vector<BlockHash> CCoinsViewDB::GetHeadBlocks() const {
     return vhashHeadBlocks;
 }
 
-bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) {
+bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
+                              bool erase) {
     CDBBatch batch(*m_db);
     size_t count = 0;
     size_t changed = 0;
@@ -149,8 +151,7 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) {
             changed++;
         }
         count++;
-        CCoinsMap::iterator itOld = it++;
-        mapCoins.erase(itOld);
+        it = erase ? mapCoins.erase(it) : std::next(it);
         if (batch.SizeEstimate() > m_options.batch_write_bytes) {
             LogPrint(BCLog::COINDB, "Writing partial batch of %.2f MiB\n",
                      batch.SizeEstimate() * (1.0 / 1048576.0));

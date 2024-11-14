@@ -3,10 +3,10 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <banman.h>
+#include <common/args.h>
 #include <config.h>
-#include <fs.h>
 #include <netaddress.h>
-#include <util/system.h>
+#include <util/fs.h>
 
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>

@@ -17,6 +17,8 @@
 #include <primitives/transaction.h>
 #include <radix.h>
 #include <sync.h>
+#include <txconflicting.h>
+#include <txorphanage.h>
 #include <uint256radixkey.h>
 #include <util/hasher.h>
 
@@ -27,6 +29,7 @@
 
 #include <atomic>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -239,6 +242,14 @@ private:
     //! CTxMemPoolEntry::entryId's
     uint64_t nextEntryId GUARDED_BY(cs) = 1;
 
+    mutable Mutex cs_orphanage;
+    /** Storage for orphan information */
+    std::unique_ptr<TxOrphanage> m_orphanage GUARDED_BY(cs_orphanage);
+
+    mutable Mutex cs_conflicting;
+    /** Storage for conflicting txs information */
+    std::unique_ptr<TxConflicting> m_conflicting GUARDED_BY(cs_conflicting);
+
 public:
     // public only for testing
     static const int ROLLING_FEE_HALFLIFE = 60 * 60 * 12;
@@ -325,7 +336,7 @@ private:
         EXCLUSIVE_LOCKS_REQUIRED(cs);
 
 public:
-    indirectmap<COutPoint, const CTransaction *> mapNextTx GUARDED_BY(cs);
+    indirectmap<COutPoint, CTransactionRef> mapNextTx GUARDED_BY(cs);
     std::map<TxId, Amount> mapDeltas GUARDED_BY(cs);
 
     using Options = kernel::MemPoolOptions;
@@ -391,7 +402,7 @@ public:
     void ClearPrioritisation(const TxId &txid) EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /** Get the transaction in the pool that spends the same prevout */
-    const CTransaction *GetConflictTx(const COutPoint &prevout) const
+    CTransactionRef GetConflictTx(const COutPoint &prevout) const
         EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /** Returns an iterator to the given txid, if found */
@@ -546,6 +557,22 @@ public:
         return m_sequence_number;
     }
 
+    template <typename Callable>
+    auto withOrphanage(Callable &&func) const
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_orphanage) {
+        LOCK(cs_orphanage);
+        assert(m_orphanage);
+        return func(*m_orphanage);
+    }
+
+    template <typename Callable>
+    auto withConflicting(Callable &&func) const
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_conflicting) {
+        LOCK(cs_conflicting);
+        assert(m_conflicting);
+        return func(*m_conflicting);
+    }
+
 private:
     /** Set ancestor state for an entry */
     void UpdateEntryForAncestors(txiter it, const setEntries *setAncestors)
@@ -596,11 +623,23 @@ class CCoinsViewMemPool : public CCoinsViewBacked {
      */
     std::unordered_map<COutPoint, Coin, SaltedOutpointHasher> m_temp_added;
 
+    /**
+     * Set of all coins that have been fetched from mempool or created using
+     * PackageAddTransaction (not base). Used to track the origin of a coin, see
+     * GetNonBaseCoins().
+     */
+    mutable std::unordered_set<COutPoint, SaltedOutpointHasher>
+        m_non_base_coins;
+
 protected:
     const CTxMemPool &mempool;
 
 public:
     CCoinsViewMemPool(CCoinsView *baseIn, const CTxMemPool &mempoolIn);
+    /**
+     * GetCoin, returning whether it exists and is not spent. Also updates
+     * m_non_base_coins if the coin is not fetched from base.
+     */
     bool GetCoin(const COutPoint &outpoint, Coin &coin) const override;
     /**
      * Add the coins created by this transaction. These coins are only
@@ -608,6 +647,13 @@ public:
      * Only used for package validation.
      */
     void PackageAddTransaction(const CTransactionRef &tx);
+    /** Get all coins in m_non_base_coins. */
+    std::unordered_set<COutPoint, SaltedOutpointHasher>
+    GetNonBaseCoins() const {
+        return m_non_base_coins;
+    }
+    /** Clear m_temp_added and m_non_base_coins. */
+    void Reset();
 };
 
 #endif // BITCOIN_TXMEMPOOL_H

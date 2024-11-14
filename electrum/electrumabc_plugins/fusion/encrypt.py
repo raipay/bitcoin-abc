@@ -53,12 +53,8 @@ except ImportError:
 import hashlib
 import hmac
 
-import ecdsa
-
-from electrumabc.bitcoin import point_to_ser, ser_to_point
-
-G = ecdsa.SECP256k1.generator
-order = ecdsa.SECP256k1.generator.order()
+from electrumabc.ecc import CURVE_ORDER, GENERATOR, ECPubkey
+from electrumabc.util import randrange
 
 
 class EncryptionFailed(Exception):
@@ -77,12 +73,14 @@ def encrypt(message, pubkey, pad_to_length=None):
     If the `pubkey` is not a valid point, raises EncryptionFailed.
     """
     try:
-        pubpoint = ser_to_point(pubkey)
+        pubpoint = ECPubkey(pubkey)
     except Exception:
         raise EncryptionFailed
-    nonce_sec = ecdsa.util.randrange(order)
-    nonce_pub = point_to_ser(nonce_sec * G, comp=True)
-    key = hashlib.sha256(point_to_ser(nonce_sec * pubpoint, comp=True)).digest()
+    nonce_sec = randrange(CURVE_ORDER)
+    nonce_pub = (nonce_sec * GENERATOR).get_public_key_bytes(compressed=True)
+    key = hashlib.sha256(
+        (nonce_sec * pubpoint).get_public_key_bytes(compressed=True)
+    ).digest()
 
     plaintext = len(message).to_bytes(4, "big") + message
     if pad_to_length is None:
@@ -140,9 +138,11 @@ def decrypt(data, privkey):
     if len(data) < 33 + 16 + 16:  # key, at least 1 block, and mac
         raise DecryptionFailed
     try:
-        nonce_pub = ser_to_point(data[:33])
+        nonce_pub = ECPubkey(data[:33])
     except Exception:
         raise DecryptionFailed
     sec = int.from_bytes(privkey, "big")
-    key = hashlib.sha256(point_to_ser(sec * nonce_pub, comp=True)).digest()
+    key = hashlib.sha256(
+        (sec * nonce_pub).get_public_key_bytes(compressed=True)
+    ).digest()
     return decrypt_with_symmkey(data, key), key

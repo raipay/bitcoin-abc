@@ -2,9 +2,9 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-from chronik_plugin.script import Script
-from chronik_plugin.token import GenesisInfo, Token, TokenTxEntry
-from chronik_plugin.tx import OutPoint, Tx, TxInput, TxOutput
+from chronik_plugin.etoken import GenesisInfo, Token, TokenTxEntry
+from chronik_plugin.script import CScript
+from chronik_plugin.tx import OutPoint, PluginOutputEntry, Tx, TxInput, TxOutput
 from test_framework.util import assert_equal
 
 
@@ -60,21 +60,23 @@ def test_non_token_tx(tx: Tx):
         [
             TxInput(
                 prev_out=OutPoint(b"\x05" * 32, 7),
-                script=Script(bytes.fromhex("0101")),
+                script=CScript(bytes.fromhex("0101")),
                 output=TxOutput(
-                    script=Script(
+                    script=CScript(
                         bytes.fromhex("a914020202020202020202020202020202020202020287")
                     ),
                     value=50000,
                     token=None,
                 ),
                 sequence=0x12345678,
+                plugin={},
             ),
             TxInput(
                 prev_out=OutPoint(b"\x08" * 32, 22),
-                script=Script(b""),
+                script=CScript(b""),
                 output=None,
                 sequence=0,
+                plugin={},
             ),
         ],
     )
@@ -82,7 +84,7 @@ def test_non_token_tx(tx: Tx):
         tx.outputs,
         [
             TxOutput(
-                script=Script(
+                script=CScript(
                     bytes.fromhex("76a914060606060606060606060606060606060606060688ac")
                 ),
                 value=40000,
@@ -470,4 +472,17 @@ def test_non_token_burn_tx(tx: Tx):
     assert_equal(
         [output.token for output in tx.outputs],
         [None, None],
+    )
+
+
+def test_plugin_inputs_tx(tx: Tx):
+    assert_equal(
+        [inpt.plugin for inpt in tx.inputs],
+        [
+            {
+                "plg1": PluginOutputEntry(groups=[b"grp1", b"grp2"], data=[b"dat1"]),
+                "plg2": PluginOutputEntry(groups=[b"2grp"], data=[b"2dat"]),
+            },
+            {},
+        ],
     )

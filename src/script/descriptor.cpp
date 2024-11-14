@@ -5,6 +5,7 @@
 #include <script/descriptor.h>
 
 #include <chainparams.h> // For Params()
+#include <common/args.h>
 #include <config.h>
 #include <key_io.h>
 #include <pubkey.h>
@@ -13,7 +14,6 @@
 #include <util/bip32.h>
 #include <util/spanparsing.h>
 #include <util/strencodings.h>
-#include <util/system.h>
 #include <util/vector.h>
 
 #include <memory>
@@ -591,7 +591,7 @@ public:
             } else {
                 tmp = pubkey->ToString();
             }
-            ret += std::move(tmp);
+            ret += tmp;
         }
         if (m_subdescriptor_arg) {
             if (pos++) {
@@ -601,7 +601,7 @@ public:
             if (!m_subdescriptor_arg->ToStringHelper(arg, tmp, priv)) {
                 return false;
             }
-            ret += std::move(tmp);
+            ret += tmp;
         }
         out = std::move(ret) + ")";
         return true;

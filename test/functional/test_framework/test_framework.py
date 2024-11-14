@@ -49,8 +49,8 @@ TEST_EXIT_PASSED = 0
 TEST_EXIT_FAILED = 1
 TEST_EXIT_SKIPPED = 77
 
-# Timestamp is Nov. 20th, 2023 at 12:00:00
-TIMESTAMP_IN_THE_PAST = 1700481600
+# Timestamp is May. 16th, 2024 at 08:00:00
+TIMESTAMP_IN_THE_PAST = 1715846400
 
 TMPDIR_PREFIX = "bitcoin_func_test_"
 
@@ -106,6 +106,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         """Sets test framework defaults. Do not override this method. Instead, override the set_test_params() method"""
         self.chain: str = "regtest"
         self.setup_clean_chain: bool = False
+        self.noban_tx_relay: bool = False
         self.nodes: List[TestNode] = []
         self.network_thread = None
         # Wait for up to 60 seconds for the RPC server to respond
@@ -286,11 +287,11 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             help="Run test using a descriptor wallet",
         )
         parser.add_argument(
-            "--with-leekuanyewactivation",
-            dest="leekuanyewactivation",
+            "--with-augustoactivation",
+            dest="augustoactivation",
             default=False,
             action="store_true",
-            help=f"Activate Lee Kuan Yew update on timestamp {TIMESTAMP_IN_THE_PAST}",
+            help=f"Activate Augusto update on timestamp {TIMESTAMP_IN_THE_PAST}",
         )
         parser.add_argument(
             "--timeout-factor",
@@ -568,6 +569,11 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             extra_confs = [[]] * num_nodes
         if extra_args is None:
             extra_args = [[]] * num_nodes
+        # Whitelist peers to speed up tx relay / mempool sync.
+        # Don't use it if testing tx relay or timing.
+        if self.noban_tx_relay:
+            for i in range(len(extra_args)):
+                extra_args[i] = extra_args[i] + ["-whitelist=noban,in,out@127.0.0.1"]
         if binary is None:
             binary = [self.options.bitcoind] * num_nodes
         assert_equal(len(extra_confs), num_nodes)
@@ -599,9 +605,9 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
                 )
             )
 
-            if self.options.leekuanyewactivation:
+            if self.options.augustoactivation:
                 self.nodes[i].extend_default_args(
-                    [f"-leekuanyewactivationtime={TIMESTAMP_IN_THE_PAST}"]
+                    [f"-augustoactivationtime={TIMESTAMP_IN_THE_PAST}"]
                 )
 
     def start_node(self, i, *args, **kwargs):
@@ -911,9 +917,9 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
                 )
             )
 
-            if self.options.leekuanyewactivation:
+            if self.options.augustoactivation:
                 self.nodes[CACHE_NODE_ID].extend_default_args(
-                    [f"-leekuanyewactivationtime={TIMESTAMP_IN_THE_PAST}"]
+                    [f"-augustoactivationtime={TIMESTAMP_IN_THE_PAST}"]
                 )
 
             self.start_node(CACHE_NODE_ID)

@@ -11,8 +11,10 @@
 #include <avalanche/validation.h>
 #include <avalanche/voterecord.h>
 #include <chain.h>
+#include <common/args.h>
 #include <key_io.h> // For DecodeSecret
 #include <net.h>
+#include <netbase.h>
 #include <netmessagemaker.h>
 #include <policy/block/stakingrewards.h>
 #include <scheduler.h>
@@ -32,10 +34,6 @@
 static constexpr std::chrono::milliseconds AVALANCHE_TIME_STEP{10};
 
 static const std::string AVAPEERS_FILE_NAME{"avapeers.dat"};
-
-// Unfortunately, the bitcoind codebase is full of global and we are kinda
-// forced into it here.
-std::unique_ptr<avalanche::Processor> g_avalanche;
 
 namespace avalanche {
 static const uint256 GetVoteItemId(const AnyVoteItem &item) {
@@ -149,19 +147,20 @@ Processor::Processor(Config avaconfigIn, interfaces::Chain &chain,
                      double minQuorumConnectedScoreRatioIn,
                      int64_t minAvaproofsNodeCountIn,
                      uint32_t staleVoteThresholdIn, uint32_t staleVoteFactorIn,
-                     Amount stakeUtxoDustThreshold, bool preConsensus)
+                     Amount stakeUtxoDustThreshold, bool preConsensus,
+                     bool stakingPreConsensus)
     : avaconfig(std::move(avaconfigIn)), connman(connmanIn),
-      chainman(chainmanIn), mempool(mempoolIn),
-      voteRecords(RWCollection<VoteMap>(VoteMap(VoteMapComparator(mempool)))),
-      round(0), peerManager(std::make_unique<PeerManager>(
-                    stakeUtxoDustThreshold, chainman,
-                    peerDataIn ? peerDataIn->proof : ProofRef())),
+      chainman(chainmanIn), mempool(mempoolIn), round(0),
+      peerManager(std::make_unique<PeerManager>(
+          stakeUtxoDustThreshold, chainman,
+          peerDataIn ? peerDataIn->proof : ProofRef())),
       peerData(std::move(peerDataIn)), sessionKey(std::move(sessionKeyIn)),
       minQuorumScore(minQuorumTotalScoreIn),
       minQuorumConnectedScoreRatio(minQuorumConnectedScoreRatioIn),
       minAvaproofsNodeCount(minAvaproofsNodeCountIn),
       staleVoteThreshold(staleVoteThresholdIn),
-      staleVoteFactor(staleVoteFactorIn), m_preConsensus(preConsensus) {
+      staleVoteFactor(staleVoteFactorIn), m_preConsensus(preConsensus),
+      m_stakingPreConsensus(stakingPreConsensus) {
     // Make sure we get notified of chain state changes.
     chainNotificationsHandler =
         chain.handleNotifications(std::make_shared<NotificationsHandler>(this));
@@ -264,7 +263,7 @@ Processor::MakeProcessor(const ArgsManager &argsman, interfaces::Chain &chain,
         }
 
         peerData = std::make_unique<PeerData>();
-        peerData->proof = std::move(proof);
+        peerData->proof = proof;
         if (!VerifyProof(stakeUtxoDustThreshold, *peerData->proof, error)) {
             // error is set by VerifyProof
             return nullptr;
@@ -399,7 +398,9 @@ Processor::MakeProcessor(const ArgsManager &argsman, interfaces::Chain &chain,
         minAvaproofsNodeCount, staleVoteThreshold, staleVoteFactor,
         stakeUtxoDustThreshold,
         argsman.GetBoolArg("-avalanchepreconsensus",
-                           DEFAULT_AVALANCHE_PRECONSENSUS)));
+                           DEFAULT_AVALANCHE_PRECONSENSUS),
+        argsman.GetBoolArg("-avalanchestakingpreconsensus",
+                           DEFAULT_AVALANCHE_STAKING_PRECONSENSUS)));
 }
 
 static bool isNull(const AnyVoteItem &item) {
@@ -493,7 +494,7 @@ namespace {
     public:
         TCPResponse(Response responseIn, const CKey &key)
             : response(std::move(responseIn)) {
-            CHashWriter hasher(SER_GETHASH, 0);
+            HashWriter hasher{};
             hasher << response;
             const uint256 hash = hasher.GetHash();
 
@@ -568,8 +569,7 @@ bool Processor::registerVotes(NodeId nodeid, const Response &response,
         }
     }
 
-    std::map<AnyVoteItem, Vote, VoteMapComparator> responseItems(
-        (VoteMapComparator(mempool)));
+    std::map<AnyVoteItem, Vote, VoteMapComparator> responseItems;
 
     // At this stage we are certain that invs[i] matches votes[i], so we can use
     // the inv type to retrieve what is being voted on.
@@ -697,7 +697,7 @@ bool Processor::sendHelloInternal(CNode *pfrom) {
         }
     }
 
-    CHashWriter hasher(SER_GETHASH, 0);
+    HashWriter hasher{};
     hasher << delegation.getId();
     hasher << pfrom->GetLocalNonce();
     hasher << pfrom->nRemoteHostNonce;
@@ -867,7 +867,7 @@ bool Processor::canShareLocalProof() {
     // Don't share our proof if we don't have any inbound connection.
     // This is a best effort measure to prevent advertising a proof if we have
     // limited network connectivity.
-    m_canShareLocalProof = connman->GetNodeCount(CConnman::CONNECTIONS_IN) > 0;
+    m_canShareLocalProof = connman->GetNodeCount(ConnectionDirection::In) > 0;
 
     return m_canShareLocalProof;
 }
@@ -919,10 +919,16 @@ void Processor::cleanupStakingRewards(const int minHeight) {
             ++it;
         }
     }
+
+    if (m_stakingPreConsensus) {
+        WITH_LOCK(cs_stakeContenderCache,
+                  return stakeContenderCache.cleanup(minHeight));
+    }
 }
 
-bool Processor::getStakingRewardWinners(const BlockHash &prevBlockHash,
-                                        std::vector<CScript> &winners) const {
+bool Processor::getStakingRewardWinners(
+    const BlockHash &prevBlockHash,
+    std::vector<std::pair<ProofId, CScript>> &winners) const {
     LOCK(cs_stakingRewards);
     auto it = stakingRewards.find(prevBlockHash);
     if (it == stakingRewards.end()) {
@@ -933,13 +939,38 @@ bool Processor::getStakingRewardWinners(const BlockHash &prevBlockHash,
     return true;
 }
 
+bool Processor::getStakingRewardWinners(const BlockHash &prevBlockHash,
+                                        std::vector<CScript> &payouts) const {
+    std::vector<std::pair<ProofId, CScript>> winners;
+    if (!getStakingRewardWinners(prevBlockHash, winners)) {
+        return false;
+    }
+
+    payouts.clear();
+    payouts.reserve(winners.size());
+    for (auto &winner : winners) {
+        payouts.push_back(std::move(winner.second));
+    }
+
+    return true;
+}
+
 bool Processor::setStakingRewardWinners(const CBlockIndex *pprev,
-                                        const std::vector<CScript> &winners) {
+                                        const std::vector<CScript> &payouts) {
     assert(pprev);
 
     StakingReward stakingReward;
     stakingReward.blockheight = pprev->nHeight;
-    stakingReward.winners = winners;
+
+    stakingReward.winners.reserve(payouts.size());
+    for (const CScript &payout : payouts) {
+        stakingReward.winners.push_back({ProofId(), payout});
+    }
+
+    if (m_stakingPreConsensus) {
+        LOCK(cs_stakeContenderCache);
+        stakeContenderCache.setWinners(pprev, payouts);
+    }
 
     LOCK(cs_stakingRewards);
     return stakingRewards.insert_or_assign(pprev->GetBlockHash(), stakingReward)
@@ -952,6 +983,36 @@ void Processor::FinalizeNode(const ::Config &config, const CNode &node) {
     const NodeId nodeid = node.GetId();
     WITH_LOCK(cs_peerManager, peerManager->removeNode(nodeid));
     WITH_LOCK(cs_delayedAvahelloNodeIds, delayedAvahelloNodeIds.erase(nodeid));
+}
+
+void Processor::addStakeContender(const ProofRef &proof) {
+    AssertLockHeld(cs_main);
+    const CBlockIndex *activeTip = chainman.ActiveTip();
+    WITH_LOCK(cs_stakeContenderCache,
+              return stakeContenderCache.add(activeTip, proof));
+}
+
+int Processor::getStakeContenderStatus(
+    const StakeContenderId &contenderId) const {
+    return WITH_LOCK(cs_stakeContenderCache,
+                     return stakeContenderCache.getVoteStatus(contenderId));
+}
+
+void Processor::promoteStakeContendersToTip() {
+    const CBlockIndex *activeTip =
+        WITH_LOCK(cs_main, return chainman.ActiveTip());
+    assert(activeTip);
+
+    if (!hasFinalizedTip()) {
+        // Avoid growing the contender cache until we have finalized a block
+        return;
+    }
+
+    LOCK(cs_peerManager);
+    LOCK(cs_stakeContenderCache);
+    stakeContenderCache.promoteToBlock(activeTip, *peerManager);
+
+    // TODO reconcile remoteProofs contenders
 }
 
 void Processor::updatedBlockTip() {
@@ -999,6 +1060,10 @@ void Processor::updatedBlockTip() {
     auto registeredProofs = registerProofs();
     for (const auto &proof : registeredProofs) {
         reconcileOrFinalize(proof);
+    }
+
+    if (m_stakingPreConsensus) {
+        promoteStakeContendersToTip();
     }
 }
 
@@ -1173,7 +1238,16 @@ AnyVoteItem Processor::getVoteItemFromInv(const CInv &inv) const {
     }
 
     if (mempool && inv.IsMsgTx()) {
-        return WITH_LOCK(mempool->cs, return mempool->get(TxId(inv.hash)));
+        LOCK(mempool->cs);
+        if (CTransactionRef tx = mempool->get(TxId(inv.hash))) {
+            return tx;
+        }
+        if (CTransactionRef tx = mempool->withConflicting(
+                [&inv](const TxConflicting &conflicting) {
+                    return conflicting.GetTx(TxId(inv.hash));
+                })) {
+            return tx;
+        }
     }
 
     return {nullptr};
@@ -1227,11 +1301,14 @@ bool Processor::IsWorthPolling::operator()(const CTransactionRef &tx) const {
         return false;
     }
 
-    // TODO For now the transactions with conflicts or rejected by policies are
-    // not stored anywhere, so only the mempool transactions are worth polling.
     AssertLockNotHeld(processor.mempool->cs);
-    return WITH_LOCK(processor.mempool->cs,
-                     return processor.mempool->exists(tx->GetId()));
+    LOCK(processor.mempool->cs);
+
+    return processor.mempool->exists(tx->GetId()) ||
+           processor.mempool->withConflicting(
+               [&tx](const TxConflicting &conflicting) {
+                   return conflicting.HaveTx(tx->GetId());
+               });
 }
 
 bool Processor::isWorthPolling(const AnyVoteItem &item) const {

@@ -12,15 +12,17 @@ from test_framework.address import (
     SCRIPTSIG_OP_TRUE,
 )
 from test_framework.blocktools import (
+    COINBASE_MATURITY,
     create_block,
     create_coinbase,
     make_conform_to_ctor,
 )
 from test_framework.chronik.slp import slp_genesis, slp_mint_vault, slp_send
 from test_framework.chronik.token_tx import TokenTx
+from test_framework.hash import hash160
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.p2p import P2PDataStore
-from test_framework.script import OP_12, OP_EQUAL, OP_HASH160, CScript, hash160
+from test_framework.script import OP_12, OP_EQUAL, OP_HASH160, CScript
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
 
@@ -54,7 +56,9 @@ class ChronikTokenSlpMintVault(BitcoinTestFramework):
         coinblock = node.getblock(coinblockhash)
         cointx = coinblock["tx"][0]
 
-        block_hashes = self.generatetoaddress(node, 100, ADDRESS_ECREG_UNSPENDABLE)
+        block_hashes = self.generatetoaddress(
+            node, COINBASE_MATURITY, ADDRESS_ECREG_UNSPENDABLE
+        )
 
         coinvalue = 5000000000
 
@@ -80,7 +84,8 @@ class ChronikTokenSlpMintVault(BitcoinTestFramework):
         vault_setup_tx.vout = [
             CTxOut(10000, CScript([OP_HASH160, mint_vault_scripthash, OP_EQUAL])),
             CTxOut(10000, CScript([OP_HASH160, mint_vault_scripthash, OP_EQUAL])),
-            CTxOut(79000, CScript([OP_HASH160, mint_vault_scripthash, OP_EQUAL])),
+            CTxOut(10000, CScript([OP_HASH160, mint_vault_scripthash, OP_EQUAL])),
+            CTxOut(69000, CScript([OP_HASH160, mint_vault_scripthash, OP_EQUAL])),
         ]
         pad_tx(vault_setup_tx)
         vault_setup_txid = node.sendrawtransaction(vault_setup_tx.serialize().hex())
@@ -237,6 +242,49 @@ class ChronikTokenSlpMintVault(BitcoinTestFramework):
         )
         mint2.send(chronik)
         mint2.test(chronik)
+
+        # MINT VAULT with 0 quantity is still indexed correctly
+        tx = CTransaction()
+        tx.vin = [
+            CTxIn(
+                COutPoint(int(vault_setup_txid, 16), 2),
+                CScript([bytes(CScript([OP_12]))]),
+            )
+        ]
+        tx.vout = [
+            CTxOut(
+                0,
+                slp_mint_vault(
+                    token_id=genesis.txid,
+                    mint_amounts=[0],
+                ),
+            ),
+            CTxOut(546, P2SH_OP_TRUE),
+        ]
+        mint3 = TokenTx(
+            tx=tx,
+            status=pb.TOKEN_STATUS_NORMAL,
+            entries=[
+                pb.TokenEntry(
+                    token_id=genesis.txid,
+                    token_type=pb.TokenType(slp=pb.SLP_TOKEN_TYPE_MINT_VAULT),
+                    tx_type=pb.MINT,
+                    actual_burn_amount="0",
+                ),
+            ],
+            inputs=[pb.Token()],
+            outputs=[
+                pb.Token(),
+                pb.Token(),
+            ],
+        )
+        mint3.send(chronik)
+        mint3.test(chronik)
+
+        # Also still valid even after it's been mined
+        block_mint3 = self.generatetoaddress(node, 1, ADDRESS_ECREG_UNSPENDABLE)[0]
+        mint3.test(chronik, block_mint3)
+        node.invalidateblock(block_mint3)
 
         # Reorg block with the GENESIS tx
         node.invalidateblock(block.hash)

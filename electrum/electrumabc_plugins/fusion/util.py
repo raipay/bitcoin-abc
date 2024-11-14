@@ -30,10 +30,10 @@ Some pieces of fusion that can be reused in the server.
 import hashlib
 from typing import Tuple, Union
 
-import ecdsa
-
+from electrumabc import ecc
 from electrumabc.address import Address, OpCodes, ScriptOutput
-from electrumabc.bitcoin import TYPE_ADDRESS, TYPE_SCRIPT, ScriptType, hash_160
+from electrumabc.bitcoin import TYPE_ADDRESS, TYPE_SCRIPT, ScriptType
+from electrumabc.crypto import hash_160
 from electrumabc.transaction import (
     OutPoint,
     Transaction,
@@ -42,6 +42,7 @@ from electrumabc.transaction import (
     get_address_from_output_script,
 )
 from electrumabc.uint256 import UInt256
+from electrumabc.util import randrange
 
 from . import fusion_pb2 as pb
 from .protocol import Protocol
@@ -85,7 +86,7 @@ def dust_limit(lenscriptpubkey):
 
 
 def pubkeys_from_privkey(privkey):
-    P = int.from_bytes(privkey, "big") * ecdsa.SECP256k1.generator
+    P = int.from_bytes(privkey, "big") * ecc.GENERATOR
     return (
         b"\x04" + int(P.x()).to_bytes(32, "big") + int(P.y()).to_bytes(32, "big"),
         bytes((2 + (P.y() & 1),)) + int(P.x()).to_bytes(32, "big"),
@@ -94,12 +95,12 @@ def pubkeys_from_privkey(privkey):
 
 def gen_keypair():
     # Returns privkey (32 bytes), pubkey (65 bytes, uncompressed), pubkey (33 bytes, compressed)
-    privkey = ecdsa.util.randrange(ecdsa.SECP256k1.order)
-    P = privkey * ecdsa.SECP256k1.generator
+    privkey = randrange(ecc.CURVE_ORDER)
+    P = privkey * ecc.GENERATOR
     return (
         int(privkey).to_bytes(32, "big"),
-        b"\x04" + int(P.x()).to_bytes(32, "big") + int(P.y()).to_bytes(32, "big"),
-        bytes((2 + (P.y() & 1),)) + int(P.x()).to_bytes(32, "big"),
+        P.get_public_key_bytes(compressed=False),
+        P.get_public_key_bytes(compressed=True),
     )
 
 

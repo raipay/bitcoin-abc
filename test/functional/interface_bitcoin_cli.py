@@ -5,6 +5,7 @@
 
 from decimal import Decimal
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -13,10 +14,10 @@ from test_framework.util import (
     get_auth_cookie,
 )
 
-# The block reward of coinbaseoutput.nValue (50) BTC/block matures after
+# The block reward of coinbaseoutput.nValue (50) MegXEC/block matures after
 # COINBASE_MATURITY (100) blocks. Therefore, after mining 101 blocks we expect
-# node 0 to have a balance of (BLOCKS - COINBASE_MATURITY) * 50 BTC/block.
-BLOCKS = 101
+# node 0 to have a balance of (BLOCKS - COINBASE_MATURITY) * 50 MegXEC/block.
+BLOCKS = COINBASE_MATURITY + 1
 BALANCE = (BLOCKS - 100) * 50000000
 
 JSON_PARSING_ERROR = "error: Error parsing JSON: foo"
@@ -48,6 +49,53 @@ class TestBitcoinCli(BitcoinTestFramework):
         cli_response = self.nodes[0].cli.getblockchaininfo()
         rpc_response = self.nodes[0].getblockchaininfo()
         assert_equal(cli_response, rpc_response)
+
+        self.log.info("Test named arguments")
+        assert_equal(
+            self.nodes[0].cli.echo(0, 1, arg3=3, arg5=5),
+            ["0", "1", None, "3", None, "5"],
+        )
+        assert_raises_rpc_error(
+            -8,
+            "Parameter arg1 specified twice both as positional and named argument",
+            self.nodes[0].cli.echo,
+            0,
+            1,
+            arg1=1,
+        )
+        assert_raises_rpc_error(
+            -8,
+            "Parameter arg1 specified twice both as positional and named argument",
+            self.nodes[0].cli.echo,
+            0,
+            None,
+            2,
+            arg1=1,
+        )
+
+        self.log.info(
+            "Test that later cli named arguments values silently overwrite earlier ones"
+        )
+        assert_equal(
+            self.nodes[0]
+            .cli("-named", "echo", "arg0=0", "arg1=1", "arg2=2", "arg1=3")
+            .send_cli(),
+            ["0", "3", "2"],
+        )
+        assert_raises_rpc_error(
+            -8,
+            "Parameter args specified multiple times",
+            self.nodes[0]
+            .cli(
+                "-named",
+                "echo",
+                "args=[0,1,2,3]",
+                "4",
+                "5",
+                "6",
+            )
+            .send_cli,
+        )
 
         user, password = get_auth_cookie(self.nodes[0].datadir, self.chain)
 

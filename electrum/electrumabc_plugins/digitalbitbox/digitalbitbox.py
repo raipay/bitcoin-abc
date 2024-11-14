@@ -3,53 +3,47 @@
 # digitalbitbox.com
 #
 
+import base64
+import binascii
+import hashlib
+import hmac
+import json
+import math
+import os
+import re
+import struct
+import sys
+import time
+
+import requests
+
+from electrumabc.base_wizard import HWD_SETUP_NEW_WALLET
+from electrumabc.bitcoin import (
+    ScriptType,
+    hmac_oneshot,
+    public_key_to_p2pkh,
+    push_script,
+)
+from electrumabc.crypto import DecodeAES_bytes, EncodeAES_base64, EncodeAES_bytes, Hash
+from electrumabc.ecc import (
+    ECPubkey,
+    SignatureType,
+    der_sig_from_r_and_s,
+    msg_magic,
+    verify_message_with_address,
+)
+from electrumabc.i18n import _
+from electrumabc.keystore import HardwareKeyStore
+from electrumabc.printerror import print_error
+from electrumabc.transaction import Transaction
+from electrumabc.util import UserCancelled, to_string
+
+from ..hw_wallet import HardwareClientBase, HWPluginBase
+
 try:
-    import base64
-    import binascii
-    import hashlib
-    import hmac
-    import json
-    import math
-    import os
-    import re
-    import struct
-    import sys
-    import time
-
     import hid
-    import requests
-    from ecdsa.curves import SECP256k1
-    from ecdsa.ecdsa import generator_secp256k1
-    from ecdsa.util import sigencode_der
-
-    from electrumabc.base_wizard import HWD_SETUP_NEW_WALLET
-    from electrumabc.bitcoin import (
-        DecodeAES_bytes,
-        EncodeAES_base64,
-        EncodeAES_bytes,
-        Hash,
-        MyVerifyingKey,
-        ScriptType,
-        SignatureType,
-        hmac_oneshot,
-        msg_magic,
-        point_to_ser,
-        pubkey_from_signature,
-        public_key_to_p2pkh,
-        push_script,
-        verify_message,
-    )
-    from electrumabc.i18n import _
-    from electrumabc.keystore import HardwareKeyStore
-    from electrumabc.printerror import print_error
-    from electrumabc.transaction import Transaction
-    from electrumabc.util import UserCancelled, to_string
-
-    from ..hw_wallet import HardwareClientBase, HWPluginBase
-
-    DIGIBOX = True
 except ImportError:
-    DIGIBOX = False
+    hid = None
 
 
 # ----------------------------------------------------------------------------------
@@ -589,10 +583,10 @@ class DigitalBitboxKeyStore(HardwareKeyStore):
                 sig = bytes(
                     [27 + int(reply["sign"][0]["recid"], 16) + 4]
                 ) + binascii.unhexlify(reply["sign"][0]["sig"])
-                pk, compressed = pubkey_from_signature(sig, msg_hash)
-                pk = point_to_ser(pk.pubkey.point, compressed)
+                pk, compressed = ECPubkey.from_signature65(sig, msg_hash)
+                pk = pk.get_public_key_bytes(compressed)
                 addr = public_key_to_p2pkh(pk)
-                if verify_message(addr, sig, message) is False:
+                if verify_message_with_address(addr, sig, message) is False:
                     raise Exception(_("Could not sign message"))
             elif "pubkey" in reply["sign"][0]:
                 # firmware <= v2.1.1
@@ -604,7 +598,7 @@ class DigitalBitboxKeyStore(HardwareKeyStore):
                         addr = public_key_to_p2pkh(
                             binascii.unhexlify(reply["sign"][0]["pubkey"])
                         )
-                        if verify_message(addr, sig, message):
+                        if verify_message_with_address(addr, sig, message):
                             break
                     except Exception:
                         continue
@@ -790,8 +784,8 @@ class DigitalBitboxKeyStore(HardwareKeyStore):
                         recid = int(signed["recid"], 16)
                         s = binascii.unhexlify(signed["sig"])
                         h = inputhasharray[i]
-                        pk = MyVerifyingKey.from_signature(s, recid, h, curve=SECP256k1)
-                        pk = to_hexstr(point_to_ser(pk.pubkey.point, True))
+                        pk = ECPubkey.from_sig_string(s, recid, h)
+                        pk = pk.get_public_key_hex(compressed=True)
                     elif "pubkey" in signed:
                         # firmware <= v2.1.1
                         pk = signed["pubkey"]
@@ -799,7 +793,7 @@ class DigitalBitboxKeyStore(HardwareKeyStore):
                         continue
                     sig_r = int(signed["sig"][:64], 16)
                     sig_s = int(signed["sig"][64:], 16)
-                    sig = sigencode_der(sig_r, sig_s, generator_secp256k1.order())
+                    sig = der_sig_from_r_and_s(sig_r, sig_s)
                     txin.update_signature(sig + b"\x41", ii)
                     tx.update_input(i, txin)
         except UserCancelled:
@@ -812,7 +806,7 @@ class DigitalBitboxKeyStore(HardwareKeyStore):
 
 
 class DigitalBitboxPlugin(HWPluginBase):
-    libraries_available = DIGIBOX
+    libraries_available = hid is not None
     keystore_class = DigitalBitboxKeyStore
     client = None
     DEVICE_IDS = [(0x03EB, 0x2402)]  # Digital Bitbox

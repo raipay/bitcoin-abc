@@ -44,6 +44,64 @@ a:hover {
     background-color: var(--primary-background);
 }
 
+.logo-selector-ctn {
+    display: flex;
+    align-items: center;
+}
+
+.network-select-ctn {
+    position: relative;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    border-left: 1px solid #fff;
+    padding-left: 20px;
+    user-select: none;
+}
+
+.down-arrow {
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid #fff;
+    margin-left: 8px;
+    transform: rotate(0deg);
+    transition: all ease-in-out 200ms;
+}
+
+.selection {
+    display: flex;
+    align-items: center;
+    transition: all ease-in-out 200ms;
+}
+
+.selection:hover .down-arrow {
+    border-top-color: var(--accent);
+}
+
+.selection:hover,
+.option:hover {
+    color: var(--accent);
+}
+
+.rotate-arrow {
+    transform: rotate(180deg);
+    transition: all ease-in-out 200ms;
+}
+
+.option {
+    position: absolute;
+    bottom: -48px;
+    left: 0px;
+    background-color: var(--primary-background);
+    padding: 6px 20px;
+    cursor: pointer;
+    display: none;
+    z-index: 999;
+    color: #fff;
+    border-top: 1px solid #646464;
+    transition: all ease-in-out 200ms;
+}
+
 .header-logo {
     margin: 0;
     padding: 0;
@@ -146,6 +204,107 @@ a:hover {
     font-size: 18px;
     color: #fff;
     z-index: 88;
+}
+
+.testnet_ctn {
+    padding-left: 0;
+}
+
+.testnet_text_ctn {
+    width: 100%;
+    max-width: 700px;
+    margin: auto;
+    z-index: 999;
+    text-align: center;
+    padding: 0 20px;
+}
+
+.testnet_text_ctn h2 {
+    font-size: 50px;
+}
+
+.testnet_text_ctn span {
+    font-weight: 600;
+}
+
+#faucet_input_ctn {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    margin-top: 30px;
+    position: relative;
+}
+
+#faucet_input_ctn input {
+    padding: 10px 20px;
+    border: none;
+}
+
+#faucet_input_ctn button {
+    padding: 10px 20px;
+    border: none;
+    margin-top: 10px;
+    border-radius: 5px;
+}
+
+#faucet_input_ctn button:hover {
+    background-color: var(--accent);
+}
+
+#faucet_loading {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(0, 0, 0, 0.8);
+    z-index: 999;
+    position: absolute;
+    display: none;
+    top: 0;
+    left: 0;
+}
+
+.inner_faucet_response {
+    width: 100%;
+    background-color: #029b18;
+    display: flex;
+    align-items: flex-start;
+    flex-direction: column;
+    text-align: left;
+    margin-top: 20px;
+    padding: 20px;
+    font-size: 16px;
+    border-radius: 3px;
+}
+
+.inner_faucet_response h3 {
+    margin: 0;
+    font-weight: 600;
+    font-size: 24px;
+}
+
+.inner_faucet_response a {
+    color: #fff;
+    text-decoration: underline;
+}
+
+.inner_faucet_response a:hover {
+    color: #b0f6ff;
+}
+
+.inner_faucet_response span {
+    margin-top: 30px;
+    word-break: break-all;
+}
+
+.inner_faucet_response > div {
+    margin: 10px 0;
+    word-break: break-all;
+}
+
+.error {
+    background-color: rgb(150, 0, 0);
 }
 
 .btn {
@@ -353,9 +512,17 @@ table.dataTable tbody tr:hover {
     background: rgba(255, 255, 255, 0.05) !important;
 }
 
-.dtr-control::before {
+td.dtr-control {
+    text-align: center;
+}
+
+td.dtr-control::before {
     height: 1em !important;
     width: 1em !important;
+    border-radius: 1em;
+    font-family: 'Courier New', Courier, monospace;
+    line-height: 1em;
+    content: '+' !important;
     background-color: var(--accent) !important;
     border: none !important;
     box-shadow: 2px 2px 15px 8px #000000;
@@ -441,12 +608,12 @@ table.dataTable thead .sorting {
     color: #fff !important;
 }
 
-.dataTables_wrapper .dataTables_length select {
+.dataTables_wrapper .dt-length select {
     border: 1px solid #fff;
     color: #fff;
 }
 
-.dataTables_length {
+.dt-length {
     color: #fff !important;
 }
 
@@ -784,9 +951,23 @@ table.dataTable thead .sorting {
     cursor: pointer;
     width: fit-content;
     user-select: none;
+    display: flex;
+    align-items: center;
 }
 .show-coins:hover {
     filter: brightness(1.2);
+}
+
+.show-coins i {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    margin-left: 2px;
+}
+
+.rotate-arrow {
+    transform: rotate(180deg);
 }
 
 .addresses {
@@ -1036,10 +1217,6 @@ table.tx-details-table tr:last-child td {
 
 .datatable__block_listing-hover {
     background: rgba(251, 123, 129, 0.1);
-}
-
-.block__tx-header {
-    margin-bottom: -29px !important;
 }
 
 .block__advanced-data {
@@ -1859,4 +2036,26 @@ div.dt-buttons button:hover {
     .search-ctn a {
         display: none;
     }
+}
+
+/* Styling for copy paste button on addresses on transaction page */
+.address-and-copy {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+/* Outputs align on the right */
+.output-row-section1 > div.address-and-copy {
+    justify-content: flex-end;
+}
+
+/* We handle spacing with flex gap for these copy-btn divs */
+.address-and-copy > div.copy-btn {
+    margin-left: 0px;
+}
+
+.token-icon {
+    max-width: 32px;
+    max-height: 32px;
 }

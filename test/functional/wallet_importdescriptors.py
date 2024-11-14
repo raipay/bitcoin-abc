@@ -15,6 +15,7 @@ variants.
   and test the values returned."""
 
 from test_framework.address import key_to_p2pkh
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.descriptors import descsum_create
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -28,10 +29,8 @@ from test_framework.wallet_util import get_generate_key, test_address
 class ImportDescriptorsTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
+        self.noban_tx_relay = True
         self.extra_args = [[], ["-keypool=5"]]
-        # whitelist peers to speed up tx relay / mempool sync
-        for args in self.extra_args:
-            args.append("-whitelist=noban@127.0.0.1")
         self.setup_clean_chain = True
 
     def skip_test_if_missing_module(self):
@@ -84,7 +83,7 @@ class ImportDescriptorsTest(BitcoinTestFramework):
         assert_equal(wpriv.getwalletinfo()["keypoolsize"], 0)
 
         self.log.info("Mining coins")
-        self.generatetoaddress(self.nodes[0], 101, w0.getnewaddress())
+        self.generatetoaddress(self.nodes[0], COINBASE_MATURITY + 1, w0.getnewaddress())
 
         # RPC importdescriptors -----------------------------------------------
 

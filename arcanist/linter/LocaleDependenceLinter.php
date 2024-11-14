@@ -76,7 +76,7 @@ final class LocaleDependenceLinter extends ArcanistLinter {
       "setlocale",
     ],
     "src/test/fuzz/parse_numbers.cpp" => ["atoi"],
-    "src/util/system.cpp" => ["atoi"],
+    "src/common/args.cpp" => ["atoi"],
     "src/util/strencodings.cpp" => [
       "atoi",
       "strtol",
@@ -85,6 +85,10 @@ final class LocaleDependenceLinter extends ArcanistLinter {
       "strtoull",
     ],
     "src/util/strencodings.h" => ["atoi"],
+    // False positive DbEnv::strerror
+    "src/wallet/bdb.cpp" => ["strerror"],
+    // Outside this function use `SysErrorString`
+    "src/util/syserror.cpp" => ["strerror"],
   );
 
   const LOCALE_DEPENDENT_FUNCTIONS = array(
@@ -170,7 +174,7 @@ final class LocaleDependenceLinter extends ArcanistLinter {
     "strcasecmp",
     "strcasestr",
     "strcoll",     // LC_COLLATE
-    //"strerror"
+    "strerror",
     "strfmon",
     "strftime",    // LC_TIME
     "strncasecmp",
@@ -296,7 +300,7 @@ ADVICE;
     }
 
     $anyFunction = implode("|", self::LOCALE_DEPENDENT_FUNCTIONS);
-    $pattern = "/[^\w`'\"<>](?P<function>".$anyFunction."(_r|_s)?)[^\w`'\"<>]/";
+    $pattern = "/[^\w`'\"<>](?P<function>".$anyFunction.")(_r|_s)?[^\w`'\"<>]/";
 
     foreach ($fileContent as $lineNumber => $lineContent) {
       // Filter comments and string constants

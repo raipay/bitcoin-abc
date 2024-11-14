@@ -7,6 +7,7 @@
 #include <avalanche/avalanche.h>
 #include <avalanche/processor.h>
 #include <blockindex.h>
+#include <common/args.h>
 #include <consensus/activation.h>
 #include <consensus/amount.h>
 #include <logging.h>
@@ -31,8 +32,8 @@ bool StakingRewardsPolicy::operator()(BlockPolicyValidationState &state) {
 
     std::vector<CScript> winners;
     if (!IsStakingRewardsActivated(m_consensusParams, m_blockIndex.pprev) ||
-        !g_avalanche->getStakingRewardWinners(
-            m_blockIndex.pprev->GetBlockHash(), winners)) {
+        !m_avalanche.getStakingRewardWinners(m_blockIndex.pprev->GetBlockHash(),
+                                             winners)) {
         LogPrint(BCLog::AVALANCHE,
                  "Staking rewards for block %s: not ready yet\n",
                  blockhash.ToString());
@@ -46,8 +47,15 @@ bool StakingRewardsPolicy::operator()(BlockPolicyValidationState &state) {
             continue;
         }
 
-        if (std::find(winners.begin(), winners.end(), o.scriptPubKey) !=
-            winners.end()) {
+        auto it = std::find(winners.begin(), winners.end(), o.scriptPubKey);
+        if (it != winners.end()) {
+            if (it != winners.begin()) {
+                LogPrint(BCLog::AVALANCHE,
+                         "Staking rewards for block %s: selected winner is "
+                         "flaky, accepting an alternative one\n",
+                         blockhash.ToString());
+            }
+
             return true;
         }
     }
@@ -68,8 +76,7 @@ Amount GetStakingRewardsAmount(const Amount &coinbaseValue) {
 
 bool IsStakingRewardsActivated(const Consensus::Params &params,
                                const CBlockIndex *pprev) {
-    return IsCowperthwaiteEnabled(params, pprev) && g_avalanche &&
-           isAvalancheEnabled(gArgs) &&
+    return IsCowperthwaiteEnabled(params, pprev) &&
            gArgs.GetBoolArg("-avalanchestakingrewards",
                             params.enableStakingRewards);
 }

@@ -47,37 +47,22 @@ import {
     SlpNftMint,
     SlpParentGenesisTxMock,
     oneOutputReceivedTx,
+    paywallPaymentTx,
+    eCashChatArticleTx,
+    eCashChatArticleReplyTx,
+    eCashChatAuthenticationTx,
+    agoraAdSetupTxSlpNft,
+    agoraOneshotSaleTx,
+    AgoraOneshotCancelTx,
+    agoraPartialCancelTwo,
+    agoraPartialCancelTx,
+    agoraPartialBuxBuyTx,
+    SlpNftParentMintTx,
 } from 'chronik/fixtures/mocks';
 import CashtabState from 'config/CashtabState';
 import { MemoryRouter } from 'react-router-dom';
 import { getHashes } from 'wallet';
-
-// https://stackoverflow.com/questions/39830580/jest-test-fails-typeerror-window-matchmedia-is-not-a-function
-Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: jest.fn().mockImplementation(query => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: jest.fn(), // Deprecated
-        removeListener: jest.fn(), // Deprecated
-        addEventListener: jest.fn(),
-        removeEventListener: jest.fn(),
-        dispatchEvent: jest.fn(),
-    })),
-});
-
-// https://stackoverflow.com/questions/64813447/cannot-read-property-addlistener-of-undefined-react-testing-library
-window.matchMedia = query => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener: jest.fn(), // deprecated
-    removeListener: jest.fn(), // deprecated
-    addEventListener: jest.fn(),
-    removeEventListener: jest.fn(),
-    dispatchEvent: jest.fn(),
-});
+import userEvent from '@testing-library/user-event';
 
 const AVALANCHE_FINALIZED_CHAINTIP = 800000;
 
@@ -118,6 +103,12 @@ describe('<Tx />', () => {
         expect(
             screen.getAllByTitle('Finalized by Avalanche')[1],
         ).toBeInTheDocument();
+
+        // If we expand the panel, we see the exact XEC amount
+        // Expand the panel
+        await userEvent.click(screen.getByTitle('tx-received'));
+        // Now we see the exact XEC received amount
+        expect(screen.getByText('42.00 XEC')).toBeInTheDocument();
     });
     it('Incoming XEC-only, not yet finalized by Avalanche', async () => {
         const AVALANCHE_UNFINALIZED_CHAINTIP = 0;
@@ -2290,5 +2281,1286 @@ describe('<Tx />', () => {
 
         // We see the expected token action text for a received SLPv1 fungible token tx
         expect(screen.getByText('Created 89 HSM')).toBeInTheDocument();
+    });
+    it('Sent paywall payment tx', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={paywallPaymentTx.tx}
+                        hashes={[paywallPaymentTx.tx.outputs[1].outputScript]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We render the timestamp
+        expect(screen.getByText('May 23, 2024, 14:33:47')).toBeInTheDocument();
+
+        // We see the Self Send icon
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We see the expected self-send amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the paywall description
+        expect(screen.getByText('Paywall Article')).toBeInTheDocument();
+
+        // We see expected explorer link generated
+        expect(screen.getByText('Paywall Article')).toHaveAttribute(
+            'href',
+            'https://www.ecashchat.com/?sharedArticleTxid=4d7a62ebb7f06fd7a86f861280853e6fce3c117c73598fe284190260abd5ddc4',
+        );
+    });
+    it('Invalid paywall payment tx', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{
+                            ...paywallPaymentTx.tx,
+                            outputs: [
+                                {
+                                    ...paywallPaymentTx.tx.outputs[0],
+                                    outputScript: '6a0470617977', // no data after the paywall lokad ID
+                                },
+                                ...paywallPaymentTx.tx.outputs.slice(1),
+                            ],
+                        }}
+                        hashes={[paywallPaymentTx.tx.outputs[1].outputScript]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We render the timestamp
+        expect(screen.getByText('May 23, 2024, 14:33:47')).toBeInTheDocument();
+
+        // We see the Self Send icon
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We see the expected self-send amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the invalid paywall tx description
+        expect(screen.getByText('Invalid Paywall Payment')).toBeInTheDocument();
+    });
+    it('Sent eCashChat article reply tx', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={eCashChatArticleReplyTx.tx}
+                        hashes={[
+                            eCashChatArticleReplyTx.tx.outputs[2].outputScript,
+                        ]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Self Send icon
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We see the expected self-send amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the article reply description
+        expect(screen.getByText('eCash Chat - Reply to')).toBeInTheDocument();
+
+        // We see expected explorer link generated
+        expect(screen.getByText('article')).toHaveAttribute(
+            'href',
+            'https://www.ecashchat.com/?sharedArticleTxid=fc1bec473c0c8de408b8587ead6d31ad1d8854835c19947488fa7b30b7992267',
+        );
+    });
+    it('Invalid eCashChat article reply tx', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{
+                            ...eCashChatArticleReplyTx.tx,
+                            outputs: [
+                                {
+                                    ...eCashChatArticleReplyTx.tx.outputs[0],
+                                    outputScript: '6a04626c6f6704726c6f67', // no data after the article reply lokad ID i.e. stackArray !== 4
+                                },
+                                ...eCashChatArticleReplyTx.tx.outputs.slice(1),
+                            ],
+                        }}
+                        hashes={[
+                            eCashChatArticleReplyTx.tx.outputs[2].outputScript,
+                        ]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Self Send icon
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We see the expected self-send amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the invalid article tx description
+        expect(
+            screen.getByText('Invalid eCashChat Article Reply'),
+        ).toBeInTheDocument();
+    });
+    it('Sent eCashChat article tx', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={eCashChatArticleTx.tx}
+                        hashes={[eCashChatArticleTx.tx.outputs[2].outputScript]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Self Send icon
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We see the expected self-send amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the article tx description
+        expect(
+            screen.getByText('eCash Chat article created'),
+        ).toBeInTheDocument();
+    });
+    it('Invalid eCashChat article tx', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{
+                            ...eCashChatArticleTx.tx,
+                            outputs: [
+                                {
+                                    ...eCashChatArticleTx.tx.outputs[0],
+                                    outputScript: '6a04626c6f67', // no data after the article lokad ID
+                                },
+                                ...eCashChatArticleTx.tx.outputs.slice(1),
+                            ],
+                        }}
+                        hashes={[eCashChatArticleTx.tx.outputs[2].outputScript]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Self Send icon
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We see the expected self-send amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the invalid article tx description
+        expect(
+            screen.getByText('Invalid eCashChat Article'),
+        ).toBeInTheDocument();
+    });
+    it('Sent eCashChat authentication tx', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={eCashChatAuthenticationTx.tx}
+                        hashes={[
+                            eCashChatAuthenticationTx.tx.outputs[2]
+                                .outputScript,
+                        ]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the tx sent icon
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
+
+        // We see the tx sent label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // For a tx with timeFirstSeen of 0, we render the block timestamp
+        expect(screen.getByText('Aug 11, 2024, 10:36:00')).toBeInTheDocument();
+
+        // We see the formatted XEC amount
+        expect(screen.getByText('-5.5 XEC')).toBeInTheDocument();
+
+        // We see the formatted fiat amount
+        expect(screen.getByText('-$0.00')).toBeInTheDocument();
+
+        // We see the article tx description
+        expect(
+            screen.getByText('eCash Chat Authentication'),
+        ).toBeInTheDocument();
+    });
+    it('Ad setup tx for an SLP1 NFT Agora offer (cached)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={agoraAdSetupTxSlpNft.tx}
+                        hashes={[
+                            agoraAdSetupTxSlpNft.tx.inputs[0].outputScript,
+                        ]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(agoraAdSetupTxSlpNft.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 22, 2024, 21:24:27')).toBeInTheDocument();
+
+        // We see the expected send amount
+        expect(screen.getByText('-8.6 XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('-$0.00')).toBeInTheDocument();
+
+        // We see the NFT associated image
+        expect(
+            screen.getByAltText(
+                'icon for f09ec0e8e5f37ab8aebe8e701a476b6f2085f8d9ea10ddc8ef8d64e7ad377df3',
+            ),
+        ).toBeInTheDocument();
+
+        // We see the Agora Offer icon
+        expect(screen.getByTitle('Agora Offer')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
+
+        // We see the token name
+        expect(screen.getByText('Nile Kinnick')).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(screen.getByText('(NK)')).toBeInTheDocument();
+
+        // We see the expected token action for listing this NFT
+        expect(screen.getByText('Listed 1 NK')).toBeInTheDocument();
+    });
+    it('Ad setup tx for an SLP1 NFT Agora offer (uncached)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={agoraAdSetupTxSlpNft.tx}
+                        hashes={[
+                            agoraAdSetupTxSlpNft.tx.inputs[0].outputScript,
+                        ]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 22, 2024, 21:24:27')).toBeInTheDocument();
+
+        // We see the expected send amount
+        expect(screen.getByText('-8.6 XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('-$0.00')).toBeInTheDocument();
+
+        // We see the NFT associated image
+        expect(
+            screen.getByAltText(
+                'icon for f09ec0e8e5f37ab8aebe8e701a476b6f2085f8d9ea10ddc8ef8d64e7ad377df3',
+            ),
+        ).toBeInTheDocument();
+
+        // We see the Agora Offer icon
+        expect(screen.getByTitle('Agora Offer')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
+
+        // We see SEND but not the token name (uncached)
+        expect(screen.getByText('SEND')).toBeInTheDocument();
+
+        // We do not see the token ticker in parenthesis in the summary column
+        expect(screen.queryByText('(NK)')).not.toBeInTheDocument();
+
+        // We see the expected token action text for a listed SLPv1 fungible token tx, but no quantity
+        expect(screen.getByText('Listed')).toBeInTheDocument();
+    });
+    it('Agora one-shot buy tx (token info available in cache)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={agoraOneshotSaleTx.tx}
+                        // See mock
+                        // Buy from this wallet
+                        // You can't reference the usual 0 input outputScript bc it's an agora p2sh
+                        hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(agoraOneshotSaleTx.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 23, 2024, 19:57:57')).toBeInTheDocument();
+
+        // We see the expected send amount
+        expect(screen.getByText('-720.67k XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('-$21.62')).toBeInTheDocument();
+
+        // We see the NFT associated image
+        expect(
+            screen.getByAltText(
+                'icon for f09ec0e8e5f37ab8aebe8e701a476b6f2085f8d9ea10ddc8ef8d64e7ad377df3',
+            ),
+        ).toBeInTheDocument();
+
+        // We see the Agora Purchase icon
+        expect(screen.getByTitle('Agora Purchase')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
+
+        // We see the token name
+        expect(screen.getByText('Nile Kinnick')).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(screen.getByText('(NK)')).toBeInTheDocument();
+
+        // We see the expected token action for buying this NFT
+        expect(screen.getByText('Bought 1 NK')).toBeInTheDocument();
+    });
+    it('Agora one-shot buy tx (uncached)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={agoraOneshotSaleTx.tx}
+                        // See mock
+                        // Buy from this wallet
+                        // You can't reference the usual 0 input outputScript bc it's an agora p2sh
+                        hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={new CashtabState()}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 23, 2024, 19:57:57')).toBeInTheDocument();
+
+        // We see the expected send amount
+        expect(screen.getByText('-720.67k XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('-$21.62')).toBeInTheDocument();
+
+        // We see the NFT associated image
+        expect(
+            screen.getByAltText(
+                'icon for f09ec0e8e5f37ab8aebe8e701a476b6f2085f8d9ea10ddc8ef8d64e7ad377df3',
+            ),
+        ).toBeInTheDocument();
+
+        // We see the Agora Purchase icon
+        expect(screen.getByTitle('Agora Purchase')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
+    });
+    it('Agora one-shot sell tx (token info available in cache)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={agoraOneshotSaleTx.tx}
+                        // See mock
+                        // Buy from this wallet
+                        // You can't reference the usual 0 input outputScript bc it's an agora p2sh
+                        hashes={['95e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(agoraOneshotSaleTx.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 23, 2024, 19:57:57')).toBeInTheDocument();
+
+        // We see the expected send amount
+        expect(screen.getByText('720.67k XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('$21.62')).toBeInTheDocument();
+
+        // We see the NFT associated image
+        expect(
+            screen.getByAltText(
+                'icon for f09ec0e8e5f37ab8aebe8e701a476b6f2085f8d9ea10ddc8ef8d64e7ad377df3',
+            ),
+        ).toBeInTheDocument();
+
+        // We see the Agora Purchase icon
+        expect(screen.getByTitle('Agora Sale')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
+
+        // We see the token name
+        expect(screen.getByText('Nile Kinnick')).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(screen.getByText('(NK)')).toBeInTheDocument();
+
+        // We see the expected token action for selling this NFT
+        expect(screen.getByText('Sold 1 NK')).toBeInTheDocument();
+    });
+    it('Agora one-shot sell tx (uncached)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={agoraOneshotSaleTx.tx}
+                        // See mock
+                        // Buy from this wallet
+                        // You can't reference the usual 0 input outputScript bc it's an agora p2sh
+                        hashes={['95e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={new CashtabState()}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 23, 2024, 19:57:57')).toBeInTheDocument();
+
+        // We see the expected send amount
+        expect(screen.getByText('720.67k XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('$21.62')).toBeInTheDocument();
+
+        // We see the NFT associated image
+        expect(
+            screen.getByAltText(
+                'icon for f09ec0e8e5f37ab8aebe8e701a476b6f2085f8d9ea10ddc8ef8d64e7ad377df3',
+            ),
+        ).toBeInTheDocument();
+
+        // We see the Agora Purchase icon
+        expect(screen.getByTitle('Agora Sale')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
+    });
+    it('Agora one-shot cancel tx (token info available in cache)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={AgoraOneshotCancelTx.tx}
+                        // See mock
+                        // Buy from this wallet
+                        // You can't reference the usual 0 input outputScript bc it's an agora p2sh
+                        hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(AgoraOneshotCancelTx.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 23, 2024, 21:52:26')).toBeInTheDocument();
+
+        // We see the expected sent to self amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the NFT associated image
+        expect(
+            screen.getByAltText(
+                'icon for f09ec0e8e5f37ab8aebe8e701a476b6f2085f8d9ea10ddc8ef8d64e7ad377df3',
+            ),
+        ).toBeInTheDocument();
+
+        // We see the Agora Cancel icon
+        expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
+
+        // We see the token name
+        expect(screen.getByText('Nile Kinnick')).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(screen.getByText('(NK)')).toBeInTheDocument();
+
+        // We see the expected token action for canceling this NFT listing
+        expect(screen.getByText('Canceled offer of 1 NK')).toBeInTheDocument();
+    });
+    it('Agora one-shot cancel tx (uncached)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={AgoraOneshotCancelTx.tx}
+                        // See mock
+                        // Buy from this wallet
+                        // You can't reference the usual 0 input outputScript bc it's an agora p2sh
+                        hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={new CashtabState()}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 23, 2024, 21:52:26')).toBeInTheDocument();
+
+        // We see the expected sent to self amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the NFT associated image
+        expect(
+            screen.getByAltText(
+                'icon for f09ec0e8e5f37ab8aebe8e701a476b6f2085f8d9ea10ddc8ef8d64e7ad377df3',
+            ),
+        ).toBeInTheDocument();
+
+        // We see the Agora Cancel icon
+        expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
+    });
+    it('Agora partial cancel tx (token info available in cache)', async () => {
+        const thisMock = agoraPartialCancelTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={thisMock.tx}
+                        hashes={['7847fe7070bec8567b3e810f543f2f80cc3e03be']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(thisMock.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 24, 2024, 17:05:38')).toBeInTheDocument();
+
+        // We see the expected sent to self amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Sale icon
+        expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
+
+        // We see the token name
+        expect(
+            screen.getByText(thisMock.cache[0][1].genesisInfo.tokenName),
+        ).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(
+            screen.getByText(
+                `(${thisMock.cache[0][1].genesisInfo.tokenTicker})`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the expected token action
+        expect(
+            screen.getByText(
+                `Canceled offer of 855.738679296 ${thisMock.cache[0][1].genesisInfo.tokenTicker}`,
+            ),
+        ).toBeInTheDocument();
+    });
+    it('Agora partial cancel tx (uncached)', async () => {
+        const thisMock = agoraPartialCancelTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={thisMock.tx}
+                        hashes={['7847fe7070bec8567b3e810f543f2f80cc3e03be']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={new CashtabState()}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 24, 2024, 17:05:38')).toBeInTheDocument();
+
+        // We see the expected send amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Sale icon
+        expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
+    });
+    it('Agora partial bux buy tx renders correct bought amount (token info available in cache)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={agoraPartialBuxBuyTx.tx}
+                        hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(agoraPartialBuxBuyTx.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // In this case, it's a partial buy, so it also recreates the offer
+        expect(screen.getByText(/and 1 other/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 24, 2024, 23:21:00')).toBeInTheDocument();
+
+        // We see the purchase price in XEC and fiat
+        expect(screen.getByText('-431.45k XEC')).toBeInTheDocument();
+        expect(screen.getByText('-$12.94')).toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${agoraPartialBuxBuyTx.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Sale icon
+        expect(screen.getByTitle('Agora Purchase')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
+
+        // We see the token name
+        expect(
+            screen.getByText(
+                agoraPartialBuxBuyTx.cache[0][1].genesisInfo.tokenName,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(
+            screen.getByText(
+                `(${agoraPartialBuxBuyTx.cache[0][1].genesisInfo.tokenTicker})`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the expected token action
+        const BOUGHT_AMOUNT = '14.0667';
+        expect(
+            screen.getByText(
+                `Bought ${BOUGHT_AMOUNT} ${agoraPartialBuxBuyTx.cache[0][1].genesisInfo.tokenTicker}`,
+            ),
+        ).toBeInTheDocument();
+    });
+    it('Agora partial bux buy tx renders (uncached)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={agoraPartialBuxBuyTx.tx}
+                        hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={new CashtabState()}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(
+            screen.getByText(
+                `${new Date(
+                    parseInt(`${agoraPartialBuxBuyTx.tx.timeFirstSeen}000`),
+                ).toLocaleTimeString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour12: false,
+                })}`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the purchase price in XEC and fiat
+        expect(screen.getByText('-431.45k XEC')).toBeInTheDocument();
+        expect(screen.getByText('-$12.94')).toBeInTheDocument();
+
+        expect(
+            screen.getByAltText(`icon for ${agoraPartialBuxBuyTx.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Sale icon
+        expect(screen.getByTitle('Agora Purchase')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
+    });
+    it('Agora partial bux sell tx renders correct bought amount (token info available in cache)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={agoraPartialBuxBuyTx.tx}
+                        // the seller is paid at outputs[1]
+                        hashes={['dee50f576362377dd2f031453c0bb09009acaf81']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(agoraPartialBuxBuyTx.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Oct 24, 2024, 23:21:00')).toBeInTheDocument();
+
+        // We see the purchase price in XEC and fiat, as sale earnings
+        expect(screen.getByText('431.45k XEC')).toBeInTheDocument();
+        expect(screen.getByText('$12.94')).toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${agoraPartialBuxBuyTx.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Sale icon
+        expect(screen.getByTitle('Agora Sale')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
+
+        // We see the token name
+        expect(
+            screen.getByText(
+                agoraPartialBuxBuyTx.cache[0][1].genesisInfo.tokenName,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(
+            screen.getByText(
+                `(${agoraPartialBuxBuyTx.cache[0][1].genesisInfo.tokenTicker})`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the expected token action
+        const SOLD_AMOUNT = '14.0667';
+        expect(
+            screen.getByText(
+                `Sold ${SOLD_AMOUNT} ${agoraPartialBuxBuyTx.cache[0][1].genesisInfo.tokenTicker}`,
+            ),
+        ).toBeInTheDocument();
+    });
+    it('Agora partial CTD cancel tx renders correct bought amount (token info available in cache)', async () => {
+        const thisMock = agoraPartialCancelTwo;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={thisMock.tx}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(thisMock.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(
+            screen.getByText(
+                `${new Date(
+                    parseInt(`${thisMock.tx.timeFirstSeen}000`),
+                ).toLocaleTimeString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour12: false,
+                })}`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see a null amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Sale icon
+        expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
+
+        // We see the token name
+        expect(
+            screen.getByText(thisMock.cache[0][1].genesisInfo.tokenName),
+        ).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(
+            screen.getByText(
+                `(${thisMock.cache[0][1].genesisInfo.tokenTicker})`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the expected token action
+        const AMOUNT = '495';
+        expect(
+            screen.getByText(
+                `Canceled offer of ${AMOUNT} ${thisMock.cache[0][1].genesisInfo.tokenTicker}`,
+            ),
+        ).toBeInTheDocument();
+    });
+    it('Agora partial CTD cancel tx renders (uncached)', async () => {
+        const thisMock = agoraPartialCancelTwo;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={thisMock.tx}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={new CashtabState()}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Agora Tx icon
+        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(
+            screen.getByText(
+                `${new Date(
+                    parseInt(`${thisMock.tx.timeFirstSeen}000`),
+                ).toLocaleTimeString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour12: false,
+                })}`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see a null amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Sale icon
+        expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
+
+        // We see the token type
+        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
+    });
+    it('Parse a mint tx for SLP NFT parent distinct from fan-out tx (token info available in cache)', async () => {
+        const thisMock = SlpNftParentMintTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={thisMock.tx}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(thisMock.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Self Send icon
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
+
+        // We see the tx received label
+        expect(screen.getByText(/to self/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(
+            screen.getByText(
+                `${new Date(
+                    parseInt(`${thisMock.tx.timeFirstSeen}000`),
+                ).toLocaleTimeString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour12: false,
+                })}`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see a null amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // Rendered token type for SLP1 NFT Parent is NFT Collection
+        expect(screen.getByText('NFT Collection')).toBeInTheDocument();
+
+        // We DO NOT see the Fan Out icon
+        expect(screen.queryByTitle('Fan Out')).not.toBeInTheDocument();
+
+        // We see the token name
+        expect(
+            screen.getByText(thisMock.cache[0][1].genesisInfo.tokenName),
+        ).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(
+            screen.getByText(
+                `(${thisMock.cache[0][1].genesisInfo.tokenTicker})`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the expected token action
+        expect(
+            screen.getByText(
+                `Minted 1 ${thisMock.cache[0][1].genesisInfo.tokenTicker}`,
+            ),
+        ).toBeInTheDocument();
+    });
+    it('Parse a mint tx for SLP NFT parent distinct from fan-out tx (uncached)', async () => {
+        const thisMock = SlpNftParentMintTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={thisMock.tx}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={new CashtabState()}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Self Send icon
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
+
+        // We see the tx received label
+        expect(screen.getByText(/to self/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(
+            screen.getByText(
+                `${new Date(
+                    parseInt(`${thisMock.tx.timeFirstSeen}000`),
+                ).toLocaleTimeString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour12: false,
+                })}`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see a null amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // Rendered token type for SLP1 NFT Parent is NFT Collection
+        expect(screen.getByText('NFT Collection')).toBeInTheDocument();
+
+        // We DO NOT see the Fan Out icon
+        expect(screen.queryByTitle('Fan Out')).not.toBeInTheDocument();
+
+        // We see the expected token action without qty or token ticker
+        expect(screen.getByText(`Minted`)).toBeInTheDocument();
     });
 });

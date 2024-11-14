@@ -16,6 +16,7 @@ import copy
 import time
 
 from test_framework.blocktools import (
+    COINBASE_MATURITY,
     MAX_FUTURE_BLOCK_TIME,
     create_block,
     create_coinbase,
@@ -32,7 +33,7 @@ class InvalidBlockRequestTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
         self.setup_clean_chain = True
-        self.extra_args = [["-whitelist=noban@127.0.0.1"]]
+        self.noban_tx_relay = True
 
     def run_test(self):
         # Add p2p connection to node0
@@ -55,7 +56,9 @@ class InvalidBlockRequestTest(BitcoinTestFramework):
         peer.send_blocks_and_test([block1], node, success=True)
 
         self.log.info("Mature the block.")
-        self.generatetoaddress(node, 100, node.get_deterministic_priv_key().address)
+        self.generatetoaddress(
+            node, COINBASE_MATURITY, node.get_deterministic_priv_key().address
+        )
 
         best_block = node.getblock(node.getbestblockhash())
         tip = int(node.getbestblockhash(), 16)

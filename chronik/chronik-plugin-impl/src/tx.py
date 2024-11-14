@@ -4,8 +4,18 @@
 
 from typing import List, NamedTuple, Optional
 
-from chronik_plugin.script import Script
-from chronik_plugin.token import Token, TokenTxEntry
+from chronik_plugin.etoken import Token, TokenTxEntry
+from chronik_plugin.script import CScript
+
+
+class PluginOutputEntry(NamedTuple):
+    # Groups assigned to the output
+    groups: List[bytes]
+    # Data assigned to the output
+    data: List[bytes]
+
+
+PluginOutput = dict[str, PluginOutputEntry]
 
 
 class OutPoint(NamedTuple):
@@ -17,7 +27,7 @@ class OutPoint(NamedTuple):
 
 class TxOutput(NamedTuple):
     # scriptPubKey, script locking the output
-    script: Script
+    script: CScript
 
     # value of the output, in satoshis
     value: int
@@ -29,14 +39,17 @@ class TxOutput(NamedTuple):
 class TxInput(NamedTuple):
     prev_out: OutPoint
 
-    # scriptSig of the input, as a handy `Script` object to simplify parsing
-    script: Script
+    # scriptSig of the input, as a handy `CScript` object to simplify parsing
+    script: CScript
 
     # Output spent by the input
     output: TxOutput
 
     # nSequence of the input
     sequence: int
+
+    # Plugin data from other plugins, if any
+    plugin: PluginOutput
 
 
 class Tx(NamedTuple):

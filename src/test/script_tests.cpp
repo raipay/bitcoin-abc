@@ -9,12 +9,12 @@
 #include <script/sign.h>
 #include <script/signingprovider.h>
 
+#include <common/system.h>
 #include <core_io.h>
 #include <key.h>
 #include <rpc/util.h>
 #include <streams.h>
 #include <util/strencodings.h>
-#include <util/system.h>
 
 #if defined(HAVE_CONSENSUS_LIB)
 #include <script/bitcoinconsensus.h>
@@ -24,6 +24,7 @@
 #include <test/jsonutil.h>
 #include <test/scriptflags.h>
 #include <test/sigutil.h>
+#include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <test/util/transaction_utils.h>
 
@@ -2361,9 +2362,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
     std::set<std::string> tests_set;
 
     {
-        UniValue json_tests = read_json(std::string(
-            json_tests::script_tests,
-            json_tests::script_tests + sizeof(json_tests::script_tests)));
+        UniValue json_tests = read_json(json_tests::script_tests);
 
         for (unsigned int idx = 0; idx < json_tests.size(); idx++) {
             const UniValue &tv = json_tests[idx];
@@ -2402,9 +2401,7 @@ BOOST_AUTO_TEST_CASE(script_json_test) {
     // "flags", "expected_scripterror" ]
     // ... where scriptSig and scriptPubKey are stringified
     // scripts.
-    UniValue tests = read_json(std::string(
-        json_tests::script_tests,
-        json_tests::script_tests + sizeof(json_tests::script_tests)));
+    UniValue tests = read_json(json_tests::script_tests);
 
     for (unsigned int idx = 0; idx < tests.size(); idx++) {
         UniValue test = tests[idx];

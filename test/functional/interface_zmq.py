@@ -97,7 +97,7 @@ class ZMQTestSetupBlock:
 class ZMQTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
-        self.extra_args = [["-whitelist=noban@127.0.0.1"]] * self.num_nodes
+        self.noban_tx_relay = True
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_py3_zmq()
@@ -126,8 +126,7 @@ class ZMQTest(BitcoinTestFramework):
 
         self.restart_node(
             0,
-            self.extra_args[0]
-            + [f"-zmqpub{topic}={address}" for topic, address in services],
+            [f"-zmqpub{topic}={address}" for topic, address in services],
         )
 
         for i, sub in enumerate(subscribers):
@@ -264,13 +263,17 @@ class ZMQTest(BitcoinTestFramework):
         payment_txid = self.nodes[0].sendtoaddress(
             self.nodes[0].getnewaddress(), 1000000
         )
+        # -> TransactionAddedToMempool
+        assert_equal(hashtx.receive().hex(), payment_txid)
+
         disconnect_block = self.generatetoaddress(
             self.nodes[0], 1, ADDRESS_ECREG_UNSPENDABLE, sync_fun=self.no_op
         )[0]
         disconnect_cb = self.nodes[0].getblock(disconnect_block)["tx"][0]
         assert_equal(self.nodes[0].getbestblockhash(), hashblock.receive().hex())
-        assert_equal(hashtx.receive().hex(), payment_txid)
+        # -> BlockConnected
         assert_equal(hashtx.receive().hex(), disconnect_cb)
+        assert_equal(hashtx.receive().hex(), payment_txid)
 
         # Generate 2 blocks in nodes[1] to a different address to ensure split
         connect_blocks = self.generatetoaddress(
@@ -283,32 +286,38 @@ class ZMQTest(BitcoinTestFramework):
         self.sync_blocks()
 
         # Should receive nodes[1] tip
+        # -> UpdatedBlockTip
         assert_equal(self.nodes[1].getbestblockhash(), hashblock.receive().hex())
 
         # During reorg:
         # Get old payment transaction notification from disconnect and
         # disconnected cb
-        assert_equal(hashtx.receive().hex(), payment_txid)
+        # -> BlockDisconnected
         assert_equal(hashtx.receive().hex(), disconnect_cb)
-        # And the payment transaction again due to mempool entry
-        assert_equal(hashtx.receive().hex(), payment_txid)
         assert_equal(hashtx.receive().hex(), payment_txid)
         # And the new connected coinbases
+        # -> BlockConnected
         for i in [0, 1]:
             assert_equal(
                 hashtx.receive().hex(),
                 self.nodes[1].getblock(connect_blocks[i])["tx"][0],
             )
+        # And the payment transaction again due to mempool entry
+        # -> TransactionAddedToMempool
+        assert_equal(hashtx.receive().hex(), payment_txid)
 
         # If we do a simple invalidate we announce the disconnected coinbase
         self.nodes[0].invalidateblock(connect_blocks[1])
+        # -> BlockDisconnected
         assert_equal(
             hashtx.receive().hex(), self.nodes[1].getblock(connect_blocks[1])["tx"][0]
         )
         # And the payment transaction again due to mempool entry (it was removed
         # from the mempool due to the reorg)
+        # -> TransactionRemovedFromMempool
         assert_equal(hashtx.receive().hex(), payment_txid)
         # And the current tip
+        # -> UpdatedBlockTip
         assert_equal(
             hashtx.receive().hex(), self.nodes[1].getblock(connect_blocks[0])["tx"][0]
         )

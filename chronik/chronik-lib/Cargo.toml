@@ -1,7 +1,7 @@
 # Copyright (c) 2022 The Bitcoin developers
 
 [package]
-name = "chronik-lib"
+name = "chronik_lib"
 version = "0.1.0"
 edition = "2021"
 rust-version.workspace = true
@@ -12,7 +12,12 @@ license = "MIT"
 crate-type = ["staticlib"]
 
 [features]
-plugins = ["chronik-plugin/enabled"]
+plugins = [
+    "chronik-db/plugins",
+    "chronik-indexer/plugins",
+    "chronik-http/plugins",
+    "chronik-plugin/enabled",
+]
 
 [dependencies]
 abc-rust-lint = { path = "../abc-rust-lint" }

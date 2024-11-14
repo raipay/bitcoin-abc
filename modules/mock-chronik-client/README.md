@@ -131,3 +131,28 @@ If you have any implementation questions regarding this mock tool please check t
 1.8.0
 
 -   Allow getting history without specifying pageNumber or pageSize
+
+1.9.0
+
+-   Support `blockTxs` endpoint
+-   Update websocket subs shape to match ChronikClientNode
+
+1.9.1
+
+-   Upgrading npm dependencies [D16380](https://reviews.bitcoinabc.org/D16380)
+
+1.10.0
+
+-   Allow getting and setting `history()` by `lokadId` [D16382](https://reviews.bitcoinabc.org/D16382)
+
+1.10.1
+
+-   Return missing `numTxs` key from `history()` calls [D16617](https://reviews.bitcoinabc.org/D16617)
+
+1.11.0
+
+-   Add support for `MockAgora`, a simple set-and-return mock for some `ecash-agora` class methods [D16737](https://reviews.bitcoinabc.org/D16737)
+
+1.12.0
+
+-   Extend `MockAgora` support to cover `offeredFungibleTokenIds()` and `activeOffersByTokenId()` methods [D16929](https://reviews.bitcoinabc.org/D16929)

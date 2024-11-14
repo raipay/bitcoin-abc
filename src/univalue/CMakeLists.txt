@@ -1,6 +1,6 @@
 # Copyright (c) 2017 The Bitcoin developers
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 project(univalue)
 
 option(UNIVALUE_BUILD_TESTS "Build univalue's unit tests" ON)
@@ -34,7 +34,6 @@ if(UNIVALUE_BUILD_TESTS)
 		PUBLIC JSON_TEST_SRC="${PROJECT_SOURCE_DIR}/test"
 	)
 
-	create_univalue_test(no_nul_test test/no_nul.cpp)
 	create_univalue_test(object_test test/object.cpp)
 
 	# test_json is not meant to run in an automated test suite.
@@ -42,13 +41,3 @@ if(UNIVALUE_BUILD_TESTS)
 	target_link_libraries(json_test univalue)
 	add_dependencies(check-univalue json_test)
 endif(UNIVALUE_BUILD_TESTS)
-
-# Generate lib/univalue_escapes.h
-include(NativeExecutable)
-add_native_executable(univalue_gen gen/gen.cpp)
-native_target_include_directories(univalue_gen PUBLIC include)
-
-# Custom target to regenerate univalue_escapes.h
-add_custom_target(generate_univalue_escapes_h
-	COMMAND univalue_gen > ${CMAKE_CURRENT_SOURCE_DIR}/lib/univalue_escapes.h
-)

@@ -5,11 +5,12 @@
 // Test vectors for slpv1 functions
 import appConfig from 'config/app';
 import { mockBurnOpReturnTokenUtxos, mockBurnAllTokenUtxos } from './mocks';
-import { BN } from 'slp-mdm';
 import {
     MAX_MINT_AMOUNT_TOKEN_SATOSHIS,
     SLP1_NFT_CHILD_GENESIS_AMOUNT,
 } from 'slpv1';
+import { Script, fromHex } from 'ecash-lib';
+import { undecimalizeTokenAmount } from 'wallet';
 
 const GENESIS_MINT_ADDRESS = 'ecash:qphlhe78677sz227k83hrh542qeehh8el5lcjwk72y';
 export const SEND_DESTINATION_ADDRESS =
@@ -22,19 +23,23 @@ export default {
         expectedReturns: [
             {
                 description: 'Fixed supply eToken mint for token with decimals',
-                genesisConfig: {
-                    name: 'ethantest',
-                    ticker: 'ETN',
-                    documentUrl: 'https://cashtab.com/',
-                    decimals: '3',
-                    genesisQty: '5000',
-                    documentHash: '',
-                    mintBatonVout: null,
+                genesisInfo: {
+                    tokenName: 'ethantest',
+                    tokenTicker: 'ETN',
+                    url: 'https://cashtab.com/',
+                    hash: '',
+                    decimals: 3,
                 },
+                initialQuantity: BigInt(undecimalizeTokenAmount('5000', 3)),
+                mintBatonOutIdx: undefined,
                 targetOutputs: [
                     {
                         value: 0,
-                        script: '6a04534c500001010747454e455349530345544e09657468616e746573741468747470733a2f2f636173687461622e636f6d2f4c0001034c000800000000004c4b40',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010747454e455349530345544e09657468616e746573741468747470733a2f2f636173687461622e636f6d2f4c0001034c000800000000004c4b40',
+                            ),
+                        ),
                     },
                     {
                         value: appConfig.dustSats,
@@ -44,19 +49,23 @@ export default {
             {
                 description:
                     'Variable supply eToken mint for token with decimals',
-                genesisConfig: {
-                    name: 'ethantest',
-                    ticker: 'ETN',
-                    documentUrl: 'https://cashtab.com/',
-                    decimals: '3',
-                    genesisQty: '5000',
-                    documentHash: '',
-                    mintBatonVout: 2,
+                genesisInfo: {
+                    tokenName: 'ethantest',
+                    tokenTicker: 'ETN',
+                    url: 'https://cashtab.com/',
+                    hash: '',
+                    decimals: 3,
                 },
+                initialQuantity: BigInt(undecimalizeTokenAmount('5000', 3)),
+                mintBatonOutIdx: 2,
                 targetOutputs: [
                     {
                         value: 0,
-                        script: '6a04534c500001010747454e455349530345544e09657468616e746573741468747470733a2f2f636173687461622e636f6d2f4c00010301020800000000004c4b40',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010747454e455349530345544e09657468616e746573741468747470733a2f2f636173687461622e636f6d2f4c00010301020800000000004c4b40',
+                            ),
+                        ),
                     },
                     {
                         value: appConfig.dustSats,
@@ -68,20 +77,27 @@ export default {
             },
             {
                 description:
-                    'Fixed supply eToken mint for tokenId 50d8292c6255cda7afc6c8566fed3cf42a2794e9619740fe8f4c95431271410e',
-                genesisConfig: {
-                    name: 'tabcash',
-                    ticker: 'TBC',
-                    documentUrl: 'https://cashtabapp.com/',
-                    decimals: '0',
-                    genesisQty: '100',
-                    documentHash: '',
-                    mintBatonVout: 2,
+                    'Variable supply eToken mint for tokenId 50d8292c6255cda7afc6c8566fed3cf42a2794e9619740fe8f4c95431271410e',
+                genesisInfo: {
+                    tokenName: 'tabcash',
+                    tokenTicker: 'TBC',
+                    url: 'https://cashtabapp.com/',
+                    hash: '',
+                    decimals: 0,
                 },
+                initialQuantity: '100',
+                mintBatonOutIdx: 2,
                 targetOutputs: [
                     {
                         value: 0,
-                        script: '6a04534c500001010747454e455349530354424307746162636173681768747470733a2f2f636173687461626170702e636f6d2f4c0001000102080000000000000064',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010747454e455349530354424307746162636173681768747470733a2f2f636173687461626170702e636f6d2f4c0001000102080000000000000064',
+                            ),
+                        ),
+                    },
+                    {
+                        value: appConfig.dustSats,
                     },
                     {
                         value: appConfig.dustSats,
@@ -91,19 +107,25 @@ export default {
             {
                 description:
                     'Fixed supply eToken mint at max supply for 9 decimal token',
-                genesisConfig: {
-                    name: 'tabcash',
-                    ticker: 'TBC',
-                    documentUrl: 'https://cashtabapp.com/',
-                    decimals: '9',
-                    genesisQty: '18446744073.709551615',
-                    documentHash: '',
-                    mintBatonVout: null,
+                genesisInfo: {
+                    tokenName: 'tabcash',
+                    tokenTicker: 'TBC',
+                    url: 'https://cashtabapp.com/',
+                    hash: '',
+                    decimals: 9,
                 },
+                initialQuantity: BigInt(
+                    undecimalizeTokenAmount('18446744073.709551615', 9),
+                ),
+                mintBatonOutIdx: undefined,
                 targetOutputs: [
                     {
                         value: 0,
-                        script: '6a04534c500001010747454e455349530354424307746162636173681768747470733a2f2f636173687461626170702e636f6d2f4c0001094c0008ffffffffffffffff',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010747454e455349530354424307746162636173681768747470733a2f2f636173687461626170702e636f6d2f4c0001094c0008ffffffffffffffff',
+                            ),
+                        ),
                     },
                     {
                         value: appConfig.dustSats,
@@ -113,23 +135,29 @@ export default {
             {
                 description:
                     'Variable supply eToken mint at max supply for 0 decimal token',
-                genesisConfig: {
-                    name: 'tabcash',
-                    ticker: 'TBC',
-                    documentUrl: 'https://cashtabapp.com/',
-                    decimals: '0',
-                    genesisQty: MAX_MINT_AMOUNT_TOKEN_SATOSHIS,
-                    documentHash: '',
-                    mintBatonVout: 2,
+                genesisInfo: {
+                    tokenName: 'tabcash',
+                    tokenTicker: 'TBC',
+                    url: 'https://cashtabapp.com/',
+                    hash: '',
+                    decimals: 0,
                 },
+                initialQuantity: MAX_MINT_AMOUNT_TOKEN_SATOSHIS,
+                mintBatonOutIdx: 2,
                 targetOutputs: [
                     {
                         value: 0,
-                        script: '6a04534c500001010747454e455349530354424307746162636173681768747470733a2f2f636173687461626170702e636f6d2f4c000100010208ffffffffffffffff',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010747454e455349530354424307746162636173681768747470733a2f2f636173687461626170702e636f6d2f4c000100010208ffffffffffffffff',
+                            ),
+                        ),
                     },
                     {
                         value: appConfig.dustSats,
-                        address: GENESIS_MINT_ADDRESS,
+                    },
+                    {
+                        value: appConfig.dustSats,
                     },
                 ],
             },
@@ -138,68 +166,43 @@ export default {
             {
                 description:
                     'Variable supply eToken with mint baton at index other than 2',
-                genesisConfig: {
-                    name: 'ethantest',
-                    ticker: 'ETN',
-                    documentUrl: 'https://cashtab.com/',
-                    decimals: '3',
-                    genesisQty: '5000',
-                    documentHash: '',
-                    mintBatonVout: 3,
+                genesisInfo: {
+                    tokenName: 'ethantest',
+                    tokenTicker: 'ETN',
+                    url: 'https://cashtab.com/',
+                    hash: '',
+                    decimals: 3,
                 },
+                initialQuantity: BigInt(undecimalizeTokenAmount('5000', 3)),
+                mintBatonOutIdx: 3,
                 errorMsg:
                     'Cashtab only supports slpv1 genesis txs for fixed supply tokens or tokens with mint baton at index 2',
             },
             {
                 description: 'Exceed 0xffffffffffffffff for genesis qty',
-                genesisConfig: {
-                    name: 'ethantest',
-                    ticker: 'ETN',
-                    documentUrl: 'https://cashtab.com/',
-                    decimals: '0',
-                    genesisQty: `${MAX_MINT_AMOUNT_TOKEN_SATOSHIS}1`,
-                    documentHash: '',
-                    mintBatonVout: 2,
+                genesisInfo: {
+                    tokenName: 'ethantest',
+                    tokenTicker: 'ETN',
+                    url: 'https://cashtab.com/',
+                    hash: '',
+                    decimals: 0,
                 },
-                errorMsg: 'bn outside of range',
+                initialQuantity: `${MAX_MINT_AMOUNT_TOKEN_SATOSHIS}1`,
+                mintBatonOutIdx: 2,
+                errorMsg: 'Amount out of range: 184467440737095516151',
             },
             {
                 description: 'Invalid document hash',
-                genesisConfig: {
-                    name: 'tabcash',
-                    ticker: 'TBC',
-                    documentUrl: 'https://cashtabapp.com/',
-                    decimals: '0',
-                    genesisQty: '100',
-                    documentHash: 'not hex and not the right length',
-                    mintBatonVout: 2,
+                genesisInfo: {
+                    tokenName: 'tabcash',
+                    tokenTicker: 'TBC',
+                    url: 'https://cashtabapp.com/',
+                    hash: 'not hex and not the right length',
+                    decimals: 0,
                 },
-                errorMsg: 'documentHash must be either 0 or 32 hex bytes',
-            },
-            {
-                description: 'Missing decimals',
-                genesisConfig: {
-                    name: 'some token name',
-                    ticker: 'some ticker',
-                    documentUrl: 'https://cashtab.com/',
-                    genesisQty: '100',
-                    documentHash: '',
-                    mintBatonVout: null,
-                },
-                errorMsg: 'bn not an integer',
-            },
-            {
-                description: 'Non-string name',
-                genesisConfig: {
-                    name: { tokenName: 'theName' },
-                    ticker: 'some ticker',
-                    documentUrl: 'https://cashtab.com/',
-                    genesisQty: '100',
-                    documentHash: '',
-                    mintBatonVout: null,
-                },
-                errorMsg:
-                    'The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received an instance of Object',
+                initialQuantity: BigInt(undecimalizeTokenAmount('100', 0)),
+                mintBatonOutIdx: 2,
+                errorMsg: 'Invalid hex pair: no, at index 0',
             },
         ],
     },
@@ -216,11 +219,20 @@ export default {
                     // we don't need tokenUtxos as an input param for burns
                     tokenId:
                         '4209be6bd48937263edef94ceaf77a417ab1b35b0c69559cfdf4a435e2bf1a88',
-                    sendAmounts: [new BN('100000'), new BN('49900000')],
+                    sendAmounts: [100000n, 49900000n],
                 },
                 decimals: 2,
-                outputScriptHex:
-                    '6a04534c500001010453454e44204209be6bd48937263edef94ceaf77a417ab1b35b0c69559cfdf4a435e2bf1a88080000000002f969e0',
+                targetOutputs: [
+                    {
+                        value: 0,
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010453454e44204209be6bd48937263edef94ceaf77a417ab1b35b0c69559cfdf4a435e2bf1a88080000000002f969e0',
+                            ),
+                        ),
+                    },
+                    { value: appConfig.dustSats },
+                ],
             },
             {
                 // https://explorer.e.cash/tx/3ec07567e5f205a312db3f7704d68a6d8ea9451a44ade3e4d9d3e75f59e681ec
@@ -234,10 +246,19 @@ export default {
                     // we don't need tokenUtxos as an input param for burns
                     tokenId:
                         '56e9b1d16c9989186c846187db57d9a9389c3ecc74e7237c1d1d0327cf904a55',
-                    sendAmounts: [new BN('88800888888')],
+                    sendAmounts: [88800888888n],
                 },
-                outputScriptHex:
-                    '6a04534c500001010453454e442056e9b1d16c9989186c846187db57d9a9389c3ecc74e7237c1d1d0327cf904a55080000000000000000',
+                targetOutputs: [
+                    {
+                        value: 0,
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010453454e442056e9b1d16c9989186c846187db57d9a9389c3ecc74e7237c1d1d0327cf904a55080000000000000000',
+                            ),
+                        ),
+                    },
+                    { value: appConfig.dustSats },
+                ],
             },
         ],
     },
@@ -507,15 +528,22 @@ export default {
                         },
                     },
                 ],
-                sendAmounts: [new BN('15'), new BN('5')],
+                sendAmounts: [15n, 5n],
                 targetOutputs: [
                     {
                         value: 0,
-                        script: '6a04534c500001010453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000000f080000000000000005',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000000f080000000000000005',
+                            ),
+                        ),
                     },
                     {
                         value: appConfig.dustSats,
-                        address: SEND_DESTINATION_ADDRESS,
+                        script: Script.fromAddress(SEND_DESTINATION_ADDRESS),
+                    },
+                    {
+                        value: appConfig.dustSats,
                     },
                 ],
             },
@@ -570,15 +598,19 @@ export default {
                         },
                     },
                 ],
-                sendAmounts: [new BN('30')],
+                sendAmounts: [30n],
                 targetOutputs: [
                     {
                         value: 0,
-                        script: '6a04534c500001010453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000001e',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000001e',
+                            ),
+                        ),
                     },
                     {
                         value: appConfig.dustSats,
-                        address: SEND_DESTINATION_ADDRESS,
+                        script: Script.fromAddress(SEND_DESTINATION_ADDRESS),
                     },
                 ],
             },
@@ -626,15 +658,22 @@ export default {
                         },
                     },
                 ],
-                sendAmounts: [new BN('150000000'), new BN('50000000')],
+                sendAmounts: [150000000n, 50000000n],
                 targetOutputs: [
                     {
                         value: 0,
-                        script: '6a04534c500001010453454e44201111111111111111111111111111111111111111111111111111111111111111080000000008f0d180080000000002faf080',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001010453454e44201111111111111111111111111111111111111111111111111111111111111111080000000008f0d180080000000002faf080',
+                            ),
+                        ),
                     },
                     {
                         value: appConfig.dustSats,
-                        address: SEND_DESTINATION_ADDRESS,
+                        script: Script.fromAddress(SEND_DESTINATION_ADDRESS),
+                    },
+                    {
+                        value: appConfig.dustSats,
                     },
                 ],
             },
@@ -801,74 +840,6 @@ export default {
                 decimals: 10,
                 errorMsg:
                     'Invalid sendQty empty string. sendQty must be a decimalized number as a string.',
-            },
-        ],
-    },
-    explicitBurns: {
-        expectedReturns: [
-            {
-                description: 'Burn a single token utxo',
-                burnUtxos: [
-                    {
-                        value: 546,
-                        token: {
-                            tokenId:
-                                '3333333333333333333333333333333333333333333333333333333333333333',
-                            amount: '100',
-                        },
-                    },
-                ],
-                decimals: 9,
-                outputScriptHex:
-                    '6a04534c50000101044255524e20333333333333333333333333333333333333333333333333333333333333333308000000174876e800',
-            },
-            {
-                description: 'Burns multiple token utxos',
-                burnUtxos: [
-                    {
-                        value: 546,
-                        token: {
-                            tokenId:
-                                '3333333333333333333333333333333333333333333333333333333333333333',
-                            amount: '100',
-                        },
-                    },
-                    {
-                        value: 546,
-                        token: {
-                            tokenId:
-                                '3333333333333333333333333333333333333333333333333333333333333333',
-                            amount: '197200',
-                        },
-                    },
-                    {
-                        value: 546,
-                        token: {
-                            tokenId:
-                                '3333333333333333333333333333333333333333333333333333333333333333',
-                            amount: '12500',
-                        },
-                    },
-                ],
-                decimals: 9,
-                outputScriptHex:
-                    '6a04534c50000101044255524e203333333333333333333333333333333333333333333333333333333333333333080000becfde795000',
-            },
-            {
-                description: 'Burns max slp quantity for 9 decimals',
-                burnUtxos: [
-                    {
-                        value: 546,
-                        token: {
-                            tokenId:
-                                '3333333333333333333333333333333333333333333333333333333333333333',
-                            amount: '10000000000',
-                        },
-                    },
-                ],
-                decimals: 9,
-                outputScriptHex:
-                    '6a04534c50000101044255524e203333333333333333333333333333333333333333333333333333333333333333088ac7230489e80000',
             },
         ],
     },
@@ -1164,7 +1135,19 @@ export default {
                 tokenId: MOCK_TOKEN_ID,
                 decimals: 0,
                 mintQty: '1000',
-                script: `6a04534c50000101044d494e5420${MOCK_TOKEN_ID}01020800000000000003e8`,
+                tokenProtocolNumber: 1,
+                targetOutputs: [
+                    {
+                        value: 0,
+                        script: new Script(
+                            fromHex(
+                                `6a04534c50000101044d494e5420${MOCK_TOKEN_ID}01020800000000000003e8`,
+                            ),
+                        ),
+                    },
+                    { value: appConfig.dustSats },
+                    { value: appConfig.dustSats },
+                ],
             },
             {
                 description:
@@ -1172,7 +1155,19 @@ export default {
                 tokenId: MOCK_TOKEN_ID,
                 decimals: 9,
                 mintQty: '1000.123456789',
-                script: `6a04534c50000101044d494e5420${MOCK_TOKEN_ID}010208000000e8dc00dd15`,
+                tokenProtocolNumber: 1,
+                targetOutputs: [
+                    {
+                        value: 0,
+                        script: new Script(
+                            fromHex(
+                                `6a04534c50000101044d494e5420${MOCK_TOKEN_ID}010208000000e8dc00dd15`,
+                            ),
+                        ),
+                    },
+                    { value: appConfig.dustSats },
+                    { value: appConfig.dustSats },
+                ],
             },
             {
                 description:
@@ -1180,7 +1175,39 @@ export default {
                 tokenId: MOCK_TOKEN_ID,
                 decimals: 0,
                 mintQty: '18446744073709551615',
-                script: `6a04534c50000101044d494e5420${MOCK_TOKEN_ID}010208ffffffffffffffff`,
+                tokenProtocolNumber: 1,
+                targetOutputs: [
+                    {
+                        value: 0,
+                        script: new Script(
+                            fromHex(
+                                `6a04534c50000101044d494e5420${MOCK_TOKEN_ID}010208ffffffffffffffff`,
+                            ),
+                        ),
+                    },
+                    { value: appConfig.dustSats },
+                    { value: appConfig.dustSats },
+                ],
+            },
+            {
+                description:
+                    'Can create a target output for the largest mint qty supported by slpv1 for an NFT1 parent',
+                tokenId: MOCK_TOKEN_ID,
+                decimals: 0,
+                mintQty: '18446744073709551615',
+                tokenProtocolNumber: 0x81,
+                targetOutputs: [
+                    {
+                        value: 0,
+                        script: new Script(
+                            fromHex(
+                                `6a04534c500001${'81'}044d494e5420${MOCK_TOKEN_ID}010208ffffffffffffffff`,
+                            ),
+                        ),
+                    },
+                    { value: appConfig.dustSats },
+                    { value: appConfig.dustSats },
+                ],
             },
         ],
         expectedErrors: [
@@ -1190,11 +1217,12 @@ export default {
                 tokenId: MOCK_TOKEN_ID,
                 decimals: 0,
                 mintQty: '18446744073709551616',
-                error: 'bn outside of range',
+                tokenProtocolNumber: 1,
+                error: 'Amount out of range: 18446744073709551616',
             },
         ],
     },
-    getMaxMintAmount: {
+    getMaxDecimalizedSlpQty: {
         expectedReturns: [
             {
                 description: '0 decimals',
@@ -1252,21 +1280,22 @@ export default {
         expectedReturns: [
             {
                 description: 'Fixed supply NFT1 parent',
-                genesisConfig: {
-                    name: 'NFT1 Parent Test',
-                    ticker: 'NPT',
-                    documentUrl: 'https://cashtab.com/',
-                    genesisQty: '100',
-                    documentHash:
-                        '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
-                    mintBatonVout: null,
+                genesisInfo: {
+                    tokenName: 'NFT1 Parent Test',
+                    tokenTicker: 'NPT',
+                    url: 'https://cashtab.com/',
+                    hash: '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
+                    decimals: 0,
                 },
+                initialQuantity: BigInt(100),
+                mintBatonOutIdx: undefined,
                 targetOutputs: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            '6a04534c500001810747454e45534953034e5054104e46543120506172656e7420546573741468747470733a2f2f636173687461622e636f6d2f200000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c01004c00080000000000000064',
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001810747454e45534953034e5054104e46543120506172656e7420546573741468747470733a2f2f636173687461622e636f6d2f200000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c01004c00080000000000000064',
+                            ),
                         ),
                     },
                     {
@@ -1276,21 +1305,22 @@ export default {
             },
             {
                 description: 'Variable supply NFT1 parent',
-                genesisConfig: {
-                    name: 'NFT1 Parent Test',
-                    ticker: 'NPT',
-                    documentUrl: 'https://cashtab.com/',
-                    genesisQty: '100',
-                    documentHash:
-                        '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
-                    mintBatonVout: 2,
+                genesisInfo: {
+                    tokenName: 'NFT1 Parent Test',
+                    tokenTicker: 'NPT',
+                    url: 'https://cashtab.com/',
+                    hash: '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
+                    decimals: 0,
                 },
+                initialQuantity: BigInt(100),
+                mintBatonOutIdx: 2,
                 targetOutputs: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            '6a04534c500001810747454e45534953034e5054104e46543120506172656e7420546573741468747470733a2f2f636173687461622e636f6d2f200000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c01000102080000000000000064',
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001810747454e45534953034e5054104e46543120506172656e7420546573741468747470733a2f2f636173687461622e636f6d2f200000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c01000102080000000000000064',
+                            ),
                         ),
                     },
                     {
@@ -1303,21 +1333,21 @@ export default {
             },
             {
                 description: 'NFT1 parent genesis at max supply',
-                genesisConfig: {
-                    name: 'NFT1 Parent Test',
-                    ticker: 'NPT',
-                    documentUrl: 'https://cashtab.com/',
-                    genesisQty: MAX_MINT_AMOUNT_TOKEN_SATOSHIS,
-                    documentHash:
-                        '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
-                    mintBatonVout: null,
+                genesisInfo: {
+                    tokenName: 'NFT1 Parent Test',
+                    tokenTicker: 'NPT',
+                    url: 'https://cashtab.com/',
+                    hash: '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
                 },
+                initialQuantity: BigInt(MAX_MINT_AMOUNT_TOKEN_SATOSHIS),
+                mintBatonOutIdx: undefined,
                 targetOutputs: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            '6a04534c500001810747454e45534953034e5054104e46543120506172656e7420546573741468747470733a2f2f636173687461622e636f6d2f200000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c01004c0008ffffffffffffffff',
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001810747454e45534953034e5054104e46543120506172656e7420546573741468747470733a2f2f636173687461622e636f6d2f200000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c01004c0008ffffffffffffffff',
+                            ),
                         ),
                     },
                     {
@@ -1330,44 +1360,30 @@ export default {
             {
                 description:
                     'Variable supply NFT1 parent with mintBatonVout !== 2',
-                genesisConfig: {
-                    name: 'NFT1 Parent Test',
-                    ticker: 'NPT',
-                    documentUrl: 'https://cashtab.com/',
-                    genesisQty: '100',
-                    documentHash:
-                        '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
-                    mintBatonVout: 3,
+                genesisInfo: {
+                    tokenName: 'NFT1 Parent Test',
+                    tokenTicker: 'NPT',
+                    url: 'https://cashtab.com/',
+                    hash: '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
                 },
+                initialQuantity: BigInt(100),
+                mintBatonOutIdx: 3,
                 errorMsg:
                     'Cashtab only supports slpv1 genesis txs for fixed supply tokens or tokens with mint baton at index 2',
             },
             {
                 description: 'Exceed 0xffffffffffffffff for genesis qty',
-                genesisConfig: {
-                    name: 'NFT1 Parent Test',
-                    ticker: 'NPT',
-                    documentUrl: 'https://cashtab.com/',
-                    genesisQty: `${MAX_MINT_AMOUNT_TOKEN_SATOSHIS}1`,
+                genesisInfo: {
+                    tokenName: 'NFT1 Parent Test',
+                    tokenTicker: 'NPT',
+                    url: 'https://cashtab.com/',
                     documentHash:
                         '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
-                    mintBatonVout: null,
                 },
+                initialQuantity: BigInt(`${MAX_MINT_AMOUNT_TOKEN_SATOSHIS}1`),
+                mintBatonOutIdx: undefined,
                 mintAddress: GENESIS_MINT_ADDRESS,
-                errorMsg: 'bn outside of range',
-            },
-            {
-                description: 'Initial qty is not an integer',
-                genesisConfig: {
-                    name: 'NFT1 Parent Test',
-                    ticker: 'NPT',
-                    documentUrl: 'https://cashtab.com/',
-                    genesisQty: new BN(100.123),
-                    documentHash:
-                        '0000000000000000108da5cf31407c9261d489171db51a88cc400c7590eb087c',
-                    mintBatonVout: null,
-                },
-                errorMsg: 'bn not an integer',
+                errorMsg: 'Amount out of range: 184467440737095516151',
             },
         ],
     },
@@ -1381,9 +1397,10 @@ export default {
                 targetOutputs: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            `6a04534c50000181044d494e5420${MOCK_TOKEN_ID}01020800000000000003e8`,
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                `6a04534c50000181044d494e5420${MOCK_TOKEN_ID}01020800000000000003e8`,
+                            ),
                         ),
                     },
                     { value: 546 },
@@ -1398,9 +1415,10 @@ export default {
                 targetOutputs: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            `6a04534c50000181044d494e5420${MOCK_TOKEN_ID}010208ffffffffffffffff`,
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                `6a04534c50000181044d494e5420${MOCK_TOKEN_ID}010208ffffffffffffffff`,
+                            ),
                         ),
                     },
                     { value: 546 },
@@ -1569,15 +1587,16 @@ export default {
                 returned: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            '6a04534c500001810453454e44201111111111111111111111111111111111111111111111111111111111111111080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001',
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001810453454e44201111111111111111111111111111111111111111111111111111111111111111080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001',
+                            ),
                         ),
                     },
                 ].concat(Array(19).fill({ value: appConfig.dustSats })),
                 rawTx: {
-                    hex: '02000000021111111111111111111111111111111111111111111111111111111111111111000000006a473044022053fa3c2142b89d1d9accc3151077f14932aba7fb420679e853ea9ee963e6643c022009db94090c322d36e13b773ba4e6c6aa23ac0070039b26a0de50a5bb28d8e709412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff4b451a9cdbc0ee92420e5b8179b432fa9af11a9fa835c4aefcd1a5d3882365a8000000006a47304402204ec14c28dc99ca0935730e6f1ac583d9840c9315afca383115be3470c23c6cd60220356e3eb98d0d5646ceab1658338df2eeb095e054f2cd784eb2fc4a715a0d7aca412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff150000000000000000d96a04534c500001810453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000122020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac20170f00000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac00000000',
-                    txid: '80af1add3a89d32cd836cdbeace7afbb8ee6f4b9a888f60e736e511b23689ba3',
+                    hex: '02000000021111111111111111111111111111111111111111111111111111111111111111000000006441a052a96ddf50be866be7f320d493ed00d4095f0b2568ebe2469c9194af093399788bf96d448fff97b4f55fd8b373d16bd86dac80c7b7384d685c3c5280450941412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff4b451a9cdbc0ee92420e5b8179b432fa9af11a9fa835c4aefcd1a5d3882365a800000000644183ddac59e648aea5776c2c4cd9cf04bce0c4d52f5511c91c49534d415a3c307668f31cc4cf697054016430c155fdb3d9a159ac5b886e7d5ff916dde2d7965dc3412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff150000000000000000d96a04534c500001810453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000122020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac2e170f00000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac00000000',
+                    txid: 'c2e390182ae4a60d72a6e84d749b96aa0345a6d46e1d7f858741862b6338f476',
                 },
             },
             {
@@ -1597,15 +1616,16 @@ export default {
                 returned: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            '6a04534c500001810453454e44201111111111111111111111111111111111111111111111111111111111111111080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000052',
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001810453454e44201111111111111111111111111111111111111111111111111111111111111111080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000052',
+                            ),
                         ),
                     },
                 ].concat(Array(19).fill({ value: appConfig.dustSats })),
                 rawTx: {
-                    hex: '02000000021211111111111111111111111111111111111111111111111111111111111111000000006a473044022041acb419fb7058cfc414066322965ce8e6c7fb2b59a3dafeef39946cc083303f022005dfefc82f11fb118614d6f9d737dc85f0d9d031bdf3f7dc40107967970d6304412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff4b451a9cdbc0ee92420e5b8179b432fa9af11a9fa835c4aefcd1a5d3882365a8000000006b483045022100819d093078e62e03aab6047c834530292efecef24f5bf1170b7cba689ca265c902205af996baa6b263bd3598d4192ede081ab7aedd0d22905133d88717b7b7366df8412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff150000000000000000d96a04534c500001810453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000005222020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac20170f00000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac00000000',
-                    txid: '28d2266a3a96d90b6c2ceca2a39692775e1d5b314c4cd12c05388894bf879854',
+                    hex: '0200000002121111111111111111111111111111111111111111111111111111111111111100000000644174469e041aea3eb24860cb0f0e0eededd2cf331d9488c8404c2aeb1905b43ae8d421e8d53d385db63f2f5b63ffe6ccd5b911139bc4082aebacefc38bcbe94322412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff4b451a9cdbc0ee92420e5b8179b432fa9af11a9fa835c4aefcd1a5d3882365a8000000006441d1ac7ebb818bed5b6aee56ee958a3fbd04cb38dae5cc1beceab5a47b3b830b6367011ec5ac4618a2366541193229047093a758b5ac196dc03b864b39119021eb412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff150000000000000000d96a04534c500001810453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000005222020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac2e170f00000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac00000000',
+                    txid: '406da5277c8efc497cd9efd826047ff3dc310a8a307d3f72e9f1792993f9079d',
                 },
             },
             {
@@ -1625,15 +1645,16 @@ export default {
                 returned: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            '6a04534c500001810453454e44201111111111111111111111111111111111111111111111111111111111111111080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001',
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001810453454e44201111111111111111111111111111111111111111111111111111111111111111080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001080000000000000001',
+                            ),
                         ),
                     },
                 ].concat(Array(12).fill({ value: appConfig.dustSats })),
                 rawTx: {
-                    hex: '02000000021411111111111111111111111111111111111111111111111111111111111111000000006a473044022022fe48be7588746a1b7b9d2d51bc3444faf0b9287f2696e40d64452781f6d579022038334e277efe4df55fae355c4e00b294ff66bcdf3d4ec9d674c3535039510549412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff4b451a9cdbc0ee92420e5b8179b432fa9af11a9fa835c4aefcd1a5d3882365a8000000006b483045022100d2a5579cfc4aaf75d6b3c0c76fb48492e350e8d0ca0bc4452a5450fb0bdd8da20220621dbf3f4965ee43898926a35f4b4488ca7bebd96056644b7eba373246c56967412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff0e00000000000000009a6a04534c500001810453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000122020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac3b270f00000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac00000000',
-                    txid: 'bf0124bae03f652aa464a1edab48696dc7372543e596ad0161273077dcfbd732',
+                    hex: '02000000021411111111111111111111111111111111111111111111111111111111111111000000006441f4a858c46ba25b9ffc56e9738b0dfc36799754696761fae70489f0aafaddea3310074cf0bdb710f890a3658ee0ae6390f0a7461c057b4137b173d2324a1dada9412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff4b451a9cdbc0ee92420e5b8179b432fa9af11a9fa835c4aefcd1a5d3882365a80000000064412e1501aceab58ac24d3fa0d8d58307a57fd820e216b65e62b342ff09e79278734e2a671c4671a93889b4093459ff2a43ee1dfaefd9ac61f9a61ebfcfe118f859412103b9fefe35855c7bf75f3132718b2107bb30d0d1f0193fdb8a11f9cb781fc7c921ffffffff0e00000000000000009a6a04534c500001810453454e4420111111111111111111111111111111111111111111111111111111111111111108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000108000000000000000122020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac22020000000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac49270f00000000001976a914c38232a045a85c84e5733d60e867dcee9ad4b18d88ac00000000',
+                    txid: 'c4209cf2035c092b484d9649424727a911705e4ab8855f5165d38aeb21485ec9',
                 },
             },
         ],
@@ -1767,19 +1788,20 @@ export default {
             {
                 description:
                     'We can generate the correct targetOutput for minting an NFT child genesis tx with data in all available fields',
-                childGenesisConfig: {
-                    ticker: 'TEST',
-                    name: 'My favorite NFT',
-                    documentUrl: 'cashtab.com',
-                    documentHash:
-                        '3333333333333333333333333333333333333333333333333333333333333333',
+                genesisInfo: {
+                    tokenTicker: 'TEST',
+                    tokenName: 'My favorite NFT',
+                    url: 'cashtab.com',
+                    hash: '3333333333333333333333333333333333333333333333333333333333333333',
+                    decimals: 0,
                 },
                 returned: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            '6a04534c500001410747454e4553495304544553540f4d79206661766f72697465204e46540b636173687461622e636f6d20333333333333333333333333333333333333333333333333333333333333333301004c00080000000000000001',
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001410747454e4553495304544553540f4d79206661766f72697465204e46540b636173687461622e636f6d20333333333333333333333333333333333333333333333333333333333333333301004c00080000000000000001',
+                            ),
                         ),
                     },
                     {
@@ -1790,18 +1812,20 @@ export default {
             {
                 description:
                     'We can generate the correct targetOutput for minting an NFT child genesis tx with no data in any available fields',
-                childGenesisConfig: {
-                    ticker: '',
-                    name: '',
-                    documentUrl: '',
-                    documentHash: '',
+                genesisInfo: {
+                    tokenTicker: '',
+                    tokenName: '',
+                    url: '',
+                    hash: '',
+                    decimals: 0,
                 },
                 returned: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            '6a04534c500001410747454e455349534c004c004c004c0001004c00080000000000000001',
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                '6a04534c500001410747454e455349534c004c004c004c0001004c00080000000000000001',
+                            ),
                         ),
                     },
                     {
@@ -1858,16 +1882,42 @@ export default {
                 returned: [
                     {
                         value: 0,
-                        script: Buffer.from(
-                            `6a04534c500001410453454e4420${MOCK_TOKEN_ID}080000000000000001`,
-                            'hex',
+                        script: new Script(
+                            fromHex(
+                                `6a04534c500001410453454e4420${MOCK_TOKEN_ID}080000000000000001`,
+                            ),
                         ),
                     },
                     {
-                        address: SEND_DESTINATION_ADDRESS,
+                        script: Script.fromAddress(SEND_DESTINATION_ADDRESS),
                         value: appConfig.dustSats,
                     },
                 ],
+            },
+        ],
+    },
+    isTokenDustChangeOutput: {
+        expectedReturns: [
+            {
+                description:
+                    'A token dust change targetOutput is recognized as such',
+                targetOutput: { value: appConfig.dustSats },
+                returned: true,
+            },
+            {
+                description:
+                    'If value is 1 satoshi more than dust, not a token dust change output',
+                targetOutput: { value: appConfig.dustSats + 1 },
+                returned: false,
+            },
+            {
+                description:
+                    'If we have a key other than value, not a token dust change output',
+                targetOutput: {
+                    value: appConfig.dustSats,
+                    script: 'some script',
+                },
+                returned: false,
             },
         ],
     },

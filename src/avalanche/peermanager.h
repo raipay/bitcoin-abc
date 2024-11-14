@@ -294,6 +294,8 @@ class PeerManager {
      */
     CRollingBloomFilter invalidProofs{100000, 0.000001};
 
+    std::unordered_set<ProofId, SaltedProofIdHasher> manualFlakyProofids;
+
 public:
     static constexpr size_t MAX_REMOTE_PROOFS{100};
 
@@ -397,6 +399,10 @@ public:
     bool rejectProof(const ProofId &proofid,
                      RejectionMode mode = RejectionMode::DEFAULT);
 
+    /**
+     * Return true if the (valid) proof exists, but only for non-dangling
+     * proofs.
+     */
     bool exists(const ProofId &proofid) const {
         return getProof(proofid) != nullptr;
     }
@@ -438,6 +444,15 @@ public:
     bool saveRemoteProof(const ProofId &proofid, const NodeId nodeid,
                          const bool present);
     std::vector<RemoteProof> getRemoteProofs(const NodeId nodeid) const;
+    bool isRemoteProof(const ProofId &proofid) const;
+
+    bool setFlaky(const ProofId &proofid);
+    bool unsetFlaky(const ProofId &proofid);
+    template <typename Callable> void forEachFlakyProof(Callable &&func) const {
+        for (const auto &p : manualFlakyProofids) {
+            func(p);
+        }
+    }
 
     template <typename Callable>
     void updateAvailabilityScores(const double decayFactor,
@@ -515,8 +530,9 @@ public:
      * Deterministically select a list of payout scripts based on the proof set
      * and the previous block hash.
      */
-    bool selectStakingRewardWinner(const CBlockIndex *pprev,
-                                   std::vector<CScript> &winners);
+    bool selectStakingRewardWinner(
+        const CBlockIndex *pprev,
+        std::vector<std::pair<ProofId, CScript>> &winners);
 
     bool dumpPeersToFile(const fs::path &dumpPath) const;
     bool loadPeersFromFile(

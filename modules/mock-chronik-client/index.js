@@ -7,6 +7,84 @@ const cashaddr = require('ecashaddrjs');
 const CHRONIK_DEFAULT_PAGESIZE = 25;
 
 module.exports = {
+    MockAgora: class {
+        // Agora can make specialized chronik-client calls to a chronik-client instance
+        // running the agora plugin
+        // For the purposes of unit testing, we only need to re-create how this object
+        // is initialized and support getting and setting of expected responses
+        constructor() {
+            // Use self since it is not a reserved term in js
+            // Can access self from inside a method and still get the class
+            const self = this;
+            // API call mock return objects
+            // Can be set with self.setMock
+            self.mockedResponses = {
+                offeredGroupTokenIds: {},
+                offeredFungibleTokenIds: {},
+                activeOffersByPubKey: {},
+                activeOffersByGroupTokenId: {},
+                activeOffersByTokenId: {},
+            };
+
+            // Allow user to set supported agora query responses
+            self.setOfferedGroupTokenIds = function (response) {
+                self.mockedResponses.offeredGroupTokenIds = response;
+            };
+            self.setOfferedFungibleTokenIds = function (response) {
+                self.mockedResponses.offeredFungibleTokenIds = response;
+            };
+            self.setActiveOffersByPubKey = function (pubKey, response) {
+                self.mockedResponses.activeOffersByPubKey[pubKey] = response;
+            };
+            self.setActiveOffersByGroupTokenId = function (
+                groupTokenId,
+                response,
+            ) {
+                self.mockedResponses.activeOffersByGroupTokenId[groupTokenId] =
+                    response;
+            };
+            self.setActiveOffersByTokenId = function (tokenId, response) {
+                self.mockedResponses.activeOffersByTokenId[tokenId] = response;
+            };
+
+            // Checks whether the user set this mock response to be an error.
+            // If so, throw it to simulate an API error response.
+            function throwOrReturnValue(mockResponse) {
+                if (mockResponse instanceof Error) {
+                    throw mockResponse;
+                }
+                return mockResponse;
+            }
+
+            self.offeredGroupTokenIds = async function () {
+                return throwOrReturnValue(
+                    self.mockedResponses.offeredGroupTokenIds,
+                );
+            };
+            self.offeredFungibleTokenIds = async function () {
+                return throwOrReturnValue(
+                    self.mockedResponses.offeredFungibleTokenIds,
+                );
+            };
+            self.activeOffersByPubKey = async function (pubKey) {
+                return throwOrReturnValue(
+                    self.mockedResponses.activeOffersByPubKey[pubKey],
+                );
+            };
+            self.activeOffersByGroupTokenId = async function (groupTokenId) {
+                return throwOrReturnValue(
+                    self.mockedResponses.activeOffersByGroupTokenId[
+                        groupTokenId
+                    ],
+                );
+            };
+            self.activeOffersByTokenId = async function (tokenId) {
+                return throwOrReturnValue(
+                    self.mockedResponses.activeOffersByTokenId[tokenId],
+                );
+            };
+        }
+    },
     MockChronikClient: class {
         constructor() {
             // Use self since it is not a reserved term in js
@@ -17,6 +95,7 @@ module.exports = {
             // Can be set with self.setMock
             self.mockedResponses = {
                 block: {},
+                blockTxs: {},
                 blockchainInfo: {},
                 txHistory: [],
                 tx: {},
@@ -32,6 +111,23 @@ module.exports = {
             self.block = async function (blockHashOrHeight) {
                 return throwOrReturnValue(
                     self.mockedResponses.block[blockHashOrHeight],
+                );
+            };
+            self.blockTxs = async function (
+                hashOrHeight,
+                pageNumber = 0,
+                pageSize = CHRONIK_DEFAULT_PAGESIZE,
+            ) {
+                if (
+                    self.mockedResponses[hashOrHeight].txHistory instanceof
+                    Error
+                ) {
+                    throw self.mockedResponses[hashOrHeight].txHistory;
+                }
+                return self.getTxHistory(
+                    pageNumber,
+                    pageSize,
+                    self.mockedResponses[hashOrHeight].txHistory,
                 );
             };
             self.tx = async function (txid) {
@@ -64,6 +160,11 @@ module.exports = {
                 return self.mockedMethods[tokenId];
             };
 
+            // Return assigned lokadId mocks
+            self.lokadId = function (lokadId) {
+                return self.mockedMethods[lokadId];
+            };
+
             // Checks whether the user set this mock response to be an error.
             // If so, throw it to simulate an API error response.
             function throwOrReturnValue(mockResponse) {
@@ -87,28 +188,36 @@ module.exports = {
                         onEnd: wsObj.onEnd, // may be undefined
                         autoReconnect: wsObj.autoReconnect || true, // default to true if unset
                         manuallyClosed: false,
-                        subs: [],
+                        subs: {
+                            blocks: false,
+                            tokens: [],
+                            lokadIds: [],
+                            scripts: [],
+                        },
                         isSubscribedBlocks: false,
                         waitForOpen: async function () {
                             self.wsWaitForOpenCalled = true;
                         },
+                        // Note: subscribe is a legacy NNG method
                         subscribe: function (type, hash) {
-                            this.subs.push({
+                            this.subs.scripts.push({
                                 scriptType: type,
                                 scriptPayload: hash,
                             });
                             self.wsSubscribeCalled = true;
                         },
+                        // Note: unsubscribe is a legacy NNG method
                         unsubscribe: function (type, hash) {
-                            const thisSubInSubsIndex = this.subs.findIndex(
-                                sub =>
-                                    sub.scriptType === type &&
-                                    sub.scriptPayload === hash,
-                            );
+                            const thisSubInSubsIndex =
+                                this.subs.scripts.findIndex(
+                                    sub =>
+                                        sub.scriptType === type &&
+                                        sub.scriptPayload === hash,
+                                );
 
                             if (typeof thisSubInSubsIndex !== 'undefined') {
                                 // Remove from subs
-                                this.subs.splice(thisSubInSubsIndex, 1);
+                                this.subs.scripts.splice(thisSubInSubsIndex, 1);
                             }
                             // Otherwise do nothing
                         },
@@ -209,6 +318,15 @@ module.exports = {
 
             self.setTxHistoryByTokenId = function (tokenId, txHistory) {
                 self.mockedResponses[tokenId].txHistory = txHistory;
+            };
+
+            self.setTxHistoryByLokadId = function (lokadId, txHistory) {
+                self.mockedResponses[lokadId].txHistory = txHistory;
+            };
+
+            self.setTxHistoryByBlock = function (hashOrHeight, txHistory) {
+                // Set all expected tx history as array where it can be accessed by mock method
+                self.mockedResponses[hashOrHeight] = { txHistory };
             };
 
             /**
@@ -328,6 +446,31 @@ module.exports = {
                     },
                 };
             };
+
+            // Allow users to set expected chronik lokadId call responses
+            self.setLokadId = function (lokadId) {
+                // Initialize object that will hold utxos if set
+                self.mockedResponses[lokadId] = {};
+
+                self.mockedMethods[lokadId] = {
+                    history: async function (
+                        pageNumber = 0,
+                        pageSize = CHRONIK_DEFAULT_PAGESIZE,
+                    ) {
+                        if (
+                            self.mockedResponses[lokadId].txHistory instanceof
+                            Error
+                        ) {
+                            throw self.mockedResponses[lokadId].txHistory;
+                        }
+                        return self.getTxHistory(
+                            pageNumber,
+                            pageSize,
+                            self.mockedResponses[lokadId].txHistory,
+                        );
+                    },
+                };
+            };
         }
         // Method to get paginated tx history with same variables as chronik
         getTxHistory(pageNumber = 0, pageSize, txHistory) {
@@ -342,6 +485,7 @@ module.exports = {
 
             response.txs = thisPage;
             response.numPages = Math.ceil(txHistory.length / pageSize);
+            response.numTxs = txHistory.length;
             return response;
         }
     },

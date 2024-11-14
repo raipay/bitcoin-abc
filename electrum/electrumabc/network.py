@@ -29,7 +29,6 @@ import json
 import os
 import queue
 import random
-import re
 import select
 import socket
 import stat
@@ -40,10 +39,12 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Un
 
 import socks
 
-from . import bitcoin, blockchain, networks, util, version
+from . import blockchain, networks, util, version
+from .crypto import Hash
 from .i18n import _
 from .interface import Connection, Interface
 from .monotonic import Monotonic
+from .networks import parse_servers
 from .printerror import print_error
 from .simple_config import SimpleConfig
 from .tor import TorController, check_proxy_bypass_tor_control
@@ -72,37 +73,6 @@ DEFAULT_WHITELIST_SERVERS_ONLY = True
 # If no issues are encountered after this change has been released, it should be safe
 # to increase it more (to 500 or 1000) in future releases.
 MAX_QLEN_GET_MERKLE_REQUESTS = 100
-
-
-def parse_servers(result):
-    """parse servers list into dict format"""
-    servers = {}
-    for item in result:
-        try:
-            host = item[1]
-            out = {}
-            version = None
-            pruning_level = "-"
-            if len(item) > 2:
-                for v in item[2]:
-                    if re.match(r"[st]\d*", v):
-                        protocol, port = v[0], v[1:]
-                        if port == "":
-                            port = networks.net.DEFAULT_PORTS[protocol]
-                        out[protocol] = port
-                    elif re.match(r"v(.?)+", v):
-                        version = v[1:]
-                    elif re.match(r"p\d*", v):
-                        pruning_level = v[1:]
-                    if pruning_level == "":
-                        pruning_level = "0"
-            if out:
-                out["pruning"] = pruning_level
-                out["version"] = version
-                servers[host] = out
-        except (TypeError, ValueError, IndexError, KeyError) as e:
-            print_error("parse_servers:", item, repr(e))
-    return servers
 
 
 def filter_version(servers):
@@ -351,7 +321,6 @@ class Network(util.DaemonThread):
 
         self.banner = ""
         self.donation_address = ""
-        self.relay_fee = None
         # callbacks passed with subscriptions
         self.subscriptions = defaultdict(list)
         self.sub_cache = {}  # note: needs self.interface_lock
@@ -581,7 +550,6 @@ class Network(util.DaemonThread):
         self.queue_request("server.banner", [])
         self.queue_request("server.donation_address", [])
         self.queue_request("server.peers.subscribe", [])
-        self.queue_request("blockchain.relayfee", [])
         n_defunct = 0
         method = "blockchain.scripthash.subscribe"
         for h in self.subscribed_addresses.copy():
@@ -926,15 +894,6 @@ class Network(util.DaemonThread):
         elif method == "server.donation_address":
             if error is None and isinstance(result, str):
                 self.donation_address = result
-        elif method == "blockchain.relayfee":
-            try:
-                if error is None and isinstance(result, (int, float)):
-                    self.relay_fee = int(result * bitcoin.CASH)
-                    self.print_error("relayfee", self.relay_fee)
-            except (TypeError, ValueError) as e:
-                self.print_error(
-                    "bad server data in blockchain.relayfee:", result, "error:", repr(e)
-                )
         elif method == "blockchain.block.headers":
             try:
                 self.on_block_headers(interface, request, response)
@@ -2037,7 +1996,7 @@ class Network(util.DaemonThread):
             )
             return False
 
-        header_hash = bitcoin.Hash(bytes.fromhex(header))
+        header_hash = Hash(bytes.fromhex(header))
         byte_branches = [bytes.fromhex(v)[::-1] for v in merkle_branch]
         proven_merkle_root = blockchain.root_from_proof(
             header_hash, byte_branches, header_height

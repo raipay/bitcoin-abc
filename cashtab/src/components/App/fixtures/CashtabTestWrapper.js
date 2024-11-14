@@ -10,8 +10,15 @@ import { WalletProvider } from 'wallet/context';
 import App from 'components/App/App';
 import PropTypes from 'prop-types';
 
-const CashtabTestWrapper = ({ chronik, route = '/wallet' }) => (
-    <WalletProvider chronik={chronik}>
+// Default ecc to an empty object
+// It is only needed in tests that use it from context
+const CashtabTestWrapper = ({
+    chronik,
+    agora = {},
+    ecc = {},
+    route = '/wallet',
+}) => (
+    <WalletProvider chronik={chronik} agora={agora} ecc={ecc}>
         <MemoryRouter initialEntries={[route]}>
             <ThemeProvider theme={theme}>
                 <App />
@@ -22,6 +29,8 @@ const CashtabTestWrapper = ({ chronik, route = '/wallet' }) => (
 
 CashtabTestWrapper.propTypes = {
     chronik: PropTypes.object,
+    agora: PropTypes.object,
+    ecc: PropTypes.object,
     route: PropTypes.string,
 };
 

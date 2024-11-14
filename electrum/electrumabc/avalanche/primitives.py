@@ -29,7 +29,8 @@ from __future__ import annotations
 from io import BytesIO
 
 from .. import schnorr
-from ..bitcoin import deserialize_privkey, public_key_from_private_key
+from ..bitcoin import deserialize_privkey
+from ..ecc import ECPrivkey
 from ..serialize import (
     DeserializationError,
     SerializableObject,
@@ -115,4 +116,4 @@ class Key:
         return schnorr.sign(self.keydata, message_hash)
 
     def get_pubkey(self):
-        return PublicKey(public_key_from_private_key(self.keydata, self.compressed))
+        return PublicKey(ECPrivkey(self.keydata).get_public_key_bytes(self.compressed))

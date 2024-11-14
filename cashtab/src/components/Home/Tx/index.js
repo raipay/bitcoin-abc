@@ -60,9 +60,15 @@ import {
     SelfSendIcon,
     FanOutIcon,
     MintNftIcon,
+    PaywallPaymentIcon,
+    AgoraTxIcon,
+    AgoraOfferIcon,
+    AgoraBuyIcon,
+    AgoraSaleIcon,
+    AgoraCancelIcon,
 } from 'components/Common/CustomIcons';
 import PropTypes from 'prop-types';
-import { supportedFiatCurrencies } from 'config/cashtabSettings';
+import { supportedFiatCurrencies } from 'config/CashtabSettings';
 import CopyToClipboard from 'components/Common/CopyToClipboard';
 import { explorer } from 'config/explorer';
 import { parseTx } from 'chronik';
@@ -85,6 +91,10 @@ import {
     SLP_1_NFT_COLLECTION_PROTOCOL_NUMBER,
     SLP_1_NFT_PROTOCOL_NUMBER,
 } from 'slpv1';
+import { CopyIconButton } from 'components/Common/Buttons';
+import appConfig from 'config/app';
+import { scriptOps } from 'ecash-agora';
+import { Script, fromHex, OP_0 } from 'ecash-lib';
 
 const Tx = ({
     tx,
@@ -104,6 +114,10 @@ const Tx = ({
     const { cashtabCache, contactList } = cashtabState;
 
     let replyAddress, replyAddressPreview, knownSender;
+    let isAgoraAdSetup = false;
+    let isAgoraCancel = false;
+    let isAgoraPurchase = false;
+
     if (xecTxType === 'Received') {
         // If Sent from Cashtab, then the sender will be the outputScript at the 0-index input
         // If Received, we assume that it is "from" the outputScript of the 0-index input
@@ -413,6 +427,115 @@ const Tx = ({
                 }
                 break;
             }
+            case opReturn.appPrefixesHex.paywallPayment: {
+                if (typeof stackArray[1] !== 'undefined') {
+                    appActions.push(
+                        <>
+                            <IconAndLabel>
+                                <PaywallPaymentIcon />
+                                <AppDescLabel>Paywall Payment</AppDescLabel>
+                            </IconAndLabel>
+                            <AppDescMsg>
+                                <a
+                                    href={`https://www.ecashchat.com/?sharedArticleTxid=${stackArray[1]}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                >
+                                    Paywall Article
+                                </a>
+                            </AppDescMsg>
+                        </>,
+                    );
+                } else {
+                    appActions.push(
+                        <IconAndLabel>
+                            <PaywallPaymentIcon />
+                            <AppDescLabel>Invalid Paywall Payment</AppDescLabel>
+                        </IconAndLabel>,
+                    );
+                }
+                break;
+            }
+            // eCashChat authentication txs consists of authPrefixHex + a random string
+            // Other apps can use this same prefix followed by an authentication identifier of their choosing
+            case opReturn.appPrefixesHex.authPrefixHex: {
+                appActions.push(
+                    <>
+                        <IconAndLabel>
+                            <ChatIcon />
+                            <AppDescLabel>
+                                eCash Chat Authentication
+                            </AppDescLabel>
+                        </IconAndLabel>
+                    </>,
+                );
+                break;
+            }
+            case opReturn.appPrefixesHex.eCashChatArticle: {
+                if (typeof stackArray[1] !== 'undefined') {
+                    // If this is a reply to a blog post then index 2 is txid of article and index 3 is the reply
+                    if (
+                        stackArray[1] ===
+                        opReturn.appPrefixesHex.eCashChatArticleReply
+                    ) {
+                        if (stackArray.length === 4) {
+                            appActions.push(
+                                <>
+                                    <IconAndLabel>
+                                        <ChatIcon />
+                                        <AppDescLabel>
+                                            eCash Chat - Reply to
+                                            <a
+                                                href={`https://www.ecashchat.com/?sharedArticleTxid=${stackArray[2]}`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                            >
+                                                &nbsp;article
+                                            </a>
+                                        </AppDescLabel>
+                                    </IconAndLabel>
+                                    <AppDescMsg>
+                                        {Buffer.from(
+                                            stackArray[3],
+                                            'hex',
+                                        ).toString('utf8')}
+                                    </AppDescMsg>
+                                </>,
+                            );
+                        } else {
+                            appActions.push(
+                                <IconAndLabel>
+                                    <ChatIcon />
+                                    <AppDescLabel>
+                                        Invalid eCashChat Article Reply
+                                    </AppDescLabel>
+                                </IconAndLabel>,
+                            );
+                        }
+                    } else {
+                        appActions.push(
+                            <>
+                                <IconAndLabel>
+                                    <ChatIcon />
+                                    <AppDescLabel>
+                                        eCash Chat article created
+                                    </AppDescLabel>
+                                </IconAndLabel>
+                            </>,
+                        );
+                    }
+                } else {
+                    appActions.push(
+                        <IconAndLabel>
+                            <ChatIcon />
+                            <AppDescLabel>
+                                Invalid eCashChat Article
+                            </AppDescLabel>
+                        </IconAndLabel>,
+                    );
+                }
+                break;
+            }
             case opReturn.appPrefixesHex.cashtab: {
                 if (typeof stackArray[1] !== 'undefined') {
                     appActions.push(
@@ -513,7 +636,7 @@ const Tx = ({
             }
         }
 
-        // Ref TokenTxType in ChronikClientNode
+        // Ref TokenTxType in ChronikClient
         if (txType === 'NONE' || txType === 'UNKNOWN') {
             // Handle special case of burning qty 1 NFT Parent token utxo for an NFT mint
             // Assume when you see txType === 'NONE' for an SLP 1 NFT Parent, that this is burning an NFT mint
@@ -548,28 +671,107 @@ const Tx = ({
         // Other txTypes have an associated quantity
         // We will render this if we can get the token's decimals from cache
 
+        // Parse for an agora ad setup tx
+        // These are SLP1 SEND txs where
+        // 1. token utxo is > dust
+        // 2. recipient is p2sh address
+        if (satoshisSent > appConfig.dustSats) {
+            if (recipients.length === 1) {
+                // Ad setup tx has 1 recipient
+
+                // Ad setup tx has p2sh recipient
+                const listingScript = recipients[0];
+                try {
+                    const { type } = cashaddr.decode(listingScript, true);
+                    isAgoraAdSetup = type === 'p2sh';
+                } catch (err) {
+                    console.error(
+                        `Error in cashaddr.decode(${listingScript}, true)`,
+                        err,
+                    );
+                    // Continue parsing as token tx
+                }
+            }
+        }
+
+        // Parse for an agora buy/sell/cancel
+        // Will have the token input coming from a p2sh script
+        // The input will be at inputs[0]
+        // Iterate over inputs to find p2sh
+        for (const input of inputs) {
+            if (typeof input.token !== 'undefined') {
+                try {
+                    const { type } = cashaddr.getTypeAndHashFromOutputScript(
+                        input.outputScript,
+                    );
+                    if (type === 'p2sh') {
+                        // Check if this is a cancellation
+                        // See agora.ts from ecash-agora lib
+                        // For now, I don't think it makes sense to have an 'isCanceled' method from ecash-agora
+                        // This is a pretty specific application
+                        const ops = scriptOps(
+                            new Script(fromHex(input.inputScript)),
+                        );
+                        // isCanceled is always the last pushop (before redeemScript)
+                        const opIsCanceled = ops[ops.length - 2];
+
+                        const isCanceled = opIsCanceled === OP_0;
+
+                        if (isCanceled) {
+                            isAgoraCancel = true;
+                        } else {
+                            // We have a cashtab-created agora-offered input going to a Cashtab wallet
+                            // Buy or sell depends on whether the XEC is sent or received
+                            isAgoraPurchase = true;
+                        }
+                    }
+                } catch (err) {
+                    console.error(
+                        `Error in cashaddr.getTypeAndHashFromOutputScript(${inputs[0].outputScript}) from txid ${txid}`,
+                    );
+                    // Do not parse it as an agora tx
+                }
+                // We don't need to find any other inputs for this case
+                continue;
+            }
+        }
+
         const cachedTokenInfo = cashtabCache.tokens.get(tokenId);
-        const renderedTxType =
-            txType === 'SEND' &&
-            !isUnintentionalBurn &&
-            parsedTokenType !== 'NFT Collection'
-                ? xecTxType
-                : // Note the only type of SEND tx for NFT Collection that Cashtab supports is a fan-out tx
-                txType !== 'GENESIS' && parsedTokenType === 'NFT Collection'
-                ? 'Fan-out'
-                : txType === 'GENESIS' && parsedTokenType !== 'NFT'
-                ? 'Created'
-                : isUnintentionalBurn || txType === 'BURN'
-                ? 'Burned'
-                : txType === 'MINT' ||
-                  (txType === 'GENESIS' && parsedTokenType === 'NFT')
-                ? 'Minted'
-                : txType;
+        const renderedTxType = isAgoraCancel
+            ? 'Agora Cancel'
+            : isAgoraAdSetup
+            ? 'Agora Offer'
+            : isAgoraPurchase && xecTxType === 'Sent'
+            ? 'Agora Buy'
+            : isAgoraPurchase && xecTxType === 'Received'
+            ? 'Agora Sale'
+            : txType === 'SEND' &&
+              !isUnintentionalBurn &&
+              parsedTokenType !== 'NFT Collection' &&
+              !isAgoraAdSetup &&
+              !isAgoraPurchase
+            ? xecTxType
+            : txType === 'GENESIS' && parsedTokenType !== 'NFT'
+            ? 'Created'
+            : isUnintentionalBurn || txType === 'BURN'
+            ? 'Burned'
+            : txType === 'MINT' ||
+              (txType === 'GENESIS' && parsedTokenType === 'NFT')
+            ? 'Minted'
+            : txType !== 'GENESIS' && parsedTokenType === 'NFT Collection'
+            ? 'Fan-out'
+            : txType;
         if (typeof cachedTokenInfo === 'undefined') {
             tokenActions.push(
                 <TokenAction tokenTxType={renderedTxType}>
                     <IconAndLabel>
                         {renderedTxType === 'Fan-out' && <FanOutIcon />}
+                        {renderedTxType === 'Agora Offer' && <AgoraOfferIcon />}
+                        {renderedTxType === 'Agora Cancel' && (
+                            <AgoraCancelIcon />
+                        )}
+                        {renderedTxType === 'Agora Buy' && <AgoraBuyIcon />}
+                        {renderedTxType === 'Agora Sale' && <AgoraSaleIcon />}
                         {txType === 'GENESIS' && parsedTokenType !== 'NFT' && (
                             <GenesisIcon />
                         )}
@@ -586,7 +788,11 @@ const Tx = ({
                             <TokenType>{txType}</TokenType>
                         </TokenInfoCol>
                     </IconAndLabel>
-                    <TokenDesc>{renderedTxType}</TokenDesc>
+                    <TokenDesc>
+                        {renderedTxType === 'Agora Offer'
+                            ? `Listed`
+                            : renderedTxType}
+                    </TokenDesc>
                 </TokenAction>,
             );
             continue;
@@ -595,6 +801,7 @@ const Tx = ({
                 cachedTokenInfo.genesisInfo;
             let amountTotal = BigInt(0);
             let amountThisWallet = BigInt(0);
+            let amountSold = 0n;
             // Special case for NFT1 Parent Fan-out tx
             // This can only be a number between 0 and 19, so we do not need BigInt
             let qtyOneInputsCreated = 0;
@@ -604,18 +811,26 @@ const Tx = ({
                 amountTotal = BigInt(actualBurnAmount);
             } else {
                 for (const output of outputs) {
-                    if (
-                        typeof output.token !== 'undefined' &&
-                        typeof output.token.entryIdx !== 'undefined' &&
-                        output.token.entryIdx === i
-                    ) {
+                    if (typeof output.token !== 'undefined') {
                         // Get the amount associated with this token entry
-                        // Per ChronikClientNode, we will always have amount as a string in
+                        // Per ChronikClient, we will always have amount as a string in
                         // the token key of an output, see type Token_InNode
                         amountTotal += BigInt(output.token.amount);
                         for (const hash of hashes) {
+                            // For sales of agora partial txs, we assume the amount sold
+                            // goes to a p2pkh address
+                            if (renderedTxType === 'Agora Sale') {
+                                const { type } =
+                                    cashaddr.getTypeAndHashFromOutputScript(
+                                        output.outputScript,
+                                    );
+                                if (type !== 'p2sh') {
+                                    amountSold += BigInt(output.token.amount);
+                                }
+                            }
                             if (output.outputScript.includes(hash)) {
                                 amountThisWallet += BigInt(output.token.amount);
+
                                 if (output.token.amount === '1') {
                                     qtyOneInputsCreated += 1;
                                 }
@@ -630,10 +845,14 @@ const Tx = ({
             // For a genesis tx -- cashtab will only create outputs at this wallet. So, just render this.
             // For a sent tx, we want amountTotal - amountThisWallet (amountThisWallet is change)
             const renderedTokenAmount =
-                renderedTxType === 'Received'
+                renderedTxType === 'Agora Sale'
+                    ? amountSold
+                    : renderedTxType === 'Received' ||
+                      renderedTxType === 'Agora Buy'
                     ? amountThisWallet
                     : renderedTxType === 'Created' ||
-                      renderedTxType === 'Minted'
+                      renderedTxType === 'Minted' ||
+                      renderedTxType === 'Agora Cancel'
                     ? amountTotal
                     : amountTotal - amountThisWallet;
 
@@ -648,6 +867,12 @@ const Tx = ({
             tokenActions.push(
                 <TokenAction tokenTxType={renderedTxType}>
                     <IconAndLabel>
+                        {renderedTxType === 'Agora Offer' && <AgoraOfferIcon />}
+                        {renderedTxType === 'Agora Cancel' && (
+                            <AgoraCancelIcon />
+                        )}
+                        {renderedTxType === 'Agora Buy' && <AgoraBuyIcon />}
+                        {renderedTxType === 'Agora Sale' && <AgoraSaleIcon />}
                         {txType === 'GENESIS' && parsedTokenType !== 'NFT' && (
                             <GenesisIcon />
                         )}
@@ -672,13 +897,23 @@ const Tx = ({
 
                     <TokenInfoCol>
                         <TokenName>{tokenName}</TokenName>
-                        <TokenTicker>({tokenTicker})</TokenTicker>
+                        {tokenTicker !== '' && (
+                            <TokenTicker>({tokenTicker})</TokenTicker>
+                        )}
                     </TokenInfoCol>
                     <TokenDesc>
                         {renderedTxType === 'Fan-out'
                             ? `Created ${qtyOneInputsCreated} NFT Mint Input${
                                   qtyOneInputsCreated > 1 ? 's' : ''
                               }`
+                            : renderedTxType === 'Agora Offer'
+                            ? `Listed ${formattedAmount} ${tokenTicker}`
+                            : renderedTxType === 'Agora Buy'
+                            ? `Bought ${formattedAmount} ${tokenTicker}`
+                            : renderedTxType === 'Agora Sale'
+                            ? `Sold ${formattedAmount} ${tokenTicker}`
+                            : renderedTxType === 'Agora Cancel'
+                            ? `Canceled offer of ${formattedAmount} ${tokenTicker}`
                             : `${renderedTxType} ${formattedAmount} ${tokenTicker}`}
                     </TokenDesc>
                 </TokenAction>,
@@ -815,7 +1050,11 @@ const Tx = ({
                 <Collapse onClick={() => setShowPanel(!showPanel)}>
                     <MainRow type={xecTxType}>
                         <MainRowLeft>
-                            {xecTxType === 'Received' && !isSelfSendTx ? (
+                            {isAgoraAdSetup ||
+                            isAgoraPurchase ||
+                            isAgoraCancel ? (
+                                <AgoraTxIcon />
+                            ) : xecTxType === 'Received' && !isSelfSendTx ? (
                                 <ReceiveIcon />
                             ) : xecTxType === 'Sent' && !isSelfSendTx ? (
                                 <SendIcon />
@@ -895,11 +1134,29 @@ const Tx = ({
                                     '-'
                                 ) : (
                                     <>
+                                        <CopyIconButton
+                                            style={{ zIndex: '2' }}
+                                            name={`Copy amount`}
+                                            data={toXec(
+                                                satoshisSent,
+                                            ).toLocaleString(userLocale, {
+                                                maximumFractionDigits: 2,
+                                                minimumFractionDigits: 2,
+                                            })}
+                                            showToast
+                                        />
                                         {xecTxType === 'Sent' ? '-' : ''}
-                                        {toFormattedXec(
-                                            satoshisSent,
-                                            userLocale,
-                                        )}{' '}
+                                        {!showPanel
+                                            ? toFormattedXec(
+                                                  satoshisSent,
+                                                  userLocale,
+                                              )
+                                            : toXec(
+                                                  satoshisSent,
+                                              ).toLocaleString(userLocale, {
+                                                  maximumFractionDigits: 2,
+                                                  minimumFractionDigits: 2,
+                                              })}{' '}
                                         XEC
                                     </>
                                 )}

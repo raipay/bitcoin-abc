@@ -34,6 +34,7 @@ import shutil
 from decimal import Decimal
 from random import randint
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -42,13 +43,13 @@ class WalletBackupTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
         self.setup_clean_chain = True
-        # nodes 1, 2,3 are spenders, let's give them a keypool=100
-        # whitelist all peers to speed up tx relay / mempool sync
+        self.noban_tx_relay = True
+        # nodes 1, 2, 3 are spenders, let's give them a keypool=100
         self.extra_args = [
-            ["-whitelist=noban@127.0.0.1", "-keypool=100"],
-            ["-whitelist=noban@127.0.0.1", "-keypool=100"],
-            ["-whitelist=noban@127.0.0.1", "-keypool=100"],
-            ["-whitelist=noban@127.0.0.1"],
+            ["-keypool=100"],
+            ["-keypool=100"],
+            ["-keypool=100"],
+            [],
         ]
         self.rpc_timeout = 120
 
@@ -155,17 +156,12 @@ class WalletBackupTest(BitcoinTestFramework):
             wallet_file,
         )
 
-    def init_three(self):
-        self.init_wallet(0)
-        self.init_wallet(1)
-        self.init_wallet(2)
-
     def run_test(self):
         self.log.info("Generating initial blockchain")
         self.generate(self.nodes[0], 1)
         self.generate(self.nodes[1], 1)
         self.generate(self.nodes[2], 1)
-        self.generate(self.nodes[3], 100)
+        self.generate(self.nodes[3], COINBASE_MATURITY)
 
         assert_equal(self.nodes[0].getbalance(), 50000000)
         assert_equal(self.nodes[1].getbalance(), 50000000)
@@ -190,7 +186,7 @@ class WalletBackupTest(BitcoinTestFramework):
             self.do_one_round()
 
         # Generate 101 more blocks, so any fees paid mature
-        self.generate(self.nodes[3], 101)
+        self.generate(self.nodes[3], COINBASE_MATURITY + 1)
 
         balance0 = self.nodes[0].getbalance()
         balance1 = self.nodes[1].getbalance()
@@ -236,7 +232,15 @@ class WalletBackupTest(BitcoinTestFramework):
         shutil.rmtree(os.path.join(self.nodes[2].datadir, self.chain, "chainstate"))
 
         self.start_three(["-nowallet"])
-        self.init_three()
+        # Create new wallets for the three nodes.
+        # We will use this empty wallets to test the 'importwallet()' RPC
+        # command below.
+        for node_num in range(3):
+            self.nodes[node_num].createwallet(
+                wallet_name=self.default_wallet_name,
+                descriptors=self.options.descriptors,
+                load_on_startup=True,
+            )
 
         assert_equal(self.nodes[0].getbalance(), 0)
         assert_equal(self.nodes[1].getbalance(), 0)

@@ -206,8 +206,17 @@ impl<'tx> BatchProcessor<'tx> {
         let has_any_inputs = spent_tokens.iter().any(|input| input.is_some());
         let has_any_outputs =
             valid_tx.outputs.iter().any(|token| token.is_some());
-        // Don't store txs that have no actual token inputs or outputs
-        if !has_any_outputs && !has_any_inputs && !is_genesis {
+        let has_mint_vault = if is_mint_vault_mint {
+            let first_entry = valid_tx.entries.first();
+            first_entry.map_or(false, |entry| !entry.is_invalid)
+        } else {
+            false
+        };
+
+        // Don't store txs that have no actual token inputs or outputs or
+        // GENESIS data or mint vault inputs.
+        if !has_any_outputs && !has_any_inputs && !is_genesis && !has_mint_vault
+        {
             return Ok(());
         }
 
@@ -254,13 +263,8 @@ impl<'tx> BatchProcessor<'tx> {
         }
 
         let mut flags = 0;
-        if is_mint_vault_mint {
-            let first_entry = valid_tx.entries.first();
-            let has_mint_vault =
-                first_entry.map_or(false, |entry| !entry.is_invalid);
-            if has_mint_vault {
-                flags |= FLAGS_HAS_MINT_VAULT;
-            }
+        if has_mint_vault {
+            flags |= FLAGS_HAS_MINT_VAULT;
         }
 
         let db_token_tx = DbTokenTx {
@@ -321,6 +325,7 @@ impl<'tx> BatchProcessor<'tx> {
                 .get(&input_tx_num)
                 .or_else(|| db_data.token_txs.get(&input_tx_num));
             let Some(db_token_tx) = db_token_tx else {
+                db_inputs.push(DbToken::NoToken);
                 continue;
             };
             let db_token = &db_token_tx.outputs[out_idx];

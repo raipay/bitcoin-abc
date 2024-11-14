@@ -11,7 +11,7 @@ import {
 import 'fake-indexeddb/auto';
 import localforage from 'localforage';
 import { chronik as chronikConfig } from 'config/chronik';
-import { CashtabSettings } from 'config/cashtabSettings';
+import CashtabSettings from 'config/CashtabSettings';
 import CashtabCache from 'config/CashtabCache';
 import { cashtabCacheToJSON, cashtabWalletsFromJSON } from 'helpers';
 
@@ -91,15 +91,20 @@ describe('Correctly prepares Cashtab mocked chronik client and localforage envir
                 await mockChronikClient
                     .address(wallet.Path1899.cashAddress)
                     .history(0, chronikConfig.txHistoryCount),
-            ).toEqual({ numPages: 1, txs: wallet.state.parsedTxHistory });
+            ).toEqual({
+                txs: wallet.state.parsedTxHistory,
+                numPages: 1,
+                numTxs: 10,
+            });
             // Path145 history empty
             expect(
                 await mockChronikClient
                     .address(wallet.Path145.cashAddress)
                     .history(0, chronikConfig.txHistoryCount),
             ).toEqual({
-                numPages: 0,
                 txs: [],
+                numPages: 0,
+                numTxs: 0,
             });
 
             // Path245 history empty
@@ -108,8 +113,9 @@ describe('Correctly prepares Cashtab mocked chronik client and localforage envir
                     .address(wallet.Path245.cashAddress)
                     .history(0, chronikConfig.txHistoryCount),
             ).toEqual({
-                numPages: 0,
                 txs: [],
+                numPages: 0,
+                numTxs: 0,
             });
 
             // Next, initialize with API error

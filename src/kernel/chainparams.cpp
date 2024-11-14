@@ -146,11 +146,11 @@ public:
         // Nov 15, 2023 12:00:00 UTC protocol upgrade
         consensus.cowperthwaiteHeight = 818669;
 
-        // May 15, 2024 12:00:00 UTC protocol upgrade
-        consensus.leeKuanYewActivationTime = 1715774400;
-
         // Nov 15, 2024 12:00:00 UTC protocol upgrade
         consensus.augustoActivationTime = 1731672000;
+
+        // May 15, 2025 12:00:00 UTC protocol upgrade
+        consensus.schumpeterActivationTime = 1747310400;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -300,11 +300,11 @@ public:
         // Nov 15, 2023 12:00:00 UTC protocol upgrade
         consensus.cowperthwaiteHeight = 1584485;
 
-        // May 15, 2024 12:00:00 UTC protocol upgrade
-        consensus.leeKuanYewActivationTime = 1715774400;
-
         // Nov 15, 2024 12:00:00 UTC protocol upgrade
         consensus.augustoActivationTime = 1731672000;
+
+        // May 15, 2025 12:00:00 UTC protocol upgrade
+        consensus.schumpeterActivationTime = 1747310400;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -436,11 +436,11 @@ public:
         // Nov 15, 2023 12:00:00 UTC protocol upgrade
         consensus.cowperthwaiteHeight = 0;
 
-        // May 15, 2024 12:00:00 UTC protocol upgrade
-        consensus.leeKuanYewActivationTime = 1715774400;
-
         // Nov 15, 2024 12:00:00 UTC protocol upgrade
         consensus.augustoActivationTime = 1731672000;
+
+        // May 15, 2025 12:00:00 UTC protocol upgrade
+        consensus.schumpeterActivationTime = 1747310400;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;

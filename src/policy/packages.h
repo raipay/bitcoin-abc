@@ -29,6 +29,8 @@ enum class PackageValidationResult {
     PCKG_POLICY,
     //! At least one tx is invalid.
     PCKG_TX,
+    //! Mempool logic error.
+    PCKG_MEMPOOL_ERROR,
 };
 
 /**
@@ -58,5 +60,20 @@ bool CheckPackage(const Package &txns, PackageValidationState &state);
  * child.
  */
 bool IsChildWithParents(const Package &package);
+
+/**
+ * Context-free check that a package IsChildWithParents() and none of the
+ * parents depend on each other (the package is a "tree").
+ */
+bool IsChildWithParentsTree(const Package &package);
+
+/*
+ * Get the hash of these transactions' txids, concatenated in lexicographical
+ * order (treating the txids as little endian encoded uint256, smallest to
+ * largest).
+ *
+ * TODO Create a PackageHash class so we are type safe
+ */
+uint256 GetPackageHash(const Package &package);
 
 #endif // BITCOIN_POLICY_PACKAGES_H

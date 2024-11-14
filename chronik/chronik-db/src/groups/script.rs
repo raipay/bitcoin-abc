@@ -3,13 +3,17 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 use bitcoinsuite_core::{
+    hash::{Hashed, Sha256},
     script::{compress_script_variant, Script},
     tx::Tx,
 };
 use bytes::Bytes;
 
 use crate::{
-    db::{CF_SCRIPT_HISTORY, CF_SCRIPT_HISTORY_NUM_TXS, CF_SCRIPT_UTXO},
+    db::{
+        CF_SCRIPTHASH, CF_SCRIPT_HISTORY, CF_SCRIPT_HISTORY_NUM_TXS,
+        CF_SCRIPT_UTXO,
+    },
     group::{Group, GroupQuery, MemberItem, UtxoDataValue},
     io::{
         GroupHistoryConf, GroupHistoryReader, GroupHistoryWriter,
@@ -51,15 +55,20 @@ impl<'a> Iterator for ScriptGroupIter<'a> {
         if self.is_coinbase && !self.is_outputs {
             return None;
         }
+        let script = if self.is_outputs {
+            // Skip OP_RETURN scripts
+            while self.tx.outputs.get(self.idx)?.script.is_opreturn() {
+                self.idx += 1;
+            }
+            &self.tx.outputs[self.idx].script
+        } else {
+            &self.tx.inputs.get(self.idx)?.coin.as_ref()?.output.script
+        };
         let idx = self.idx;
         self.idx += 1;
         Some(MemberItem {
             idx,
-            member: if self.is_outputs {
-                &self.tx.outputs.get(idx)?.script
-            } else {
-                &self.tx.inputs.get(idx)?.coin.as_ref()?.output.script
-            },
+            member: script,
         })
     }
 }
@@ -101,11 +110,16 @@ impl Group for ScriptGroup {
         compress_script_variant(&member.variant())
     }
 
+    fn ser_hash_member(&self, member: &Self::Member<'_>) -> [u8; 32] {
+        Sha256::digest(member.bytecode()).to_be_bytes()
+    }
+
     fn tx_history_conf() -> GroupHistoryConf {
         GroupHistoryConf {
             cf_page_name: CF_SCRIPT_HISTORY,
             cf_num_txs_name: CF_SCRIPT_HISTORY_NUM_TXS,
             page_size: 1000,
+            cf_member_hash_name: Some(CF_SCRIPTHASH),
         }
     }
 
@@ -147,7 +161,7 @@ mod tests {
                         ..Default::default()
                     })
                     .collect(),
-                outputs: [[0x53].as_ref(), &[0x51]]
+                outputs: [[0x53].as_ref(), &[0x6a], &[0x6a], &[0x51], &[0x6a]]
                     .into_iter()
                     .map(|script| TxOutput {
                         script: Script::new(script.into()),
@@ -191,7 +205,7 @@ mod tests {
             script_group.output_members(query, &()).collect::<Vec<_>>(),
             vec![
                 make_member_item(0, &make_script(vec![0x53])),
-                make_member_item(1, &make_script(vec![0x51])),
+                make_member_item(3, &make_script(vec![0x51])),
             ],
         );
 
@@ -214,7 +228,7 @@ mod tests {
             script_group.output_members(query, &()).collect::<Vec<_>>(),
             vec![
                 make_member_item(0, &make_script(vec![0x53])),
-                make_member_item(1, &make_script(vec![0x51])),
+                make_member_item(3, &make_script(vec![0x51])),
             ],
         );
 

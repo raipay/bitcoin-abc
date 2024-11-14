@@ -5,9 +5,9 @@
 #include <wallet/rpc/backup.h>
 
 #include <chain.h>
+#include <common/args.h>
 #include <config.h>
 #include <core_io.h>
-#include <fs.h>
 #include <interfaces/chain.h>
 #include <key_io.h>
 #include <merkleblock.h>
@@ -18,7 +18,8 @@
 #include <script/standard.h>
 #include <sync.h>
 #include <util/bip32.h>
-#include <util/system.h>
+#include <util/fs.h>
+#include <util/fs_helpers.h>
 #include <util/time.h>
 #include <util/translation.h>
 #include <wallet/rpc/util.h>
@@ -116,7 +117,9 @@ RPCHelpMan importprivkey() {
         "may report that the imported key exists but related transactions are "
         "still missing, leading to temporarily incorrect/bogus balances and "
         "unspent outputs until rescan completes.\n"
-        "Note: Use \"getwalletinfo\" to query the scanning progress.\n",
+        "Note: Use \"getwalletinfo\" to query the scanning progress.\n"
+        "Note: This command is only compatible with legacy wallets. Use "
+        "\"importdescriptors\" with \"combo(X)\" for descriptor wallets.\n",
         {
             {"privkey", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The private key (see dumpprivkey)"},
@@ -279,7 +282,9 @@ RPCHelpMan importaddress() {
         "\nNote: If you import a non-standard raw script in hex form, outputs "
         "sending to it will be treated\n"
         "as change, and not show up in many RPCs.\n"
-        "Note: Use \"getwalletinfo\" to query the scanning progress.\n",
+        "Note: Use \"getwalletinfo\" to query the scanning progress.\n"
+        "Note: This command is only compatible with legacy wallets. Use "
+        "\"importdescriptors\" for descriptor wallets.\n",
         {
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The Bitcoin address (or hex-encoded script)"},
@@ -540,7 +545,9 @@ RPCHelpMan importpubkey() {
         "may report that the imported pubkey exists but related transactions "
         "are still missing, leading to temporarily incorrect/bogus balances "
         "and unspent outputs until rescan completes.\n"
-        "Note: Use \"getwalletinfo\" to query the scanning progress.\n",
+        "Note: Use \"getwalletinfo\" to query the scanning progress.\n"
+        "Note: This command is only compatible with legacy wallets. Use "
+        "\"importdescriptors\" with \"combo(X)\" for descriptor wallets.\n",
         {
             {"pubkey", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The hex-encoded public key"},
@@ -642,7 +649,8 @@ RPCHelpMan importwallet() {
         "importwallet",
         "Imports keys from a wallet dump file (see dumpwallet). Requires a "
         "new wallet backup to include imported keys.\n"
-        "Note: Use \"getwalletinfo\" to query the scanning progress.\n",
+        "Note: Use \"getwalletinfo\" to query the scanning progress.\n"
+        "Note: This command is only compatible with legacy wallets.\n",
         {
             {"filename", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The wallet file"},
@@ -855,7 +863,8 @@ RPCHelpMan dumpprivkey() {
     return RPCHelpMan{
         "dumpprivkey",
         "Reveals the private key corresponding to 'address'.\n"
-        "Then the importprivkey can be used with this output\n",
+        "Then the importprivkey can be used with this output\n"
+        "Note: This command is only compatible with legacy wallets.\n",
         {
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The bitcoin address for the private key"},
@@ -913,7 +922,8 @@ RPCHelpMan dumpwallet() {
         "Note that if your wallet contains keys which are not derived from "
         "your HD seed (e.g. imported keys), these are not covered by\n"
         "only backing up the seed itself, and must be backed up too (e.g. "
-        "ensure you back up the whole dumpfile).\n",
+        "ensure you back up the whole dumpfile).\n"
+        "Note: This command is only compatible with legacy wallets.\n",
         {
             {"filename", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The filename with path (absolute path recommended)"},
@@ -1640,7 +1650,7 @@ static int64_t GetImportTimestamp(const UniValue &data, int64_t now) {
     if (data.exists("timestamp")) {
         const UniValue &timestamp = data["timestamp"];
         if (timestamp.isNum()) {
-            return timestamp.get_int64();
+            return timestamp.getInt<int64_t>();
         } else if (timestamp.isStr() && timestamp.get_str() == "now") {
             return now;
         }
@@ -1683,7 +1693,9 @@ RPCHelpMan importmulti() {
         "Conversely, if all the private keys are provided and the "
         "address/script is spendable, the watchonly option must be set to "
         "false, or a warning will be returned.\n"
-        "Note: Use \"getwalletinfo\" to query the scanning progress.\n",
+        "Note: Use \"getwalletinfo\" to query the scanning progress.\n"
+        "Note: This command is only compatible with legacy wallets. Use "
+        "\"importdescriptors\" for descriptor wallets.\n",
         {
             {"requests",
              RPCArg::Type::ARR,
@@ -1700,50 +1712,35 @@ RPCHelpMan importmulti() {
                           "Descriptor to import. If using descriptor, do not "
                           "also provide address/scriptPubKey, scripts, or "
                           "pubkeys"},
-                         {"scriptPubKey",
-                          RPCArg::Type::STR,
+                         {"scriptPubKey", RPCArg::Type::STR,
                           RPCArg::Optional::NO,
                           "Type of scriptPubKey (string for script, json for "
                           "address). Should not be provided if using a "
                           "descriptor",
-                          /* oneline_description */ "",
-                          {"\"<script>\" | { \"address\":\"<address>\" }",
-                           "string / json"}},
-                         {"timestamp",
-                          RPCArg::Type::NUM,
-                          RPCArg::Optional::NO,
+                          RPCArgOptions{
+                              .type_str = {"\"<script>\" | { "
+                                           "\"address\":\"<address>\" }",
+                                           "string / json"}}},
+                         {"timestamp", RPCArg::Type::NUM, RPCArg::Optional::NO,
                           "Creation time of the key expressed in " +
                               UNIX_EPOCH_TIME +
                               ",\n"
-                              "                                            "
-                              "                  or the string \"now\" to "
-                              "substitute the current synced blockchain time. "
-                              "The "
-                              "timestamp of the oldest\n"
-                              "                                            "
-                              "                  key will determine how far "
-                              "back "
-                              "blockchain rescans need to begin for missing "
-                              "wallet "
+                              "or the string \"now\" to substitute the current "
+                              "synced blockchain time. The timestamp of the "
+                              "oldest\n"
+                              "key will determine how far back blockchain "
+                              "rescans need to begin for missing wallet "
                               "transactions.\n"
-                              "                                            "
-                              "                  \"now\" can be specified to "
-                              "bypass scanning, for keys which are known to "
-                              "never "
-                              "have been used, and\n"
-                              "                                            "
-                              "                  0 can be specified to scan "
-                              "the "
-                              "entire blockchain. Blocks up to 2 hours before "
-                              "the "
+                              "\"now\" can be specified to bypass scanning, "
+                              "for keys which are known to never have been "
+                              "used, and\n"
+                              "0 can be specified to scan the entire "
+                              "blockchain. Blocks up to 2 hours before the "
                               "earliest key\n"
-                              "                                            "
-                              "                  creation time of all keys "
-                              "being "
-                              "imported by the importmulti call will be "
-                              "scanned.",
-                          /* oneline_description */ "",
-                          {"timestamp | \"now\"", "integer / string"}},
+                              "creation time of all keys being imported by the "
+                              "importmulti call will be scanned.",
+                          RPCArgOptions{.type_str = {"timestamp | \"now\"",
+                                                     "integer / string"}}},
                          {"redeemscript", RPCArg::Type::STR,
                           RPCArg::Optional::OMITTED,
                           "Allowed only if the scriptPubKey is a P2SH "
@@ -1793,16 +1790,16 @@ RPCHelpMan importmulti() {
                      },
                  },
              },
-             "\"requests\""},
+             RPCArgOptions{.oneline_description = "\"requests\""}},
             {"options",
-             RPCArg::Type::OBJ,
+             RPCArg::Type::OBJ_NAMED_PARAMS,
              RPCArg::Optional::OMITTED_NAMED_ARG,
              "",
              {
                  {"rescan", RPCArg::Type::BOOL, RPCArg::Default{true},
                   "Stating if should rescan the blockchain after all imports"},
              },
-             "\"options\""},
+             RPCArgOptions{.oneline_description = "\"options\""}},
         },
         RPCResult{RPCResult::Type::ARR,
                   "",
@@ -1852,8 +1849,6 @@ RPCHelpMan importmulti() {
                 return NullUniValue;
             }
             CWallet *const pwallet = wallet.get();
-
-            RPCTypeCheck(mainRequest.params, {UniValue::VARR, UniValue::VOBJ});
 
             EnsureLegacyScriptPubKeyMan(*wallet, true);
 
@@ -2015,7 +2010,7 @@ static UniValue ProcessDescriptorImport(CWallet *const pwallet,
             next_index = range_start;
 
             if (data.exists("next_index")) {
-                next_index = data["next_index"].get_int64();
+                next_index = data["next_index"].getInt<int64_t>();
                 // bound checks
                 if (next_index < range_start || next_index >= range_end) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER,
@@ -2180,29 +2175,23 @@ RPCHelpMan importdescriptors() {
                           "If a ranged descriptor is set to active, this "
                           "specifies the next index to generate addresses "
                           "from"},
-                         {"timestamp",
-                          RPCArg::Type::NUM,
-                          RPCArg::Optional::NO,
+                         {"timestamp", RPCArg::Type::NUM, RPCArg::Optional::NO,
                           "Time from which to start rescanning the blockchain "
                           "for this descriptor, in " +
                               UNIX_EPOCH_TIME +
                               "\n"
-                              "                                                "
-                              "              Use the string \"now\" to "
-                              "substitute the current synced blockchain time.\n"
-                              "                                                "
-                              "              \"now\" can be specified to "
-                              "bypass scanning, for outputs which are known to "
-                              "never have been used, and\n"
-                              "                                                "
-                              "              0 can be specified to scan the "
-                              "entire blockchain. Blocks up to 2 hours before "
-                              "the earliest timestamp\n"
-                              "                                                "
-                              "              of all descriptors being imported "
-                              "will be scanned.",
-                          /* oneline_description */ "",
-                          {"timestamp | \"now\"", "integer / string"}},
+                              "Use the string \"now\" to substitute the "
+                              "current synced blockchain time.\n"
+                              "\"now\" can be specified to bypass scanning, "
+                              "for outputs which are known to never have been "
+                              "used, and\n"
+                              "0 can be specified to scan the entire "
+                              "blockchain. Blocks up to 2 hours before the "
+                              "earliest timestamp\n"
+                              "of all descriptors being imported will be "
+                              "scanned.",
+                          RPCArgOptions{.type_str = {"timestamp | \"now\"",
+                                                     "integer / string"}}},
                          {"internal", RPCArg::Type::BOOL,
                           RPCArg::Default{false},
                           "Whether matching outputs should be treated as not "
@@ -2213,7 +2202,7 @@ RPCHelpMan importdescriptors() {
                      },
                  },
              },
-             "\"requests\""},
+             RPCArgOptions{.oneline_description = "\"requests\""}},
         },
         RPCResult{RPCResult::Type::ARR,
                   "",
@@ -2267,8 +2256,6 @@ RPCHelpMan importdescriptors() {
                                    "importdescriptors is not available for "
                                    "non-descriptor wallets");
             }
-
-            RPCTypeCheck(main_request.params, {UniValue::VARR, UniValue::VOBJ});
 
             WalletRescanReserver reserver(*pwallet);
             if (!reserver.reserve()) {

@@ -5,6 +5,7 @@
 #include <consensus/validation.h>
 #include <policy/packages.h>
 #include <primitives/transaction.h>
+#include <primitives/txid.h>
 #include <util/hasher.h>
 
 #include <numeric>
@@ -40,6 +41,14 @@ bool CheckPackage(const Package &txns, PackageValidationState &state) {
     std::transform(txns.cbegin(), txns.cend(),
                    std::inserter(later_txids, later_txids.end()),
                    [](const auto &tx) { return tx->GetId(); });
+
+    // Package must not contain any duplicate transactions, which is checked by
+    // txid.
+    if (later_txids.size() != txns.size()) {
+        return state.Invalid(PackageValidationResult::PCKG_POLICY,
+                             "package-contains-duplicates");
+    }
+
     for (const auto &tx : txns) {
         for (const auto &input : tx->vin) {
             if (later_txids.find(input.prevout.GetTxId()) !=
@@ -95,4 +104,43 @@ bool IsChildWithParents(const Package &package) {
                        [&input_txids](const auto &ptx) {
                            return input_txids.count(ptx->GetId()) > 0;
                        });
+}
+
+bool IsChildWithParentsTree(const Package &package) {
+    if (!IsChildWithParents(package)) {
+        return false;
+    }
+    std::unordered_set<TxId, SaltedTxIdHasher> parent_txids;
+    std::transform(package.cbegin(), package.cend() - 1,
+                   std::inserter(parent_txids, parent_txids.end()),
+                   [](const auto &ptx) { return ptx->GetId(); });
+    // Each parent must not have an input who is one of the other parents.
+    return std::all_of(
+        package.cbegin(), package.cend() - 1, [&](const auto &ptx) {
+            for (const auto &input : ptx->vin) {
+                if (parent_txids.count(input.prevout.GetTxId()) > 0) {
+                    return false;
+                }
+            }
+            return true;
+        });
+}
+
+uint256 GetPackageHash(const Package &package) {
+    // Create a vector of the txids.
+    std::vector<TxId> txids_copy;
+    std::transform(package.cbegin(), package.cend(),
+                   std::back_inserter(txids_copy),
+                   [](const auto &tx) { return tx->GetId(); });
+
+    // Sort in ascending order
+    std::sort(txids_copy.begin(), txids_copy.end(),
+              [](const auto &lhs, const auto &rhs) { return lhs < rhs; });
+
+    // Get (single) sha256 hash of the txids concatenated in this order
+    HashWriter hashwriter;
+    for (const auto &txid : txids_copy) {
+        hashwriter << txid;
+    }
+    return hashwriter.GetSHA256();
 }

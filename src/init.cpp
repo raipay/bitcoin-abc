@@ -22,12 +22,12 @@
 #include <blockfilter.h>
 #include <chain.h>
 #include <chainparams.h>
+#include <common/args.h>
 #include <compat/sanity.h>
 #include <config.h>
 #include <consensus/amount.h>
 #include <currencyunit.h>
 #include <flatfile.h>
-#include <fs.h>
 #include <hash.h>
 #include <httprpc.h>
 #include <httpserver.h>
@@ -49,10 +49,13 @@
 #include <node/chainstate.h>
 #include <node/chainstatemanager_args.h>
 #include <node/context.h>
+#include <node/kernel_notifications.h>
 #include <node/mempool_persist_args.h>
 #include <node/miner.h>
+#include <node/peerman_args.h>
 #include <node/ui_interface.h>
 #include <node/validation_cache_args.h>
+#include <policy/block/rtt.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
 #include <rpc/blockchain.h>
@@ -69,11 +72,13 @@
 #include <torcontrol.h>
 #include <txdb.h>
 #include <txmempool.h>
-#include <txorphanage.h>
 #include <util/asmap.h>
 #include <util/check.h>
+#include <util/fs.h>
+#include <util/fs_helpers.h>
 #include <util/moneystr.h>
 #include <util/string.h>
+#include <util/syserror.h>
 #include <util/thread.h>
 #include <util/threadnames.h>
 #include <util/translation.h>
@@ -113,16 +118,17 @@
 #include <thread>
 #include <vector>
 
+using kernel::DEFAULT_STOPAFTERBLOCKIMPORT;
 using kernel::DumpMempool;
 using kernel::ValidationCacheSizes;
 
 using node::ApplyArgsManOptions;
+using node::BlockManager;
 using node::CacheSizes;
 using node::CalculateCacheSizes;
-using node::CleanupBlockRevFiles;
 using node::DEFAULT_PERSIST_MEMPOOL;
-using node::DEFAULT_STOPAFTERBLOCKIMPORT;
 using node::fReindex;
+using node::KernelNotifications;
 using node::LoadChainstate;
 using node::MempoolPath;
 using node::NodeContext;
@@ -144,13 +150,16 @@ static constexpr bool DEFAULT_CHRONIK = false;
 
 static const char *DEFAULT_ASMAP_FILENAME = "ip_asn.map";
 
+static const std::string HEADERS_TIME_FILE_NAME{"headerstime.dat"};
+
 /**
  * The PID file facilities.
  */
 static const char *BITCOIN_PID_FILENAME = "bitcoind.pid";
 
 static fs::path GetPidFile(const ArgsManager &args) {
-    return AbsPathForConfigVal(args.GetPathArg("-pid", BITCOIN_PID_FILENAME));
+    return AbsPathForConfigVal(args,
+                               args.GetPathArg("-pid", BITCOIN_PID_FILENAME));
 }
 
 [[nodiscard]] static bool CreatePidFile(const ArgsManager &args) {
@@ -165,7 +174,7 @@ static fs::path GetPidFile(const ArgsManager &args) {
     } else {
         return InitError(strprintf(_("Unable to create the PID file '%s': %s"),
                                    fs::PathToString(GetPidFile(args)),
-                                   std::strerror(errno)));
+                                   SysErrorString(errno)));
     }
 }
 
@@ -200,10 +209,10 @@ void Interrupt(NodeContext &node) {
     InterruptREST();
     InterruptTorControl();
     InterruptMapPort();
-    if (g_avalanche) {
+    if (node.avalanche) {
         // Avalanche needs to be stopped before we interrupt the thread group as
         // the scheduler will stop working then.
-        g_avalanche->stopEventLoop();
+        node.avalanche->stopEventLoop();
     }
     if (node.connman) {
         node.connman->Interrupt();
@@ -250,8 +259,8 @@ void Shutdown(NodeContext &node) {
     // 2. Shutdown network processing.
     // 3. Destroy avalanche::Processor.
     // 4. Destroy CConnman
-    if (g_avalanche) {
-        g_avalanche->stopEventLoop();
+    if (node.avalanche) {
+        node.avalanche->stopEventLoop();
     }
 
     // Because these depend on each-other, we make sure that neither can be
@@ -280,7 +289,7 @@ void Shutdown(NodeContext &node) {
     node.peerman.reset();
 
     // Destroy various global instances
-    g_avalanche.reset();
+    node.avalanche.reset();
     node.connman.reset();
     node.banman.reset();
     node.addrman.reset();
@@ -337,6 +346,9 @@ void Shutdown(NodeContext &node) {
                 chainstate->ResetCoinsViews();
             }
         }
+
+        node.chainman->DumpRecentHeadersTime(node.chainman->m_options.datadir /
+                                             HEADERS_TIME_FILE_NAME);
     }
     for (const auto &client : node.chain_clients) {
         client->stop();
@@ -344,9 +356,8 @@ void Shutdown(NodeContext &node) {
 
 #if ENABLE_ZMQ
     if (g_zmq_notification_interface) {
-        UnregisterValidationInterface(g_zmq_notification_interface);
-        delete g_zmq_notification_interface;
-        g_zmq_notification_interface = nullptr;
+        UnregisterValidationInterface(g_zmq_notification_interface.get());
+        g_zmq_notification_interface.reset();
     }
 #endif
 
@@ -457,8 +468,8 @@ void SetupServerArgs(NodeContext &node) {
         "-allowselfsignedrootcertificates", "-choosedatadir", "-lang=<lang>",
         "-min", "-resetguisettings", "-rootcertificates=<file>", "-splash",
         "-uiplatform",
-        // TODO remove after the May. 2024 upgrade
-        "-leekuanyewactivationtime",
+        // TODO remove after the Nov. 2024 upgrade
+        "-augustoactivationtime",
     };
 
     // Set all of the args and their help
@@ -507,8 +518,8 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg(
         "-blocksonly",
         strprintf("Whether to reject transactions from network peers.  "
-                  "Automatic broadcast and rebroadcast of any transactions "
-                  "from inbound peers is disabled, unless the peer has the "
+                  "Disables automatic broadcast and rebroadcast of "
+                  "transactions, unless the source peer has the "
                   "'forcerelay' permission. RPC transactions are"
                   " not affected. (default: %u)",
                   DEFAULT_BLOCKSONLY),
@@ -581,6 +592,14 @@ void SetupServerArgs(NodeContext &node) {
                              "on restart (default: %u)",
                              DEFAULT_PERSIST_MEMPOOL),
                    ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg(
+        "-persistrecentheaderstime",
+        strprintf(
+            "Whether the node stores the recent headers reception time to a "
+            "file and load it upon startup. This is intended for mining nodes "
+            "to overestimate the real time target upon restart (default: %u)",
+            DEFAULT_STORE_RECENT_HEADERS_TIME),
+        ArgsManager::ALLOW_BOOL, OptionsCategory::OPTIONS);
     argsman.AddArg(
         "-pid=<file>",
         strprintf("Specify pid file. Relative paths will be prefixed "
@@ -692,6 +711,10 @@ void SetupServerArgs(NodeContext &node) {
                    "Output some performance statistics (e.g. num cache hits, "
                    "seconds spent) into a <datadir>/perf folder. (default: 0)",
                    ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg(
+        "-chronikscripthashindex",
+        "Enable the scripthash index for the Chronik indexer (default: 0) ",
+        ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
 #endif
     argsman.AddArg(
         "-blockfilterindex=<type>",
@@ -945,11 +968,14 @@ void SetupServerArgs(NodeContext &node) {
         ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
 
     argsman.AddArg("-whitelist=<[permissions@]IP address or network>",
-                   "Add permission flags to the peers connecting from the "
-                   "given IP address (e.g. 1.2.3.4) or CIDR-notated network "
+                   "Add permission flags to the peers using the given "
+                   "IP address (e.g. 1.2.3.4) or CIDR-notated network "
                    "(e.g. 1.2.3.0/24). "
-                   "Uses the same permissions as -whitebind. Can be specified "
-                   "multiple times.",
+                   "Uses the same permissions as -whitebind. "
+                   "Additional flags \"in\" and \"out\" control whether "
+                   "permissions apply to incoming connections and/or manual "
+                   "(default: incoming only). "
+                   "Can be specified multiple times.",
                    ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg(
         "-maxuploadtarget=<n>",
@@ -1172,7 +1198,7 @@ void SetupServerArgs(NodeContext &node) {
         ArgsManager::ALLOW_ANY, OptionsCategory::NODE_RELAY);
     argsman.AddArg(
         "-whitelistrelay",
-        strprintf("Add 'relay' permission to whitelisted inbound peers "
+        strprintf("Add 'relay' permission to whitelisted peers "
                   "with default permissions. This will accept relayed "
                   "transactions even when not relaying transactions "
                   "(default: %d)",
@@ -1180,8 +1206,8 @@ void SetupServerArgs(NodeContext &node) {
         ArgsManager::ALLOW_ANY, OptionsCategory::NODE_RELAY);
     argsman.AddArg(
         "-whitelistforcerelay",
-        strprintf("Add 'forcerelay' permission to whitelisted inbound peers"
-                  " with default permissions. This will relay transactions "
+        strprintf("Add 'forcerelay' permission to whitelisted peers "
+                  "with default permissions. This will relay transactions "
                   "even if the transactions were already in the mempool "
                   "(default: %d)",
                   DEFAULT_WHITELISTFORCERELAY),
@@ -1220,6 +1246,12 @@ void SetupServerArgs(NodeContext &node) {
         ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY |
             ArgsManager::SENSITIVE,
         OptionsCategory::RPC);
+    argsman.AddArg(
+        "-rpcdoccheck",
+        strprintf("Throw a non-fatal error at runtime if the documentation for "
+                  "an RPC is incorrect (default: %u)",
+                  DEFAULT_RPC_DOC_CHECK),
+        ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::RPC);
     argsman.AddArg(
         "-rpccookiefile=<loc>",
         "Location of the auth cookie. Relative paths will be prefixed "
@@ -1426,6 +1458,11 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg("-avasessionkey", "Avalanche session key (default: random)",
                    ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE,
                    OptionsCategory::HIDDEN);
+    argsman.AddArg("-enablertt",
+                   strprintf("Whether to enforce Real Time Targeting via "
+                             "Avalanche, default (%u)",
+                             DEFAULT_ENABLE_RTT),
+                   ArgsManager::ALLOW_BOOL, OptionsCategory::AVALANCHE);
     argsman.AddArg(
         "-maxavalancheoutbound",
         strprintf(
@@ -1442,40 +1479,10 @@ void SetupServerArgs(NodeContext &node) {
         ArgsManager::ALLOW_BOOL, OptionsCategory::AVALANCHE);
 
     hidden_args.emplace_back("-avalanchepreconsensus");
+    hidden_args.emplace_back("-avalanchestakingpreconsensus");
 
     // Add the hidden options
     argsman.AddHiddenArgs(hidden_args);
-}
-
-std::string LicenseInfo() {
-    const std::string URL_SOURCE_CODE =
-        "<https://github.com/Bitcoin-ABC/bitcoin-abc>";
-    const std::string URL_WEBSITE = "<https://www.bitcoinabc.org>";
-
-    return CopyrightHolders(strprintf(_("Copyright (C) %i-%i").translated, 2009,
-                                      COPYRIGHT_YEAR) +
-                            " ") +
-           "\n" + "\n" +
-           strprintf(_("Please contribute if you find %s useful. "
-                       "Visit %s for further information about the software.")
-                         .translated,
-                     PACKAGE_NAME, URL_WEBSITE) +
-           "\n" +
-           strprintf(_("The source code is available from %s.").translated,
-                     URL_SOURCE_CODE) +
-           "\n" + "\n" + _("This is experimental software.").translated + "\n" +
-           strprintf(_("Distributed under the MIT software license, see the "
-                       "accompanying file %s or %s")
-                         .translated,
-                     "COPYING", "<https://opensource.org/licenses/MIT>") +
-           "\n" + "\n" +
-           strprintf(_("This product includes software developed by the "
-                       "OpenSSL Project for use in the OpenSSL Toolkit %s and "
-                       "cryptographic software written by Eric Young and UPnP "
-                       "software written by Thomas Bernard.")
-                         .translated,
-                     "<https://www.openssl.org>") +
-           "\n";
 }
 
 static bool fHaveGenesis = false;
@@ -1837,7 +1844,9 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
     // -maxavalancheoutbound takes precedence over -maxconnections
     const int maxAvalancheOutbound = args.GetIntArg(
         "-maxavalancheoutbound", DEFAULT_MAX_AVALANCHE_OUTBOUND_CONNECTIONS);
-    if (isAvalancheEnabled(args) && maxAvalancheOutbound > nMaxConnections) {
+    const bool fAvalanche =
+        args.GetBoolArg("-avalanche", AVALANCHE_DEFAULT_ENABLED);
+    if (fAvalanche && maxAvalancheOutbound > nMaxConnections) {
         nMaxConnections = std::max(maxAvalancheOutbound, nMaxConnections);
         // Indicate the value set by the user
         LogPrintf("Increasing -maxconnections from %d to %d to comply with "
@@ -1980,7 +1989,7 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
     }
 
     // This is a staking node
-    if (isAvalancheEnabled(args) && args.IsArgSet("-avaproof")) {
+    if (fAvalanche && args.IsArgSet("-avaproof")) {
         if (!args.GetBoolArg("-listen", true)) {
             return InitError(_("Running a staking node requires accepting "
                                "inbound connections. Please enable -listen."));
@@ -2002,15 +2011,18 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
 
     // Also report errors from parsing before daemonization
     {
+        KernelNotifications notifications{};
         ChainstateManager::Options chainman_opts_dummy{
             .config = config,
             .datadir = args.GetDataDirNet(),
+            .notifications = notifications,
         };
         if (const auto error{ApplyArgsManOptions(args, chainman_opts_dummy)}) {
             return InitError(*error);
         }
-        node::BlockManager::Options blockman_opts_dummy{
+        BlockManager::Options blockman_opts_dummy{
             .chainparams = chainman_opts_dummy.config.GetChainParams(),
+            .blocks_dir = args.GetBlocksDirPath(),
         };
         if (const auto error{ApplyArgsManOptions(args, blockman_opts_dummy)}) {
             return InitError(*error);
@@ -2232,7 +2244,7 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
                                     fs::quoted(fs::PathToString(asmap_path))));
                 return false;
             }
-            const uint256 asmap_version = SerializeHash(asmap);
+            const uint256 asmap_version = (HashWriter{} << asmap).GetHash();
             LogPrintf("Using asmap version %s for IP bucketing\n",
                       asmap_version.ToString());
         } else {
@@ -2374,15 +2386,20 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     }
 
 #if ENABLE_ZMQ
-    g_zmq_notification_interface = CZMQNotificationInterface::Create();
+    g_zmq_notification_interface = CZMQNotificationInterface::Create(
+        [&chainman = node.chainman](CBlock &block, const CBlockIndex &index) {
+            assert(chainman);
+            return chainman->m_blockman.ReadBlockFromDisk(block, index);
+        });
 
     if (g_zmq_notification_interface) {
-        RegisterValidationInterface(g_zmq_notification_interface);
+        RegisterValidationInterface(g_zmq_notification_interface.get());
     }
 #endif
 
     // Step 7: load block chain
 
+    node.notifications = std::make_unique<KernelNotifications>();
     fReindex = args.GetBoolArg("-reindex", false);
     bool fReindexChainState = args.GetBoolArg("-reindex-chainstate", false);
 
@@ -2390,6 +2407,7 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         .config = config,
         .datadir = args.GetDataDirNet(),
         .adjusted_time_callback = GetAdjustedTime,
+        .notifications = *node.notifications,
     };
     // no error can happen, already checked in AppInitParameterInteraction
     Assert(!ApplyArgsManOptions(args, chainman_opts));
@@ -2400,8 +2418,9 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         LogPrintf("Skipping checkpoint verification.\n");
     }
 
-    node::BlockManager::Options blockman_opts{
+    BlockManager::Options blockman_opts{
         .chainparams = chainman_opts.config.GetChainParams(),
+        .blocks_dir = args.GetBlocksDirPath(),
     };
     // no error can happen, already checked in AppInitParameterInteraction
     Assert(!ApplyArgsManOptions(args, blockman_opts));
@@ -2502,6 +2521,9 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
             std::tie(status, error) = catch_exceptions(
                 [&] { return VerifyLoadedChainstate(chainman, options); });
             if (status == node::ChainstateLoadStatus::SUCCESS) {
+                WITH_LOCK(cs_main, return node.chainman->LoadRecentHeadersTime(
+                                       node.chainman->m_options.datadir /
+                                       HEADERS_TIME_FILE_NAME));
                 fLoaded = true;
                 LogPrintf(" block index %15dms\n",
                           GetTimeMillis() - load_block_index_start_time);
@@ -2550,30 +2572,34 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
 
     ChainstateManager &chainman = *Assert(node.chainman);
 
+    if (args.GetBoolArg("-avalanche", AVALANCHE_DEFAULT_ENABLED)) {
+        // Initialize Avalanche.
+        bilingual_str avalancheError;
+        node.avalanche = avalanche::Processor::MakeProcessor(
+            args, *node.chain, node.connman.get(), chainman, node.mempool.get(),
+            *node.scheduler, avalancheError);
+        if (!node.avalanche) {
+            InitError(avalancheError);
+            return false;
+        }
+
+        if (node.avalanche->isAvalancheServiceAvailable()) {
+            nLocalServices = ServiceFlags(nLocalServices | NODE_AVALANCHE);
+        }
+    }
+
+    PeerManager::Options peerman_opts{};
+    ApplyArgsManOptions(args, peerman_opts);
+
     assert(!node.peerman);
-    node.peerman = PeerManager::make(
-        *node.connman, *node.addrman, node.banman.get(), chainman,
-        *node.mempool, args.GetBoolArg("-blocksonly", DEFAULT_BLOCKSONLY));
+    node.peerman = PeerManager::make(*node.connman, *node.addrman,
+                                     node.banman.get(), chainman, *node.mempool,
+                                     node.avalanche.get(), peerman_opts);
     RegisterValidationInterface(node.peerman.get());
 
     // Encoded addresses using cashaddr instead of base58.
     // We do this by default to avoid confusion with BTC addresses.
     config.SetCashAddrEncoding(args.GetBoolArg("-usecashaddr", true));
-
-    // Step 7.5 (I guess ?): Initialize Avalanche.
-    bilingual_str avalancheError;
-    g_avalanche = avalanche::Processor::MakeProcessor(
-        args, *node.chain, node.connman.get(), chainman, node.mempool.get(),
-        *node.scheduler, avalancheError);
-    if (!g_avalanche) {
-        InitError(avalancheError);
-        return false;
-    }
-
-    if (isAvalancheEnabled(args) &&
-        g_avalanche->isAvalancheServiceAvailable()) {
-        nLocalServices = ServiceFlags(nLocalServices | NODE_AVALANCHE);
-    }
 
     // Step 8: load indexers
     if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
@@ -2612,7 +2638,7 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     if (args.GetBoolArg("-chronik", DEFAULT_CHRONIK)) {
         const bool fReindexChronik =
             fReindex || args.GetBoolArg("-chronikreindex", false);
-        if (!chronik::Start(config, node, fReindexChronik)) {
+        if (!chronik::Start(args, config, node, fReindexChronik)) {
             return false;
         }
     }
@@ -2697,9 +2723,10 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         vImportFiles.push_back(fs::PathFromString(strFile));
     }
 
+    avalanche::Processor *const avalanche = node.avalanche.get();
     chainman.m_load_block =
         std::thread(&util::TraceThread, "loadblk", [=, &chainman, &args] {
-            ThreadImport(chainman, vImportFiles, args,
+            ThreadImport(chainman, avalanche, vImportFiles,
                          ShouldPersistMempool(args) ? MempoolPath(args)
                                                     : fs::path{});
         });
@@ -2756,7 +2783,7 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     connOptions.nLocalServices = nLocalServices;
     connOptions.nMaxConnections = nMaxConnections;
     connOptions.m_max_avalanche_outbound =
-        g_avalanche && isAvalancheEnabled(args)
+        node.avalanche
             ? args.GetIntArg("-maxavalancheoutbound",
                              DEFAULT_MAX_AVALANCHE_OUTBOUND_CONNECTIONS)
             : 0;
@@ -2772,8 +2799,8 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     connOptions.uiInterface = &uiInterface;
     connOptions.m_banman = node.banman.get();
     connOptions.m_msgproc.push_back(node.peerman.get());
-    if (g_avalanche) {
-        connOptions.m_msgproc.push_back(g_avalanche.get());
+    if (node.avalanche) {
+        connOptions.m_msgproc.push_back(node.avalanche.get());
     }
     connOptions.nSendBufferMaxSize =
         1000 * args.GetIntArg("-maxsendbuffer", DEFAULT_MAXSENDBUFFER);
@@ -2785,6 +2812,10 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         1024 * 1024 *
         args.GetIntArg("-maxuploadtarget", DEFAULT_MAX_UPLOAD_TARGET);
     connOptions.m_peer_connect_timeout = peer_connect_timeout;
+    connOptions.whitelist_forcerelay =
+        args.GetBoolArg("-whitelistforcerelay", DEFAULT_WHITELISTFORCERELAY);
+    connOptions.whitelist_relay =
+        args.GetBoolArg("-whitelistrelay", DEFAULT_WHITELISTRELAY);
 
     // Port to bind to if `-bind=addr` is provided without a `:port` suffix.
     const uint16_t default_bind_port = static_cast<uint16_t>(
@@ -2875,11 +2906,18 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
 
     for (const auto &net : args.GetArgs("-whitelist")) {
         NetWhitelistPermissions subnet;
+        ConnectionDirection connection_direction;
         bilingual_str error;
-        if (!NetWhitelistPermissions::TryParse(net, subnet, error)) {
+        if (!NetWhitelistPermissions::TryParse(net, subnet,
+                                               connection_direction, error)) {
             return InitError(error);
         }
-        connOptions.vWhitelistedRange.push_back(subnet);
+        if (connection_direction & ConnectionDirection::In) {
+            connOptions.vWhitelistedRangeIncoming.push_back(subnet);
+        }
+        if (connection_direction & ConnectionDirection::Out) {
+            connOptions.vWhitelistedRangeOutgoing.push_back(subnet);
+        }
     }
 
     connOptions.vSeedNodes = args.GetArgs("-seednode");
@@ -2941,12 +2979,14 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         },
         DUMP_BANS_INTERVAL);
 
+    // Start Avalanche's event loop.
+    if (node.avalanche) {
+        node.avalanche->startEventLoop(*node.scheduler);
+    }
+
     if (node.peerman) {
         node.peerman->StartScheduledTasks(*node.scheduler);
     }
-
-    // Start Avalanche's event loop.
-    g_avalanche->startEventLoop(*node.scheduler);
 
 #if HAVE_SYSTEM
     StartupNotify(args);

@@ -7,9 +7,9 @@
 #ifndef BITCOIN_LOGGING_H
 #define BITCOIN_LOGGING_H
 
-#include <fs.h>
 #include <threadsafety.h>
 #include <tinyformat.h>
+#include <util/fs.h>
 #include <util/string.h>
 
 #include <atomic>
@@ -67,6 +67,7 @@ enum LogFlags : uint32_t {
 #endif
     BLOCKSTORE = (1 << 26),
     NETDEBUG = (1 << 27),
+    TXPACKAGES = (1 << 28),
     ALL = ~uint32_t(0),
 };
 
@@ -221,5 +222,10 @@ LogPrintf_(const std::string &logging_function, const std::string &source_file,
  */
 #define LogPrintfToBeContinued LogPrintf
 #define LogPrintToBeContinued LogPrint
+
+template <typename... Args> bool error(const char *fmt, const Args &...args) {
+    LogPrintf("ERROR: %s\n", tfm::format(fmt, args...));
+    return false;
+}
 
 #endif // BITCOIN_LOGGING_H

@@ -6,13 +6,15 @@
 #ifndef BITCOIN_NET_PROCESSING_H
 #define BITCOIN_NET_PROCESSING_H
 
+#include <avalanche/avalanche.h>
 #include <net.h>
 #include <sync.h>
 #include <validationinterface.h>
 
 namespace avalanche {
 struct ProofId;
-}
+class Processor;
+} // namespace avalanche
 
 class AddrMan;
 class CTxMemPool;
@@ -23,16 +25,31 @@ class Config;
  * Default for -maxorphantx, maximum number of orphan transactions kept in
  * memory.
  */
-static const unsigned int DEFAULT_MAX_ORPHAN_TRANSACTIONS = 100;
+static const uint32_t DEFAULT_MAX_ORPHAN_TRANSACTIONS{100};
 /**
- * Default number of orphan+recently-replaced txn to keep around for block
- * reconstruction.
+ * Maximum number of conflicting transactions kept in memory.
  */
-static const unsigned int DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN = 100;
+static const uint32_t DEFAULT_MAX_CONFLICTING_TRANSACTIONS{100};
+/**
+ * Default number of non-mempool transactions to keep around for block
+ * reconstruction. Includes orphan and rejected transactions.
+ */
+static const uint32_t DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN{100};
 static const bool DEFAULT_PEERBLOCKFILTERS = false;
 /** Threshold for marking a node to be discouraged, e.g. disconnected and added
  * to the discouragement filter. */
 static const int DISCOURAGEMENT_THRESHOLD{100};
+/** Maximum number of outstanding CMPCTBLOCK requests for the same block. */
+static const unsigned int MAX_CMPCTBLOCKS_INFLIGHT_PER_BLOCK = 3;
+/** The maximum number of address records permitted in an ADDR message. */
+static constexpr size_t MAX_ADDR_TO_SEND{1000};
+
+/**
+ * Number of headers sent in one getheaders result. We rely on the assumption
+ * that if a peer sends less than this number, we reached its tip. Changing
+ * this value is a protocol upgrade.
+ */
+static const unsigned int MAX_HEADERS_RESULTS = 2000;
 
 struct CNodeStateStats {
     int nSyncHeight = -1;
@@ -51,11 +68,41 @@ struct CNodeStateStats {
 
 class PeerManager : public CValidationInterface, public NetEventsInterface {
 public:
-    static std::unique_ptr<PeerManager> make(CConnman &connman,
-                                             AddrMan &addrman, BanMan *banman,
-                                             ChainstateManager &chainman,
-                                             CTxMemPool &pool,
-                                             bool ignore_incoming_txs);
+    struct Options {
+        //! Whether this node is running in -blocksonly mode
+        bool ignore_incoming_txs{DEFAULT_BLOCKSONLY};
+        //! Maximum number of orphan transactions kept in memory
+        uint32_t max_orphan_txs{DEFAULT_MAX_ORPHAN_TRANSACTIONS};
+        //! Maximum number of conflicting transactions kept in memory
+        uint32_t max_conflicting_txs{DEFAULT_MAX_CONFLICTING_TRANSACTIONS};
+        //! Number of non-mempool transactions to keep around for block
+        //! reconstruction. Includes orphan and rejected transactions.
+        uint32_t max_extra_txs{DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN};
+        //! Whether all P2P messages are captured to disk
+        bool capture_messages{false};
+        //! Number of addresses a node may send in an ADDR message.
+        //! This can be modified for tests only. Changing it on main net may
+        //! cause disconnections.
+        size_t max_addr_to_send{MAX_ADDR_TO_SEND};
+
+        //! Minimum time between two AVAPOLL messages.
+        int64_t avalanche_cooldown{AVALANCHE_DEFAULT_COOLDOWN};
+        //! Minimum time before we will consider replacing a finalized proof
+        //! with a conflicting one.
+        int64_t avalanche_peer_replacement_cooldown{
+            AVALANCHE_DEFAULT_PEER_REPLACEMENT_COOLDOWN};
+        //! Whether this node has enabled avalanche preconsensus.
+        bool avalanche_preconsensus{DEFAULT_AVALANCHE_PRECONSENSUS};
+
+        //! Whether or not the internal RNG behaves deterministically (this is
+        //! a test-only option).
+        bool deterministic_rng{false};
+    };
+
+    static std::unique_ptr<PeerManager>
+    make(CConnman &connman, AddrMan &addrman, BanMan *banman,
+         ChainstateManager &chainman, CTxMemPool &pool,
+         avalanche::Processor *const avalanche, Options opts);
     virtual ~PeerManager() {}
 
     /**

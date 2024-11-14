@@ -16,14 +16,32 @@ import {
 
 const devLinks = [
     {
-        sectionTitle: 'How to contribute',
-        anchor: 'contributions',
+        sectionTitle: 'Contribute',
+        anchor: 'contribute',
         links: [
             {
-                title: 'Contributions guide',
+                title: 'Contribution guide',
                 description:
-                    'Learn more about contributing to the Bitcoin ABC repo',
+                    'Learn more about contributing to the Bitcoin ABC repository',
                 link: 'https://github.com/Bitcoin-ABC/bitcoin-abc/blob/master/CONTRIBUTING.md',
+            },
+            {
+                title: 'Source Code',
+                description:
+                    'Source Code for eCash Software from Bitcoin ABC - Including the Full Node, Electrum ABC wallet, and Cashtab Wallet',
+                link: 'https://github.com/Bitcoin-ABC/bitcoin-abc/',
+            },
+        ],
+    },
+    {
+        sectionTitle: 'Software',
+        anchor: 'software',
+        links: [
+            {
+                title: 'Bitcoin ABC Releases',
+                description:
+                    'Ready-to-run Binaries for the Bitcoin ABC Full Node',
+                link: 'https://www.bitcoinabc.org/releases/',
             },
         ],
     },
@@ -38,20 +56,15 @@ const devLinks = [
                 link: 'https://www.npmjs.com/package/chronik-client',
             },
             {
-                title: 'BitGo utxo-lib',
+                title: 'ecash-lib',
                 description:
-                    'Create a wallet, build eCash transactions, manage utxos',
-                link: 'https://www.npmjs.com/package/@bitgo/utxo-lib',
+                    'Full-featured eCash-native transaction building library',
+                link: 'https://www.npmjs.com/package/ecash-lib',
             },
             {
                 title: 'ecashaddrjs',
                 description: 'Tools for working with eCash addresses',
                 link: 'https://www.npmjs.com/package/ecashaddrjs',
-            },
-            {
-                title: 'ecash-script',
-                description: 'Tools for parsing OP_RETURN transactions',
-                link: 'https://www.npmjs.com/package/ecash-script',
             },
         ],
     },
@@ -60,15 +73,26 @@ const devLinks = [
         anchor: 'examples',
         links: [
             {
-                title: 'App dev examples',
+                title: 'Cashtab codebase',
+                description: 'Public repo for the Cashtab wallet',
+                link: 'https://github.com/Bitcoin-ABC/bitcoin-abc/tree/master/cashtab',
+            },
+        ],
+    },
+    {
+        sectionTitle: 'Documentation',
+        anchor: 'documentation',
+        links: [
+            {
+                title: 'Bitcoin ABC',
                 description:
-                    'Series of example code to serve as a reference guide for app developers',
-                link: 'https://github.com/Bitcoin-ABC/bitcoin-abc/tree/master/apps/examples',
+                    'Documentation for the Bitcoin ABC Full Node Software',
+                link: 'https://www.bitcoinabc.org/doc/',
             },
             {
-                title: 'Cashtab codebase',
-                description: 'Public repo for the CashTab wallet',
-                link: 'https://github.com/Bitcoin-ABC/bitcoin-abc/tree/master/cashtab',
+                title: 'Chronik',
+                description: 'Documentation for the Chronik Indexer',
+                link: 'https://chronik.e.cash',
             },
         ],
     },
@@ -118,7 +142,7 @@ function Build() {
                     single dev can reach millions of customers overnight.
                 </p>
                 <p>
-                    A good strategy to make an app successful is to go though a
+                    A good strategy to make an app successful is to go through a
                     process of trial, error, feedback, and iteration. Reducing
                     the cycle time of this process is critical. This is called
                     rapid prototyping.
@@ -141,16 +165,6 @@ function Build() {
                         ))}
                     </LinkSection>
                 ))}
-
-                <LinkSection>
-                    <H3 text="Coming Soon!" id="coming-soon" />
-                    <BuildLinkCtn>
-                        <InnerBuildLinkCtn>
-                            <h4>ecash-lib</h4>
-                            <p>Full-feature ecash native tx building</p>
-                        </InnerBuildLinkCtn>
-                    </BuildLinkCtn>
-                </LinkSection>
             </Container>
         </Layout>
     );

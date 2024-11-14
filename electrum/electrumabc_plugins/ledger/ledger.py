@@ -7,9 +7,11 @@ import traceback
 from struct import pack, unpack
 from typing import Optional, Tuple
 
-from electrumabc import bitcoin
 from electrumabc.address import Address
-from electrumabc.bitcoin import TYPE_ADDRESS, TYPE_SCRIPT, ScriptType, SignatureType
+from electrumabc.bip32 import serialize_xpub
+from electrumabc.bitcoin import TYPE_ADDRESS, TYPE_SCRIPT, ScriptType
+from electrumabc.crypto import hash_160
+from electrumabc.ecc import SignatureType
 from electrumabc.i18n import _
 from electrumabc.keystore import HardwareKeyStore
 from electrumabc.plugins import Device
@@ -49,6 +51,7 @@ BITCOIN_CASH_SUPPORT = (1, 1, 8)
 CASHADDR_SUPPORT = (1, 2, 5)
 MULTI_OUTPUT_SUPPORT = (1, 1, 4)
 TRUSTED_INPUTS_REQUIRED = (1, 4, 0)
+OPERATION_MODE_UNSUPPORTED = (2, 4, 0)
 
 
 def test_pin_unlocked(func):
@@ -73,6 +76,14 @@ def test_pin_unlocked(func):
                 raise
 
     return catch_exception
+
+
+class DeviceNotInBitcoinCashModeError(Exception):
+    pass
+
+
+class UnknownCommandError(Exception):
+    pass
 
 
 class LedgerClient(HardwareClientBase):
@@ -139,7 +150,7 @@ class LedgerClient(HardwareClientBase):
             prevPath = "/".join(splitPath[0 : len(splitPath) - 1])
             nodeData = self.dongleObject.getWalletPublicKey(prevPath)
             publicKey = compress_public_key(nodeData["publicKey"])
-            h = bitcoin.hash_160(publicKey)
+            h = hash_160(publicKey)
             fingerprint = unpack(">I", h[0:4])[0]
         nodeData = self.dongleObject.getWalletPublicKey(bip32_path)
         publicKey = compress_public_key(nodeData["publicKey"])
@@ -148,7 +159,7 @@ class LedgerClient(HardwareClientBase):
         childnum = (
             int(lastChild[0]) if len(lastChild) == 1 else 0x80000000 | int(lastChild[0])
         )
-        xpub = bitcoin.serialize_xpub(
+        xpub = serialize_xpub(
             xtype,
             nodeData["chainCode"],
             publicKey,
@@ -208,6 +219,7 @@ class LedgerClient(HardwareClientBase):
             self.cashaddrFWSupported = firmwareVersion >= CASHADDR_SUPPORT
             self.multiOutputSupported = firmwareVersion >= MULTI_OUTPUT_SUPPORT
             self.trustedInputsRequired = firmwareVersion >= TRUSTED_INPUTS_REQUIRED
+            self.operationModeSupported = firmwareVersion < OPERATION_MODE_UNSUPPORTED
 
             if not checkFirmware(firmwareInfo) or not self.supports_bitcoin_cash():
                 self.close()
@@ -217,15 +229,16 @@ class LedgerClient(HardwareClientBase):
                         " https://www.ledgerwallet.com"
                     ).format(self.device)
                 )
-            try:
-                self.dongleObject.getOperationMode()
-            except BTChipException as e:
-                if e.sw == 0x6985:
-                    self.close()
-                    self.handler.get_setup()
-                    # Acquire the new client on the next run
-                else:
-                    raise e
+            if self.operationModeSupported:
+                try:
+                    self.dongleObject.getOperationMode()
+                except BTChipException as e:
+                    if e.sw == 0x6985:
+                        self.close()
+                        self.handler.get_setup()
+                        # Acquire the new client on the next run
+                    else:
+                        raise e
             if (
                 self.has_detached_pin_support(self.dongleObject)
                 and not self.is_pin_validated(self.dongleObject)
@@ -255,7 +268,7 @@ class LedgerClient(HardwareClientBase):
             gwpkArgSpecs = inspect.getfullargspec(self.dongleObject.getWalletPublicKey)
             self.cashaddrSWSupported = "cashAddr" in gwpkArgSpecs.args
         except BTChipException as e:
-            if e.sw == 0x6FAA:
+            if e.sw in [0x6FAA, 0x5515]:
                 raise Exception(
                     _(
                         "{hw_device_name} is temporarily locked - please unplug and"
@@ -282,25 +295,41 @@ class LedgerClient(HardwareClientBase):
                         " your {}."
                     ).format(self.device)
                 ) from e
-            if e.sw == 0x6702:
-                # This happens with firmware/BTC/BCH apps > 2.0.2 when the user didn't
-                # open the BCH app
-                raise Exception(
-                    _("Open the BCH app")
-                    + "\n"
-                    + _("Please make sure that the BCH app is open on your device.")
-                ) from e
+            if e.sw in [0x6702, 0x6E00]:
+                # 0x6702 happens with firmware/BTC/BCH apps > 2.0.2 when the user didn't
+                # open the BCH app.
+                # 0x6e00 happens when the BTC app is open instead of the BCH app.
+                self.raise_device_not_in_bch_mode_error(e)
             raise e
+
+    def raise_device_not_in_bch_mode_error(self, e: BTChipException):
+        raise DeviceNotInBitcoinCashModeError(
+            _("Open the BCH app")
+            + "\n"
+            + _("Please make sure that the BCH app is open on your {}.").format(
+                self.device
+            )
+        ) from e
 
     def checkDevice(self):
         if not self.preflightDone:
             try:
                 self.perform_hw1_preflight()
             except BTChipException as e:
-                if e.sw == 0x6D00 or e.sw == 0x6700:
-                    raise RuntimeError(
-                        _("{} not in Bitcoin Cash mode").format(self.device)
-                    ) from e
+                if e.sw == 0x6700:
+                    self.raise_device_not_in_bch_mode_error(e)
+                if e.sw == 0x6D00:
+                    raise UnknownCommandError(
+                        _("Unknown command")
+                        + "\n\n"
+                        + _(
+                            "Check that the BCH app is open on your {}. If the problem "
+                            "persists, report the following error to the Electrum ABC "
+                            "developers."
+                        ).format(self.device)
+                        + "\n\n"
+                        + traceback.format_exc()
+                    )
                 raise e
             self.preflightDone = True
 
@@ -335,7 +364,7 @@ class LedgerKeyStore(HardwareKeyStore):
     def get_client(self):
         return self.plugin.get_client(self).dongleObject
 
-    def get_client_electrum(self):
+    def get_client_electrum(self) -> LedgerClient:
         return self.plugin.get_client(self)
 
     def give_error(self, message, clear_client=False):
@@ -607,7 +636,8 @@ class LedgerKeyStore(HardwareKeyStore):
             self.handler.show_message(_("Confirm Transaction on your Ledger device..."))
             # Sign all inputs
             inputIndex = 0
-            client_ledger.enableAlternate2fa(False)
+            if self.get_client_electrum().operationModeSupported:
+                client_ledger.enableAlternate2fa(False)
             cashaddr = Address.FMT_UI == Address.FMT_CASHADDR
             if cashaddr and client_electrum.supports_cashaddr():
                 # For now the Ledger will show a bitcoincash: CashAddr

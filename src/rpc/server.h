@@ -7,11 +7,11 @@
 #ifndef BITCOIN_RPC_SERVER_H
 #define BITCOIN_RPC_SERVER_H
 
+#include <common/system.h>
 #include <rpc/command.h>
 #include <rpc/request.h>
 #include <rpc/util.h>
 #include <rwcollection.h>
-#include <util/system.h>
 
 #include <univalue.h>
 
@@ -22,6 +22,7 @@
 
 static const unsigned int DEFAULT_RPC_SERIALIZE_VERSION = 1;
 
+class ArgsManager;
 class CRPCCommand;
 
 namespace RPCServerSignals {
@@ -154,7 +155,8 @@ public:
 
     //! Constructor taking Actor callback supporting multiple handlers.
     CRPCCommand(std::string _category, std::string _name, Actor _actor,
-                std::vector<std::string> _args, intptr_t _unique_id)
+                std::vector<std::pair<std::string, bool>> _args,
+                intptr_t _unique_id)
         : category(std::move(_category)), name(std::move(_name)),
           actor(std::move(_actor)), argNames(std::move(_args)),
           unique_id(_unique_id) {}
@@ -173,7 +175,16 @@ public:
     std::string category;
     std::string name;
     Actor actor;
-    std::vector<std::string> argNames;
+    //! List of method arguments and whether they are named-only. Incoming RPC
+    //! requests contain a "params" field that can either be an array containing
+    //! unnamed arguments or an object containing named arguments. The
+    //! "argNames" vector is used in the latter case to transform the params
+    //! object into an array. Each argument in "argNames" gets mapped to a
+    //! unique position in the array, based on the order it is listed, unless
+    //! the argument is a named-only argument with argNames[x].second set to
+    //! true. Named-only arguments are combined into a JSON object that is
+    //! appended after other arguments, see transformNamedArguments for details.
+    std::vector<std::pair<std::string, bool>> argNames;
     intptr_t unique_id;
 };
 

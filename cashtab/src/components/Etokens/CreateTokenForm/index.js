@@ -31,7 +31,7 @@ import { token as tokenConfig } from 'config/token';
 import appConfig from 'config/app';
 import {
     getSlpGenesisTargetOutput,
-    getMaxMintAmount,
+    getMaxDecimalizedSlpQty,
     getNftParentGenesisTargetOutputs,
     getNftChildGenesisTargetOutputs,
 } from 'slpv1';
@@ -39,7 +39,7 @@ import { sendXec } from 'transactions';
 import { TokenNotificationIcon } from 'components/Common/CustomIcons';
 import { explorer } from 'config/explorer';
 import { getWalletState } from 'utils/cashMethods';
-import { hasEnoughToken } from 'wallet';
+import { hasEnoughToken, undecimalizeTokenAmount } from 'wallet';
 import { toast } from 'react-toastify';
 import Switch from 'components/Common/Switch';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -73,7 +73,7 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
     const navigate = useNavigate();
     const location = useLocation();
     const userLocale = getUserLocale(navigator);
-    const { chronik, chaintipBlockheight, cashtabState } =
+    const { chronik, ecc, chaintipBlockheight, cashtabState } =
         React.useContext(WalletContext);
     const { settings, wallets } = cashtabState;
 
@@ -125,7 +125,7 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
     const [formDataErrors, setFormDataErrors] = useState(initialFormDataErrors);
     // This switch is form data, but since it is a bool and not a string, keep it with its own state field
     const [createWithMintBatonAtIndexTwo, setCreateWithMintBatonAtIndexTwo] =
-        useState(false);
+        useState(true);
 
     // Note: We do not include a UI input for token document hash
     // Questionable value to casual users and requires significant complication
@@ -155,7 +155,7 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
             // Cashtab only creates NFT1 Parent tokens (aka NFT Collections) with 0 decimals
             setFormData(previous => ({
                 ...previous,
-                decimals: '0',
+                decimals: 0,
             }));
         }
     }, [createNftCollection]);
@@ -422,7 +422,7 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
         // Use 0 for decimals if user has not input decimals yet
         const usedDecimals =
             formData.decimals === '' ? 0 : parseInt(formData.decimals);
-        const maxGenesisAmount = getMaxMintAmount(usedDecimals);
+        const maxGenesisAmount = getMaxDecimalizedSlpQty(usedDecimals);
 
         handleInput({
             target: {
@@ -442,6 +442,8 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
         formDataErrors.url === false &&
         // Name must not be empty
         formData.name !== '' &&
+        // Ticker must not be empty
+        formData.ticker !== '' &&
         // If this is an nft mint, we need an NFT Mint Input
         ((isNftMint && nftChildGenesisInput.length === 1) || !isNftMint) &&
         (tokenIcon === '' ||
@@ -510,31 +512,48 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
         }
 
         // data must be valid and user reviewed to get here
-        const configObj = {
-            name: formData.name,
-            ticker: formData.ticker,
-            decimals: isNftMint ? NFT_DECIMALS : formData.decimals,
-            documentUrl:
+        const genesisInfo = {
+            tokenName: formData.name,
+            tokenTicker: formData.ticker,
+            url:
                 formData.url === ''
                     ? tokenConfig.newTokenDefaultUrl
                     : formData.url,
-            genesisQty: isNftMint ? NFT_GENESIS_QTY : formData.genesisQty,
             // Support documentHash for NFT Collection, but only for uploaded image file
-            documentHash: createNftCollection || isNftMint ? formData.hash : '',
-            mintBatonVout: createWithMintBatonAtIndexTwo ? 2 : null,
+            hash: createNftCollection || isNftMint ? formData.hash : '',
+            decimals: isNftMint ? NFT_DECIMALS : parseInt(formData.decimals),
         };
 
         // Create type 1 slp token per specified user data
         try {
             // Get target outputs for an SLP v1 genesis tx
             const targetOutputs = createNftCollection
-                ? getNftParentGenesisTargetOutputs(configObj)
+                ? getNftParentGenesisTargetOutputs(
+                      genesisInfo,
+                      BigInt(
+                          undecimalizeTokenAmount(
+                              formData.genesisQty,
+                              parseInt(formData.decimals),
+                          ),
+                      ),
+                      createWithMintBatonAtIndexTwo ? 2 : undefined,
+                  )
                 : isNftMint
-                ? getNftChildGenesisTargetOutputs(configObj)
-                : getSlpGenesisTargetOutput(configObj);
+                ? getNftChildGenesisTargetOutputs(genesisInfo)
+                : getSlpGenesisTargetOutput(
+                      genesisInfo,
+                      BigInt(
+                          undecimalizeTokenAmount(
+                              formData.genesisQty,
+                              parseInt(formData.decimals),
+                          ),
+                      ),
+                      createWithMintBatonAtIndexTwo ? 2 : undefined,
+                  );
             const { response } = isNftMint
                 ? await sendXec(
                       chronik,
+                      ecc,
                       wallet,
                       targetOutputs,
                       settings.minFeeSends &&
@@ -557,6 +576,7 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
                   )
                 : await sendXec(
                       chronik,
+                      ecc,
                       wallet,
                       targetOutputs,
                       settings.minFeeSends &&
@@ -846,7 +866,9 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
                                     <Slider
                                         name="zoom"
                                         value={zoom}
-                                        handleSlide={setZoom}
+                                        handleSlide={e =>
+                                            setZoom(e.target.value)
+                                        }
                                         min={1}
                                         max={10}
                                         step={0.01}
@@ -859,7 +881,9 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
                                     <Slider
                                         name="rotation"
                                         value={rotation}
-                                        handleSlide={setRotation}
+                                        handleSlide={e =>
+                                            setRotation(e.target.value)
+                                        }
                                         min={0}
                                         max={360}
                                         step={1}
@@ -881,16 +905,17 @@ const CreateTokenForm = ({ nftChildGenesisInput }) => {
                         ? 'Mint NFT'
                         : 'Create eToken'}
                 </PrimaryButton>
-                {formData.name === '' && (
-                    <ButtonDisabledMsg>
-                        {isNftMint
-                            ? 'NFT'
-                            : createNftCollection
-                            ? 'NFT Collection'
-                            : 'Token'}{' '}
-                        must have a name
-                    </ButtonDisabledMsg>
-                )}
+                {formData.name === '' ||
+                    (formData.ticker === '' && (
+                        <ButtonDisabledMsg>
+                            {isNftMint
+                                ? 'NFT'
+                                : createNftCollection
+                                ? 'NFT Collection'
+                                : 'Token'}{' '}
+                            must have a name and a ticker
+                        </ButtonDisabledMsg>
+                    ))}
                 {tokenIcon !== '' && tokenIcon.size > ICON_MAX_UPLOAD_BYTES && (
                     <ButtonDisabledMsg>
                         Icon exceeds max upload size of{' '}

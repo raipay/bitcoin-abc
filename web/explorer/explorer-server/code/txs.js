@@ -46,13 +46,22 @@ const renderInput = data => {
     );
 };
 
+const escapeHtml = unsafe => {
+    return unsafe
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+};
+
 const renderOutput = (satsOutput, _type, row) => {
     if (row.token) {
         var ticker =
             '<a href="/tx/' +
             row.txHash +
             '" class="num-col-suffix" data-suffix=' +
-            row.token.tokenTicker +
+            escapeHtml(row.token.tokenTicker) +
             '></a>';
         return renderAmount(row.stats.tokenOutput, row.token.decimals) + ticker;
     }
@@ -88,6 +97,7 @@ const datatable = () => {
     const blockHash = $('#block-hash').text();
 
     $('#txs-table').DataTable({
+        paging: false,
         searching: false,
         lengthMenu: [25, 50, 100, 200],
         pageLength: DEFAULT_ROWS_PER_PAGE,

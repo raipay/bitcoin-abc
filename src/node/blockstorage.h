@@ -11,14 +11,13 @@
 
 #include <chain.h>
 #include <chainparams.h>
-#include <fs.h>
 #include <kernel/blockmanager_opts.h>
 #include <kernel/cs_main.h>
 #include <protocol.h> // For CMessageHeader::MessageStartChars
 #include <sync.h>
 #include <txdb.h>
+#include <util/fs.h>
 
-class ArgsManager;
 class BlockValidationState;
 class CBlock;
 class CBlockFileInfo;
@@ -35,9 +34,11 @@ struct FlatFilePos;
 namespace Consensus {
 struct Params;
 }
+namespace avalanche {
+class Processor;
+}
 
 namespace node {
-static constexpr bool DEFAULT_STOPAFTERBLOCKIMPORT{false};
 
 /** The pre-allocation chunk size for blk?????.dat files (since 0.8) */
 static constexpr unsigned int BLOCKFILE_CHUNK_SIZE = 0x1000000; // 16 MiB
@@ -92,6 +93,19 @@ private:
                       uint64_t nTime, bool fKnown);
     bool FindUndoPos(BlockValidationState &state, int nFile, FlatFilePos &pos,
                      unsigned int nAddSize);
+
+    FlatFileSeq BlockFileSeq() const;
+    FlatFileSeq UndoFileSeq() const;
+
+    FILE *OpenUndoFile(const FlatFilePos &pos, bool fReadOnly = false) const;
+
+    bool
+    WriteBlockToDisk(const CBlock &block, FlatFilePos &pos,
+                     const CMessageHeader::MessageMagic &messageStart) const;
+    bool
+    UndoWriteToDisk(const CBlockUndo &blockundo, FlatFilePos &pos,
+                    const BlockHash &hashBlock,
+                    const CMessageHeader::MessageMagic &messageStart) const;
 
     /**
      * Calculate the block/rev files to delete based on height specified
@@ -229,6 +243,10 @@ public:
 
     [[nodiscard]] bool LoadingBlocks() const { return m_importing || fReindex; }
 
+    [[nodiscard]] bool StopAfterBlockImport() const {
+        return m_opts.stop_after_block_import;
+    }
+
     /**
      * Calculate the amount of disk space the block & undo files currently use
      */
@@ -237,6 +255,10 @@ public:
     //! Returns last CBlockIndex* that is a checkpoint
     const CBlockIndex *GetLastCheckpoint(const CCheckpointData &data)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+    //! Find the first block that is not pruned
+    const CBlockIndex *GetFirstStoredBlock(const CBlockIndex &start_block)
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
     /** True if any block files have ever been pruned. */
     bool m_have_pruned = false;
@@ -250,39 +272,34 @@ public:
     void UpdatePruneLock(const std::string &name,
                          const PruneLockInfo &lock_info)
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    /** Open a block file (blk?????.dat) */
+    FILE *OpenBlockFile(const FlatFilePos &pos, bool fReadOnly = false) const;
+
+    /** Translation to a filesystem path. */
+    fs::path GetBlockPosFilename(const FlatFilePos &pos) const;
+
+    /**
+     *  Actually unlink the specified files
+     */
+    void UnlinkPrunedFiles(const std::set<int> &setFilesToPrune) const;
+
+    /** Functions for disk access for blocks */
+    bool ReadBlockFromDisk(CBlock &block, const FlatFilePos &pos) const;
+    bool ReadBlockFromDisk(CBlock &block, const CBlockIndex &index) const;
+    bool UndoReadFromDisk(CBlockUndo &blockundo,
+                          const CBlockIndex &index) const;
+
+    /** Functions for disk access for txs */
+    bool ReadTxFromDisk(CMutableTransaction &tx, const FlatFilePos &pos) const;
+    bool ReadTxUndoFromDisk(CTxUndo &tx, const FlatFilePos &pos) const;
+
+    void CleanupBlockRevFiles() const;
 };
 
-//! Find the first block that is not pruned
-const CBlockIndex *GetFirstStoredBlock(const CBlockIndex *start_block)
-    EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
-
-void CleanupBlockRevFiles();
-
-/** Open a block file (blk?????.dat) */
-FILE *OpenBlockFile(const FlatFilePos &pos, bool fReadOnly = false);
-/** Open an undo file (rev?????.dat) */
-FILE *OpenUndoFile(const FlatFilePos &pos, bool fReadOnly = false);
-/** Translation to a filesystem path. */
-fs::path GetBlockPosFilename(const FlatFilePos &pos);
-
-/**
- *  Actually unlink the specified files
- */
-void UnlinkPrunedFiles(const std::set<int> &setFilesToPrune);
-
-/** Functions for disk access for blocks */
-bool ReadBlockFromDisk(CBlock &block, const FlatFilePos &pos,
-                       const Consensus::Params &consensusParams);
-bool ReadBlockFromDisk(CBlock &block, const CBlockIndex *pindex,
-                       const Consensus::Params &consensusParams);
-bool UndoReadFromDisk(CBlockUndo &blockundo, const CBlockIndex *pindex);
-
-/** Functions for disk access for txs */
-bool ReadTxFromDisk(CMutableTransaction &tx, const FlatFilePos &pos);
-bool ReadTxUndoFromDisk(CTxUndo &tx, const FlatFilePos &pos);
-
 void ThreadImport(ChainstateManager &chainman,
-                  std::vector<fs::path> vImportFiles, const ArgsManager &args,
+                  avalanche::Processor *const avalanche,
+                  std::vector<fs::path> vImportFiles,
                   const fs::path &mempool_path);
 } // namespace node
 

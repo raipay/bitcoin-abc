@@ -35,7 +35,6 @@ EXCLUDE_DIRS = [
     "src/crypto/ctaes/",
     "src/leveldb/",
     "src/secp256k1/",
-    "src/univalue/",
 ]
 
 INCLUDE = ["*.h", "*.cpp", "*.cc", "*.c", "*.mm", "*.py", "*.sh", "*.bash-completion"]
@@ -256,9 +255,7 @@ def print_report(file_infos, verbose):
         ]
         if len(dominant_style) > 0:
             print(
-                "{:4d} with '{}'".format(
-                    len(dominant_style), holder_name.replace("\n", "\\n")
-                )
+                f"{len(dominant_style):4d} with '{holder_name.replace('\\n', '\\\\n')}'"
             )
             print_filenames(dominant_style, verbose)
     print("")

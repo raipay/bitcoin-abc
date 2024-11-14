@@ -5,6 +5,8 @@
 #include <arith_uint256.h>
 #include <chainparams.h>
 #include <clientversion.h>
+#include <common/args.h>
+#include <common/system.h>
 #include <compressor.h>
 #include <config.h>
 #include <consensus/amount.h>
@@ -31,7 +33,6 @@
 #include <util/moneystr.h>
 #include <util/strencodings.h>
 #include <util/string.h>
-#include <util/system.h>
 #include <util/time.h>
 #include <version.h>
 

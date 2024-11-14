@@ -554,6 +554,38 @@ void run_rfc6979_hmac_sha256_tests(void) {
     secp256k1_rfc6979_hmac_sha256_finalize(&rng);
 }
 
+void run_tagged_sha256_tests(void) {
+    int ecount = 0;
+    secp256k1_context *none = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    unsigned char tag[32] = { 0 };
+    unsigned char msg[32] = { 0 };
+    unsigned char hash32[32];
+    unsigned char hash_expected[32] = {
+        0x04, 0x7A, 0x5E, 0x17, 0xB5, 0x86, 0x47, 0xC1,
+        0x3C, 0xC6, 0xEB, 0xC0, 0xAA, 0x58, 0x3B, 0x62,
+        0xFB, 0x16, 0x43, 0x32, 0x68, 0x77, 0x40, 0x6C,
+        0xE2, 0x76, 0x55, 0x9A, 0x3B, 0xDE, 0x55, 0xB3
+    };
+
+    secp256k1_context_set_illegal_callback(none, counting_illegal_callback_fn, &ecount);
+
+    /* API test */
+    CHECK(secp256k1_tagged_sha256(none, hash32, tag, sizeof(tag), msg, sizeof(msg)) == 1);
+    CHECK(secp256k1_tagged_sha256(none, NULL, tag, sizeof(tag), msg, sizeof(msg)) == 0);
+    CHECK(ecount == 1);
+    CHECK(secp256k1_tagged_sha256(none, hash32, NULL, 0, msg, sizeof(msg)) == 0);
+    CHECK(ecount == 2);
+    CHECK(secp256k1_tagged_sha256(none, hash32, tag, sizeof(tag), NULL, 0) == 0);
+    CHECK(ecount == 3);
+
+    /* Static test vector */
+    memcpy(tag, "tag", 3);
+    memcpy(msg, "msg", 3);
+    CHECK(secp256k1_tagged_sha256(none, hash32, tag, 3, msg, 3) == 1);
+    CHECK(secp256k1_memcmp_var(hash32, hash_expected, sizeof(hash32)) == 0);
+    secp256k1_context_destroy(none);
+}
+
 /***** RANDOM TESTS *****/
 
 void test_rand_bits(int rand32, int bits) {
@@ -4829,6 +4861,55 @@ void test_random_pubkeys(void) {
     }
 }
 
+void run_pubkey_comparison(void) {
+    unsigned char pk1_ser[33] = {
+        0x02,
+        0x58, 0x84, 0xb3, 0xa2, 0x4b, 0x97, 0x37, 0x88, 0x92, 0x38, 0xa6, 0x26, 0x62, 0x52, 0x35, 0x11,
+        0xd0, 0x9a, 0xa1, 0x1b, 0x80, 0x0b, 0x5e, 0x93, 0x80, 0x26, 0x11, 0xef, 0x67, 0x4b, 0xd9, 0x23
+    };
+    const unsigned char pk2_ser[33] = {
+        0x02,
+        0xde, 0x36, 0x0e, 0x87, 0x59, 0x8f, 0x3c, 0x01, 0x36, 0x2a, 0x2a, 0xb8, 0xc6, 0xf4, 0x5e, 0x4d,
+        0xb2, 0xc2, 0xd5, 0x03, 0xa7, 0xf9, 0xf1, 0x4f, 0xa8, 0xfa, 0x95, 0xa8, 0xe9, 0x69, 0x76, 0x1c
+    };
+    secp256k1_pubkey pk1;
+    secp256k1_pubkey pk2;
+    int32_t ecount = 0;
+
+    CHECK(secp256k1_ec_pubkey_parse(ctx, &pk1, pk1_ser, sizeof(pk1_ser)) == 1);
+    CHECK(secp256k1_ec_pubkey_parse(ctx, &pk2, pk2_ser, sizeof(pk2_ser)) == 1);
+
+    secp256k1_context_set_illegal_callback(ctx, counting_illegal_callback_fn, &ecount);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, NULL, &pk2) < 0);
+    CHECK(ecount == 1);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk1, NULL) > 0);
+    CHECK(ecount == 2);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk1, &pk2) < 0);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk2, &pk1) > 0);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk1, &pk1) == 0);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk2, &pk2) == 0);
+    CHECK(ecount == 2);
+    {
+        secp256k1_pubkey pk_tmp;
+        memset(&pk_tmp, 0, sizeof(pk_tmp)); /* illegal pubkey */
+        CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk_tmp, &pk2) < 0);
+        CHECK(ecount == 3);
+        CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk_tmp, &pk_tmp) == 0);
+        CHECK(ecount == 5);
+        CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk2, &pk_tmp) > 0);
+        CHECK(ecount == 6);
+    }
+
+    secp256k1_context_set_illegal_callback(ctx, NULL, NULL);
+
+    /* Make pk2 the same as pk1 but with 3 rather than 2. Note that in
+     * an uncompressed encoding, these would have the opposite ordering */
+    pk1_ser[0] = 3;
+    CHECK(secp256k1_ec_pubkey_parse(ctx, &pk2, pk1_ser, sizeof(pk1_ser)) == 1);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk1, &pk2) < 0);
+    CHECK(secp256k1_ec_pubkey_cmp(ctx, &pk2, &pk1) > 0);
+}
+
 void run_random_pubkeys(void) {
     int i;
     for (i = 0; i < 10*count; i++) {
@@ -5735,6 +5816,7 @@ int main(int argc, char **argv) {
     run_sha256_tests();
     run_hmac_sha256_tests();
     run_rfc6979_hmac_sha256_tests();
+    run_tagged_sha256_tests();
 
     /* scalar tests */
     run_scalar_tests();
@@ -5778,6 +5860,7 @@ int main(int argc, char **argv) {
 #endif
 
     /* ecdsa tests */
+    run_pubkey_comparison();
     run_random_pubkeys();
     run_ecdsa_der_parse();
     run_ecdsa_sign_verify();

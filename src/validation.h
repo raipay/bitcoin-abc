@@ -23,7 +23,6 @@
 #include <deploymentstatus.h>
 #include <disconnectresult.h>
 #include <flatfile.h>
-#include <fs.h>
 #include <kernel/chainparams.h>
 #include <kernel/chainstatemanager_opts.h>
 #include <kernel/cs_main.h>
@@ -37,6 +36,7 @@
 #include <txmempool.h> // For CTxMemPool::cs
 #include <uint256.h>
 #include <util/check.h>
+#include <util/fs.h>
 #include <util/result.h>
 #include <util/translation.h>
 
@@ -48,6 +48,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -71,10 +72,9 @@ class SnapshotMetadata;
 namespace Consensus {
 struct Params;
 } // namespace Consensus
-
-namespace Consensus {
-struct Params;
-}
+namespace avalanche {
+class Processor;
+} // namespace avalanche
 
 #define MIN_TRANSACTION_SIZE                                                   \
     (::GetSerializeSize(CTransaction(), PROTOCOL_VERSION))
@@ -116,7 +116,7 @@ enum class SynchronizationState { INIT_REINDEX, INIT_DOWNLOAD, POST_INIT };
 extern GlobalMutex g_best_block_mutex;
 extern std::condition_variable g_best_block_cv;
 /** Used to notify getblocktemplate RPC of new tips. */
-extern uint256 g_best_block;
+extern const CBlockIndex *g_best_block;
 
 /** Documentation for argument 'checklevel'. */
 extern const std::vector<std::string> CHECKLEVEL_DOC;
@@ -180,9 +180,30 @@ double GuessVerificationProgress(const ChainTxData &data,
 void PruneBlockFilesManual(Chainstate &active_chainstate,
                            int nManualPruneHeight);
 
+// clang-format off
 /**
- * Validation result for a single transaction mempool acceptance.
+ * Validation result for a transaction evaluated by MemPoolAccept (single or
+ * package).
+ * Here are the expected fields and properties of a result depending on its
+ * ResultType, applicable to results returned from package evaluation:
+ *+--------------------------+-----------+-------------------------------------------+---------------+
+ *| Field or property        |   VALID   |                   INVALID                 | MEMPOOL_ENTRY |
+ *|                          |           |-------------------------------------------|               |
+ *|                          |           | TX_PACKAGE_RECONSIDERABLE |    Other      |               |
+ *+--------------------------+-----------+---------------------------+---------------+---------------+
+ *| txid in mempool?         | yes       | no                        | no*           | yes           |
+ *| m_state                  | IsValid() | IsInvalid()               | IsInvalid()   | IsValid()     |
+ *| m_replaced_transactions  | yes       | no                        | no            | no            |
+ *| m_vsize                  | yes       | no                        | no            | yes           |
+ *| m_base_fees              | yes       | no                        | no            | yes           |
+ *| m_effective_feerate      | yes       | yes                       | no            | no            |
+ *| m_txids_fee_calculations | yes       | yes                       | no            | no            |
+ *+--------------------------+-----------+---------------------------+---------------+---------------+
+ * (*) Individual transaction acceptance doesn't return MEMPOOL_ENTRY. It
+ * returns INVALID, with the error txn-already-in-mempool. In this case, the
+ * txid may be in the mempool for a tx conflict (TX_AVALANCHE_RECONSIDERABLE).
  */
+// clang-format on
 struct MempoolAcceptResult {
     /** Used to indicate the results of mempool validation. */
     enum class ResultType {
@@ -193,11 +214,12 @@ struct MempoolAcceptResult {
         //! Valid, transaction was already in the mempool.
         MEMPOOL_ENTRY,
     };
+    /** Result type. Present in all MempoolAcceptResults. */
     const ResultType m_result_type;
+
+    /** Contains information about why the transaction failed. */
     const TxValidationState m_state;
 
-    // The following fields are only present when m_result_type =
-    // ResultType::VALID or MEMPOOL_ENTRY
     /**
      * Virtual size as used by the mempool, calculated using serialized size
      * and sigchecks.
@@ -205,13 +227,39 @@ struct MempoolAcceptResult {
     const std::optional<int64_t> m_vsize;
     /** Raw base fees in satoshis. */
     const std::optional<Amount> m_base_fees;
+    /**
+     * The feerate at which this transaction was considered. This includes any
+     * fee delta added using prioritisetransaction (i.e. modified fees). If this
+     * transaction was submitted as a package, this is the package feerate,
+     * which may also include its descendants and/or ancestors
+     * (see m_txids_fee_calculations below).
+     */
+    const std::optional<CFeeRate> m_effective_feerate;
+    /**
+     * Contains the txids of the transactions used for fee-related checks.
+     * Includes this transaction's txid and may include others if this
+     * transaction was validated as part of a package. This is not necessarily
+     * equivalent to the list of transactions passed to ProcessNewPackage().
+     */
+    const std::optional<std::vector<TxId>> m_txids_fee_calculations;
+
     static MempoolAcceptResult Failure(TxValidationState state) {
         return MempoolAcceptResult(state);
     }
 
+    static MempoolAcceptResult
+    FeeFailure(TxValidationState state, CFeeRate effective_feerate,
+               const std::vector<TxId> &txids_fee_calculations) {
+        return MempoolAcceptResult(state, effective_feerate,
+                                   txids_fee_calculations);
+    }
+
     /** Constructor for success case */
-    static MempoolAcceptResult Success(int64_t vsize, Amount fees) {
-        return MempoolAcceptResult(ResultType::VALID, vsize, fees);
+    static MempoolAcceptResult
+    Success(int64_t vsize, Amount fees, CFeeRate effective_feerate,
+            const std::vector<TxId> &txids_fee_calculations) {
+        return MempoolAcceptResult(ResultType::VALID, vsize, fees,
+                                   effective_feerate, txids_fee_calculations);
     }
 
     /**
@@ -219,7 +267,7 @@ struct MempoolAcceptResult {
      * transactions.
      */
     static MempoolAcceptResult MempoolTx(int64_t vsize, Amount fees) {
-        return MempoolAcceptResult(ResultType::MEMPOOL_ENTRY, vsize, fees);
+        return MempoolAcceptResult(vsize, fees);
     }
 
     // Private constructors. Use static methods MempoolAcceptResult::Success,
@@ -234,16 +282,33 @@ private:
     }
 
     /** Generic constructor for success cases */
-    explicit MempoolAcceptResult(ResultType result_type, int64_t vsize,
-                                 Amount fees)
-        : m_result_type(result_type), m_vsize{vsize}, m_base_fees(fees) {}
+    explicit MempoolAcceptResult(
+        ResultType result_type, int64_t vsize, Amount fees,
+        CFeeRate effective_feerate,
+        const std::vector<TxId> &txids_fee_calculations)
+        : m_result_type(result_type), m_vsize{vsize}, m_base_fees(fees),
+          m_effective_feerate(effective_feerate),
+          m_txids_fee_calculations(txids_fee_calculations) {}
+
+    /** Constructor for fee-related failure case */
+    explicit MempoolAcceptResult(
+        TxValidationState state, CFeeRate effective_feerate,
+        const std::vector<TxId> &txids_fee_calculations)
+        : m_result_type(ResultType::INVALID), m_state(state),
+          m_effective_feerate(effective_feerate),
+          m_txids_fee_calculations(txids_fee_calculations) {}
+
+    /** Constructor for already-in-mempool case. */
+    explicit MempoolAcceptResult(int64_t vsize, Amount fees)
+        : m_result_type(ResultType::MEMPOOL_ENTRY), m_vsize{vsize},
+          m_base_fees(fees) {}
 };
 
 /**
  * Validation result for package mempool acceptance.
  */
 struct PackageMempoolAcceptResult {
-    const PackageValidationState m_state;
+    PackageValidationState m_state;
     /**
      * Map from txid to finished MempoolAcceptResults. The client is
      * responsible for keeping track of the transaction objects themselves.
@@ -251,11 +316,11 @@ struct PackageMempoolAcceptResult {
      * transaction. If there was a package-wide error (see result in m_state),
      * m_tx_results will be empty.
      */
-    std::map<const TxId, const MempoolAcceptResult> m_tx_results;
+    std::map<TxId, MempoolAcceptResult> m_tx_results;
 
     explicit PackageMempoolAcceptResult(
         PackageValidationState state,
-        std::map<const TxId, const MempoolAcceptResult> &&results)
+        std::map<TxId, MempoolAcceptResult> &&results)
         : m_state{state}, m_tx_results(std::move(results)) {}
 
     /**
@@ -351,8 +416,6 @@ public:
         return txLimiter;
     }
 };
-
-class ConnectTrace;
 
 /**
  * Check whether all of this transaction's input scripts succeed.
@@ -495,6 +558,11 @@ public:
     ScriptExecutionMetrics GetScriptExecutionMetrics() const { return metrics; }
 };
 
+// CScriptCheck is used a lot in std::vector, make sure that's efficient
+static_assert(std::is_nothrow_move_assignable_v<CScriptCheck>);
+static_assert(std::is_nothrow_move_constructible_v<CScriptCheck>);
+static_assert(std::is_nothrow_destructible_v<CScriptCheck>);
+
 /** Functions for validating blocks and updating the block tree */
 
 /**
@@ -550,9 +618,14 @@ enum class VerifyDBResult {
  * databases.
  */
 class CVerifyDB {
+private:
+    kernel::Notifications &m_notifications;
+
 public:
     CVerifyDB();
 
+public:
+    explicit CVerifyDB(kernel::Notifications &notifications);
     ~CVerifyDB();
 
     [[nodiscard]] VerifyDBResult VerifyDB(Chainstate &chainstate,
@@ -831,7 +904,8 @@ public:
      */
     void LoadExternalBlockFile(FILE *fileIn, FlatFilePos *dbp = nullptr,
                                std::multimap<BlockHash, FlatFilePos>
-                                   *blocks_with_unknown_parent = nullptr)
+                                   *blocks_with_unknown_parent = nullptr,
+                               avalanche::Processor *const avalanche = nullptr)
         EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex,
                                  !cs_avalancheFinalizedBlockIndex);
 
@@ -884,6 +958,7 @@ public:
      */
     bool ActivateBestChain(BlockValidationState &state,
                            std::shared_ptr<const CBlock> pblock = nullptr,
+                           avalanche::Processor *const avalanche = nullptr,
                            bool skip_checkblockindex = false)
         EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex,
                                  !cs_avalancheFinalizedBlockIndex)
@@ -916,7 +991,8 @@ public:
      *
      * May not be called in a validationinterface callback.
      */
-    bool PreciousBlock(BlockValidationState &state, CBlockIndex *pindex)
+    bool PreciousBlock(BlockValidationState &state, CBlockIndex *pindex,
+                       avalanche::Processor *const avalanche = nullptr)
         EXCLUSIVE_LOCKS_REQUIRED(!m_chainstate_mutex,
                                  !cs_avalancheFinalizedBlockIndex)
             LOCKS_EXCLUDED(cs_main);
@@ -934,7 +1010,8 @@ public:
     /**
      * Mark a block as finalized by avalanche.
      */
-    bool AvalancheFinalizeBlock(CBlockIndex *pindex)
+    bool AvalancheFinalizeBlock(CBlockIndex *pindex,
+                                avalanche::Processor &avalanche)
         EXCLUSIVE_LOCKS_REQUIRED(!cs_avalancheFinalizedBlockIndex);
 
     /**
@@ -1027,25 +1104,26 @@ public:
     }
 
 private:
-    bool ActivateBestChainStep(BlockValidationState &state,
-                               CBlockIndex *pindexMostWork,
-                               const std::shared_ptr<const CBlock> &pblock,
-                               bool &fInvalidFound, ConnectTrace &connectTrace)
+    bool ActivateBestChainStep(
+        BlockValidationState &state, CBlockIndex *pindexMostWork,
+        const std::shared_ptr<const CBlock> &pblock, bool &fInvalidFound,
+        const avalanche::Processor *const avalanche = nullptr)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main, m_mempool->cs,
                                  !cs_avalancheFinalizedBlockIndex);
     bool ConnectTip(BlockValidationState &state,
                     BlockPolicyValidationState &blockPolicyState,
                     CBlockIndex *pindexNew,
                     const std::shared_ptr<const CBlock> &pblock,
-                    ConnectTrace &connectTrace,
-                    DisconnectedBlockTransactions &disconnectpool)
+                    DisconnectedBlockTransactions &disconnectpool,
+                    const avalanche::Processor *const avalanche = nullptr)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main, m_mempool->cs,
                                  !cs_avalancheFinalizedBlockIndex);
     void InvalidBlockFound(CBlockIndex *pindex,
                            const BlockValidationState &state)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main, !cs_avalancheFinalizedBlockIndex);
     CBlockIndex *
-    FindMostWorkChain(std::vector<const CBlockIndex *> &blocksToReconcile)
+    FindMostWorkChain(std::vector<const CBlockIndex *> &blocksToReconcile,
+                      bool fAutoUnpark)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main, !cs_avalancheFinalizedBlockIndex);
     void ReceivedBlockTransactions(const CBlock &block, CBlockIndex *pindexNew,
                                    const FlatFilePos &pos)
@@ -1247,6 +1325,9 @@ public:
     const BlockHash &AssumedValidBlock() const {
         return *Assert(m_options.assumed_valid_block);
     }
+    kernel::Notifications &GetNotifications() const {
+        return m_options.notifications;
+    };
 
     /**
      * Alias for ::cs_main.
@@ -1401,7 +1482,9 @@ public:
      */
     bool ProcessNewBlock(const std::shared_ptr<const CBlock> &block,
                          bool force_processing, bool min_pow_checked,
-                         bool *new_block) LOCKS_EXCLUDED(cs_main);
+                         bool *new_block,
+                         avalanche::Processor *const avalanche = nullptr)
+        LOCKS_EXCLUDED(cs_main);
 
     /**
      * Process incoming block headers.
@@ -1476,6 +1559,13 @@ public:
     //!
     //! @sa node/chainstate:LoadChainstate()
     bool ValidatedSnapshotCleanup() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    /** Dump the recent block headers reception time to a file. */
+    bool DumpRecentHeadersTime(const fs::path &filePath) const
+        EXCLUSIVE_LOCKS_REQUIRED(GetMutex());
+    /** Load the recent block headers reception time from a file. */
+    bool LoadRecentHeadersTime(const fs::path &filePath)
+        EXCLUSIVE_LOCKS_REQUIRED(GetMutex());
 };
 
 /** Deployment* info via ChainstateManager */

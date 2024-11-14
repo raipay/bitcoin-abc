@@ -19,9 +19,6 @@
 #include <scheduler.h>
 #include <util/time.h>
 #include <util/translation.h> // For bilingual_str
-// D6970 moved LookupBlockIndex from chain.h to validation.h TODO: remove this
-// when LookupBlockIndex is refactored out of validation
-#include <validation.h>
 
 #include <avalanche/test/util.h>
 #include <test/util/setup_common.h>
@@ -138,10 +135,6 @@ struct AvalancheTestingSetup : public TestChain100Setup {
                                                       *m_node.addrman);
         m_connman = connman.get();
         m_node.connman = std::move(connman);
-        m_node.peerman = ::PeerManager::make(
-            *m_connman, *m_node.addrman, m_node.banman.get(), *m_node.chainman,
-            *m_node.mempool, false);
-        m_node.chain = interfaces::MakeChain(m_node, config.GetChainParams());
 
         // Get the processor ready.
         setArg("-avaminquorumstake", "0");
@@ -154,6 +147,11 @@ struct AvalancheTestingSetup : public TestChain100Setup {
             *Assert(m_node.chainman), m_node.mempool.get(), *m_node.scheduler,
             error);
         BOOST_CHECK(m_processor);
+
+        m_node.peerman = ::PeerManager::make(
+            *m_connman, *m_node.addrman, m_node.banman.get(), *m_node.chainman,
+            *m_node.mempool, m_processor.get(), {});
+        m_node.chain = interfaces::MakeChain(m_node, config.GetChainParams());
     }
 
     ~AvalancheTestingSetup() {
@@ -266,9 +264,9 @@ struct AvalancheTestingSetup : public TestChain100Setup {
                                           error);
     }
 
-    void setArg(std::string key, std::string value) {
+    void setArg(std::string key, const std::string &value) {
         ArgsManager &argsman = *Assert(m_node.args);
-        argsman.ForceSetArg(key, std::move(value));
+        argsman.ForceSetArg(key, value);
         m_overridden_args.emplace(std::move(key));
     }
 
@@ -380,17 +378,15 @@ struct TxProvider {
         : fixture(_fixture), invType(MSG_TX) {}
 
     CTransactionRef buildVoteItem() const {
-        auto rng = FastRandomContext();
         CMutableTransaction mtx;
         mtx.nVersion = 2;
-        mtx.vin.emplace_back(COutPoint{TxId(rng.rand256()), 0});
-        mtx.vout.emplace_back(10 * COIN, CScript() << OP_TRUE);
+        mtx.vin.emplace_back(COutPoint{TxId(FastRandomContext().rand256()), 0});
+        mtx.vout.emplace_back(1 * COIN, CScript() << OP_TRUE);
 
         CTransactionRef tx = MakeTransactionRef(std::move(mtx));
 
         TestMemPoolEntryHelper mempoolEntryHelper;
-        auto entry = mempoolEntryHelper.Fee(int64_t(rng.randrange(10)) * COIN)
-                         .FromTx(tx);
+        auto entry = mempoolEntryHelper.FromTx(tx);
 
         CTxMemPool *mempool = Assert(fixture->m_node.mempool.get());
         {
@@ -413,28 +409,11 @@ struct TxProvider {
         std::vector<Vote> votes;
         votes.reserve(numItems);
 
-        CTxMemPool *mempool = Assert(fixture->m_node.mempool.get());
-
-        {
-            LOCK(mempool->cs);
-
-            // Transactions are sorted by modified fee rate as long as they are
-            // in the mempool. Let's keep it simple here and assume it's the
-            // case.
-            std::sort(items.begin(), items.end(),
-                      [mempool](const CTransactionRef &lhs,
-                                const CTransactionRef &rhs)
-                          EXCLUSIVE_LOCKS_REQUIRED(mempool->cs) {
-                              auto lhsIter = mempool->GetIter(lhs->GetId());
-                              auto rhsIter = mempool->GetIter(rhs->GetId());
-                              BOOST_CHECK(lhsIter);
-                              BOOST_CHECK(rhsIter);
-
-                              return CompareTxMemPoolEntryByModifiedFeeRate{}(
-                                  **lhsIter, **rhsIter);
-                          });
-        }
-
+        // Transactions are sorted by TxId
+        std::sort(items.begin(), items.end(),
+                  [](const CTransactionRef &lhs, const CTransactionRef &rhs) {
+                      return lhs->GetId() < rhs->GetId();
+                  });
         for (auto &item : items) {
             votes.emplace_back(error, item->GetId());
         }
@@ -1829,6 +1808,8 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(voting_parameters, P, VoteItemProviders) {
 BOOST_AUTO_TEST_CASE(block_vote_finalization_tip) {
     BlockProvider provider(this);
 
+    BOOST_CHECK(!m_processor->hasFinalizedTip());
+
     std::vector<CBlockIndex *> blockIndexes;
     for (size_t i = 0; i < AVALANCHE_MAX_ELEMENT_POLL; i++) {
         CBlockIndex *pindex = provider.buildVoteItem();
@@ -1866,6 +1847,8 @@ BOOST_AUTO_TEST_CASE(block_vote_finalization_tip) {
         BOOST_CHECK(registerVotes(nodeid, resp, updates));
     };
 
+    BOOST_CHECK(!m_processor->hasFinalizedTip());
+
     // Vote for the blocks until the one being accepted finalizes
     bool eleventhBlockFinalized = false;
     for (size_t i = 0; i < 10000 && !eleventhBlockFinalized; i++) {
@@ -1876,10 +1859,14 @@ BOOST_AUTO_TEST_CASE(block_vote_finalization_tip) {
                 provider.fromAnyVoteItem(update.getVoteItem())
                         ->GetBlockHash() == eleventhBlockHash) {
                 eleventhBlockFinalized = true;
+                BOOST_CHECK(m_processor->hasFinalizedTip());
+            } else {
+                BOOST_CHECK(!m_processor->hasFinalizedTip());
             }
         }
     }
     BOOST_CHECK(eleventhBlockFinalized);
+    BOOST_CHECK(m_processor->hasFinalizedTip());
 
     // From now only the 10 blocks with more work are polled for
     invs = getInvsForNextPoll();
@@ -2003,32 +1990,10 @@ BOOST_AUTO_TEST_CASE(vote_map_comparator) {
     }
     Shuffle(indexes.begin(), indexes.end(), rng);
 
-    CTxMemPool *mempool = Assert(m_node.mempool.get());
-    TestMemPoolEntryHelper mempoolEntryHelper;
-    std::vector<CTransactionRef> txs;
-    for (size_t i = 1; i <= numberElementsEachType; i++) {
-        CMutableTransaction mtx;
-        mtx.nVersion = 2;
-        mtx.vin.emplace_back(COutPoint{TxId(rng.rand256()), 0});
-        mtx.vout.emplace_back(1000 * COIN, CScript() << OP_TRUE);
-
-        CTransactionRef tx = MakeTransactionRef(std::move(mtx));
-
-        auto entry = mempoolEntryHelper.Fee(int64_t(i) * COIN).FromTx(tx);
-        {
-            LOCK2(cs_main, mempool->cs);
-            mempool->addUnchecked(entry);
-            BOOST_CHECK(mempool->exists(tx->GetId()));
-        }
-
-        txs.emplace_back(std::move(tx));
-    }
-
-    auto allItems =
-        std::make_tuple(std::move(proofs), std::move(indexes), std::move(txs));
+    auto allItems = std::make_tuple(std::move(proofs), std::move(indexes));
     static const size_t numTypes = std::tuple_size<decltype(allItems)>::value;
 
-    RWCollection<VoteMap> voteMap(VoteMap(m_node.mempool.get()));
+    RWCollection<VoteMap> voteMap;
 
     {
         auto writeView = voteMap.getWriteView();
@@ -2048,11 +2013,6 @@ BOOST_AUTO_TEST_CASE(vote_map_comparator) {
                         writeView->insert(std::make_pair(
                             &std::get<1>(allItems)[i], VoteRecord(true)));
                         break;
-                    // CTransactionRef
-                    case 2:
-                        writeView->insert(std::make_pair(
-                            std::get<2>(allItems)[i], VoteRecord(true)));
-                        break;
                     default:
                         break;
                 }
@@ -2065,8 +2025,7 @@ BOOST_AUTO_TEST_CASE(vote_map_comparator) {
         auto readView = voteMap.getReadView();
         auto it = readView.begin();
 
-        // The first batch of items is the proofs ordered by score
-        // (descending)
+        // The first batch of items is the proofs ordered by score (descending)
         uint32_t lastScore = std::numeric_limits<uint32_t>::max();
         for (size_t i = 0; i < numberElementsEachType; i++) {
             BOOST_CHECK(std::holds_alternative<const ProofRef>(it->first));
@@ -2093,106 +2052,7 @@ BOOST_AUTO_TEST_CASE(vote_map_comparator) {
             it++;
         }
 
-        // The last batch of items is the txs ordered by modified fee rate
-        CFeeRate lastFeeRate{MAX_MONEY};
-        {
-            LOCK(mempool->cs);
-
-            for (size_t i = 0; i < numberElementsEachType; i++) {
-                BOOST_CHECK(
-                    std::holds_alternative<const CTransactionRef>(it->first));
-
-                auto iter = mempool->GetIter(
-                    std::get<const CTransactionRef>(it->first)->GetId());
-                BOOST_CHECK(iter.has_value());
-
-                CFeeRate currentFeeRate = (**iter)->GetModifiedFeeRate();
-
-                BOOST_CHECK(currentFeeRate < lastFeeRate);
-                lastFeeRate = currentFeeRate;
-
-                it++;
-            }
-        }
-
         BOOST_CHECK(it == readView.end());
-    }
-}
-
-BOOST_AUTO_TEST_CASE(vote_map_tx_comparator) {
-    CTxMemPool *mempool = Assert(m_node.mempool.get());
-    TestMemPoolEntryHelper mempoolEntryHelper;
-    TxProvider provider(this);
-
-    std::vector<CTransactionRef> txs;
-    for (size_t i = 0; i < 5; i++) {
-        txs.emplace_back(provider.buildVoteItem());
-    }
-
-    {
-        // When there is no mempool, the txs are sorted by txid
-        RWCollection<VoteMap> voteMap(VoteMap(nullptr));
-        {
-            auto writeView = voteMap.getWriteView();
-            for (const auto &tx : txs) {
-                writeView->insert(std::make_pair(tx, VoteRecord(true)));
-            }
-        }
-
-        auto readView = voteMap.getReadView();
-        TxId lastTxId{uint256::ZERO};
-        for (const auto &[item, vote] : readView) {
-            auto tx = std::get<const CTransactionRef>(item);
-            BOOST_CHECK_GT(tx->GetId(), lastTxId);
-            lastTxId = tx->GetId();
-        }
-    }
-
-    // Remove the 5 first txs from the mempool, and add 5 more
-    mempool->clear();
-    for (size_t i = 0; i < 5; i++) {
-        txs.emplace_back(provider.buildVoteItem());
-    }
-
-    {
-        RWCollection<VoteMap> voteMap((VoteMap(mempool)));
-
-        {
-            auto writeView = voteMap.getWriteView();
-            for (const auto &tx : txs) {
-                writeView->insert(std::make_pair(tx, VoteRecord(true)));
-            }
-        }
-
-        auto readView = voteMap.getReadView();
-        auto it = readView.begin();
-
-        LOCK(mempool->cs);
-
-        // The first 5 txs are sorted by fee
-        CFeeRate lastFeeRate{MAX_MONEY};
-        for (size_t i = 0; i < 5; i++) {
-            auto tx = std::get<const CTransactionRef>(it->first);
-
-            auto iter = mempool->GetIter(tx->GetId());
-            BOOST_CHECK(iter.has_value());
-
-            BOOST_CHECK((**iter)->GetModifiedFeeRate() <= lastFeeRate);
-            lastFeeRate = (**iter)->GetModifiedFeeRate();
-            it++;
-        }
-
-        // The last 5 txs are sorted by txid
-        TxId lastTxId{uint256::ZERO};
-        for (size_t i = 0; i < 5; i++) {
-            auto tx = std::get<const CTransactionRef>(it->first);
-
-            BOOST_CHECK(!mempool->exists(tx->GetId()));
-
-            BOOST_CHECK_GT(tx->GetId(), lastTxId);
-            lastTxId = tx->GetId();
-            it++;
-        }
     }
 }
 
@@ -2217,31 +2077,26 @@ BOOST_AUTO_TEST_CASE(block_reconcile_initial_vote) {
         BOOST_CHECK(blockindex);
     }
 
-    // ActivateBestChain() interacts with g_avalanche, so make it happy
-    g_avalanche = std::move(m_processor);
-
     // The block is not connected yet, and not added to the poll list yet
-    BOOST_CHECK(AvalancheTest::getInvsForNextPoll(*g_avalanche).empty());
-    BOOST_CHECK(!g_avalanche->isAccepted(blockindex));
+    BOOST_CHECK(AvalancheTest::getInvsForNextPoll(*m_processor).empty());
+    BOOST_CHECK(!m_processor->isAccepted(blockindex));
 
     // Call ActivateBestChain to connect the new block
-    BOOST_CHECK(chainstate.ActivateBestChain(state, block));
+    BOOST_CHECK(chainstate.ActivateBestChain(state, block, m_processor.get()));
     // It is a valid block so the tip is updated
     BOOST_CHECK_EQUAL(chainstate.m_chain.Tip(), blockindex);
 
     // Check the block is added to the poll
-    auto invs = AvalancheTest::getInvsForNextPoll(*g_avalanche);
+    auto invs = AvalancheTest::getInvsForNextPoll(*m_processor);
     BOOST_CHECK_EQUAL(invs.size(), 1);
     BOOST_CHECK_EQUAL(invs[0].type, MSG_BLOCK);
     BOOST_CHECK_EQUAL(invs[0].hash, blockhash);
 
     // This block is our new tip so we should vote "yes"
-    BOOST_CHECK(g_avalanche->isAccepted(blockindex));
+    BOOST_CHECK(m_processor->isAccepted(blockindex));
 
     // Prevent a data race between UpdatedBlockTip and the Processor destructor
     SyncWithValidationInterfaceQueue();
-
-    g_avalanche.reset(nullptr);
 }
 
 BOOST_AUTO_TEST_CASE(compute_staking_rewards) {
@@ -2312,7 +2167,7 @@ BOOST_AUTO_TEST_CASE(compute_staking_rewards) {
     };
 
     // Elapse some time
-    now += 1h;
+    now += 1h + 1s;
     SetMockTime(now);
     prevBlock.nTime = now.count();
 
@@ -2534,6 +2389,136 @@ BOOST_AUTO_TEST_CASE(reconcileOrFinalize) {
     BOOST_CHECK(!m_processor->reconcileOrFinalize(proof));
     // But the better proof can be polled
     BOOST_CHECK(m_processor->reconcileOrFinalize(betterProof));
+}
+
+BOOST_AUTO_TEST_CASE(stake_contenders) {
+    setArg("-avalanchestakingpreconsensus", "1");
+    bilingual_str error;
+    m_processor = Processor::MakeProcessor(
+        *m_node.args, *m_node.chain, m_node.connman.get(),
+        *Assert(m_node.chainman), m_node.mempool.get(), *m_node.scheduler,
+        error);
+    BOOST_CHECK(m_processor);
+
+    ChainstateManager &chainman = *Assert(m_node.chainman);
+    Chainstate &active_chainstate = chainman.ActiveChainstate();
+    CBlockIndex *chaintip =
+        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip());
+
+    auto proof1 = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+    const ProofId proofid1 = proof1->getId();
+    const StakeContenderId contender1_block1(chaintip->GetBlockHash(),
+                                             proofid1);
+
+    auto proof2 = buildRandomProof(active_chainstate, MIN_VALID_PROOF_SCORE);
+    const ProofId proofid2 = proof2->getId();
+    const StakeContenderId contender2_block1(chaintip->GetBlockHash(),
+                                             proofid2);
+
+    // Add stake contenders and sanity check they default to rejected.
+    {
+        LOCK(cs_main);
+        m_processor->addStakeContender(proof1);
+        m_processor->addStakeContender(proof2);
+    }
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender1_block1),
+                      1);
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender2_block1),
+                      1);
+
+    // Register proof2 and save it as a remote proof so that it will be promoted
+    m_processor->withPeerManager([&](avalanche::PeerManager &pm) {
+        ConnectNode(NODE_AVALANCHE);
+        pm.registerProof(proof2);
+        pm.addNode(0, proofid2);
+        pm.saveRemoteProof(proofid2, 0, true);
+    });
+
+    // Need to have finalization tip set for contenders to be promoted
+    AvalancheTest::setFinalizationTip(*m_processor, chaintip);
+
+    // Advance chaintip
+    CBlock block = CreateAndProcessBlock({}, CScript());
+    chaintip =
+        WITH_LOCK(cs_main, return Assert(m_node.chainman)
+                               ->m_blockman.LookupBlockIndex(block.GetHash()));
+    AvalancheTest::updatedBlockTip(*m_processor);
+
+    // Old contender cache entries unaffected
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender1_block1),
+                      1);
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender2_block1),
+                      1);
+
+    // contender1 was not promoted
+    const StakeContenderId contender1_block2 =
+        StakeContenderId(chaintip->GetBlockHash(), proofid1);
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender1_block2),
+                      -1);
+
+    // contender2 was promoted
+    const StakeContenderId contender2_block2 =
+        StakeContenderId(chaintip->GetBlockHash(), proofid2);
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender2_block2),
+                      1);
+
+    // Advance the finalization tip
+    AvalancheTest::setFinalizationTip(*m_processor, chaintip);
+
+    // Now that the finalization point has passed the block where contender1 was
+    // added, cleaning up the cache will remove its entry. contender2 will have
+    // its old entry cleaned up, but the promoted one remains.
+    m_processor->cleanupStakingRewards(chaintip->nHeight);
+
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender1_block1),
+                      -1);
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender1_block2),
+                      -1);
+
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender2_block1),
+                      -1);
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender2_block2),
+                      1);
+
+    // Manually set contenders as winners
+    m_processor->setStakingRewardWinners(
+        chaintip, {proof1->getPayoutScript(), proof2->getPayoutScript()});
+    // contender1 has been forgotten, which is expected. When a proof becomes
+    // invalid and is cleaned up from the cache, we do not expect peers to poll
+    // for it any more.
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender1_block2),
+                      -1);
+    // contender2 is a winner despite avalanche not finalizing it
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender2_block2),
+                      0);
+
+    // Reject proof2, mine a new chain tip, finalize it, and cleanup the cache
+    m_processor->withPeerManager(
+        [&](avalanche::PeerManager &pm) { pm.rejectProof(proofid2); });
+    block = CreateAndProcessBlock({}, CScript());
+    chaintip =
+        WITH_LOCK(cs_main, return Assert(m_node.chainman)
+                               ->m_blockman.LookupBlockIndex(block.GetHash()));
+    AvalancheTest::updatedBlockTip(*m_processor);
+    AvalancheTest::setFinalizationTip(*m_processor, chaintip);
+    m_processor->cleanupStakingRewards(chaintip->nHeight);
+
+    // Old entries were cleaned up
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender1_block2),
+                      -1);
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender2_block2),
+                      -1);
+
+    // Neither contender was promoted and contender2 was cleaned up even though
+    // it was once a manual winner.
+    const StakeContenderId contender1_block3 =
+        StakeContenderId(chaintip->GetBlockHash(), proofid1);
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender1_block3),
+                      -1);
+    const StakeContenderId contender2_block3 =
+        StakeContenderId(chaintip->GetBlockHash(), proofid2);
+    BOOST_CHECK_EQUAL(m_processor->getStakeContenderStatus(contender2_block3),
+                      -1);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

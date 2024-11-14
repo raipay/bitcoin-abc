@@ -22,7 +22,7 @@ const init =
         ? () => {
               const isGAEnabled = process.env.NODE_ENV === 'production';
               if (isGAEnabled) {
-                  ReactGA.initialize('UA-183678810-1');
+                  ReactGA.initialize(process.env.REACT_APP_GOOGLE_ANALYTICS);
               }
 
               return isGAEnabled;
@@ -46,7 +46,7 @@ export const Event =
         : // If you are building the extension, export function that does nothing
           // Note: it's not practical to conditionally remove calls to this function from all screens
           // So, more practical to just define it as a do-nothing function for the extension
-          () => {};
+          () => undefined;
 
 export default process.env.REACT_APP_BUILD_ENV !== 'extension'
     ? {
@@ -54,6 +54,6 @@ export default process.env.REACT_APP_BUILD_ENV !== 'extension'
           init,
       }
     : {
-          RouteTracker: () => {},
+          RouteTracker: () => undefined,
           init,
       };

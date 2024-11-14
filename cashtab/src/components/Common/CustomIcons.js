@@ -44,6 +44,14 @@ import { ReactComponent as Reward } from 'assets/reward.svg';
 import { ReactComponent as SelfSend } from 'assets/selfsend.svg';
 import { ReactComponent as FanOut } from 'assets/fanout.svg';
 import { ReactComponent as MintNft } from 'assets/mintnft.svg';
+import { ReactComponent as Nft } from 'assets/nft.svg';
+import { ReactComponent as AgoraOffer } from 'assets/agora-offer.svg';
+import { ReactComponent as AgoraTx } from 'assets/agora-tx.svg';
+import { ReactComponent as AgoraBuy } from 'assets/agora-buy.svg';
+import { ReactComponent as AgoraSale } from 'assets/agora-sale.svg';
+import { ReactComponent as AgoraCancel } from 'assets/agora-cancel.svg';
+import { ReactComponent as Doge } from 'assets/doge.svg';
+import { ReactComponent as CollapseDown } from 'assets/collapse-down.svg';
 
 import appConfig from 'config/app';
 
@@ -156,6 +164,19 @@ export const TokenBurnIcon = () => <TokenBurn title="tx-token-burn" />;
 export const PayButtonIcon = () => (
     <PayButtonImg src={PayButton} alt="tx-paybutton" />
 );
+const PaywallPaymentIconWrapper = styled.div`
+    svg,
+    g,
+    path {
+        fill: ${props => props.theme.eCashBlue};
+    }
+    fill: ${props => props.theme.eCashBlue};
+`;
+export const PaywallPaymentIcon = () => (
+    <PaywallPaymentIconWrapper>
+        <Audit title="tx-paywall" />
+    </PaywallPaymentIconWrapper>
+);
 export const ChatIcon = () => <Chat title="tx-chat" />;
 export const MintIcon = () => <Mint title="tx-mint" />;
 export const CopyPasteIcon = () => <CopyPaste title="copy-paste" />;
@@ -199,6 +220,14 @@ export const RewardIcon = () => <Reward title="Cashtab Rewards" />;
 export const SelfSendIcon = () => <SelfSend title="Self Send" />;
 export const FanOutIcon = () => <FanOut title="Fan Out" />;
 export const MintNftIcon = () => <MintNft title="Mint NFT" />;
+export const NftIcon = () => <Nft title="NFT" />;
+export const AgoraOfferIcon = () => <AgoraOffer title="Agora Offer" />;
+export const AgoraTxIcon = () => <AgoraTx title="Agora Tx" />;
+export const AgoraBuyIcon = () => <AgoraBuy title="Agora Purchase" />;
+export const AgoraSaleIcon = () => <AgoraSale title="Agora Sale" />;
+export const AgoraCancelIcon = () => <AgoraCancel title="Agora Cancel" />;
+export const DogeIcon = () => <Doge title="Meme Agora" />;
+export const CollapseDownIcon = () => <CollapseDown title="Expand" />;
 
 const GithubIconWrapper = styled.div`
     svg {

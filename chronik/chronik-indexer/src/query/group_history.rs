@@ -7,13 +7,18 @@
 use std::collections::BTreeSet;
 
 use abc_rust_error::Result;
-use bitcoinsuite_core::tx::{Tx, TxId};
+use bitcoinsuite_core::{
+    hash::Hashed,
+    tx::{Tx, TxId},
+};
+use bytes::Bytes;
 use chronik_db::{
     db::Db,
-    group::Group,
+    group::{Group, GroupMember},
     io::{BlockReader, GroupHistoryReader, SpentByReader, TxNum, TxReader},
     mem::{Mempool, MempoolGroupHistory},
 };
+use chronik_plugin::data::PluginNameMap;
 use chronik_proto::proto;
 use chronik_util::log;
 use thiserror::Error;
@@ -21,7 +26,10 @@ use thiserror::Error;
 use crate::{
     avalanche::Avalanche,
     indexer::Node,
-    query::{make_tx_proto, OutputsSpent, TxTokenData},
+    query::{
+        make_tx_proto, read_plugin_outputs, MakeTxProtoParams, OutputsSpent,
+        TxTokenData,
+    },
 };
 
 /// Smallest allowed page size
@@ -48,6 +56,10 @@ pub struct QueryGroupHistory<'a, G: Group> {
     pub node: &'a Node,
     /// Whether the SLP/ALP token index is enabled
     pub is_token_index_enabled: bool,
+    /// Whether the script hash index is enabled
+    pub is_scripthash_index_enabled: bool,
+    /// Map plugin name <-> plugin idx of all loaded plugins
+    pub plugin_name_map: &'a PluginNameMap,
 }
 
 /// Errors indicating something went wrong with reading txs.
@@ -78,18 +90,55 @@ pub enum QueryGroupHistoryError {
         MIN_HISTORY_PAGE_SIZE
     )]
     RequestPageSizeTooSmall(usize),
+
+    /// Script hash not found
+    #[error("404: Script hash {0:?} not found")]
+    ScriptHashNotFound(String),
+
+    /// Script hash index not enabled
+    #[error("400: Script hash index disabled")]
+    ScriptHashIndexDisabled,
 }
 
 use self::QueryGroupHistoryError::*;
 
 impl<'a, G: Group> QueryGroupHistory<'a, G> {
+    fn member_ser_from_member(
+        &self,
+        member: &GroupMember<G::Member<'_>>,
+        db_reader: &GroupHistoryReader<'_, G>,
+    ) -> Result<Bytes> {
+        match member {
+            GroupMember::Member(member) => Ok(Bytes::copy_from_slice(
+                self.group.ser_member(member).as_ref(),
+            )),
+            GroupMember::MemberHash(memberhash) => {
+                if !self.is_scripthash_index_enabled {
+                    return Err(ScriptHashIndexDisabled.into());
+                }
+                // Check the mempool first, then the db. The script is more
+                // likely to be in the db, but accessing the mempool's
+                // hashmap is faster.
+                if let Some(member_ser) =
+                    self.mempool_history.member_ser_by_member_hash(*memberhash)
+                {
+                    return Ok(Bytes::copy_from_slice(member_ser));
+                }
+                let script_ser = db_reader
+                    .member_ser_by_member_hash(*memberhash)?
+                    .ok_or_else(|| ScriptHashNotFound(memberhash.hex_be()))?;
+                Ok(Bytes::from(script_ser))
+            }
+        }
+    }
+
     /// Return the confirmed txs of the group in the order as txs occur on the
     /// blockchain, i.e.:
     /// - Sorted by block height ascendingly.
     /// - Within a block, sorted as txs occur in the block.
     pub fn confirmed_txs(
         &self,
-        member: G::Member<'_>,
+        member: GroupMember<G::Member<'_>>,
         request_page_num: usize,
         request_page_size: usize,
     ) -> Result<proto::TxHistoryPage> {
@@ -100,8 +149,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
             return Err(RequestPageSizeTooBig(request_page_size).into());
         }
         let db_reader = GroupHistoryReader::<G>::new(self.db)?;
-        let member_ser = self.group.ser_member(&member);
-
+        let member_ser = self.member_ser_from_member(&member, &db_reader)?;
         let (num_db_pages, num_db_txs) =
             db_reader.member_num_pages_and_txs(member_ser.as_ref())?;
         let num_request_pages =
@@ -189,7 +237,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
     /// are mostly interested in the "latest" txs of the address.
     pub fn rev_history(
         &self,
-        member: G::Member<'_>,
+        member: GroupMember<G::Member<'_>>,
         request_page_num: usize,
         request_page_size: usize,
     ) -> Result<proto::TxHistoryPage> {
@@ -201,7 +249,7 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
         }
 
         let db_reader = GroupHistoryReader::<G>::new(self.db)?;
-        let member_ser = self.group.ser_member(&member);
+        let member_ser = self.member_ser_from_member(&member, &db_reader)?;
         let (_, num_db_txs) =
             db_reader.member_num_pages_and_txs(member_ser.as_ref())?;
 
@@ -264,18 +312,29 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
             .take(request_page_size);
         for (_, txid) in page_mempool_txs_iter {
             let entry = self.mempool.tx(txid).ok_or(MissingMempoolTx(*txid))?;
-            page_txs.push(make_tx_proto(
-                &entry.tx,
-                &OutputsSpent::new_mempool(
+            page_txs.push(make_tx_proto(MakeTxProtoParams {
+                tx: &entry.tx,
+                outputs_spent: &OutputsSpent::new_mempool(
                     self.mempool.spent_by().outputs_spent(txid),
                 ),
-                entry.time_first_seen,
-                false,
-                None,
-                self.avalanche,
-                TxTokenData::from_mempool(self.mempool.tokens(), &entry.tx)
-                    .as_ref(),
-            ));
+                time_first_seen: entry.time_first_seen,
+                is_coinbase: false,
+                block: None,
+                avalanche: self.avalanche,
+                token: TxTokenData::from_mempool(
+                    self.mempool.tokens(),
+                    &entry.tx,
+                )
+                .as_ref(),
+                plugin_outputs: &read_plugin_outputs(
+                    self.db,
+                    self.mempool,
+                    &entry.tx,
+                    None,
+                    !self.plugin_name_map.is_empty(),
+                )?,
+                plugin_name_map: self.plugin_name_map,
+            }));
         }
 
         // If we filled up the page with mempool txs, or there's no DB txs on
@@ -338,9 +397,10 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
     /// pagination later.
     pub fn unconfirmed_txs(
         &self,
-        member: G::Member<'_>,
+        member: GroupMember<G::Member<'_>>,
     ) -> Result<proto::TxHistoryPage> {
-        let member_ser = self.group.ser_member(&member);
+        let db_reader = GroupHistoryReader::<G>::new(self.db)?;
+        let member_ser = self.member_ser_from_member(&member, &db_reader)?;
         let txs = match self.mempool_history.member_history(member_ser.as_ref())
         {
             Some(mempool_txs) => mempool_txs
@@ -348,21 +408,29 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                 .map(|(_, txid)| -> Result<_> {
                     let entry =
                         self.mempool.tx(txid).ok_or(MissingMempoolTx(*txid))?;
-                    Ok(make_tx_proto(
-                        &entry.tx,
-                        &OutputsSpent::new_mempool(
+                    Ok(make_tx_proto(MakeTxProtoParams {
+                        tx: &entry.tx,
+                        outputs_spent: &OutputsSpent::new_mempool(
                             self.mempool.spent_by().outputs_spent(txid),
                         ),
-                        entry.time_first_seen,
-                        false,
-                        None,
-                        self.avalanche,
-                        TxTokenData::from_mempool(
+                        time_first_seen: entry.time_first_seen,
+                        is_coinbase: false,
+                        block: None,
+                        avalanche: self.avalanche,
+                        token: TxTokenData::from_mempool(
                             self.mempool.tokens(),
                             &entry.tx,
                         )
                         .as_ref(),
-                    ))
+                        plugin_outputs: &read_plugin_outputs(
+                            self.db,
+                            self.mempool,
+                            &entry.tx,
+                            None,
+                            !self.plugin_name_map.is_empty(),
+                        )?,
+                        plugin_name_map: self.plugin_name_map,
+                    }))
                 })
                 .collect::<Result<Vec<_>>>()?,
             None => vec![],
@@ -400,14 +468,23 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
             &tx,
             self.is_token_index_enabled,
         )?;
-        Ok(make_tx_proto(
+        let plugin_outputs = read_plugin_outputs(
+            self.db,
+            self.mempool,
             &tx,
-            &outputs_spent,
-            block_tx.entry.time_first_seen,
-            block_tx.entry.is_coinbase,
-            Some(&block),
-            self.avalanche,
-            token.as_ref(),
-        ))
+            Some(tx_num),
+            !self.plugin_name_map.is_empty(),
+        )?;
+        Ok(make_tx_proto(MakeTxProtoParams {
+            tx: &tx,
+            outputs_spent: &outputs_spent,
+            time_first_seen: block_tx.entry.time_first_seen,
+            is_coinbase: block_tx.entry.is_coinbase,
+            block: Some(&block),
+            avalanche: self.avalanche,
+            token: token.as_ref(),
+            plugin_outputs: &plugin_outputs,
+            plugin_name_map: self.plugin_name_map,
+        }))
     }
 }

@@ -7,14 +7,10 @@ import chaiAsPromised from 'chai-as-promised';
 import { ChildProcess } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import path from 'path';
-import {
-    ChronikClientNode,
-    Tx_InNode,
-    WsEndpoint_InNode,
-    WsMsgClient,
-} from '../../index';
+import { ChronikClient, Tx, WsEndpoint, WsMsgClient } from '../../index';
 import initializeTestRunner, {
     cleanupMochaRegtest,
+    expectWsMsgs,
     setMochaTimeout,
     TestInfo,
 } from '../setup/testRunner';
@@ -147,12 +143,12 @@ describe('Get blocktxs, txs, and history for SLP fungible token txs', () => {
     let slpSendTxid = '';
     let slpEmptyGenesisTxid = '';
 
-    let slpGenesis: Tx_InNode;
-    let slpMint: Tx_InNode;
-    let slpSend: Tx_InNode;
-    let slpEmptyGenesis: Tx_InNode;
+    let slpGenesis: Tx;
+    let slpMint: Tx;
+    let slpSend: Tx;
+    let slpEmptyGenesis: Tx;
 
-    let ws: WsEndpoint_InNode;
+    let ws: WsEndpoint;
 
     const BASE_ADDEDTOMEMPOOL_WSMSG: WsMsgClient = {
         type: 'Tx',
@@ -164,10 +160,9 @@ describe('Get blocktxs, txs, and history for SLP fungible token txs', () => {
         msgType: 'TX_CONFIRMED',
         txid: '1111111111111111111111111111111111111111111111111111111111111111',
     };
-    const MSG_WAIT_MSECS = 1000;
 
     it('Gets an SLP genesis tx from the mempool', async () => {
-        const chronik = new ChronikClientNode(chronikUrl);
+        const chronik = new ChronikClient(chronikUrl);
 
         slpGenesisTxid = await get_slp_fungible_genesis_txid;
 
@@ -273,16 +268,13 @@ describe('Get blocktxs, txs, and history for SLP fungible token txs', () => {
         // Note: ws subs and unsubs tested in token_alp.ts
     });
     it('Gets an SLP fungible mint tx from the mempool', async () => {
-        const chronik = new ChronikClientNode(chronikUrl);
+        const chronik = new ChronikClient(chronikUrl);
 
         slpMintTxid = await get_slp_fungible_mint_txid;
 
         // We see slpMintTxid from our websocket subscription to slpGenesisTxid
-        while (msgCollector.length < 1) {
-            // Wait for expected ws msg
-            // If it does not come in, test will time out
-            await new Promise(resolve => setTimeout(resolve, MSG_WAIT_MSECS));
-        }
+        // Wait for expected ws msg
+        await expectWsMsgs(1, msgCollector);
         expect(msgCollector).to.deep.equal([
             { ...BASE_ADDEDTOMEMPOOL_WSMSG, txid: slpMintTxid },
         ]);
@@ -356,16 +348,13 @@ describe('Get blocktxs, txs, and history for SLP fungible token txs', () => {
         expect(slpMint.tokenStatus).to.eql('TOKEN_STATUS_NORMAL');
     });
     it('Gets an SLP fungible send tx from the mempool', async () => {
-        const chronik = new ChronikClientNode(chronikUrl);
+        const chronik = new ChronikClient(chronikUrl);
 
         slpSendTxid = await get_slp_fungible_send_txid;
 
         // We see slpSendTxid from our websocket subscription to slpGenesisTxid
-        while (msgCollector.length < 1) {
-            // Wait for expected ws msg
-            // If it does not come in, test will time out
-            await new Promise(resolve => setTimeout(resolve, MSG_WAIT_MSECS));
-        }
+        // Wait for expected ws msg
+        await expectWsMsgs(1, msgCollector);
         expect(msgCollector).to.deep.equal([
             { ...BASE_ADDEDTOMEMPOOL_WSMSG, txid: slpSendTxid },
         ]);
@@ -438,7 +427,7 @@ describe('Get blocktxs, txs, and history for SLP fungible token txs', () => {
         expect(slpSend.tokenStatus).to.eql('TOKEN_STATUS_NORMAL');
     });
     it('Gets an SLP fungible empty genesis tx from the mempool', async () => {
-        const chronik = new ChronikClientNode(chronikUrl);
+        const chronik = new ChronikClient(chronikUrl);
 
         slpEmptyGenesisTxid = await get_slp_fungible_genesis_empty_txid;
 
@@ -496,7 +485,7 @@ describe('Get blocktxs, txs, and history for SLP fungible token txs', () => {
         expect(slpEmptyGenesis.tokenStatus).to.eql('TOKEN_STATUS_NORMAL');
     });
     it('Can get all of the above txs from the blockTxs endpoint after they are mined in a block', async () => {
-        const chronik = new ChronikClientNode(chronikUrl);
+        const chronik = new ChronikClient(chronikUrl);
 
         // Now that we have a block, we get a block key from token info
         const slpGenesisConfirmedInfo = await chronik.token(slpGenesisTxid);
@@ -524,7 +513,7 @@ describe('Get blocktxs, txs, and history for SLP fungible token txs', () => {
             slpEmptyGenesis,
         ].sort((a, b) => a.txid.localeCompare(b.txid));
 
-        // The token fields of Tx_InNode(s) from blockTxs match the Tx_InNode(s) from tx
+        // The token fields of Tx(s) from blockTxs match the Tx(s) from tx
         // Note the txs are not expected to fully match bc now we have block and spentBy keys,
         // which are expected after confirmation
         // Full endpoint output is tested in blocktxs_and_tx_and_rawtx.ts
@@ -562,11 +551,8 @@ describe('Get blocktxs, txs, and history for SLP fungible token txs', () => {
 
         // We see expected TX_CONFIRMED msg for txs related to slpGenesisTxid
         // Note they come in block order, i.e. alphabetical by txid
-        while (msgCollector.length < 3) {
-            // Wait for expected ws msg
-            // If it does not come in, test will time out
-            await new Promise(resolve => setTimeout(resolve, MSG_WAIT_MSECS));
-        }
+        // Wait for expected ws msg
+        await expectWsMsgs(3, msgCollector);
         expect(msgCollector).to.deep.equal([
             { ...BASE_CONFIRMED_WSMSG, txid: slpMintTxid }, // 31417f7a8c8939d5b8da5e0d241e733fd698d5bce384d00f5f682b78dcff944d
             { ...BASE_CONFIRMED_WSMSG, txid: slpGenesisTxid }, // cd295e7eb883b5826e2d8872b1626a4af4ce7ec81c468f1bfdad14632036d20a

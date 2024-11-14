@@ -33,14 +33,14 @@ from typing import List, Optional, Tuple, Union
 
 from . import cashaddr, networks
 from .bitcoin import (
-    ECKey,
     OpCodes,
     ScriptType,
-    hash_160,
     is_minikey,
     minikey_to_private_key,
     push_script_bytes,
 )
+from .crypto import hash_160
+from .ecc import ECPrivkey
 from .util import cachedproperty
 
 _sha256 = hashlib.sha256
@@ -181,8 +181,8 @@ class PublicKey(namedtuple("PublicKeyTuple", "pubkey")):
         """Create a compressed or uncompressed public key from a private
         key."""
         privkey, compressed = cls.privkey_from_WIF_privkey(WIF_privkey)
-        ec_key = ECKey(privkey)
-        return cls.from_pubkey(ec_key.GetPubKey(compressed))
+        ec_key = ECPrivkey(privkey)
+        return cls.from_pubkey(ec_key.get_public_key_bytes(compressed))
 
     @classmethod
     def from_string(cls, string):

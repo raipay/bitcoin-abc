@@ -31,11 +31,20 @@ struct BlockInfo;
 struct Block;
 struct Tx;
 struct OutPoint;
+struct WrappedBlockHash;
+struct RawBlockHeader;
 
 class block_index_not_found : public std::exception {
 public:
     const char *what() const noexcept override {
         return "CBlockIndex not found";
+    }
+};
+
+class invalid_block_range : public std::exception {
+public:
+    const char *what() const noexcept override {
+        return "Invalid block range requested";
     }
 };
 
@@ -58,6 +67,13 @@ public:
     const CBlockIndex &get_chain_tip() const;
 
     const CBlockIndex &lookup_block_index(std::array<uint8_t, 32> hash) const;
+
+    const CBlockIndex &lookup_block_index_by_height(int height) const;
+
+    rust::Vec<RawBlockHeader> get_block_headers_by_range(int start,
+                                                         int end) const;
+    rust::Vec<WrappedBlockHash> get_block_hashes_by_range(int start,
+                                                          int end) const;
 
     std::unique_ptr<CBlock> load_block(const CBlockIndex &bindex) const;
 
@@ -91,6 +107,8 @@ Block bridge_block(const CBlock &block, const CBlockUndo &block_undo,
 
 BlockInfo get_block_info(const CBlockIndex &index);
 
+std::array<uint8_t, 80> get_block_header(const CBlockIndex &index);
+
 const CBlockIndex &get_block_ancestor(const CBlockIndex &index, int32_t height);
 
 rust::Vec<uint8_t> compress_script(rust::Slice<const uint8_t> script);
@@ -104,6 +122,8 @@ int64_t default_max_raw_tx_fee_rate_per_kb();
 void sync_with_validation_interface_queue();
 
 bool init_error(const rust::Str msg);
+
+rust::String format_full_version();
 
 } // namespace chronik_bridge
 

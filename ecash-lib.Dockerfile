@@ -14,23 +14,41 @@ RUN apt-get update \
 WORKDIR /app/
 COPY Cargo.toml .
 
-# Copy ecash-lib and ecash-lib-wasm files to same directory structure as monorepo
+# Copy chronik to same directory structure as monorepo
+# This needs to be in place to run ./build-wasm
+WORKDIR /app/chronik/
+COPY chronik/ .
+
+# Copy secp256k1 to same directory structure as monorepo
+WORKDIR /app/src/secp256k1
+COPY src/secp256k1/ .
+
+# Copy ecash-secp256k1, ecash-lib and ecash-lib-wasm files to same directory structure as monorepo
+WORKDIR /app/modules/ecash-secp256k1
+COPY modules/ecash-secp256k1 .
 WORKDIR /app/modules/ecash-lib
 COPY modules/ecash-lib .
 WORKDIR /app/modules/ecash-lib-wasm
 COPY modules/ecash-lib-wasm .
 
 # Build web assembly for ecash-lib
-RUN ./build-wasm.sh
+RUN CC=clang ./build-wasm.sh
 
 # Stage 2 - Node image for running npm publish
-FROM node:20-buster-slim
+FROM node:20-bookworm-slim
 
 # Copy static assets from WasmBuilder stage (ecash-lib-wasm and ecash-lib, with wasm built in place)
 WORKDIR /app/modules
 COPY --from=WasmBuilder /app/modules .
 
 # Build out local dependencies of ecash-lib
+
+# ecashaddrjs (dependency of chronik-client)
+WORKDIR /app/modules/ecashaddrjs
+COPY modules/ecashaddrjs/ .
+RUN npm ci
+RUN npm run build
+
 # chronik-client
 WORKDIR /app/modules/chronik-client
 COPY modules/chronik-client/ .

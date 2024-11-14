@@ -3,6 +3,7 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test wallet group functionality."""
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import CTransaction, FromHex, ToHex
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_approx, assert_equal
@@ -12,6 +13,7 @@ class WalletGroupTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 5
+        self.noban_tx_relay = True
         self.extra_args = [
             [],
             [],
@@ -23,9 +25,6 @@ class WalletGroupTest(BitcoinTestFramework):
             ["-maxapsfee=2.93"],
             ["-maxapsfee=2.94"],
         ]
-        # whitelist peers to speed up tx relay / mempool sync
-        for args in self.extra_args:
-            args.append("-whitelist=noban@127.0.0.1")
 
         self.rpc_timeout = 480
         self.supports_cli = False
@@ -35,7 +34,7 @@ class WalletGroupTest(BitcoinTestFramework):
 
     def run_test(self):
         # Mine some coins
-        self.generate(self.nodes[0], 110)
+        self.generate(self.nodes[0], COINBASE_MATURITY + 10)
 
         # Get some addresses from the two nodes
         addr1 = [self.nodes[1].getnewaddress() for _ in range(3)]

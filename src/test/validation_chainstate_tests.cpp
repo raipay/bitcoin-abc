@@ -9,6 +9,8 @@
 #include <rpc/blockchain.h>
 #include <sync.h>
 #include <test/util/chainstate.h>
+#include <test/util/coins.h>
+#include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <uint256.h>
 #include <validation.h>
@@ -25,20 +27,6 @@ BOOST_AUTO_TEST_CASE(validation_chainstate_resize_caches) {
     ChainstateManager &manager = *Assert(m_node.chainman);
     CTxMemPool &mempool = *Assert(m_node.mempool);
 
-    //! Create and add a Coin with DynamicMemoryUsage of 80 bytes to the given
-    //! view.
-    auto add_coin = [](CCoinsViewCache &coins_view) -> COutPoint {
-        TxId txid{InsecureRand256()};
-        COutPoint outp{txid, 0};
-        Amount nValue = static_cast<int64_t>(InsecureRand32()) * SATOSHI;
-        CScript scriptPubKey;
-        scriptPubKey.assign((uint32_t)56, 1);
-        Coin newcoin(CTxOut(nValue, std::move(scriptPubKey)), 1, false);
-        coins_view.AddCoin(outp, std::move(newcoin), false);
-
-        return outp;
-    };
-
     Chainstate &c1 =
         WITH_LOCK(cs_main, return manager.InitializeChainstate(&mempool));
     c1.InitCoinsDB(
@@ -51,7 +39,7 @@ BOOST_AUTO_TEST_CASE(validation_chainstate_resize_caches) {
     // Add a coin to the in-memory cache, upsize once, then downsize.
     {
         LOCK(::cs_main);
-        auto outpoint = add_coin(c1.CoinsTip());
+        const auto outpoint = AddTestCoin(c1.CoinsTip());
 
         // Set a meaningless bestblock value in the coinsview cache - otherwise
         // we won't flush during ResizecoinsCaches() and will subsequently hit
@@ -81,7 +69,7 @@ BOOST_AUTO_TEST_CASE(validation_chainstate_resize_caches) {
 //! of what it does for the active chainstate.
 BOOST_FIXTURE_TEST_CASE(chainstate_update_tip, TestChain100Setup) {
     ChainstateManager &chainman = *Assert(m_node.chainman);
-    BlockHash curr_tip = BlockHash{::g_best_block};
+    const CBlockIndex *curr_tip = ::g_best_block;
 
     // Mine 10 more blocks, putting at us height 110 where a valid assumeutxo
     // value can be found.
@@ -96,7 +84,7 @@ BOOST_FIXTURE_TEST_CASE(chainstate_update_tip, TestChain100Setup) {
     // Ensure our active chain is the snapshot chainstate.
     BOOST_CHECK(WITH_LOCK(::cs_main, return chainman.IsSnapshotActive()));
 
-    curr_tip = BlockHash{::g_best_block};
+    curr_tip = ::g_best_block;
 
     // Mine a new block on top of the activated snapshot chainstate.
     // Defined in TestChain100Setup.
@@ -106,7 +94,7 @@ BOOST_FIXTURE_TEST_CASE(chainstate_update_tip, TestChain100Setup) {
     // changed.
     BOOST_CHECK(::g_best_block != curr_tip);
 
-    curr_tip = BlockHash{::g_best_block};
+    curr_tip = ::g_best_block;
 
     BOOST_CHECK_EQUAL(chainman.GetAll().size(), 2);
 

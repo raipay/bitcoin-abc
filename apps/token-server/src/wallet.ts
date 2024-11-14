@@ -7,7 +7,7 @@
  * methods for working with a server-based hotwallet
  */
 
-import { ChronikClientNode, ScriptUtxo_InNode } from 'chronik-client';
+import { ChronikClient, ScriptUtxo } from 'chronik-client';
 import BIP32Factory from 'bip32';
 import * as ecc from 'tiny-secp256k1';
 import * as bip39 from 'bip39';
@@ -16,8 +16,8 @@ const bip32 = BIP32Factory(ecc);
 
 export interface ServerWallet {
     address: string;
-    wif: string;
-    utxos?: ScriptUtxo_InNode[];
+    sk: Uint8Array;
+    utxos?: ScriptUtxo[];
 }
 
 /**
@@ -40,10 +40,16 @@ export function getWalletFromSeed(mnemonic: string): ServerWallet {
 
     const child = root.derivePath(ECASH_DERIVATION_PATH_TOKENS);
 
-    const wif = child.toWIF();
-    const address = cashaddr.encode('ecash', 'p2pkh', child.identifier);
+    // Get private key and public key
+    const { privateKey, identifier } = child;
 
-    return { address, wif };
+    // bip32 child.privateKey is Buffer | undefined
+    const skString = privateKey!.toString('hex');
+    console.log(`sk as hex string: ${skString}`);
+
+    const address = cashaddr.encode('ecash', 'p2pkh', identifier);
+
+    return { address, sk: Uint8Array.from(Buffer.from(skString, 'hex')) };
 }
 
 /**
@@ -53,7 +59,7 @@ export function getWalletFromSeed(mnemonic: string): ServerWallet {
  * @throws if error in chronik call
  */
 export async function syncWallet(
-    chronik: ChronikClientNode,
+    chronik: ChronikClient,
     wallet: ServerWallet,
 ): Promise<ServerWallet> {
     const { address } = wallet;

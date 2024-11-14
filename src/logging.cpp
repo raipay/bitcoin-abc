@@ -4,8 +4,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <fs.h>
 #include <logging.h>
+#include <util/fs.h>
 
 #include <util/string.h>
 #include <util/threadnames.h>
@@ -134,6 +134,7 @@ const CLogCategoryDesc LogCategories[] = {
 #endif
     {BCLog::BLOCKSTORE, "blockstorage"},
     {BCLog::NETDEBUG, "netdebug"},
+    {BCLog::TXPACKAGES, "txpackages"},
     {BCLog::ALL, "1"},
     {BCLog::ALL, "all"},
 };

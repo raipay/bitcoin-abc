@@ -14,10 +14,10 @@
 #include <random.h>
 #include <serialize.h>
 #include <streams.h>
-#include <timedata.h>
 #include <tinyformat.h>
 #include <uint256.h>
 #include <util/check.h>
+#include <util/time.h>
 
 #include <cmath>
 #include <optional>
@@ -54,11 +54,9 @@ static constexpr auto ADDRMAN_TEST_WINDOW{40min};
 
 int AddrInfo::GetTriedBucket(const uint256 &nKey,
                              const std::vector<bool> &asmap) const {
-    uint64_t hash1 =
-        (CHashWriter(SER_GETHASH, 0) << nKey << GetKey()).GetCheapHash();
-    uint64_t hash2 = (CHashWriter(SER_GETHASH, 0)
-                      << nKey << GetGroup(asmap)
-                      << (hash1 % ADDRMAN_TRIED_BUCKETS_PER_GROUP))
+    uint64_t hash1 = (HashWriter{} << nKey << GetKey()).GetCheapHash();
+    uint64_t hash2 = (HashWriter{} << nKey << GetGroup(asmap)
+                                   << (hash1 % ADDRMAN_TRIED_BUCKETS_PER_GROUP))
                          .GetCheapHash();
     return hash2 % ADDRMAN_TRIED_BUCKET_COUNT;
 }
@@ -66,21 +64,21 @@ int AddrInfo::GetTriedBucket(const uint256 &nKey,
 int AddrInfo::GetNewBucket(const uint256 &nKey, const CNetAddr &src,
                            const std::vector<bool> &asmap) const {
     std::vector<uint8_t> vchSourceGroupKey = src.GetGroup(asmap);
-    uint64_t hash1 = (CHashWriter(SER_GETHASH, 0)
-                      << nKey << GetGroup(asmap) << vchSourceGroupKey)
-                         .GetCheapHash();
-    uint64_t hash2 = (CHashWriter(SER_GETHASH, 0)
-                      << nKey << vchSourceGroupKey
+    uint64_t hash1 =
+        (HashWriter{} << nKey << GetGroup(asmap) << vchSourceGroupKey)
+            .GetCheapHash();
+    uint64_t hash2 =
+        (HashWriter{} << nKey << vchSourceGroupKey
                       << (hash1 % ADDRMAN_NEW_BUCKETS_PER_SOURCE_GROUP))
-                         .GetCheapHash();
+            .GetCheapHash();
     return hash2 % ADDRMAN_NEW_BUCKET_COUNT;
 }
 
 int AddrInfo::GetBucketPosition(const uint256 &nKey, bool fNew,
                                 int nBucket) const {
     uint64_t hash1 =
-        (CHashWriter(SER_GETHASH, 0)
-         << nKey << (fNew ? uint8_t{'N'} : uint8_t{'K'}) << nBucket << GetKey())
+        (HashWriter{} << nKey << (fNew ? uint8_t{'N'} : uint8_t{'K'}) << nBucket
+                      << GetKey())
             .GetCheapHash();
     return hash1 % ADDRMAN_BUCKET_SIZE;
 }
@@ -133,8 +131,8 @@ double AddrInfo::GetChance(NodeSeconds now) const {
 
 AddrManImpl::AddrManImpl(std::vector<bool> &&asmap,
                          int32_t consistency_check_ratio)
-    : m_consistency_check_ratio{consistency_check_ratio}, m_asmap{std::move(
-                                                              asmap)} {}
+    : m_consistency_check_ratio{consistency_check_ratio},
+      m_asmap{std::move(asmap)} {}
 
 AddrManImpl::~AddrManImpl() {
     nKey.SetNull();
@@ -241,7 +239,7 @@ template <typename Stream> void AddrManImpl::Serialize(Stream &s_) const {
     // can be ignored by older clients for backward compatibility.
     uint256 asmap_checksum;
     if (m_asmap.size() != 0) {
-        asmap_checksum = SerializeHash(m_asmap);
+        asmap_checksum = (HashWriter{} << m_asmap).GetHash();
     }
     s << asmap_checksum;
 }
@@ -598,7 +596,7 @@ bool AddrManImpl::AddSingle(const CAddress &addr, const CNetAddr &source,
 
     if (pinfo) {
         // periodically update nTime
-        const bool currently_online{AdjustedTime() - addr.nTime < 24h};
+        const bool currently_online{NodeClock::now() - addr.nTime < 24h};
         const auto update_interval{currently_online ? 1h : 24h};
         if (pinfo->nTime < addr.nTime - update_interval - time_penalty) {
             pinfo->nTime = std::max(NodeSeconds{0s}, addr.nTime - time_penalty);
@@ -868,7 +866,7 @@ AddrManImpl::GetAddr_(size_t max_addresses, size_t max_pct,
     }
 
     // gather a list of random nodes, skipping those of low quality
-    const auto now{AdjustedTime()};
+    const auto now{Now<NodeSeconds>()};
     std::vector<CAddress> addresses;
     for (unsigned int n = 0; n < vRandom.size(); n++) {
         if (addresses.size() >= nNodes) {
@@ -937,7 +935,7 @@ void AddrManImpl::SetServices_(const CService &addr, ServiceFlags nServices) {
 void AddrManImpl::ResolveCollisions_() {
     AssertLockHeld(cs);
 
-    const auto current_time{AdjustedTime()};
+    const auto current_time{Now<NodeSeconds>()};
 
     for (std::set<int>::iterator it = m_tried_collisions.begin();
          it != m_tried_collisions.end();) {

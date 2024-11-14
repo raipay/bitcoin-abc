@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <bench/bench.h>
+#include <common/system.h>
 #include <config.h>
 #include <consensus/amount.h>
 #include <node/context.h>
@@ -11,7 +12,6 @@
 #include <script/script.h>
 #include <txmempool.h>
 #include <util/string.h>
-#include <util/system.h>
 #include <validation.h>
 
 #include <test/util/mining.h>
@@ -400,7 +400,7 @@ static void Reorg10BlocksWith500TxChainSkipMempool(benchmark::Bench &bench) {
 static void GenerateBlock50ChainedTxs(benchmark::Bench &bench) {
     RegTestingSetup test_setup{};
     const Config &config = test_setup.m_node.chainman->GetConfig();
-    const CTxIn utxo = createUTXOs(config, 1, test_setup.m_node).back();
+    CTxIn utxo = createUTXOs(config, 1, test_setup.m_node).back();
     benchGenerateNewBlock(config, test_setup.m_node, bench,
                           {oneInOneOutChain(config, std::move(utxo), 50)});
 }
@@ -409,7 +409,7 @@ static void GenerateBlock50ChainedTxs(benchmark::Bench &bench) {
 static void GenerateBlock500ChainedTxs(benchmark::Bench &bench) {
     RegTestingSetup test_setup{};
     const Config &config = test_setup.m_node.chainman->GetConfig();
-    const CTxIn utxo = createUTXOs(config, 1, test_setup.m_node).back();
+    CTxIn utxo = createUTXOs(config, 1, test_setup.m_node).back();
     benchGenerateNewBlock(config, test_setup.m_node, bench,
                           {oneInOneOutChain(config, std::move(utxo), 500)});
 }

@@ -5,6 +5,8 @@
 #include <qt/clientmodel.h>
 
 #include <clientversion.h>
+#include <common/args.h>
+#include <common/system.h>
 #include <config.h>
 #include <interfaces/handler.h>
 #include <interfaces/node.h>
@@ -14,7 +16,6 @@
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 #include <qt/peertablemodel.h>
-#include <util/system.h>
 #include <util/threadnames.h>
 #include <validation.h>
 
@@ -66,14 +67,14 @@ ClientModel::~ClientModel() {
 }
 
 int ClientModel::getNumConnections(NumConnections flags) const {
-    CConnman::NumConnections connections = CConnman::CONNECTIONS_NONE;
+    ConnectionDirection connections = ConnectionDirection::None;
 
     if (flags == CONNECTIONS_IN) {
-        connections = CConnman::CONNECTIONS_IN;
+        connections = ConnectionDirection::In;
     } else if (flags == CONNECTIONS_OUT) {
-        connections = CConnman::CONNECTIONS_OUT;
+        connections = ConnectionDirection::Out;
     } else if (flags == CONNECTIONS_ALL) {
-        connections = CConnman::CONNECTIONS_ALL;
+        connections = ConnectionDirection::Both;
     }
 
     return m_node.getNodeCount(connections);

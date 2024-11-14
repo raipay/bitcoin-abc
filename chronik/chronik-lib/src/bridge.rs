@@ -6,14 +6,20 @@
 
 use std::{
     net::{AddrParseError, IpAddr, SocketAddr},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 
 use abc_rust_error::Result;
-use bitcoinsuite_core::tx::{Tx, TxId};
+use bitcoinsuite_core::{
+    net::Net,
+    tx::{Tx, TxId},
+};
 use chronik_bridge::{ffi::init_error, util::expect_unique_ptr};
-use chronik_db::{index_tx::TxNumCacheSettings, mem::MempoolTx};
+use chronik_db::{
+    index_tx::TxNumCacheSettings, io::GroupHistorySettings, mem::MempoolTx,
+};
 use chronik_http::server::{
     ChronikServer, ChronikServerParams, ChronikSettings,
 };
@@ -21,7 +27,7 @@ use chronik_indexer::{
     indexer::{ChronikIndexer, ChronikIndexerParams, Node},
     pause::Pause,
 };
-use chronik_plugin::context::PluginContext;
+use chronik_plugin::{context::PluginContext, params::PluginParams};
 use chronik_util::{log, log_chronik, mount_loggers, Loggers};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -34,6 +40,10 @@ pub enum ChronikError {
     /// Chronik host address failed to parse
     #[error("Invalid Chronik host address {0:?}: {1}")]
     InvalidChronikHost(String, AddrParseError),
+
+    /// Unknown net repr
+    #[error("Unknown net repr {0}")]
+    UnknownNetRepr(u8),
 }
 
 use self::ChronikError::*;
@@ -66,22 +76,45 @@ fn try_setup_chronik(
         .into_iter()
         .map(|host| parse_socket_addr(host, params.default_port))
         .collect::<Result<Vec<_>>>()?;
-    PluginContext::setup()?;
+    let datadir: PathBuf = params.datadir.into();
+    let net = match params.net {
+        ffi::Net::Mainnet => Net::Mainnet,
+        ffi::Net::Testnet => Net::Testnet,
+        ffi::Net::Regtest => Net::Regtest,
+        _ => return Err(UnknownNetRepr(params.net.repr).into()),
+    };
+    let plugin_ctx = PluginContext::setup(PluginParams {
+        net,
+        plugins_dir: datadir.join("plugins"),
+        plugins_conf: datadir.join("plugins.toml"),
+    })?;
     log!("Starting Chronik bound to {:?}\n", hosts);
     let bridge = chronik_bridge::ffi::make_bridge(node_context);
     let bridge_ref = expect_unique_ptr("make_bridge", &bridge);
     let (pause, pause_notify) = Pause::new_pair(params.is_pause_allowed);
-    let mut indexer = ChronikIndexer::setup(ChronikIndexerParams {
-        datadir_net: params.datadir_net.into(),
-        wipe_db: params.wipe_db,
-        enable_token_index: params.enable_token_index,
-        enable_lokad_id_index: params.enable_lokad_id_index,
-        enable_perf_stats: params.enable_perf_stats,
-        tx_num_cache: TxNumCacheSettings {
-            bucket_size: params.tx_num_cache.bucket_size,
-            num_buckets: params.tx_num_cache.num_buckets,
+    let mut indexer = ChronikIndexer::setup(
+        ChronikIndexerParams {
+            datadir_net: params.datadir_net.into(),
+            wipe_db: params.wipe_db,
+            enable_token_index: params.enable_token_index,
+            enable_lokad_id_index: params.enable_lokad_id_index,
+            enable_scripthash_index: params.enable_scripthash_index,
+            enable_perf_stats: params.enable_perf_stats,
+            tx_num_cache: TxNumCacheSettings {
+                bucket_size: params.tx_num_cache.bucket_size,
+                num_buckets: params.tx_num_cache.num_buckets,
+            },
+            plugin_ctx: Arc::new(plugin_ctx),
+            script_history: GroupHistorySettings {
+                is_member_hash_index_enabled: params.enable_scripthash_index,
+            },
+            decompress_script_fn: decompress_script,
         },
-    })?;
+        |file_num, data_pos, undo_pos| {
+            Ok(Tx::from(bridge_ref.load_tx(file_num, data_pos, undo_pos)?))
+        },
+        || bridge_ref.shutdown_requested(),
+    )?;
     indexer.resync_indexer(bridge_ref)?;
     if bridge.shutdown_requested() {
         // Don't setup Chronik if the user requested shutdown during resync
@@ -135,6 +168,10 @@ fn parse_socket_addr(host: String, default_port: u16) -> Result<SocketAddr> {
         .parse::<IpAddr>()
         .map_err(|err| InvalidChronikHost(host, err))?;
     Ok(SocketAddr::new(ip_addr, default_port))
+}
+
+fn decompress_script(script: &[u8]) -> Result<Vec<u8>> {
+    Ok(chronik_bridge::ffi::decompress_script(script)?)
 }
 
 /// Contains all db, runtime, tpc, etc. handles needed by Chronik.
@@ -209,6 +246,19 @@ impl Chronik {
             .ok_or_abort("handle_block_finalized", self.finalize_block(bindex));
     }
 
+    /// Block invalidated with Avalanche
+    pub fn handle_block_invalidated(
+        &self,
+        block: &ffi::CBlock,
+        bindex: &ffi::CBlockIndex,
+    ) {
+        self.block_if_paused();
+        self.node.ok_or_abort(
+            "handle_block_invalidated",
+            self.invalidate_block(block, bindex),
+        );
+    }
+
     fn add_tx_to_mempool(
         &self,
         ptx: &ffi::CTransaction,
@@ -278,6 +328,31 @@ impl Chronik {
             "Chronik: block {} finalized with {} txs\n",
             block_hash,
             num_txs,
+        );
+        Ok(())
+    }
+
+    fn invalidate_block(
+        &self,
+        block: &ffi::CBlock,
+        bindex: &ffi::CBlockIndex,
+    ) -> Result<()> {
+        // If there is no block undo for this block, skip the processing.
+        // This behavior can only occur for blocks building on a parked chain,
+        // and we don't have any interest for these blocks. This might as well
+        // be another chain.
+        let Ok(block_undo) = self.node.bridge.load_block_undo(bindex) else {
+            return Ok(());
+        };
+        let block =
+            chronik_bridge::ffi::bridge_block(block, &block_undo, bindex)?;
+        let mut indexer = self.indexer.blocking_write();
+        let block = indexer.make_chronik_block(block);
+        let block_hash = block.db_block.hash.clone();
+        let num_txs = block.block_txs.txs.len();
+        indexer.handle_block_invalidated(block)?;
+        log_chronik!(
+            "Chronik: block {block_hash} invalidated with {num_txs} txs\n",
         );
         Ok(())
     }

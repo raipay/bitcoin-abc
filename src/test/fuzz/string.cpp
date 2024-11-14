@@ -4,6 +4,8 @@
 
 #include <blockfilter.h>
 #include <clientversion.h>
+#include <common/args.h>
+#include <common/system.h>
 #include <logging.h>
 #include <netaddress.h>
 #include <netbase.h>
@@ -21,7 +23,6 @@
 #include <util/settings.h>
 #include <util/strencodings.h>
 #include <util/string.h>
-#include <util/system.h>
 #include <util/translation.h>
 #include <util/url.h>
 #include <version.h>
@@ -69,10 +70,6 @@ FUZZ_TARGET(string) {
     (void)OnlyHasDefaultSectionSetting(settings, random_string_1,
                                        random_string_2);
     (void)ParseNetwork(random_string_1);
-    try {
-        (void)ParseNonRFCJSONValue(random_string_1);
-    } catch (const std::runtime_error &) {
-    }
     OutputType output_type;
     (void)ParseOutputType(random_string_1, output_type);
     (void)RemovePrefix(random_string_1, random_string_2);

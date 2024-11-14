@@ -4,8 +4,8 @@
 
 #include <util/error.h>
 
+#include <common/system.h>
 #include <tinyformat.h>
-#include <util/system.h>
 #include <util/translation.h>
 
 bilingual_str TransactionErrorString(const TransactionError error) {
@@ -34,6 +34,8 @@ bilingual_str TransactionErrorString(const TransactionError error) {
         case TransactionError::MAX_FEE_EXCEEDED:
             return Untranslated("Fee exceeds maximum configured by user (e.g. "
                                 "-maxtxfee, maxfeerate)");
+        case TransactionError::INVALID_PACKAGE:
+            return Untranslated("Transaction rejected due to invalid package");
             // no default case, so the compiler can warn about missing cases
     }
     assert(false);

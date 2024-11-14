@@ -7,8 +7,10 @@
 use abc_rust_error::{Result, WrapErr};
 use bitcoinsuite_core::{
     block::BlockHash,
+    hash::{Hashed, Sha256d},
     tx::{Tx, TxId},
 };
+use chronik_bridge::ffi;
 use chronik_db::{
     db::Db,
     io::{
@@ -17,13 +19,19 @@ use chronik_db::{
     },
     mem::Mempool,
 };
+use chronik_plugin::data::PluginNameMap;
 use chronik_proto::proto;
 use thiserror::Error;
+use tokio::sync::Mutex;
 
 use crate::{
     avalanche::Avalanche,
     indexer::Node,
-    query::{make_tx_proto, HashOrHeight, OutputsSpent, TxTokenData},
+    merkle::BlockMerkleTree,
+    query::{
+        make_tx_proto, read_plugin_outputs, HashOrHeight, MakeTxProtoParams,
+        OutputsSpent, TxTokenData,
+    },
 };
 
 const MAX_BLOCKS_PAGE_SIZE: usize = 500;
@@ -46,6 +54,10 @@ pub struct QueryBlocks<'a> {
     pub node: &'a Node,
     /// Whether the SLP/ALP token index is enabled
     pub is_token_index_enabled: bool,
+    /// Map plugin name <-> plugin idx of all loaded plugins
+    pub plugin_name_map: &'a PluginNameMap,
+    /// Cached block merkle tree
+    pub block_merkle_tree: &'a Mutex<BlockMerkleTree>,
 }
 
 /// Errors indicating something went wrong with querying blocks.
@@ -62,6 +74,13 @@ pub enum QueryBlockError {
     /// Invalid block end height
     #[error("400: Invalid block end height: {0}")]
     InvalidEndHeight(BlockHeight),
+
+    /// Invalid checkpoint height
+    #[error(
+        "400: Invalid checkpoint height {0}, may not be below queried header \
+         height {1}"
+    )]
+    InvalidCheckpointHeight(BlockHeight, BlockHeight),
 
     /// Blocks page size too large
     #[error(
@@ -129,12 +148,12 @@ impl<'a> QueryBlocks<'a> {
         })
     }
 
-    /// Query blocks by a range of heights. Start and end height are inclusive.
-    pub fn by_range(
-        &self,
+    /// Check that the start and end heights are consistent for a range of
+    /// blocks, and return the number of blocks.
+    fn check_range_boundaries(
         start_height: BlockHeight,
         end_height: BlockHeight,
-    ) -> Result<proto::Blocks> {
+    ) -> Result<usize> {
         if start_height < 0 {
             return Err(InvalidStartHeight(start_height).into());
         }
@@ -145,6 +164,31 @@ impl<'a> QueryBlocks<'a> {
         if num_blocks > MAX_BLOCKS_PAGE_SIZE {
             return Err(BlocksPageSizeTooLarge(num_blocks).into());
         }
+        Ok(num_blocks)
+    }
+
+    /// Check that the block height and checkpoint height are consistent.
+    fn check_checkpoint_height(
+        block_height: BlockHeight,
+        checkpoint_height: BlockHeight,
+    ) -> Result<(), QueryBlockError> {
+        if block_height > checkpoint_height {
+            return Err(InvalidCheckpointHeight(
+                checkpoint_height,
+                block_height,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Query blocks by a range of heights. Start and end height are inclusive.
+    pub fn by_range(
+        &self,
+        start_height: BlockHeight,
+        end_height: BlockHeight,
+    ) -> Result<proto::Blocks> {
+        let num_blocks =
+            Self::check_range_boundaries(start_height, end_height)?;
         let block_reader = BlockReader::new(self.db)?;
         let block_stats_reader = BlockStatsReader::new(self.db)?;
         let mut blocks = Vec::with_capacity(num_blocks);
@@ -221,15 +265,24 @@ impl<'a> QueryBlocks<'a> {
                 &tx,
                 self.is_token_index_enabled,
             )?;
-            txs.push(make_tx_proto(
+            let plugin_outputs = read_plugin_outputs(
+                self.db,
+                self.mempool,
                 &tx,
-                &outputs_spent,
-                db_tx.entry.time_first_seen,
-                db_tx.entry.is_coinbase,
-                Some(&db_block),
-                self.avalanche,
-                token.as_ref(),
-            ));
+                Some(tx_num),
+                !self.plugin_name_map.is_empty(),
+            )?;
+            txs.push(make_tx_proto(MakeTxProtoParams {
+                tx: &tx,
+                outputs_spent: &outputs_spent,
+                time_first_seen: db_tx.entry.time_first_seen,
+                is_coinbase: db_tx.entry.is_coinbase,
+                block: Some(&db_block),
+                avalanche: self.avalanche,
+                token: token.as_ref(),
+                plugin_outputs: &plugin_outputs,
+                plugin_name_map: self.plugin_name_map,
+            }));
         }
         let total_num_txs = (tx_range.end - tx_range.start) as usize;
         let total_num_pages =
@@ -277,5 +330,99 @@ impl<'a> QueryBlocks<'a> {
             sum_normal_output_sats: block_stats.sum_normal_output_sats,
             sum_burned_sats: block_stats.sum_burned_sats,
         }
+    }
+
+    /// Query a block header. Optional checkpoint data is computed and
+    /// included in the result if checkpoint_height > 0.
+    pub async fn header(
+        &self,
+        hash_or_height: String,
+        checkpoint_height: i32,
+    ) -> Result<proto::BlockHeader> {
+        let bridge = &self.node.bridge;
+        let block_index = match hash_or_height.parse::<HashOrHeight>()? {
+            HashOrHeight::Hash(hash) => {
+                bridge.lookup_block_index(hash.to_bytes())
+            }
+            HashOrHeight::Height(height) => {
+                bridge.lookup_block_index_by_height(height)
+            }
+        };
+        let block_index =
+            block_index.map_err(|_| BlockNotFound(hash_or_height))?;
+        let block_height = ffi::get_block_info(block_index).height;
+        let (root, branch) = self
+            .merkle_root_and_branch(block_height, checkpoint_height)
+            .await?;
+        Ok(proto::BlockHeader {
+            raw_header: ffi::get_block_header(block_index).to_vec(),
+            root,
+            branch,
+        })
+    }
+
+    async fn merkle_root_and_branch(
+        &self,
+        block_height: BlockHeight,
+        checkpoint_height: BlockHeight,
+    ) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
+        let mut root = Vec::<u8>::new();
+        let mut branch = Vec::<Vec<u8>>::new();
+        if checkpoint_height > 0 {
+            Self::check_checkpoint_height(block_height, checkpoint_height)?;
+            let bridge = &self.node.bridge;
+            let hashes: Vec<Sha256d> = bridge
+                .get_block_hashes_by_range(0, checkpoint_height)?
+                .iter()
+                .map(|raw_hash| Sha256d::from_le_bytes(raw_hash.data))
+                .collect();
+            let mut block_merkle_tree = self.block_merkle_tree.lock().await;
+            let (root_hash, branch_hashes) = block_merkle_tree
+                .merkle_root_and_branch(&hashes, block_height as usize);
+            root = root_hash.to_le_bytes().to_vec();
+            branch = branch_hashes
+                .iter()
+                .map(|&hash| hash.to_le_bytes().to_vec())
+                .collect();
+        }
+        Ok((root, branch))
+    }
+
+    /// Query headers by a range of heights. Start and end height are inclusive.
+    /// Optional checkpoint data is computed and included with the last header
+    /// if checkpoint_height > 0.
+    pub async fn headers_by_range(
+        &self,
+        start_height: BlockHeight,
+        end_height: BlockHeight,
+        checkpoint_height: i32,
+    ) -> Result<proto::BlockHeaders> {
+        Self::check_range_boundaries(start_height, end_height)?;
+        let (root, branch) = self
+            .merkle_root_and_branch(end_height, checkpoint_height)
+            .await?;
+        let headers = self
+            .node
+            .bridge
+            .get_block_headers_by_range(start_height, end_height)?;
+        let last_header = headers.last();
+        let mut headers: Vec<_> = headers
+            .iter()
+            .take(headers.len() - 1)
+            .map(|h| proto::BlockHeader {
+                raw_header: h.data.to_vec(),
+                root: Vec::<u8>::new(),
+                branch: Vec::<Vec<u8>>::new(),
+            })
+            .collect();
+        if let Some(h) = last_header {
+            headers.push(proto::BlockHeader {
+                raw_header: h.data.to_vec(),
+                root,
+                branch,
+            });
+        }
+
+        Ok(proto::BlockHeaders { headers })
     }
 }

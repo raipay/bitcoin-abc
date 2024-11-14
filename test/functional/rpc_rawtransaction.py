@@ -48,10 +48,7 @@ class RawTransactionsTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 3
         self.extra_args = [["-txindex"], ["-txindex"], ["-txindex"]]
-        # whitelist all peers to speed up tx relay / mempool sync
-        for args in self.extra_args:
-            args.append("-whitelist=noban@127.0.0.1")
-
+        self.noban_tx_relay = True
         self.supports_cli = False
 
     def skip_test_if_missing_module(self):
@@ -98,18 +95,22 @@ class RawTransactionsTest(BitcoinTestFramework):
         # Test `createrawtransaction` invalid `inputs`
         txid = "1d1d4e24ed99057e84c3f80fd8fbec79ed9e1acee37da269356ecea000000000"
         assert_raises_rpc_error(
-            -3, "Expected type array", self.nodes[0].createrawtransaction, "foo", {}
+            -3,
+            "not of expected type array",
+            self.nodes[0].createrawtransaction,
+            "foo",
+            {},
         )
         assert_raises_rpc_error(
-            -1,
-            "JSON value is not an object as expected",
+            -3,
+            "JSON value of type string is not of expected type object",
             self.nodes[0].createrawtransaction,
             ["foo"],
             {},
         )
         assert_raises_rpc_error(
-            -1,
-            "JSON value is not a string as expected",
+            -3,
+            "JSON value of type null is not of expected type string",
             self.nodes[0].createrawtransaction,
             [{}],
             {},
@@ -166,8 +167,8 @@ class RawTransactionsTest(BitcoinTestFramework):
         address = self.nodes[0].getnewaddress()
         address2 = self.nodes[0].getnewaddress()
         assert_raises_rpc_error(
-            -1,
-            "JSON value is not an array as expected",
+            -3,
+            "JSON value of type string is not of expected type array",
             self.nodes[0].createrawtransaction,
             [],
             "foo",
@@ -249,7 +250,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         # Test `createrawtransaction` invalid `locktime`
         assert_raises_rpc_error(
             -3,
-            "Expected type number",
+            "not of expected type number",
             self.nodes[0].createrawtransaction,
             [],
             {},
@@ -454,8 +455,8 @@ class RawTransactionsTest(BitcoinTestFramework):
         )
         # An invalid block hash should raise the correct errors
         assert_raises_rpc_error(
-            -1,
-            "JSON value is not a string as expected",
+            -3,
+            "not of expected type string",
             self.nodes[0].getrawtransaction,
             tx,
             True,
@@ -738,17 +739,21 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         # 6. invalid parameters - supply txid and string "Flase"
         assert_raises_rpc_error(
-            -1, "not a boolean", self.nodes[0].getrawtransaction, txId, "Flase"
+            -3,
+            "not of expected type bool",
+            self.nodes[0].getrawtransaction,
+            txId,
+            "Flase",
         )
 
         # 7. invalid parameters - supply txid and empty array
         assert_raises_rpc_error(
-            -1, "not a boolean", self.nodes[0].getrawtransaction, txId, []
+            -3, "not of expected type bool", self.nodes[0].getrawtransaction, txId, []
         )
 
         # 8. invalid parameters - supply txid and empty dict
         assert_raises_rpc_error(
-            -1, "not a boolean", self.nodes[0].getrawtransaction, txId, {}
+            -3, "not of expected type bool", self.nodes[0].getrawtransaction, txId, {}
         )
 
         inputs = [

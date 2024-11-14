@@ -22,7 +22,7 @@ import { queryAliasServer } from 'alias';
 import appConfig from 'config/app';
 import aliasSettings from 'config/alias';
 import { CashReceivedNotificationIcon } from 'components/Common/CustomIcons';
-import { supportedFiatCurrencies } from 'config/cashtabSettings';
+import { supportedFiatCurrencies } from 'config/CashtabSettings';
 import {
     cashtabCacheToJSON,
     storedCashtabCacheToMap,
@@ -43,7 +43,7 @@ import TokenIcon from 'components/Etokens/TokenIcon';
 import { getUserLocale } from 'helpers';
 import { toFormattedXec } from 'utils/formatting';
 
-const useWallet = chronik => {
+const useWallet = (chronik, agora, ecc) => {
     const [cashtabLoaded, setCashtabLoaded] = useState(false);
     const [ws, setWs] = useState(null);
     const [fiatPrice, setFiatPrice] = useState(null);
@@ -717,6 +717,9 @@ const useWallet = chronik => {
     // With different currency selections possible, need unique intervals for price checks
     // Must be able to end them and set new ones with new currencies
     const initializeFiatPriceApi = async selectedFiatCurrency => {
+        if (process.env.REACT_APP_TESTNET === 'true') {
+            return setFiatPrice(0);
+        }
         // Update fiat price and confirm it is set to make sure ap keeps loading state until this is updated
 
         // Call this instance with showNotifications = false,
@@ -968,6 +971,8 @@ const useWallet = chronik => {
 
     return {
         chronik,
+        agora,
+        ecc,
         chaintipBlockheight,
         fiatPrice,
         cashtabLoaded,

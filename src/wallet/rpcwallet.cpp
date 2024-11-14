@@ -5,6 +5,7 @@
 
 #include <chainparams.h> // for GetConsensus.
 #include <coins.h>
+#include <common/system.h>
 #include <config.h>
 #include <consensus/amount.h>
 #include <consensus/validation.h>
@@ -23,7 +24,6 @@
 #include <util/error.h>
 #include <util/moneystr.h>
 #include <util/string.h>
-#include <util/system.h>
 #include <util/translation.h>
 #include <util/url.h>
 #include <util/vector.h>
@@ -95,7 +95,7 @@ static void WalletTxToJSON(const CWallet &wallet, const CWalletTx &wtx,
 static RPCHelpMan getnewaddress() {
     return RPCHelpMan{
         "getnewaddress",
-        "Returns a new Bitcoin address for receiving payments.\n"
+        "Returns a new eCash address for receiving payments.\n"
         "If 'label' is specified, it is added to the address book \n"
         "so payments received with the address will be associated with "
         "'label'.\n",
@@ -106,11 +106,15 @@ static RPCHelpMan getnewaddress() {
              "string \"\" to represent the default label. The label does not "
              "need to exist, it will be created if there is no label by the "
              "given name."},
-            {"address_type", RPCArg::Type::STR,
-             RPCArg::DefaultHint{"set by -addresstype"},
-             "The address type to use. Options are \"legacy\"."},
+            // Deprecated in v0.30.4
+            {"address_type", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
+             "DEPRECATED: The Bitcoin address type to use. Only available for "
+             "compatibility with Bitcoin and will be removed in the future. "
+             "The only valid value is \"legacy\". Note that this does not "
+             "change the output of this RPC; in order to get a Bitcoin address "
+             "the -usecashaddr option should be disabled."},
         },
-        RPCResult{RPCResult::Type::STR, "address", "The new bitcoin address"},
+        RPCResult{RPCResult::Type::STR, "address", "The new eCash address"},
         RPCExamples{HelpExampleCli("getnewaddress", "") +
                     HelpExampleRpc("getnewaddress", "")},
         [&](const RPCHelpMan &self, const Config &config,
@@ -430,7 +434,7 @@ static RPCHelpMan listaddressgroupings() {
                        "",
                        "",
                        {
-                           {RPCResult::Type::ARR,
+                           {RPCResult::Type::ARR_FIXED,
                             "",
                             "",
                             {
@@ -514,7 +518,7 @@ static Amount GetReceived(const CWallet &wallet, const UniValue &params,
     // Minimum confirmations
     int min_depth = 1;
     if (!params[1].isNull()) {
-        min_depth = params[1].get_int();
+        min_depth = params[1].getInt<int>();
     }
 
     // Tally
@@ -691,7 +695,7 @@ static RPCHelpMan getbalance() {
 
             int min_depth = 0;
             if (!request.params[1].isNull()) {
-                min_depth = request.params[1].get_int();
+                min_depth = request.params[1].getInt<int>();
             }
 
             bool include_watchonly =
@@ -744,7 +748,9 @@ static RPCHelpMan sendmany() {
             HELP_REQUIRING_PASSPHRASE,
         {
             {"dummy", RPCArg::Type::STR, RPCArg::Optional::NO,
-             "Must be set to \"\" for backwards compatibility.", "\"\""},
+             "Must be set to \"\" for backwards compatibility.",
+             RPCArgOptions{.skip_type_check = true,
+                           .oneline_description = "\"\""}},
             {
                 "amounts",
                 RPCArg::Type::OBJ,
@@ -874,7 +880,8 @@ static RPCHelpMan addmultisigaddress() {
         "This functionality is only intended for use with non-watchonly "
         "addresses.\n"
         "See `importaddress` for watchonly p2sh address support.\n"
-        "If 'label' is specified (DEPRECATED), assign address to that label.\n",
+        "If 'label' is specified (DEPRECATED), assign address to that label.\n"
+        "Note: This command is only compatible with legacy wallets.\n",
         {
             {"nrequired", RPCArg::Type::NUM, RPCArg::Optional::NO,
              "The number of required signatures out of the n keys or "
@@ -933,7 +940,7 @@ static RPCHelpMan addmultisigaddress() {
                 label = LabelFromValue(request.params[2]);
             }
 
-            int required = request.params[0].get_int();
+            int required = request.params[0].getInt<int>();
 
             // Get the public keys
             const UniValue &keys_or_addrs = request.params[1].get_array();
@@ -985,7 +992,7 @@ static UniValue ListReceived(const Config &config, const CWallet *const pwallet,
     // Minimum confirmations
     int nMinDepth = 1;
     if (!params[0].isNull()) {
-        nMinDepth = params[0].get_int();
+        nMinDepth = params[0].getInt<int>();
     }
 
     // Whether to include empty labels
@@ -1286,12 +1293,13 @@ static void MaybePushAddress(UniValue &entry, const CTxDestination &dest) {
  * @param  nMinDepth      The minimum confirmation depth.
  * @param  fLong          Whether to include the JSON version of the
  * transaction.
- * @param  ret            The UniValue into which the result is stored.
+ * @param  ret            The vector into which the result is stored.
  * @param  filter_ismine  The "is mine" filter flags.
  * @param  filter_label   Optional label string to filter incoming transactions.
  */
+template <class Vec>
 static void ListTransactions(const CWallet *const pwallet, const CWalletTx &wtx,
-                             int nMinDepth, bool fLong, UniValue &ret,
+                             int nMinDepth, bool fLong, Vec &ret,
                              const isminefilter &filter_ismine,
                              const std::string *filter_label)
     EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
@@ -1511,12 +1519,12 @@ RPCHelpMan listtransactions() {
             }
             int nCount = 10;
             if (!request.params[1].isNull()) {
-                nCount = request.params[1].get_int();
+                nCount = request.params[1].getInt<int>();
             }
 
             int nFrom = 0;
             if (!request.params[2].isNull()) {
-                nFrom = request.params[2].get_int();
+                nFrom = request.params[2].getInt<int>();
             }
 
             isminefilter filter = ISMINE_SPENDABLE;
@@ -1530,8 +1538,8 @@ RPCHelpMan listtransactions() {
             if (nFrom < 0) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative from");
             }
-            UniValue ret(UniValue::VARR);
 
+            std::vector<UniValue> ret;
             {
                 LOCK(pwallet->cs_wallet);
 
@@ -1559,11 +1567,10 @@ RPCHelpMan listtransactions() {
                 nCount = ret.size() - nFrom;
             }
 
-            const std::vector<UniValue> &txs = ret.getValues();
+            auto txs_rev_it{std::make_move_iterator(ret.rend())};
             UniValue result{UniValue::VARR};
             // Return oldest to newest
-            result.push_backV(
-                {txs.rend() - nFrom - nCount, txs.rend() - nFrom});
+            result.push_backV(txs_rev_it - nFrom - nCount, txs_rev_it - nFrom);
             return result;
         },
     };
@@ -1729,7 +1736,7 @@ static RPCHelpMan listsinceblock() {
             }
 
             if (!request.params[1].isNull()) {
-                target_confirms = request.params[1].get_int();
+                target_confirms = request.params[1].getInt<int>();
 
                 if (target_confirms < 1) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER,
@@ -2060,12 +2067,12 @@ static RPCHelpMan keypoolrefill() {
             // given by -keypool
             unsigned int kpSize = 0;
             if (!request.params[0].isNull()) {
-                if (request.params[0].get_int() < 0) {
+                if (request.params[0].getInt<int>() < 0) {
                     throw JSONRPCError(
                         RPC_INVALID_PARAMETER,
                         "Invalid parameter, expected valid size.");
                 }
-                kpSize = (unsigned int)request.params[0].get_int();
+                kpSize = (unsigned int)request.params[0].getInt<int>();
             }
 
             EnsureWalletIsUnlocked(pwallet);
@@ -2164,8 +2171,6 @@ static RPCHelpMan lockunspent() {
 
             LOCK(pwallet->cs_wallet);
 
-            RPCTypeCheckArgument(request.params[0], UniValue::VBOOL);
-
             bool fUnlock = request.params[0].get_bool();
 
             if (request.params[1].isNull()) {
@@ -2175,9 +2180,7 @@ static RPCHelpMan lockunspent() {
                 return true;
             }
 
-            RPCTypeCheckArgument(request.params[1], UniValue::VARR);
-
-            const UniValue &output_params = request.params[1];
+            const UniValue &output_params = request.params[1].get_array();
 
             // Create and validate the COutPoints first.
 
@@ -2192,7 +2195,7 @@ static RPCHelpMan lockunspent() {
                                        {"vout", UniValueType(UniValue::VNUM)},
                                    });
 
-                const int nOutput = o.find_value("vout").get_int();
+                const int nOutput = o.find_value("vout").getInt<int>();
                 if (nOutput < 0) {
                     throw JSONRPCError(
                         RPC_INVALID_PARAMETER,
@@ -2490,15 +2493,15 @@ static RPCHelpMan getwalletinfo() {
                  "the total number of transactions in the wallet"},
                 {RPCResult::Type::NUM_TIME, "keypoololdest",
                  "the " + UNIX_EPOCH_TIME +
-                     " of the oldest pre-generated key in the key pool. Legacy "
-                     "wallets only."},
+                     " of the oldest pre-generated key in the key pool. "
+                     "Legacy wallets only."},
                 {RPCResult::Type::NUM, "keypoolsize",
                  "how many new keys are pre-generated (only counts external "
                  "keys)"},
                 {RPCResult::Type::NUM, "keypoolsize_hd_internal",
                  "how many new keys are pre-generated for internal use (used "
-                 "for change outputs, only appears if the wallet is using this "
-                 "feature, otherwise external keys are used)"},
+                 "for change outputs, only appears if the wallet is using "
+                 "this feature, otherwise external keys are used)"},
                 {RPCResult::Type::NUM_TIME, "unlocked_until",
                  /* optional */ true,
                  "the " + UNIX_EPOCH_TIME +
@@ -2516,13 +2519,15 @@ static RPCHelpMan getwalletinfo() {
                  "watch-only wallet)"},
                 {RPCResult::Type::OBJ,
                  "scanning",
-                 "current scanning details, or false if no scan is in progress",
+                 "current scanning details, or false if no scan is in "
+                 "progress",
                  {
                      {RPCResult::Type::NUM, "duration",
                       "elapsed seconds since scan start"},
                      {RPCResult::Type::NUM, "progress",
                       "scanning progress percentage [0.0, 1.0]"},
-                 }},
+                 },
+                 /*skip_type_check=*/true},
                 {RPCResult::Type::BOOL, "avoid_reuse",
                  "whether this wallet tracks clean/dirty coins in terms of "
                  "reuse"},
@@ -3005,7 +3010,7 @@ static RPCHelpMan listunspent() {
              "Include outputs that are not safe to spend\n"
              "                  See description of \"safe\" attribute below."},
             {"query_options",
-             RPCArg::Type::OBJ,
+             RPCArg::Type::OBJ_NAMED_PARAMS,
              RPCArg::Optional::OMITTED_NAMED_ARG,
              "JSON with query options",
              {
@@ -3021,7 +3026,7 @@ static RPCHelpMan listunspent() {
                   RPCArg::DefaultHint{"unlimited"},
                   "Minimum sum value of all UTXOs in " + ticker + ""},
              },
-             "query_options"},
+             RPCArgOptions{.oneline_description = "query_options"}},
         },
         RPCResult{
             RPCResult::Type::ARR,
@@ -3115,19 +3120,16 @@ static RPCHelpMan listunspent() {
 
             int nMinDepth = 1;
             if (!request.params[0].isNull()) {
-                RPCTypeCheckArgument(request.params[0], UniValue::VNUM);
-                nMinDepth = request.params[0].get_int();
+                nMinDepth = request.params[0].getInt<int>();
             }
 
             int nMaxDepth = 9999999;
             if (!request.params[1].isNull()) {
-                RPCTypeCheckArgument(request.params[1], UniValue::VNUM);
-                nMaxDepth = request.params[1].get_int();
+                nMaxDepth = request.params[1].getInt<int>();
             }
 
             std::set<CTxDestination> destinations;
             if (!request.params[2].isNull()) {
-                RPCTypeCheckArgument(request.params[2], UniValue::VARR);
                 UniValue inputs = request.params[2].get_array();
                 for (size_t idx = 0; idx < inputs.size(); idx++) {
                     const UniValue &input = inputs[idx];
@@ -3151,7 +3153,6 @@ static RPCHelpMan listunspent() {
 
             bool include_unsafe = true;
             if (!request.params[3].isNull()) {
-                RPCTypeCheckArgument(request.params[3], UniValue::VBOOL);
                 include_unsafe = request.params[3].get_bool();
             }
 
@@ -3187,7 +3188,7 @@ static RPCHelpMan listunspent() {
                 }
 
                 if (options.exists("maximumCount")) {
-                    nMaximumCount = options["maximumCount"].get_int64();
+                    nMaximumCount = options["maximumCount"].getInt<int64_t>();
                 }
             }
 
@@ -3299,7 +3300,6 @@ void FundTransaction(CWallet *const pwallet, CMutableTransaction &tx,
             // backward compatibility bool only fallback
             coinControl.fAllowWatchOnly = options.get_bool();
         } else {
-            RPCTypeCheckArgument(options, UniValue::VOBJ);
             RPCTypeCheckObj(
                 options,
                 {
@@ -3353,7 +3353,7 @@ void FundTransaction(CWallet *const pwallet, CMutableTransaction &tx,
                 change_position = (options.exists("change_position")
                                        ? options["change_position"]
                                        : options["changePosition"])
-                                      .get_int();
+                                      .getInt<int>();
             }
 
             const UniValue include_watching_option =
@@ -3410,7 +3410,7 @@ void FundTransaction(CWallet *const pwallet, CMutableTransaction &tx,
     }
 
     for (size_t idx = 0; idx < subtractFeeFromOutputs.size(); idx++) {
-        int pos = subtractFeeFromOutputs[idx].get_int();
+        int pos = subtractFeeFromOutputs[idx].getInt<int>();
         if (setSubtractFeeFromOutputs.count(pos)) {
             throw JSONRPCError(
                 RPC_INVALID_PARAMETER,
@@ -3465,9 +3465,9 @@ static RPCHelpMan fundrawtransaction() {
             {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
              "The hex string of the raw transaction"},
             {"options",
-             RPCArg::Type::OBJ,
+             RPCArg::Type::OBJ_NAMED_PARAMS,
              RPCArg::Optional::OMITTED_NAMED_ARG,
-             "for backward compatibility: passing in a true instead of an "
+             "For backward compatibility: passing in a true instead of an "
              "object will result in {\"includeWatching\":true}",
              {
                  {"add_inputs", RPCArg::Type::BOOL, RPCArg::Default{true},
@@ -3500,7 +3500,8 @@ static RPCHelpMan fundrawtransaction() {
                  {"feeRate", RPCArg::Type::AMOUNT,
                   RPCArg::DefaultHint{
                       "not set: makes wallet determine the fee"},
-                  "Set a specific fee rate in " + ticker + "/kB"},
+                  "Set a specific fee rate in " + ticker + "/kB",
+                  RPCArgOptions{.also_positional = true}},
                  {
                      "subtractFeeFromOutputs",
                      RPCArg::Type::ARR,
@@ -3521,7 +3522,8 @@ static RPCHelpMan fundrawtransaction() {
                      },
                  },
              },
-             "options"},
+             RPCArgOptions{.skip_type_check = true,
+                           .oneline_description = "options"}},
         },
         RPCResult{RPCResult::Type::OBJ,
                   "",
@@ -3553,8 +3555,6 @@ static RPCHelpMan fundrawtransaction() {
                 return NullUniValue;
             }
             CWallet *const pwallet = wallet.get();
-
-            RPCTypeCheck(request.params, {UniValue::VSTR, UniValueType()});
 
             // parse hex string from parameter
             CMutableTransaction tx;
@@ -3673,10 +3673,6 @@ RPCHelpMan signrawtransactionwithwallet() {
             }
             const CWallet *const pwallet = wallet.get();
 
-            RPCTypeCheck(request.params,
-                         {UniValue::VSTR, UniValue::VARR, UniValue::VSTR},
-                         true);
-
             CMutableTransaction mtx;
             if (!DecodeHexTx(mtx, request.params[0].get_str())) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR,
@@ -3768,7 +3764,7 @@ RPCHelpMan rescanblockchain() {
                 int tip_height = pwallet->GetLastBlockHeight();
 
                 if (!request.params[0].isNull()) {
-                    start_height = request.params[0].get_int();
+                    start_height = request.params[0].getInt<int>();
                     if (start_height < 0 || start_height > tip_height) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER,
                                            "Invalid start_height");
@@ -3776,7 +3772,7 @@ RPCHelpMan rescanblockchain() {
                 }
 
                 if (!request.params[1].isNull()) {
-                    stop_height = request.params[1].get_int();
+                    stop_height = request.params[1].getInt<int>();
                     if (*stop_height < 0 || *stop_height > tip_height) {
                         throw JSONRPCError(RPC_INVALID_PARAMETER,
                                            "Invalid stop_height");
@@ -4145,10 +4141,10 @@ RPCHelpMan getaddressesbylabel() {
                     CHECK_NONFATAL(addresses.emplace(address).second);
                     // UniValue::pushKV checks if the key exists in O(N)
                     // and since duplicate addresses are unexpected (checked
-                    // with std::set in O(log(N))), UniValue::__pushKV is used
+                    // with std::set in O(log(N))), UniValue::pushKVEnd is used
                     // instead, which currently is O(1).
-                    ret.__pushKV(address,
-                                 AddressBookDataToJSON(item.second, false));
+                    ret.pushKVEnd(address,
+                                  AddressBookDataToJSON(item.second, false));
                 }
             }
 
@@ -4231,47 +4227,44 @@ static RPCHelpMan send() {
         "EXPERIMENTAL warning: this call may be changed in future releases.\n"
         "\nSend a transaction.\n",
         {
-            {
-                "outputs",
-                RPCArg::Type::ARR,
-                RPCArg::Optional::NO,
-                "A JSON array with outputs (key-value pairs), where none of "
-                "the keys are duplicated.\n"
-                "That is, each address can only appear once and there can only "
-                "be one 'data' object.\n"
-                "For convenience, a dictionary, which holds the key-value "
-                "pairs directly, is also accepted.",
-                {
-                    {
-                        "",
-                        RPCArg::Type::OBJ,
-                        RPCArg::Optional::OMITTED,
-                        "",
-                        {
-                            {"address", RPCArg::Type::AMOUNT,
-                             RPCArg::Optional::NO,
-                             "A key-value pair. The key (string) is the "
-                             "bitcoin address, the value (float or string) is "
-                             "the amount in " +
-                                 Currency::get().ticker + ""},
-                        },
-                    },
-                    {
-                        "",
-                        RPCArg::Type::OBJ,
-                        RPCArg::Optional::OMITTED,
-                        "",
-                        {
-                            {"data", RPCArg::Type::STR_HEX,
-                             RPCArg::Optional::NO,
-                             "A key-value pair. The key must be \"data\", the "
-                             "value is hex-encoded data"},
-                        },
-                    },
-                },
-            },
+            {"outputs",
+             RPCArg::Type::ARR,
+             RPCArg::Optional::NO,
+             "A JSON array with outputs (key-value pairs), where none of "
+             "the keys are duplicated.\n"
+             "That is, each address can only appear once and there can only "
+             "be one 'data' object.\n"
+             "For convenience, a dictionary, which holds the key-value "
+             "pairs directly, is also accepted.",
+             {
+                 {
+                     "",
+                     RPCArg::Type::OBJ,
+                     RPCArg::Optional::OMITTED,
+                     "",
+                     {
+                         {"address", RPCArg::Type::AMOUNT, RPCArg::Optional::NO,
+                          "A key-value pair. The key (string) is the "
+                          "bitcoin address, the value (float or string) is "
+                          "the amount in " +
+                              Currency::get().ticker + ""},
+                     },
+                 },
+                 {
+                     "",
+                     RPCArg::Type::OBJ,
+                     RPCArg::Optional::OMITTED,
+                     "",
+                     {
+                         {"data", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+                          "A key-value pair. The key must be \"data\", the "
+                          "value is hex-encoded data"},
+                     },
+                 },
+             },
+             RPCArgOptions{.skip_type_check = true}},
             {"options",
-             RPCArg::Type::OBJ,
+             RPCArg::Type::OBJ_NAMED_PARAMS,
              RPCArg::Optional::OMITTED_NAMED_ARG,
              "",
              {
@@ -4288,7 +4281,7 @@ static RPCHelpMan send() {
                  {"add_to_wallet", RPCArg::Type::BOOL, RPCArg::Default{true},
                   "When false, returns a serialized transaction which will not "
                   "be added to the wallet or broadcast"},
-                 {"change_address", RPCArg::Type::STR_HEX,
+                 {"change_address", RPCArg::Type::STR,
                   RPCArg::DefaultHint{"pool address"},
                   "The bitcoin address to receive the change"},
                  {"change_position", RPCArg::Type::NUM,
@@ -4298,7 +4291,8 @@ static RPCHelpMan send() {
                   RPCArg::DefaultHint{
                       "not set: makes wallet determine the fee"},
                   "Set a specific fee rate in " + Currency::get().ticker +
-                      "/kB"},
+                      "/kB",
+                  RPCArgOptions{.also_positional = true}},
                  {"include_watching", RPCArg::Type::BOOL,
                   RPCArg::DefaultHint{
                       "true for watch-only wallets, otherwise false"},
@@ -4349,7 +4343,7 @@ static RPCHelpMan send() {
                      },
                  },
              },
-             "options"},
+             RPCArgOptions{.oneline_description = "options"}},
         },
         RPCResult{
             RPCResult::Type::OBJ,
@@ -4383,11 +4377,6 @@ static RPCHelpMan send() {
                                "5e72f463568df1aadf0\", \"vout\":1}]}'")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            RPCTypeCheck(request.params,
-                         {// ARR or OBJ, checked later
-                          UniValueType(), UniValue::VOBJ},
-                         true);
-
             std::shared_ptr<CWallet> const wallet =
                 GetWalletForJSONRPCRequest(request);
             if (!wallet) {
@@ -4487,7 +4476,8 @@ static RPCHelpMan sethdseed() {
         "will be derived from this new seed.\n"
         "\nNote that you will need to MAKE A NEW BACKUP of your wallet after "
         "setting the HD wallet seed.\n" +
-            HELP_REQUIRING_PASSPHRASE,
+            HELP_REQUIRING_PASSPHRASE +
+            "Note: This command is only compatible with legacy wallets.\n",
         {
             {"newkeypool", RPCArg::Type::BOOL, RPCArg::Default{true},
              "Whether to flush old unused addresses, including change "
@@ -4620,9 +4610,6 @@ static RPCHelpMan walletprocesspsbt() {
             }
             const CWallet *const pwallet = wallet.get();
 
-            RPCTypeCheck(request.params,
-                         {UniValue::VSTR, UniValue::VBOOL, UniValue::VSTR});
-
             // Unserialize the transaction
             PartiallySignedTransaction psbtx;
             std::string error;
@@ -4697,53 +4684,50 @@ static RPCHelpMan walletcreatefundedpsbt() {
                     },
                 },
             },
-            {
-                "outputs",
-                RPCArg::Type::ARR,
-                RPCArg::Optional::NO,
-                "The outputs (key-value pairs), where none of "
-                "the keys are duplicated.\n"
-                "That is, each address can only appear once and there can only "
-                "be one 'data' object.\n"
-                "For compatibility reasons, a dictionary, which holds the "
-                "key-value pairs directly, is also\n"
-                "                             accepted as second parameter.",
-                {
-                    {
-                        "",
-                        RPCArg::Type::OBJ,
-                        RPCArg::Optional::OMITTED,
-                        "",
-                        {
-                            {"address", RPCArg::Type::AMOUNT,
-                             RPCArg::Optional::NO,
-                             "A key-value pair. The key (string) is the "
-                             "bitcoin address, the value (float or string) is "
-                             "the amount in " +
-                                 ticker + ""},
-                        },
-                    },
-                    {
-                        "",
-                        RPCArg::Type::OBJ,
-                        RPCArg::Optional::OMITTED,
-                        "",
-                        {
-                            {"data", RPCArg::Type::STR_HEX,
-                             RPCArg::Optional::NO,
-                             "A key-value pair. The key must be \"data\", the "
-                             "value is hex-encoded data"},
-                        },
-                    },
-                },
-            },
+            {"outputs",
+             RPCArg::Type::ARR,
+             RPCArg::Optional::NO,
+             "The outputs (key-value pairs), where none of "
+             "the keys are duplicated.\n"
+             "That is, each address can only appear once and there can only "
+             "be one 'data' object.\n"
+             "For compatibility reasons, a dictionary, which holds the "
+             "key-value pairs directly, is also\n"
+             "                             accepted as second parameter.",
+             {
+                 {
+                     "",
+                     RPCArg::Type::OBJ,
+                     RPCArg::Optional::OMITTED,
+                     "",
+                     {
+                         {"address", RPCArg::Type::AMOUNT, RPCArg::Optional::NO,
+                          "A key-value pair. The key (string) is the "
+                          "bitcoin address, the value (float or string) is "
+                          "the amount in " +
+                              ticker + ""},
+                     },
+                 },
+                 {
+                     "",
+                     RPCArg::Type::OBJ,
+                     RPCArg::Optional::OMITTED,
+                     "",
+                     {
+                         {"data", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+                          "A key-value pair. The key must be \"data\", the "
+                          "value is hex-encoded data"},
+                     },
+                 },
+             },
+             RPCArgOptions{.skip_type_check = true}},
             {"locktime", RPCArg::Type::NUM, RPCArg::Default{0},
              "Raw locktime. Non-0 value also locktime-activates inputs\n"
              "                             Allows this transaction to be "
              "replaced by a transaction with higher fees. If provided, it is "
              "an error if explicit sequence numbers are incompatible."},
             {"options",
-             RPCArg::Type::OBJ,
+             RPCArg::Type::OBJ_NAMED_PARAMS,
              RPCArg::Optional::OMITTED_NAMED_ARG,
              "",
              {
@@ -4757,7 +4741,7 @@ static RPCHelpMan walletcreatefundedpsbt() {
                   "one of the unsafe inputs disappears.\n"
                   "If that happens, you will need to fund the transaction with "
                   "different inputs and republish it."},
-                 {"changeAddress", RPCArg::Type::STR_HEX,
+                 {"changeAddress", RPCArg::Type::STR,
                   RPCArg::DefaultHint{"pool address"},
                   "The bitcoin address to receive the change"},
                  {"changePosition", RPCArg::Type::NUM,
@@ -4772,7 +4756,8 @@ static RPCHelpMan walletcreatefundedpsbt() {
                  {"feeRate", RPCArg::Type::AMOUNT,
                   RPCArg::DefaultHint{
                       "not set: makes wallet determine the fee"},
-                  "Set a specific fee rate in " + ticker + "/kB"},
+                  "Set a specific fee rate in " + ticker + "/kB",
+                  RPCArgOptions{.also_positional = true}},
                  {
                      "subtractFeeFromOutputs",
                      RPCArg::Type::ARR,
@@ -4793,7 +4778,7 @@ static RPCHelpMan walletcreatefundedpsbt() {
                      },
                  },
              },
-             "options"},
+             RPCArgOptions{.oneline_description = "options"}},
             {"bip32derivs", RPCArg::Type::BOOL, RPCArg::Default{true},
              "Includes the BIP 32 derivation paths for public keys if we know "
              "them"},
@@ -4822,12 +4807,6 @@ static RPCHelpMan walletcreatefundedpsbt() {
                 return NullUniValue;
             }
             CWallet *const pwallet = wallet.get();
-
-            RPCTypeCheck(request.params,
-                         {UniValue::VARR,
-                          UniValueType(), // ARR or OBJ, checked later
-                          UniValue::VNUM, UniValue::VOBJ},
-                         true);
 
             Amount fee;
             int change_position;
@@ -4876,7 +4855,7 @@ static RPCHelpMan upgradewallet() {
         "version number is specified\n"
         "New keys may be generated and a new wallet backup will need to "
         "be made.",
-        {{"version", RPCArg::Type::NUM, RPCArg::Default{FEATURE_LATEST},
+        {{"version", RPCArg::Type::NUM, RPCArg::Default{int{FEATURE_LATEST}},
           "The version number to upgrade to. Default is the latest "
           "wallet version"}},
         RPCResult{RPCResult::Type::NONE, "", ""},
@@ -4891,13 +4870,11 @@ static RPCHelpMan upgradewallet() {
             }
             CWallet *const pwallet = wallet.get();
 
-            RPCTypeCheck(request.params, {UniValue::VNUM}, true);
-
             EnsureWalletIsUnlocked(pwallet);
 
             int version = 0;
             if (!request.params[0].isNull()) {
-                version = request.params[0].get_int();
+                version = request.params[0].getInt<int>();
             }
             bilingual_str error;
             if (!pwallet->UpgradeWallet(version, error)) {

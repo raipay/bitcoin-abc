@@ -3,13 +3,17 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import { BN } from 'slp-mdm';
-import { toXec, toSatoshis } from 'wallet';
+import {
+    toXec,
+    toSatoshis,
+    xecToNanoSatoshis,
+    decimalizeTokenAmount,
+} from 'wallet';
 import cashaddr from 'ecashaddrjs';
 import * as bip39 from 'bip39';
-import {
-    CashtabSettings,
+import CashtabSettings, {
     cashtabSettingsValidation,
-} from 'config/cashtabSettings';
+} from 'config/CashtabSettings';
 import tokenBlacklist from 'config/tokenBlacklist';
 import appConfig from 'config/app';
 import { opReturn } from 'config/opreturn';
@@ -19,7 +23,7 @@ import { getAliasByteCount } from 'opreturn';
 import { fiatToSatoshis } from 'wallet';
 import { UNKNOWN_TOKEN_ID } from 'config/CashtabCache';
 import { STRINGIFIED_DECIMALIZED_REGEX } from 'wallet';
-import { getMaxMintAmount } from 'slpv1';
+import { getMaxDecimalizedSlpQty } from 'slpv1';
 
 /**
  * Checks whether the instantiated sideshift library object has loaded
@@ -39,7 +43,10 @@ export const isValidSideshiftObj = sideshiftObj => {
 };
 
 export const getContactAddressError = (address, contacts) => {
-    const isValidCashAddress = cashaddr.isValidCashAddress(address, 'ecash');
+    const isValidCashAddress = cashaddr.isValidCashAddress(
+        address,
+        appConfig.prefix,
+    );
     // We do not accept prefixless input
     if (!address.startsWith('ecash:')) {
         return `Addresses in Contacts must start with "ecash:" prefix`;
@@ -282,7 +289,7 @@ export const isValidCashtabSettings = settings => {
  * When Cashtab adds a new setting, existing users will not have it set
  * We do not want to force these users to start with fully-wiped default settings
  * Instead, we add the missing key
- * @param {object} settings cashtabSettings object from localforage
+ * @param {CashtabSettings} settings CashtabSettings object from localforage
  * @returns {object} migratedCashtabSettings
  */
 export const migrateLegacyCashtabSettings = settings => {
@@ -318,7 +325,7 @@ export const isValidContactList = contactList => {
             // Address must be a valid XEC address, name must be a string
             const { address, name } = contact;
             if (
-                (cashaddr.isValidCashAddress(address, 'ecash') ||
+                (cashaddr.isValidCashAddress(address, appConfig.prefix) ||
                     isValidAliasSendInput(address)) &&
                 typeof name === 'string'
             ) {
@@ -380,19 +387,15 @@ export const isValidCashtabCache = cashtabCache => {
     return isValidCachedInfo;
 };
 
-// XEC airdrop field validations
+// TokenId regex
+const TOKEN_ID_REGEX = new RegExp(/^[a-f0-9]{64}$/);
+/**
+ * Validate a tokenId
+ * @param {string} tokenId
+ * @returns
+ */
 export const isValidTokenId = tokenId => {
-    // disable no-useless-escape for regex
-    //eslint-disable-next-line
-    const format = /[ `!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~]/;
-    const specialCharCheck = format.test(tokenId);
-
-    return (
-        typeof tokenId === 'string' &&
-        tokenId.length === 64 &&
-        tokenId.trim() != '' &&
-        !specialCharCheck
-    );
+    return TOKEN_ID_REGEX.test(tokenId);
 };
 
 /**
@@ -446,8 +449,8 @@ export const isValidAirdropExclusionArray = airdropExclusionArray => {
     // parse and validate each address in array
     for (const address of addressStringArray) {
         if (
-            !address.startsWith('ecash') ||
-            !cashaddr.isValidCashAddress(address, 'ecash')
+            !address.startsWith(appConfig.prefix) ||
+            !cashaddr.isValidCashAddress(address, appConfig.prefix)
         ) {
             return false;
         }
@@ -495,7 +498,10 @@ export const isValidMultiSendUserInput = (
         }
 
         const address = addressAndValueThisLine[0].trim();
-        const isValidAddress = cashaddr.isValidCashAddress(address, 'ecash');
+        const isValidAddress = cashaddr.isValidCashAddress(
+            address,
+            appConfig.prefix,
+        );
 
         if (!isValidAddress) {
             return `Invalid address "${address}" at line ${i + 1}`;
@@ -651,6 +657,7 @@ export const shouldSendXecBeDisabled = (
  * For now, Cashtab supports only
  * amount - amount to be sent in XEC
  * opreturn - raw hex for opreturn output
+ * additional addr & amount - multiple outputs for XEC txs
  * @param {number} balanceSats user wallet balance in satoshis
  * @param {string} userLocale navigator.language if available, or default value if not
  * @returns {object} addressInfo. Object with parsed params designed for use in Send.js
@@ -681,7 +688,10 @@ export function parseAddressInput(
     parsedAddressInput.address.value = cleanAddress;
 
     // Validate address
-    const isValidAddr = cashaddr.isValidCashAddress(cleanAddress, 'ecash');
+    const isValidAddr = cashaddr.isValidCashAddress(
+        cleanAddress,
+        appConfig.prefix,
+    );
 
     // Is this valid address?
     if (!isValidAddr) {
@@ -714,31 +724,92 @@ export function parseAddressInput(
         // https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams
         const addrParams = new URLSearchParams(queryString);
 
-        // Check for duplicated params
-        const duplicatedParams =
-            new Set(addrParams.keys()).size !==
-            Array.from(addrParams.keys()).length;
-
-        if (duplicatedParams) {
-            // In this case, we can't pass any values back for supported params,
-            // without changing the shape of addressInfo
-            parsedAddressInput.queryString.error = `bip21 parameters may not appear more than once`;
-            return parsedAddressInput;
-        }
-
-        const supportedParams = ['amount', 'op_return_raw'];
+        const supportedParams = ['amount', 'op_return_raw', 'addr'];
 
         // Iterate over params to check for valid and/or invalid params
-        for (const paramKeyValue of addrParams) {
-            const paramKey = paramKeyValue[0];
-            if (!supportedParams.includes(paramKey)) {
+        // Set a flag -- the first time we see the 'amount' param, it is for the bip21 starting address
+        let firstAmount = true;
+        // Set a flag -- per spec, nth outputs must be addr=<address> followed immediately by amount= for that address
+        let precedingParamAddr = false;
+
+        // Tempting to make additionalXecOutputs a map of address => amount
+        // However, we want to support the use case of multiple outputs of different amounts going to the same address
+        const additionalXecOutputs = [];
+        // Flag as any duplication of this param is off spec
+        let opReturnRawOccurred = false;
+        for (const [key, value] of addrParams) {
+            if (precedingParamAddr !== false) {
+                // If the preceding param was addr, then this has to be amount, otherwise off spec
+                if (key !== 'amount') {
+                    parsedAddressInput.parsedAdditionalXecOutputs.error = `No amount key for addr ${precedingParamAddr}`;
+                    return parsedAddressInput;
+                }
+                // Validate the amount
+                const isValidXecSendAmountOrErrorMsg = isValidXecSendAmount(
+                    value,
+                    balanceSats,
+                    userLocale,
+                );
+                if (isValidXecSendAmountOrErrorMsg !== true) {
+                    parsedAddressInput.parsedAdditionalXecOutputs.error = `Invalid amount ${value} for address ${precedingParamAddr}: ${isValidXecSendAmountOrErrorMsg}`;
+                    return parsedAddressInput;
+                } else {
+                    additionalXecOutputs.push([precedingParamAddr, value]);
+                }
+
+                // Reset the flag
+                precedingParamAddr = false;
+
+                // Go to the next param
+                continue;
+            }
+
+            if (!supportedParams.includes(key)) {
                 // queryString error
                 // Keep parsing for other params though
-                parsedAddressInput.queryString.error = `Unsupported param "${paramKey}"`;
+                parsedAddressInput.queryString.error = `Unsupported param "${key}"`;
             }
-            if (paramKey === 'amount') {
+            if (key === 'addr') {
+                // nth output address param
+                // So, we will return a parsedAdditionalXecOutputs key
+                parsedAddressInput.parsedAdditionalXecOutputs = {
+                    value: null,
+                    error: false,
+                };
+
+                const nthAddress = value;
+                // address validation
+                // Note: for now, Cashtab only supports valid cash addresses for secondary outputs
+                // TODO support aliases
+                const isValidNthAddress = cashaddr.isValidCashAddress(
+                    nthAddress,
+                    appConfig.prefix,
+                );
+                if (!isValidNthAddress) {
+                    //
+                    // If your address is not a valid address and not a valid alias format
+                    parsedAddressInput.parsedAdditionalXecOutputs.error = `Invalid address "${nthAddress}"`;
+                    // We do not return a value for parsedAdditionalXecOutputs if there is a validation error
+                    return parsedAddressInput;
+                }
+                // set precedingParamAddr flag to the address
+                // In this way we can validate bip21 spec and set the amount for this address by the next param
+                precedingParamAddr = nthAddress;
+            }
+            if (key === 'amount') {
+                if (!firstAmount) {
+                    // We should only get to this block for the first amount
+                    // If we get here otherwise, it means we are missing the corresponding 'addr' param for this amount
+                    // Set a query string error
+                    parsedAddressInput.queryString.error = `The amount param appears without a corresponding addr param`;
+                    // Do not return an amount value, since it is ambiguous
+                    parsedAddressInput.amount.value = null;
+                    parsedAddressInput.amount.error = `Duplicated amount param without matching address`;
+                    // Stop parsing
+                    return parsedAddressInput;
+                }
                 // Handle Cashtab-supported bip21 param 'amount'
-                const amount = paramKeyValue[1];
+                const amount = value;
                 parsedAddressInput.amount = { value: amount, error: false };
 
                 const validXecSendAmount = isValidXecSendAmount(
@@ -750,10 +821,25 @@ export function parseAddressInput(
                     // If the result of isValidXecSendAmount is not true, it is an error msg explaining wy
                     parsedAddressInput.amount.error = validXecSendAmount;
                 }
+
+                if (firstAmount) {
+                    // Unset the firstAmount flag so that we correctly parse nth outputs
+                    firstAmount = false;
+                }
             }
-            if (paramKey === 'op_return_raw') {
+            if (key === 'op_return_raw') {
+                if (opReturnRawOccurred) {
+                    // Set a query string error
+                    parsedAddressInput.queryString.error = `The op_return_raw param may not appear more than once`;
+                    // Do not return an op_return_raw value, since it is ambiguous
+                    parsedAddressInput.op_return_raw.value = null;
+                    parsedAddressInput.op_return_raw.error = `Duplicated op_return_raw param`;
+                    // Stop parsing
+                    return parsedAddressInput;
+                }
+                opReturnRawOccurred = true;
                 // Handle Cashtab-supported bip21 param 'op_return_raw'
-                const opreturnParam = paramKeyValue[1];
+                const opreturnParam = value;
                 parsedAddressInput.op_return_raw = {
                     value: opreturnParam,
                     error: false,
@@ -764,6 +850,17 @@ export function parseAddressInput(
                     parsedAddressInput.op_return_raw.error = `Invalid op_return_raw param: ${opReturnRawError}`;
                 }
             }
+        }
+
+        // Catch a bip21 syntax error where the LAST param was addr
+        if (precedingParamAddr !== false) {
+            parsedAddressInput.parsedAdditionalXecOutputs.error = `No amount key for addr ${precedingParamAddr}`;
+            return parsedAddressInput;
+        }
+        if (additionalXecOutputs.length > 0) {
+            // If we have secondary outputs, include them
+            parsedAddressInput.parsedAdditionalXecOutputs.value =
+                additionalXecOutputs;
         }
     }
 
@@ -871,6 +968,12 @@ export const isValidTokenSendOrBurnAmount = (
         return `Amount ${amount} exceeds balance of ${tokenBalance}`;
     }
 
+    // Amount must be <= 0xffffffffffffffff in token satoshis for this token decimals
+    const maxQty = getMaxDecimalizedSlpQty(decimals);
+    if (amountBN.gt(maxQty)) {
+        return `Amount ${amount} exceeds max supported SLP qty for this token in one tx (${maxQty})`;
+    }
+
     if (amount.includes('.')) {
         if (amount.toString().split('.')[1].length > decimals) {
             if (decimals === 0) {
@@ -919,7 +1022,7 @@ export const isValidTokenMintAmount = (amount, decimals) => {
     // Amount must be <= 0xffffffffffffffff in token satoshis for this token decimals
     const amountBN = new BN(amount);
     // Returns 1 if greater, -1 if less, 0 if the same, null if n/a
-    const maxMintAmount = getMaxMintAmount(decimals);
+    const maxMintAmount = getMaxDecimalizedSlpQty(decimals);
     if (amountBN.gt(maxMintAmount)) {
         return `Amount ${amount} exceeds max mint amount for this token (${maxMintAmount})`;
     }
@@ -945,6 +1048,158 @@ export const getContactNameError = (name, contacts) => {
         if (contact.name === name) {
             return `"${name}" already exists in contacts`;
         }
+    }
+    return false;
+};
+
+/**
+ * Validation for a user-input price for listing an NFT, in XEC or fiat
+ * @param {string} xecListPrice user input list price of an NFT in XEC or fiat
+ * @param {string} selectedCurrency e.g. XEC, USD (comes from Select dropdown)
+ * @param {number} fiatPrice price of XEC in selectedCurrency
+ */
+export const getXecListPriceError = (
+    xecListPrice,
+    selectedCurrency,
+    fiatPrice,
+) => {
+    if (xecListPrice === '') {
+        return 'List price is required.';
+    }
+    if (selectedCurrency !== 'XEC' && fiatPrice === null) {
+        // Should never happen as screen using this function sets selectedCurrency to XEC on fiatPrice becoming null
+        return `Cannot input price in ${selectedCurrency} while fiat price is unavailable.`;
+    }
+    if (!STRINGIFIED_DECIMALIZED_REGEX.test(xecListPrice)) {
+        // Must be a number (can't necessarily rely on Number input field to validate this)
+        return 'List price must be a number greater than 5.46 XEC.';
+    }
+    if (xecListPrice.includes('.')) {
+        if (xecListPrice.split('.')[1].length > appConfig.cashDecimals) {
+            return `List price supports up to ${appConfig.cashDecimals} decimal places.`;
+        }
+    }
+    const priceSatoshis =
+        selectedCurrency !== 'XEC'
+            ? toSatoshis(
+                  parseFloat((parseFloat(xecListPrice) / fiatPrice).toFixed(2)),
+              )
+            : toSatoshis(xecListPrice);
+    if (priceSatoshis < appConfig.dustSats) {
+        // We cannot enforce an output to have less than dust satoshis
+        return 'List price cannot be less than dust (5.46 XEC).';
+    }
+
+    // If we get here, there is no error in the XEC list price for this NFT
+    return false;
+};
+
+/**
+ * Validation for a user-input price for listing a token in an Agora Partial offer, in XEC or fiat
+ * Unlike NFTs, agora partial offers are priced in nanosatoshis per token satoshi
+ * So, we can have much lower prices
+ * However we still must prevent prices that are "too low", i.e. less than 1 nanosatoshi per token
+ * satoshi, or prices where the min buy would be less than dust (546 satoshis)
+ * @param {string} xecListPrice user input list price of an NFT in XEC or fiat
+ * @param {string} selectedCurrency e.g. XEC, USD (comes from Select dropdown)
+ * @param {number} fiatPrice price of XEC in selectedCurrency
+ * @param {string} minBuyTokenQty min amount that can be purchased in this agora partial
+ * @param {0|1|2|3|4|5|6|7|8|9} tokenDecimals
+ */
+export const NANOSAT_DECIMALS = 11;
+export const getAgoraPartialListPriceError = (
+    xecListPrice,
+    selectedCurrency,
+    fiatPrice,
+    minBuyTokenQty,
+    tokenDecimals,
+) => {
+    if (xecListPrice === '') {
+        return 'List price is required.';
+    }
+    if (selectedCurrency !== 'XEC' && fiatPrice === null) {
+        // Should never happen as screen using this function sets selectedCurrency to XEC on fiatPrice becoming null
+        return `Cannot input price in ${selectedCurrency} while fiat price is unavailable.`;
+    }
+    if (!STRINGIFIED_DECIMALIZED_REGEX.test(xecListPrice)) {
+        // Must be a number (can't necessarily rely on Number input field to validate this)
+        return 'List price must be a number';
+    }
+    if (xecListPrice.includes('.')) {
+        // We can't support prices lower than 1 nanosatoshi per token satoshi
+        // In practice, if the token has more than 1 decimal place,
+        // Any amoutn lower than 1 nanosatoshi will be much lower than 1 nanosatoshi per token satoshi
+        if (xecListPrice.split('.')[1].length > NANOSAT_DECIMALS) {
+            return `List price supports up to ${NANOSAT_DECIMALS} decimal places.`;
+        }
+    }
+
+    // Get the price in XEC
+
+    let priceXec =
+        selectedCurrency !== 'XEC'
+            ? new BN(
+                  new BN(xecListPrice).div(fiatPrice).toFixed(NANOSAT_DECIMALS),
+              )
+            : new BN(xecListPrice);
+
+    // Get the total price of the min buy amount
+    const priceXecMinBuy = priceXec.times(new BN(minBuyTokenQty));
+
+    if (priceXecMinBuy.lt(toXec(appConfig.dustSats))) {
+        // We cannot enforce an output to have less than dust satoshis
+        return `Minimum buy costs ${priceXecMinBuy.toString()} XEC, must be at least 5.46 XEC`;
+    }
+
+    // Get the price in nanosats per token satoshi
+    // this is the unit agora takes, 1 nanosat per 1 tokens at is the min
+    const priceNanoSatsPerDecimalizedToken = xecToNanoSatoshis(priceXec);
+
+    if (priceNanoSatsPerDecimalizedToken < Math.pow(10, tokenDecimals)) {
+        return 'Price cannot be lower than 1 nanosatoshi per 1 token satoshi';
+    }
+
+    // If we get here, there is no error in the XEC list price for this NFT
+    return false;
+};
+
+export const getAgoraPartialAcceptTokenQtyError = (
+    acceptTokenSatoshis,
+    offerMinAcceptTokenSatoshis,
+    offerMaxAcceptSatoshis,
+    decimals,
+) => {
+    /**
+     * 2 potential problems
+     *
+     * 1 - the minimum amount left may cost less than 5.46 XEC, or dust
+     *     such a tx would be impossible to accept
+     *
+     * 2 - the minimum amount left may be less than the minAcceptedTokens of this offer
+     *     In this case, ecash-agora will create a partial with a total amount of less
+     *     than the min accepted offer, which would itself be unacceptable
+     *
+     * ecash-agora has validation preventing both cases. But the agora protocol does not
+     * necessarily prevent this from happening.
+     *
+     * Even if the case were handled by ecash-agora, it is still a good practice to validate this input
+     * in the frontend, so the user knows why such a qty cannot be accepted
+     *
+     * For now, Cashtab already handles 1 -- as the minAcceptedToken amount is validated such that
+     * it must cost at least dust
+     *
+     * So, in Cashtab, we only test for case 2 here
+     */
+
+    const threshold = offerMaxAcceptSatoshis - offerMinAcceptTokenSatoshis;
+    if (
+        acceptTokenSatoshis > threshold &&
+        acceptTokenSatoshis < offerMaxAcceptSatoshis
+    ) {
+        return `Must accept <= ${decimalizeTokenAmount(
+            threshold.toString(),
+            decimals,
+        )} or the full offer`;
     }
     return false;
 };

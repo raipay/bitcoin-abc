@@ -13,6 +13,7 @@ Derived from abc-schnorr.py
 """
 
 from test_framework.blocktools import (
+    COINBASE_MATURITY,
     create_block,
     create_coinbase,
     create_tx_with_script,
@@ -29,14 +30,10 @@ from test_framework.messages import (
     ToHex,
 )
 from test_framework.p2p import P2PDataStore
-from test_framework.script import (
-    OP_0,
-    OP_1,
-    OP_CHECKMULTISIG,
-    OP_TRUE,
+from test_framework.script import OP_0, OP_1, OP_CHECKMULTISIG, OP_TRUE, CScript
+from test_framework.signature_hash import (
     SIGHASH_ALL,
     SIGHASH_FORKID,
-    CScript,
     SignatureHashForkId,
 )
 from test_framework.test_framework import BitcoinTestFramework
@@ -141,7 +138,7 @@ class SchnorrMultisigTest(BitcoinTestFramework):
         spendable_outputs = [block.vtx[0] for block in blocks]
 
         self.log.info("Mature the blocks and get out of IBD.")
-        self.generate(node, 100, sync_fun=self.no_op)
+        self.generate(node, COINBASE_MATURITY, sync_fun=self.no_op)
 
         tip = self.getbestblock(node)
 

@@ -6,7 +6,9 @@
 
 #include <rpc/server.h>
 
+#include <common/args.h>
 #include <config.h>
+#include <logging.h>
 #include <rpc/util.h>
 #include <shutdown.h>
 #include <sync.h>
@@ -215,13 +217,8 @@ static RPCHelpMan stop() {
         // returning to the client (intended for testing)
         "\nRequest a graceful shutdown of " PACKAGE_NAME ".",
         {
-            {"wait",
-             RPCArg::Type::NUM,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
-             "how long to wait in ms",
-             "",
-             {},
-             /* hidden */ true},
+            {"wait", RPCArg::Type::NUM, RPCArg::Optional::OMITTED_NAMED_ARG,
+             "how long to wait in ms", RPCArgOptions{.hidden = true}},
         },
         RPCResult{RPCResult::Type::STR, "",
                   "A string with the content '" + RESULT + "'"},
@@ -232,8 +229,8 @@ static RPCHelpMan stop() {
             // handled, so this reply will get back to the client.
             StartShutdown();
             if (jsonRequest.params[0].isNum()) {
-                UninterruptibleSleep(
-                    std::chrono::milliseconds{jsonRequest.params[0].get_int()});
+                UninterruptibleSleep(std::chrono::milliseconds{
+                    jsonRequest.params[0].getInt<int>()});
             }
             return RESULT;
         },
@@ -449,9 +446,9 @@ std::string JSONRPCExecBatch(const Config &config, RPCServer &rpcServer,
  * Process named arguments into a vector of positional arguments, based on the
  * passed-in specification for the RPC call's arguments.
  */
-static inline JSONRPCRequest
-transformNamedArguments(const JSONRPCRequest &in,
-                        const std::vector<std::string> &argNames) {
+static inline JSONRPCRequest transformNamedArguments(
+    const JSONRPCRequest &in,
+    const std::vector<std::pair<std::string, bool>> &argNames) {
     JSONRPCRequest out = in;
     out.params = UniValue(UniValue::VARR);
     // Build a map of parameters, and remove ones that have been processed, so
@@ -460,11 +457,26 @@ transformNamedArguments(const JSONRPCRequest &in,
     const std::vector<UniValue> &values = in.params.getValues();
     std::unordered_map<std::string, const UniValue *> argsIn;
     for (size_t i = 0; i < keys.size(); ++i) {
-        argsIn[keys[i]] = &values[i];
+        auto [_, inserted] = argsIn.emplace(keys[i], &values[i]);
+        if (!inserted) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               "Parameter " + keys[i] +
+                                   " specified multiple times");
+        }
     }
-    // Process expected parameters.
-    int hole = 0;
-    for (const std::string &argNamePattern : argNames) {
+    // Process expected parameters. If any parameters were left unspecified in
+    // the request before a parameter that was specified, null values need to be
+    // inserted at the unspecifed parameter positions, and the "hole" variable
+    // below tracks the number of null values that need to be inserted.
+    // The "initial_hole_size" variable stores the size of the initial hole,
+    // i.e. how many initial positional arguments were left unspecified. This is
+    // used after the for-loop to add initial positional arguments from the
+    // "args" parameter, if present.
+    size_t hole = 0;
+    size_t initial_hole_size = 0;
+    const std::string *initial_param = nullptr;
+    UniValue options{UniValue::VOBJ};
+    for (const auto &[argNamePattern, named_only] : argNames) {
         std::vector<std::string> vargNames = SplitString(argNamePattern, '|');
         auto fr = argsIn.end();
         for (const std::string &argName : vargNames) {
@@ -473,18 +485,77 @@ transformNamedArguments(const JSONRPCRequest &in,
                 break;
             }
         }
-        if (fr != argsIn.end()) {
-            for (int i = 0; i < hole; ++i) {
-                // Fill hole between specified parameters with JSON nulls, but
-                // not at the end (for backwards compatibility with calls that
-                // act based on number of specified parameters).
+
+        // Handle named-only parameters by pushing them into a temporary options
+        // object, and then pushing the accumulated options as the next
+        // positional argument.
+        if (named_only) {
+            if (fr != argsIn.end()) {
+                if (options.exists(fr->first)) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                       "Parameter " + fr->first +
+                                           " specified multiple times");
+                }
+                options.pushKVEnd(fr->first, *fr->second);
+                argsIn.erase(fr);
+            }
+            continue;
+        }
+
+        if (!options.empty() || fr != argsIn.end()) {
+            for (size_t i = 0; i < hole; ++i) {
+                // Fill hole between specified parameters with JSON nulls,
+                // but not at the end (for backwards compatibility with calls
+                // that act based on number of specified parameters).
                 out.params.push_back(UniValue());
             }
             hole = 0;
-            out.params.push_back(*fr->second);
-            argsIn.erase(fr);
+            if (!initial_param) {
+                initial_param = &argNamePattern;
+            }
         } else {
             hole += 1;
+            if (out.params.empty()) {
+                initial_hole_size = hole;
+            }
+        }
+
+        // If named input parameter "fr" is present, push it onto out.params. If
+        // options are present, push them onto out.params. If both are present,
+        // throw an error.
+        if (fr != argsIn.end()) {
+            if (!options.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "Parameter " + fr->first +
+                                       " conflicts with parameter " +
+                                       options.getKeys().front());
+            }
+            out.params.push_back(*fr->second);
+            argsIn.erase(fr);
+        }
+        if (!options.empty()) {
+            out.params.push_back(std::move(options));
+            options = UniValue{UniValue::VOBJ};
+        }
+    }
+    // If leftover "args" param was found, use it as a source of positional
+    // arguments and add named arguments after. This is a convenience for
+    // clients that want to pass a combination of named and positional
+    // arguments as described in doc/JSON-RPC-interface.md#parameter-passing
+    auto positional_args{argsIn.extract("args")};
+    if (positional_args && positional_args.mapped()->isArray()) {
+        if (initial_hole_size < positional_args.mapped()->size() &&
+            initial_param) {
+            throw JSONRPCError(
+                RPC_INVALID_PARAMETER,
+                "Parameter " + *initial_param +
+                    " specified twice both as positional and named argument");
+        }
+        // Assign positional_args to out.params and append named_args after.
+        UniValue named_args{std::move(out.params)};
+        out.params = *positional_args.mapped();
+        for (size_t i{out.params.size()}; i < named_args.size(); ++i) {
+            out.params.push_back(named_args[i]);
         }
     }
     // If there are still arguments in the argsIn map, this is an error.
@@ -542,6 +613,8 @@ static bool ExecuteCommand(const Config &config, const CRPCCommand &command,
         } else {
             return command.actor(config, request, result, last_handler);
         }
+    } catch (const UniValue::type_error &e) {
+        throw JSONRPCError(RPC_TYPE_ERROR, e.what());
     } catch (const std::exception &e) {
         throw JSONRPCError(RPC_MISC_ERROR, e.what());
     }

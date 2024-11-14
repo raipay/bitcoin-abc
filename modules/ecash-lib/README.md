@@ -50,6 +50,7 @@ import {
     initWasm,
     shaRmd160,
     toHex,
+    ALL_BIP143,
 } from 'ecash-lib';
 
 // Download and compile WebAssembly
@@ -71,7 +72,7 @@ const walletUtxo = {
 const txBuild = new TxBuilder({
     inputs: [
         {
-            inputs: {
+            input: {
                 prevOut: walletUtxo,
                 signData: {
                     value: 1000,
@@ -93,3 +94,10 @@ const tx = txBuild.sign(ecc, 1000, 546);
 const rawTx = tx.ser();
 console.log(toHex(rawTx));
 ```
+
+## Changelog
+
+-   0.1.1 - Validation that feePerKb is an integer
+-   0.1.2 - Upgrade dependencies [D16373](https://reviews.bitcoinabc.org/D16373)
+-   0.1.3 - Export `slpAmount` function [D16379](https://reviews.bitcoinabc.org/D16379)
+-   0.2.0 - Add `Script.fromAddress` method to convert cashaddr addresses to `Script`

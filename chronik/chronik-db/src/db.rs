@@ -22,6 +22,7 @@ use crate::{
         token::TokenWriter, BlockStatsWriter, BlockWriter, MetadataWriter,
         SpentByWriter, TxWriter,
     },
+    plugins::PluginsWriter,
 };
 
 // All column family names used by Chronik should be defined here
@@ -45,6 +46,18 @@ pub const CF_LOOKUP_BLK_BY_HASH: &str = "lookup_blk_by_hash";
 pub const CF_LOOKUP_TX_BY_HASH: &str = "lookup_tx_by_hash";
 /// Column family name for db metadata.
 pub const CF_META: &str = "meta";
+/// Column family to store plugin group UTXOs.
+pub const CF_PLUGIN_GROUP_UTXOS: &str = "plugin_utxos";
+/// Column family to store tx history by plugin groups.
+pub const CF_PLUGIN_HISTORY: &str = "plugin_history";
+/// Column family to store number of txs by plugin groups.
+pub const CF_PLUGIN_HISTORY_NUM_TXS: &str = "plugin_history_num_txs";
+/// Column family to store plugin metadata.
+pub const CF_PLUGIN_META: &str = "plugin_meta";
+/// Column family to store plugin outputs.
+pub const CF_PLUGIN_OUTPUTS: &str = "plugin_outputs";
+/// Column family for the scripthash:script index
+pub const CF_SCRIPTHASH: &str = "scripthash";
 /// Column family to store tx history by script.
 pub const CF_SCRIPT_HISTORY: &str = "script_history";
 /// Column family to store number of txs by script.
@@ -108,6 +121,7 @@ impl Db {
         TokenIdHistoryWriter::add_cfs(&mut cfs);
         TokenIdUtxoWriter::add_cfs(&mut cfs);
         LokadIdHistoryWriter::add_cfs(&mut cfs);
+        PluginsWriter::add_cfs(&mut cfs);
         Self::open_with_cfs(path, cfs)
     }
 
@@ -210,6 +224,17 @@ impl Db {
 
     /// Writes the batch to the Db atomically.
     pub fn write_batch(&self, write_batch: WriteBatch) -> Result<()> {
+        self.db.write(write_batch).map_err(RocksDb)?;
+        Ok(())
+    }
+
+    /// Writes the batch to the Db without write-ahead logs.
+    /// This can be faster and more space efficient, but should only be used
+    /// when we don't care about only partially writing the WriteBatch.
+    pub fn write_batch_without_wal(
+        &self,
+        write_batch: WriteBatch,
+    ) -> Result<()> {
         self.db.write_without_wal(write_batch).map_err(RocksDb)?;
         Ok(())
     }

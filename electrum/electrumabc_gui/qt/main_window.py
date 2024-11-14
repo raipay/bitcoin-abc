@@ -55,9 +55,11 @@ import electrumabc.web as web
 from electrumabc import bitcoin, commands, keystore, networks, paymentrequest, util
 from electrumabc.address import Address
 from electrumabc.alias import DEFAULT_ENABLE_ALIASES
+from electrumabc.bip32 import InvalidXKeyFormat, InvalidXKeyNotBase58, deserialize_xpub
 from electrumabc.bitcoin import TYPE_ADDRESS
 from electrumabc.constants import CURRENCY, PROJECT_NAME, REPOSITORY_URL, SCRIPT_NAME
 from electrumabc.contacts import Contact
+from electrumabc.ecc import ECPubkey
 from electrumabc.i18n import _, ngettext
 from electrumabc.paymentrequest import PR_PAID
 from electrumabc.plugins import run_hook
@@ -649,12 +651,6 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
             and self.wallet.get_master_public_key()
         ) or None
         if xkey:
-            from electrumabc.bitcoin import (
-                InvalidXKeyFormat,
-                InvalidXKeyNotBase58,
-                deserialize_xpub,
-            )
-
             try:
                 deserialize_xpub(xkey)
             except InvalidXKeyNotBase58:
@@ -1037,10 +1033,6 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
             self.show_error(_("No donation address for this server"))
 
     def show_about(self):
-        year_start_ec = 2017
-        year_end_ec = 2022
-        year_start = 2020
-        year_end = 2022
         QtWidgets.QMessageBox.about(
             self,
             f"{PROJECT_NAME}",
@@ -1048,17 +1040,6 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
             + _("Version")
             + f" {self.wallet.electrum_version}"
             + "</p>"
-            + '<span style="font-size:11pt; font-weight:500;"><p>'
-            + f"Copyright © {year_start}-{year_end} Bitcoin ABC and the {PROJECT_NAME} "
-            "developers."
-            + "</p><p>"
-            + _(
-                f"Copyright © {year_start_ec}-{year_end_ec} Electron Cash LLC "
-                "and the Electron Cash developers."
-            )
-            + "</p><p>"
-            + _("darkdetect for macOS © 2019 Alberto Sottile")
-            + "</p></span>"
             + '<span style="font-weight:200;"><p>'
             + _(
                 f"{PROJECT_NAME}'s focus is speed, with low resource usage and"
@@ -1069,7 +1050,10 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
                 "high-performance servers that handle the most complicated "
                 f"parts of the {CURRENCY} system."
             )
-            + "</p></span>",
+            + "</p></span>"
+            + f"<p><a href={REPOSITORY_URL}/blob/master/electrum/COPYING>"
+            + _("License and copyright information")
+            + "</a></p>",
         )
 
     def show_report_bug(self):
@@ -3682,7 +3666,8 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
         message = message_e.toPlainText()
         message = message.encode("utf-8")
         try:
-            encrypted = bitcoin.encrypt_message(message, bytes.fromhex(pubkey_e.text()))
+            public_key = ECPubkey(bytes.fromhex(pubkey_e.text()))
+            encrypted = public_key.encrypt_message(message)
             encrypted_e.setText(encrypted.decode("ascii"))
         except Exception as e:
             if is_verbose:

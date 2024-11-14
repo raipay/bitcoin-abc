@@ -5,10 +5,14 @@
 'use strict';
 
 export const chronik = {
-    urls: [
-        'https://chronik-native1.fabien.cash',
-        'https://chronik.pay2stay.com/xec',
-    ],
+    urls:
+        process.env.REACT_APP_TESTNET === 'true'
+            ? ['https://chronik-testnet.fabien.cash']
+            : [
+                  'https://chronik-native1.fabien.cash', // indexed for agora.py plugin
+                  'https://chronik.pay2stay.com/xec2', // indexed for agora.py plugin
+                  'https://chronik-native2.fabien.cash', // NOT indexed for agora.py
+              ],
     txHistoryCount: 20,
     txHistoryPageSize: 20,
 };

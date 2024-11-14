@@ -8,6 +8,7 @@
 #include <chronik-cpp/chronik_bridge.h>
 #include <chronik-cpp/util/collection.h>
 #include <chronik-cpp/util/hash.h>
+#include <clientversion.h>
 #include <compressor.h>
 #include <config.h>
 #include <feerate.h>
@@ -198,11 +199,60 @@ ChronikBridge::lookup_block_index(std::array<uint8_t, 32> hash) const {
     return *pindex;
 }
 
+const CBlockIndex &
+ChronikBridge::lookup_block_index_by_height(int height) const {
+    // The boundary check is performed in the CChain::operator[](int nHeight)
+    // method, a nullptr is returned if height is out of bounds.
+    const CBlockIndex *pindex =
+        WITH_LOCK(cs_main, return m_node.chainman->ActiveChain()[height]);
+    if (!pindex) {
+        throw block_index_not_found();
+    }
+    return *pindex;
+}
+
+rust::Vec<RawBlockHeader>
+ChronikBridge::get_block_headers_by_range(int start, int end) const {
+    if (start < 0 || end < start) {
+        throw invalid_block_range();
+    }
+    LOCK(cs_main);
+    std::vector<RawBlockHeader> headers;
+    for (int height = start; height <= end; height++) {
+        const CBlockIndex *pindex = m_node.chainman->ActiveChain()[height];
+        if (!pindex) {
+            // We allow partial results or empty result.
+            // We can assume that if a block height does not exist the following
+            // ones also will not exist.
+            return chronik::util::ToRustVec<RawBlockHeader>(headers);
+        }
+        headers.push_back({.data = get_block_header(*pindex)});
+    }
+    return chronik::util::ToRustVec<RawBlockHeader>(headers);
+}
+
+rust::Vec<WrappedBlockHash>
+ChronikBridge::get_block_hashes_by_range(int start, int end) const {
+    if (start < 0 || end < start) {
+        throw invalid_block_range();
+    }
+    LOCK(cs_main);
+    std::vector<WrappedBlockHash> block_hashes;
+    for (int height = start; height <= end; height++) {
+        const CBlockIndex *pindex = m_node.chainman->ActiveChain()[height];
+        if (!pindex) {
+            throw block_index_not_found();
+        }
+        block_hashes.push_back(
+            {.data = chronik::util::HashToArray(pindex->GetBlockHash())});
+    }
+    return chronik::util::ToRustVec<WrappedBlockHash>(block_hashes);
+}
+
 std::unique_ptr<CBlock>
 ChronikBridge::load_block(const CBlockIndex &bindex) const {
     CBlock block;
-    if (!node::ReadBlockFromDisk(block, &bindex,
-                                 m_node.chainman->GetConsensus())) {
+    if (!m_node.chainman->m_blockman.ReadBlockFromDisk(block, bindex)) {
         throw std::runtime_error("Reading block data failed");
     }
     return std::make_unique<CBlock>(std::move(block));
@@ -213,7 +263,7 @@ ChronikBridge::load_block_undo(const CBlockIndex &bindex) const {
     CBlockUndo block_undo;
     // Read undo data (genesis block doesn't have undo data)
     if (bindex.nHeight > 0) {
-        if (!node::UndoReadFromDisk(block_undo, &bindex)) {
+        if (!m_node.chainman->m_blockman.UndoReadFromDisk(block_undo, bindex)) {
             throw std::runtime_error("Reading block undo data failed");
         }
     }
@@ -225,12 +275,13 @@ Tx ChronikBridge::load_tx(uint32_t file_num, uint32_t data_pos,
     CMutableTransaction tx;
     CTxUndo txundo{};
     const bool isCoinbase = undo_pos == 0;
-    if (!node::ReadTxFromDisk(tx, FlatFilePos(file_num, data_pos))) {
+    if (!m_node.chainman->m_blockman.ReadTxFromDisk(
+            tx, FlatFilePos(file_num, data_pos))) {
         throw std::runtime_error("Reading tx data from disk failed");
     }
     if (!isCoinbase) {
-        if (!node::ReadTxUndoFromDisk(txundo,
-                                      FlatFilePos(file_num, undo_pos))) {
+        if (!m_node.chainman->m_blockman.ReadTxUndoFromDisk(
+                txundo, FlatFilePos(file_num, undo_pos))) {
             throw std::runtime_error("Reading tx undo data from disk failed");
         }
     }
@@ -240,7 +291,8 @@ Tx ChronikBridge::load_tx(uint32_t file_num, uint32_t data_pos,
 rust::Vec<uint8_t> ChronikBridge::load_raw_tx(uint32_t file_num,
                                               uint32_t data_pos) const {
     CMutableTransaction tx;
-    if (!node::ReadTxFromDisk(tx, FlatFilePos(file_num, data_pos))) {
+    if (!m_node.chainman->m_blockman.ReadTxFromDisk(
+            tx, FlatFilePos(file_num, data_pos))) {
         throw std::runtime_error("Reading tx data from disk failed");
     }
     CDataStream raw_tx{SER_NETWORK, PROTOCOL_VERSION};
@@ -356,6 +408,14 @@ BlockInfo get_block_info(const CBlockIndex &bindex) {
     };
 }
 
+std::array<uint8_t, 80> get_block_header(const CBlockIndex &index) {
+    CDataStream ser_header{SER_NETWORK, PROTOCOL_VERSION};
+    ser_header << index.GetBlockHeader();
+    std::array<uint8_t, 80> array;
+    std::copy_n(MakeUCharSpan(ser_header).begin(), 80, array.begin());
+    return array;
+}
+
 const CBlockIndex &get_block_ancestor(const CBlockIndex &index,
                                       int32_t height) {
     const CBlockIndex *pindex = index.GetAncestor(height);
@@ -395,6 +455,10 @@ void sync_with_validation_interface_queue() {
 
 bool init_error(const rust::Str msg) {
     return InitError(Untranslated(std::string(msg)));
+}
+
+rust::String format_full_version() {
+    return FormatFullVersion();
 }
 
 } // namespace chronik_bridge

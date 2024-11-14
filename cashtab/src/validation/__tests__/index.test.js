@@ -32,6 +32,9 @@ import {
     getContactAddressError,
     getWalletNameError,
     TOKEN_DOCUMENT_URL_MAX_CHARACTERS,
+    getXecListPriceError,
+    getAgoraPartialListPriceError,
+    getAgoraPartialAcceptTokenQtyError,
 } from 'validation';
 import {
     validXecAirdropExclusionList,
@@ -536,6 +539,75 @@ describe('Cashtab validation functions', () => {
             const { description, name, wallets, returned } = expectedReturn;
             it(`getWalletNameError: ${description}`, () => {
                 expect(getWalletNameError(name, wallets)).toBe(returned);
+            });
+        });
+    });
+    describe('Gets error or false for list price input', () => {
+        const { expectedReturns } = vectors.getXecListPriceError;
+        expectedReturns.forEach(expectedReturn => {
+            const {
+                description,
+                xecListPrice,
+                selectedCurrency,
+                fiatPrice,
+                returned,
+            } = expectedReturn;
+            it(`getXecListPriceError: ${description}`, () => {
+                expect(
+                    getXecListPriceError(
+                        xecListPrice,
+                        selectedCurrency,
+                        fiatPrice,
+                    ),
+                ).toBe(returned);
+            });
+        });
+    });
+    describe('Gets error or false for agora partial list price input', () => {
+        const { expectedReturns } = vectors.getAgoraPartialListPriceError;
+        expectedReturns.forEach(expectedReturn => {
+            const {
+                description,
+                xecListPrice,
+                selectedCurrency,
+                fiatPrice,
+                minBuyTokenQty,
+                tokenDecimals,
+                returned,
+            } = expectedReturn;
+            it(`getAgoraPartialListPriceError: ${description}`, () => {
+                expect(
+                    getAgoraPartialListPriceError(
+                        xecListPrice,
+                        selectedCurrency,
+                        fiatPrice,
+                        minBuyTokenQty,
+                        tokenDecimals,
+                    ),
+                ).toBe(returned);
+            });
+        });
+    });
+    describe('Gets error or false for agora partial qty select', () => {
+        const { expectedReturns } = vectors.getAgoraPartialAcceptTokenQtyError;
+        expectedReturns.forEach(expectedReturn => {
+            const {
+                description,
+                acceptTokenQty,
+                offerMinAcceptTokenQty,
+                offerMaxAcceptTokenQty,
+                decimals,
+                returned,
+            } = expectedReturn;
+            it(`getAgoraPartialAcceptTokenQtyError: ${description}`, () => {
+                expect(
+                    getAgoraPartialAcceptTokenQtyError(
+                        acceptTokenQty,
+                        offerMinAcceptTokenQty,
+                        offerMaxAcceptTokenQty,
+                        decimals,
+                    ),
+                ).toBe(returned);
             });
         });
     });

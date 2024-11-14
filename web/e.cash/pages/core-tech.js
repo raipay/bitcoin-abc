@@ -17,16 +17,18 @@ import AnimateImage from '/components/animate-image';
 import chronik from '/public/animations/services.json';
 import {
     TextImageBlockCtn,
+    TextCtn,
+    ImageCtn,
+    ButtonRow,
+} from '/styles/pages/core-tech.js';
+import {
     LeftTopArrow,
     LeftDownArrow,
     RightTopArrow,
     RightDownArrow,
-    TextCtn,
-    ImageCtn,
-    ButtonRow,
     Blob,
     ContentCtn,
-} from '/styles/pages/core-tech.js';
+} from '/styles/common.js';
 
 /**
  * Return a styled block for the coretech items
@@ -37,21 +39,36 @@ import {
  * @param {object} children any children to display in the body
  * @param {string} id the CSS id used for anchor links
  */
-function TextImageBlock({ title, image, reverse, speed, children, id }) {
+function TextImageBlock({
+    title,
+    image,
+    reverse,
+    speed,
+    children,
+    id,
+    imageHeight = 700,
+}) {
     return (
-        <TextImageBlockCtn id={id}>
-            <LeftTopArrow />
-            <LeftDownArrow />
-            <RightTopArrow />
-            <RightDownArrow />
-            <TextCtn>
-                <H3 text={title} />
-                {children}
-            </TextCtn>
-            <ImageCtn>
-                <AnimateImage image={image} reverse={reverse} speed={speed} />
-            </ImageCtn>
-        </TextImageBlockCtn>
+        <>
+            <span class="anchor" id={id} />
+            <TextImageBlockCtn>
+                <LeftTopArrow />
+                <LeftDownArrow />
+                <RightTopArrow />
+                <RightDownArrow />
+                <TextCtn>
+                    <H3 text={title} />
+                    {children}
+                </TextCtn>
+                <ImageCtn imageHeight={imageHeight}>
+                    <AnimateImage
+                        image={image}
+                        reverse={reverse}
+                        speed={speed}
+                    />
+                </ImageCtn>
+            </TextImageBlockCtn>
+        </>
     );
 }
 
@@ -87,6 +104,7 @@ export default function CoreTech() {
                         title="Avalanche"
                         image={avalanche}
                         reverse
+                        speed="0.75"
                     >
                         <p>
                             Avalanche is a revolutionary consensus algorithm
@@ -155,25 +173,25 @@ export default function CoreTech() {
                     >
                         <p>
                             Subnets are customized networks linked to the main
-                            eCash network. They will allow developers to build
-                            networks with unique or experimental properties
-                            &mdash; while tethering value to the main eCash
-                            network.
+                            eCash blockchain. They will allow developers to
+                            build protocols with unique or experimental
+                            properties &mdash; while tethering value to the main
+                            eCash network.
                         </p>
                         <p>
-                            The technology is powered by subsets of Avalanche
-                            validators, who monitor the subnets to validate
-                            token tranfers to and from the subnet. This enables
-                            decentralized and trustless setup.
+                            Each subnet is powered by a set of Avalanche nodes.
+                            These nodes monitor the subnets to validate token
+                            transfers. This enables decentralized and trustless
+                            setup.
                         </p>
                         <p>
-                            Subnets enable eCash to natively connect with the
-                            wider DeFi ecosystem. Services can run their subnets
-                            with customized rules and properties according to
-                            their business requirements, including privately
-                            owned ones. Two subnets planned by the eCash team
-                            are an Ethereum Virtual Machine (EVM) and a
-                            Zero-Knowledge (ZK) privacy subnet.
+                            Services can run subnets permissionlessly with
+                            customized rules and properties according to their
+                            business requirements, including privately owned
+                            ones. Two subnets planned by the eCash team are an
+                            Ethereum Virtual Machine (EVM) that enables eCash to
+                            interoperate with the wider DeFi ecosystem and a
+                            Zero-Knowledge (ZK) subnet for bulletproof privacy.
                         </p>
                     </TextImageBlock>
 
@@ -199,6 +217,7 @@ export default function CoreTech() {
                         title="eTokens"
                         image={spiningcoin}
                         speed={0.8}
+                        imageHeight={490}
                     >
                         <p>
                             eCash supports tokens that anyone can create and

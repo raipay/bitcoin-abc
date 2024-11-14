@@ -24,7 +24,7 @@ export const wallets = [
         image: '/images/electrum-abc.png',
         link: 'https://www.bitcoinabc.org/electrum/',
         availableOn: ['Desktop'],
-        features: ['Message Signing', 'Multi-sig wallets'],
+        features: ['Message Signing', 'Multi-sig wallets', 'Bip-70'],
     },
     {
         name: 'RaiPay',
@@ -32,13 +32,13 @@ export const wallets = [
         image: '/images/raipay.png',
         link: 'https://www.raipay.co',
         availableOn: ['iOS', 'Android'],
-        features: ['eTokens', 'Message Signing'],
+        features: ['eTokens', 'Message Signing', 'Bip-70'],
     },
     {
-        name: 'ViaWallet',
-        text: 'Backed by CoinEx, ViaWallet is a multi-chain non-custodial mobile wallet that supports eCash (XEC). With ViaWallet you can send, receive and manage your XEC coins securely. ViaWallet is available for both Android & iOS devices.',
-        image: '/images/via-wallet.png',
-        link: 'https://viawallet.com/',
+        name: 'CoinEx Wallet',
+        text: 'CoinEx Wallet is a multi-chain non-custodial mobile wallet that supports eCash (XEC). With CoinEx Wallet you can send, receive and manage your XEC coins securely. CoinEx Wallet is available for both Android & iOS devices.',
+        image: '/images/coinex-wallet.png',
+        link: 'https://wallet.coinex.com/',
         availableOn: ['iOS', 'Android'],
     },
     {
@@ -58,17 +58,17 @@ export const wallets = [
     },
     {
         name: 'Unstoppable Wallet',
-        text: 'A privacy-oriented non-custodial wallet for eCash (XEC). Unstoppable is a highly secure, decentralized, and open-source wallet, available for Android and iOS smartphones.',
+        text: 'A privacy-oriented non-custodial wallet for eCash (XEC). Unstoppable Wallet is a highly secure, decentralized, and open-source wallet, available for Android and iOS smartphones.',
         image: '/images/unstoppable-wallet.png',
         link: 'https://unstoppable.money/',
         availableOn: ['iOS', 'Android'],
     },
     {
         name: 'Stack Wallet',
-        text: 'An open-source, non-custodial multichain wallet for eCash (XEC). Stack is a highly secure, privacy-first mobile wallet for XEC, available for Android and iOS smartphones.',
+        text: 'An open-source, non-custodial multichain wallet for eCash (XEC). Stack Wallet is a highly secure, privacy-first mobile wallet for XEC, available for Android and iOS smartphones as well as Windows, MacOS, and Linux.',
         image: '/images/stack-wallet.png',
         link: 'https://stackwallet.com/',
-        availableOn: ['iOS', 'Android'],
+        availableOn: ['iOS', 'Android', 'Desktop'],
     },
     {
         name: 'Guarda Wallet',

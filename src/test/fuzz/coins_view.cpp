@@ -48,7 +48,8 @@ void initialize_coins_view() {
 FUZZ_TARGET_INIT(coins_view, initialize_coins_view) {
     FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
     CCoinsView backend_coins_view;
-    CCoinsViewCache coins_view_cache{&backend_coins_view};
+    CCoinsViewCache coins_view_cache{&backend_coins_view,
+                                     /*deterministic=*/true};
     COutPoint random_out_point;
     Coin random_coin;
     CMutableTransaction random_mutable_transaction;
@@ -78,6 +79,7 @@ FUZZ_TARGET_INIT(coins_view, initialize_coins_view) {
                 assert(expected_code_path);
             },
             [&] { (void)coins_view_cache.Flush(); },
+            [&] { (void)coins_view_cache.Sync(); },
             [&] {
                 coins_view_cache.SetBestBlock(
                     BlockHash{ConsumeUInt256(fuzzed_data_provider)});
@@ -122,7 +124,10 @@ FUZZ_TARGET_INIT(coins_view, initialize_coins_view) {
                 random_mutable_transaction = *opt_mutable_transaction;
             },
             [&] {
-                CCoinsMap coins_map;
+                CCoinsMapMemoryResource resource;
+                CCoinsMap coins_map{
+                    0, SaltedOutpointHasher{/*deterministic=*/true},
+                    CCoinsMap::key_equal{}, &resource};
                 while (fuzzed_data_provider.ConsumeBool()) {
                     CCoinsCacheEntry coins_cache_entry;
                     coins_cache_entry.flags =

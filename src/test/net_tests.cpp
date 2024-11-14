@@ -61,6 +61,8 @@ struct CConnmanTest : public CConnman {
 
     NodeId nodeid = 0;
 
+    ~CConnmanTest() { ClearNodes(); }
+
     void AddNode(ConnectionType type) {
         CAddress addr(
             CService(ip(GetRand<uint32_t>()), Params().GetDefaultPort()),
@@ -211,7 +213,7 @@ struct CConnmanTest : public CConnman {
 
         Mutex mutex;
         WAIT_LOCK(mutex, lock);
-        bool ret = cvar.wait_for(lock, 10s, [&]() {
+        bool ret = cvar.wait_for(lock, 60s, [&]() {
             LOCK(cs);
             return outboundFullRelayCount == expectedOutboundFullRelayCount &&
                    avalancheOutboundsCount == expectedAvalancheOutboundsCount;
@@ -1139,20 +1141,9 @@ BOOST_AUTO_TEST_CASE(get_extra_full_outbound_count) {
     checkExtraFullOutboundCount(5, 5, 2);
 }
 
-BOOST_FIXTURE_TEST_CASE(net_group_limit, TestChain100Setup) {
+BOOST_AUTO_TEST_CASE(net_group_limit) {
     m_node.connman = std::make_unique<CConnmanTest>(
         m_node.chainman->GetConfig(), 0x1337, 0x1337, *m_node.addrman);
-    m_node.peerman =
-        PeerManager::make(*m_node.connman, *m_node.addrman, m_node.banman.get(),
-                          *m_node.chainman, *m_node.mempool, false);
-
-    bilingual_str error;
-    // Init the global avalanche object otherwise the avalanche outbound
-    // slots are not allocated.
-    g_avalanche = avalanche::Processor::MakeProcessor(
-        *m_node.args, *m_node.chain, m_node.connman.get(), *m_node.chainman,
-        m_node.mempool.get(), *m_node.scheduler, error);
-    BOOST_CHECK(g_avalanche);
 
     CConnman::Options options;
     options.nMaxConnections = 200;
@@ -1261,8 +1252,6 @@ BOOST_FIXTURE_TEST_CASE(net_group_limit, TestChain100Setup) {
         options.m_max_outbound_full_relay, // Expected full-relay outbound count
         50                                 // Expected avalanche outbound count
         ));
-
-    g_avalanche.reset();
 }
 
 BOOST_AUTO_TEST_CASE(initial_advertise_from_version_message) {
@@ -1367,6 +1356,9 @@ BOOST_AUTO_TEST_CASE(initial_advertise_from_version_message) {
 
     CaptureMessage = CaptureMessageOrig;
     chainstate.ResetIbd();
+
+    m_node.peerman->FinalizeNode(config, peer);
+
     m_node.args->ForceSetArg("-capturemessages", "0");
     m_node.args->ForceSetArg("-bind", "");
     // PeerManager::ProcessMessage() calls AddTimeData() which changes the

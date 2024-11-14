@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <fs.h>
+#include <util/fs.h>
 #include <util/settings.h>
 
 #include <tinyformat.h>
@@ -124,7 +124,7 @@ bool WriteSettings(const fs::path &path,
                    std::vector<std::string> &errors) {
     SettingsValue out(SettingsValue::VOBJ);
     for (const auto &value : values) {
-        out.__pushKV(value.first, value.second);
+        out.pushKVEnd(value.first, value.second);
     }
     std::ofstream file;
     file.open(path);

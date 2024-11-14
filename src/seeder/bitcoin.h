@@ -41,16 +41,16 @@ private:
     std::unique_ptr<Sock> sock;
     CDataStream vSend;
     CDataStream vRecv;
-    uint32_t nHeaderStart;
-    uint32_t nMessageStart;
-    int nVersion;
+    int nVersion{0};
     std::string strSubVer;
-    int nStartingHeight;
+    int nStartingHeight{0};
     std::vector<CAddress> *vAddr;
-    int ban;
-    NodeSeconds doneAfter;
+    int ban{0};
+    NodeSeconds doneAfter{NodeSeconds{0s}};
     CService you;
-    ServiceFlags yourServices;
+    ServiceFlags yourServices{ServiceFlags(NODE_NETWORK)};
+    bool checkpointVerified{false};
+    bool needAddrReply{false};
 
     std::chrono::seconds GetTimeout() { return you.IsTor() ? 120s : 30s; }
 
@@ -84,6 +84,8 @@ public:
     int GetStartingHeight() { return nStartingHeight; }
 
     uint64_t GetServices() { return yourServices; }
+
+    bool IsCheckpointVerified() const { return checkpointVerified; }
 };
 
 #endif // BITCOIN_SEEDER_BITCOIN_H

@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <common/system.h>
 #include <consensus/tx_check.h>
 #include <consensus/validation.h>
 #include <hash.h>
@@ -10,11 +11,11 @@
 #include <serialize.h>
 #include <streams.h>
 #include <util/strencodings.h>
-#include <util/system.h>
 #include <version.h>
 
 #include <test/data/sighash.json.h>
 #include <test/jsonutil.h>
+#include <test/util/random.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -78,7 +79,7 @@ static uint256 SignatureHashOld(CScript scriptCode, const CTransaction &txTo,
     }
 
     // Serialize and hash
-    CHashWriter ss(SER_GETHASH, 0);
+    HashWriter ss{};
     ss << txTmp << nHashType;
     return ss.GetHash();
 }
@@ -114,7 +115,7 @@ static void RandomTransaction(CMutableTransaction &tx, bool fSingle) {
     for (int out = 0; out < outs; out++) {
         tx.vout.push_back(CTxOut());
         CTxOut &txout = tx.vout.back();
-        txout.nValue = int64_t(InsecureRandRange(100000000)) * SATOSHI;
+        txout.nValue = InsecureRandMoneyAmount();
         RandomScript(txout.scriptPubKey);
     }
 }
@@ -212,9 +213,7 @@ BOOST_AUTO_TEST_CASE(sighash_test) {
 
 // Goal: check that SignatureHash generates correct hash
 BOOST_AUTO_TEST_CASE(sighash_from_data) {
-    UniValue tests = read_json(
-        std::string(json_tests::sighash,
-                    json_tests::sighash + sizeof(json_tests::sighash)));
+    UniValue tests = read_json(json_tests::sighash);
 
     for (size_t idx = 0; idx < tests.size(); idx++) {
         UniValue test = tests[idx];
@@ -239,8 +238,8 @@ BOOST_AUTO_TEST_CASE(sighash_from_data) {
             // deserialize test data
             std::string raw_tx = test[0].get_str();
             std::string raw_script = test[1].get_str();
-            nIn = test[2].get_int();
-            sigHashType = SigHashType(test[3].get_int());
+            nIn = test[2].getInt<int>();
+            sigHashType = SigHashType(test[3].getInt<int>());
             sigHashRegHex = test[4].get_str();
             sigHashOldHex = test[5].get_str();
             sigHashRepHex = test[6].get_str();

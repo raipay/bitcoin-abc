@@ -27,7 +27,6 @@ $(package)_config_opts+=no-rfc3779
 $(package)_config_opts+=no-sctp
 $(package)_config_opts+=no-seed
 $(package)_config_opts+=no-shared
-$(package)_config_opts+=no-sock
 $(package)_config_opts+=no-ssl-trace
 $(package)_config_opts+=no-ssl2
 $(package)_config_opts+=no-ssl3
@@ -48,8 +47,11 @@ $(package)_config_opts_mipsel_linux=linux-generic32
 $(package)_config_opts_mips_linux=linux-generic32
 $(package)_config_opts_powerpc_linux=linux-generic32
 $(package)_config_opts_x86_64_darwin=darwin64-x86_64-cc
+$(package)_config_opts_x86_64_darwin+=no-sock
 $(package)_config_opts_x86_64_mingw32=mingw64
+$(package)_config_opts_x86_64_mingw32+=no-sock
 $(package)_config_opts_i686_mingw32=mingw
+$(package)_config_opts_i686_mingw32+=no-sock
 endef
 
 define $(package)_preprocess_cmds

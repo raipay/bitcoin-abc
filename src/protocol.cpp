@@ -6,8 +6,9 @@
 #include <protocol.h>
 
 #include <chainparams.h>
+#include <common/system.h>
 #include <config.h>
-#include <util/system.h>
+#include <logging.h>
 
 #include <atomic>
 
@@ -79,6 +80,9 @@ static const std::string allNetMessageTypes[] = {
     NetMsgType::CMPCTBLOCK,  NetMsgType::GETBLOCKTXN,  NetMsgType::BLOCKTXN,
     NetMsgType::GETCFILTERS, NetMsgType::CFILTER,      NetMsgType::GETCFHEADERS,
     NetMsgType::CFHEADERS,   NetMsgType::GETCFCHECKPT, NetMsgType::CFCHECKPT,
+    NetMsgType::AVAHELLO,    NetMsgType::AVAPOLL,      NetMsgType::AVARESPONSE,
+    NetMsgType::AVAPROOF,    NetMsgType::GETAVAADDR,   NetMsgType::GETAVAPROOFS,
+    NetMsgType::AVAPROOFS,   NetMsgType::AVAPROOFSREQ,
 };
 static const std::vector<std::string>
     allNetMessageTypesVec(std::begin(allNetMessageTypes),
@@ -113,7 +117,6 @@ CMessageHeader::CMessageHeader(const MessageMagic &pchMessageStartIn,
 }
 
 std::string CMessageHeader::GetCommand() const {
-    // return std::string(pchCommand.begin(), pchCommand.end());
     return std::string(pchCommand.data(),
                        pchCommand.data() +
                            strnlen(pchCommand.data(), COMMAND_SIZE));
@@ -189,19 +192,13 @@ bool CMessageHeader::IsValidWithoutConfig(const MessageMagic &magic) const {
 }
 
 bool CMessageHeader::IsOversized(const Config &config) const {
-    // If the message doesn't not contain a block content, check against
-    // MAX_PROTOCOL_MESSAGE_LENGTH.
-    if (nMessageSize > MAX_PROTOCOL_MESSAGE_LENGTH &&
-        !NetMsgType::IsBlockLike(GetCommand())) {
-        return true;
+    // Scale the maximum accepted size with the block size for messages with
+    // block content
+    if (NetMsgType::IsBlockLike(GetCommand())) {
+        return nMessageSize > 2 * config.GetMaxBlockSize();
     }
 
-    // Scale the maximum accepted size with the block size.
-    if (nMessageSize > 2 * config.GetMaxBlockSize()) {
-        return true;
-    }
-
-    return false;
+    return nMessageSize > MAX_PROTOCOL_MESSAGE_LENGTH;
 }
 
 ServiceFlags GetDesirableServiceFlags(ServiceFlags services) {

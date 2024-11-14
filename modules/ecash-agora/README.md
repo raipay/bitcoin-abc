@@ -115,3 +115,49 @@ const txBuilder = new TxBuilder({
 const acceptTx = txBuilder.sign(ecc);
 await chronik.broadcastTx(acceptTx.ser());
 ```
+
+## Development
+
+### Running the integration tests locally
+
+1. Build the node software from source with chronik and plugins enabled
+
+```
+mkdir build/
+cd build/
+cmake -GNinja .. -DBUILD_BITCOIN_CHRONIK=ON -DBUILD_BITCOIN_CHRONIK_PLUGINS=ON
+ninja
+```
+
+2. You may need to [adjust](https://stackoverflow.com/questions/72409563/unsupported-hash-type-ripemd160-with-hashlib-in-python/72508879#72508879) your `openssl` settings
+
+3. Specify the location of your built chronik-with-plugins node with the `BUILD_DIR` env variable, e.g.
+
+Running from `bitcoin-abc/modules/ecash-agora` if your build dir is `bitcoin-abc/build/`:
+
+`BUILD_DIR="${PWD}/../../build" npm run integration-tests`
+
+## Changelog
+
+-   0.1.0 - MVP [D16087](https://reviews.bitcoinabc.org/D16087) [D16111](https://reviews.bitcoinabc.org/D16111)
+-   0.1.1 - Upgrading dependencies [D16374](https://reviews.bitcoinabc.org/D16374)
+
+### 0.2.0
+
+-   Add agora.py plugin [D16544](https://reviews.bitcoinabc.org/D16544)
+-   Plugin support [D16745](https://reviews.bitcoinabc.org/D16745)|[D16753](https://reviews.bitcoinabc.org/D16753)|[D16754](https://reviews.bitcoinabc.org/D16754)|[D16755](https://reviews.bitcoinabc.org/D16755)
+-   Improve test framework [D16741](https://reviews.bitcoinabc.org/D16741)
+-   Websocket subscriptions [D16845](https://reviews.bitcoinabc.org/D16845)
+-   Build script for partial SLP offers [D16743](https://reviews.bitcoinabc.org/D16743)
+-   Approximation logic for partial offers [D16735](https://reviews.bitcoinabc.org/D16735)
+-   Add `historicOffers` function to `Agora` [D16819](https://reviews.bitcoinabc.org/D16819)
+-   Patch burned tokens issue in agora partial scripts [D16821](https://reviews.bitcoinabc.org/D16821)
+-   Export partial modules [D16820](https://reviews.bitcoinabc.org/D16820)
+-   Syntax linting [D16919](https://reviews.bitcoinabc.org/D16919)|[D16928](https://reviews.bitcoinabc.org/D16928)
+-   README patch for local integration testing [D16952](https://reviews.bitcoinabc.org/D16952)
+-   Patch minAcceptedTokens() to return true minimum (prepared value) [D16920](https://reviews.bitcoinabc.org/D16920)
+-   Add validation to acceptTx method of AgoraPartial to prevent creation of unspendable offers [D16944](https://reviews.bitcoinabc.org/D16944)
+-   Export `scriptOps` helper function [D16972](https://reviews.bitcoinabc.org/D16972)
+-   Improve approximation for USD-esque tokens [D16995](https://reviews.bitcoinabc.org/D16995)
+-   Update tsconfig to support use in nodejs [D17019](https://reviews.bitcoinabc.org/D17019)
+-   Monorepo linting [D17072](https://reviews.bitcoinabc.org/D17072)

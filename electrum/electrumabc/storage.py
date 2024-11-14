@@ -31,7 +31,7 @@ import zlib
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 
-from . import bitcoin
+from . import ecc
 from .json_db import JsonDB
 from .plugins import run_hook
 from .printerror import PrintError
@@ -180,11 +180,12 @@ class WalletStorage(PrintError):
         except Exception:
             return STO_EV_PLAINTEXT
 
-    def get_key(self, password: str) -> bitcoin.ECKey:
+    @staticmethod
+    def get_key(password: str) -> ecc.ECPrivkey:
         secret = hashlib.pbkdf2_hmac(
             "sha512", password.encode("utf-8"), b"", iterations=1024
         )
-        ec_key = bitcoin.ECKey(secret)
+        ec_key = ecc.ECPrivkey.from_arbitrary_size_secret(secret)
         return ec_key
 
     def _get_encryption_magic(self):
@@ -203,7 +204,7 @@ class WalletStorage(PrintError):
             s = zlib.decompress(ec_key.decrypt_message(self.raw, enc_magic))
         else:
             s = None
-        self.pubkey = ec_key.get_public_key().hex()
+        self.pubkey = ec_key.get_public_key_hex()
         s = s.decode("utf8")
         self.db = JsonDB(s, manual_upgrades=True)
 
@@ -213,7 +214,8 @@ class WalletStorage(PrintError):
             s = bytes(s, "utf8")
             c = zlib.compress(s, level=zlib.Z_BEST_SPEED)
             enc_magic = self._get_encryption_magic()
-            s = bitcoin.encrypt_message(c, bytes.fromhex(self.pubkey), enc_magic)
+            public_key = ecc.ECPubkey(bytes.fromhex(self.pubkey))
+            s = public_key.encrypt_message(c, enc_magic)
             s = s.decode("utf8")
         return s
 
@@ -221,7 +223,7 @@ class WalletStorage(PrintError):
         """Raises an InvalidPassword exception on invalid password"""
         if not self.is_encrypted():
             return
-        if self.pubkey and self.pubkey != self.get_key(password).get_public_key().hex():
+        if self.pubkey and self.pubkey != self.get_key(password).get_public_key_hex():
             raise InvalidPassword()
 
     def set_keystore_encryption(self, enable):
@@ -233,7 +235,7 @@ class WalletStorage(PrintError):
             enc_version = self._encryption_version
         if password and enc_version != STO_EV_PLAINTEXT:
             ec_key = self.get_key(password)
-            self.pubkey = ec_key.get_public_key().hex()
+            self.pubkey = ec_key.get_public_key_hex()
             self._encryption_version = enc_version
         else:
             self.pubkey = None

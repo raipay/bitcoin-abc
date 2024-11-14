@@ -10,6 +10,7 @@ link = String: the link for the button
 corner = String: accepts "topLeft", "topRight", "bottomRight", "bottomLeft", clips the corner of the button
 color = String: accepts "accent" or "white". If no option is given button defaults to primary theme color
 glow = Boolean: adds a glow behind the button
+id = String: optional id tag
 ******/
 
 <Button text="Example Text" link="/" color="accent" glow />;
@@ -17,9 +18,11 @@ glow = Boolean: adds a glow behind the button
 export default function Button({
     text = 'Button',
     link = '/',
+    openInNewTab = false,
     corner = null,
     color = null,
     glow = false,
+    id,
 }) {
     const corners = {
         topLeft: {
@@ -42,7 +45,9 @@ export default function Button({
     return (
         <ButtonCtn color={color} glow={glow}>
             <ButtonMain
+                id={id}
                 href={link}
+                target={openInNewTab ? '_blank' : undefined}
                 color={color}
                 style={corner ? { clipPath: corners[corner].outer } : null}
             >

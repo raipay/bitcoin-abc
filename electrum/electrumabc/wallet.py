@@ -57,20 +57,14 @@ from typing import (
 )
 from weakref import ref
 
-from . import (
-    bitcoin,
-    coinchooser,
-    ecc_fast,
-    keystore,
-    mnemo,
-    paymentrequest,
-    schnorr,
-    slp,
-)
+from . import bitcoin, coinchooser, keystore, mnemo, paymentrequest, slp
 from .address import Address, PublicKey, Script
+from .bip32 import xpub_type
 from .bitcoin import ScriptType
 from .constants import XEC
 from .contacts import Contacts
+from .crypto import Hash
+from .ecc import ECPrivkey, SignatureType
 from .i18n import _, ngettext
 from .keystore import (
     BIP32KeyStore,
@@ -182,7 +176,7 @@ def sweep_preparations(
             inputs.append(TxInput.from_coin_dict(item))
 
     def find_utxos_for_privkey(txin_type: bitcoin.ScriptType, privkey, compressed):
-        pubkey = bitcoin.public_key_from_private_key(privkey, compressed)
+        pubkey = ECPrivkey(privkey).get_public_key_bytes(compressed)
         append_utxos_to_inputs(inputs, pubkey.hex(), txin_type)
         keypairs[pubkey] = privkey, compressed
 
@@ -1363,7 +1357,7 @@ class AbstractWallet(PrintError, SPVDelegate):
                         f"{me.name}: removed",
                         ct,
                         "(non-relevant) pruned_txo's in",
-                        f"{time.time()-t0:3.2f}",
+                        f"{time.time() - t0:3.2f}",
                         "seconds",
                     )
         except Exception:
@@ -2751,7 +2745,7 @@ class AbstractWallet(PrintError, SPVDelegate):
                 " make_payment_request"
             )
         timestamp = int(time.time())
-        _id = bh2u(bitcoin.Hash(addr.to_storage_string() + "%d" % timestamp))[0:10]
+        _id = bh2u(Hash(addr.to_storage_string() + "%d" % timestamp))[0:10]
         d = {
             "time": timestamp,
             "amount": amount,
@@ -2958,9 +2952,7 @@ class AbstractWallet(PrintError, SPVDelegate):
 
         self.storage.write()
 
-    def sign_message(
-        self, address, message, password, sigtype=bitcoin.SignatureType.ECASH
-    ):
+    def sign_message(self, address, message, password, sigtype=SignatureType.ECASH):
         index = self.get_address_index(address)
         return self.keystore.sign_message(index, message, password, sigtype)
 
@@ -3027,33 +3019,17 @@ class AbstractWallet(PrintError, SPVDelegate):
             return False
         ss_cfg = self.storage.get("sign_schnorr", None)
         if ss_cfg is None:
-            # Schnorr was not set in config; figure out intelligent defaults,
-            # preferring Schnorr if it's at least as fast as ECDSA (based on
-            # which libs user has installed). Note for watching-only we default
-            # to off if unspecified regardless, to not break compatibility
-            # with air-gapped signing systems that have older EC installed
-            # on the signing system. This is to avoid underpaying fees if
-            # signing system doesn't use Schnorr.  We can turn on default
+            # Schnorr was not set in config; figure out intelligent defaults.
+            # Note for watching-only we default to off if unspecified regardless,
+            # to not break compatibility with air-gapped signing systems that have
+            # older EC installed on the signing system. This is to avoid underpaying
+            # fees if signing system doesn't use Schnorr.  We can turn on default
             # Schnorr on watching-only sometime in the future after enough
             # time has passed that air-gapped systems are unlikely to not
             # have Schnorr enabled by default.
             # TO DO: Finish refactor of txn serialized format to handle this
             # case better!
-            if not self.is_watching_only() and (
-                schnorr.has_fast_sign() or not ecc_fast.is_using_fast_ecc()
-            ):
-                # Prefer Schnorr, all things being equal.
-                # - If not watching-only & schnorr possible AND
-                # - Either Schnorr is fast sign (native, ABC's secp256k1),
-                #   so use it by default
-                # - Or both ECDSA & Schnorr are slow (non-native);
-                #   so use Schnorr in that case as well
-                ss_cfg = 2
-            else:
-                # This branch is reached if Schnorr is slow but ECDSA is fast
-                # (core's secp256k1 lib was found which lacks Schnorr) -- so we
-                # default it to off. Also if watching only we default off.
-                ss_cfg = 0
+            ss_cfg = 2 if not self.is_watching_only() else 0
         return bool(ss_cfg)
 
     def set_schnorr_enabled(self, b: bool):
@@ -3543,7 +3519,7 @@ class SimpleDeterministicWallet(SimpleWallet, DeterministicWallet):
     def load_keystore(self):
         self.keystore = load_keystore(self.storage, "keystore")
         try:
-            xtype = bitcoin.xpub_type(self.keystore.xpub)
+            xtype = xpub_type(self.keystore.xpub)
         except Exception:
             xtype = "standard"
         self.txin_type = "p2pkh" if xtype == "standard" else xtype
@@ -3608,7 +3584,7 @@ class MultisigWallet(DeterministicWallet):
             name = "x%d/" % (i + 1)
             self.keystores[name] = load_keystore(self.storage, name)
         self.keystore = self.keystores["x1/"]
-        xtype = bitcoin.xpub_type(self.keystore.xpub)
+        xtype = xpub_type(self.keystore.xpub)
         self.txin_type = "p2sh" if xtype == "standard" else xtype
 
     def save_keystore(self):

@@ -4,6 +4,7 @@
 """Test createwallet arguments.
 """
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -32,7 +33,7 @@ class CreateWalletWatchonlyTest(BitcoinTestFramework):
         wo_wallet.importpubkey(pubkey=def_wallet.getaddressinfo(wo_change)["pubkey"])
 
         # generate some btc for testing
-        self.generatetoaddress(node, 101, a1)
+        self.generatetoaddress(node, COINBASE_MATURITY + 1, a1)
 
         # send 1 btc to our watch-only address
         txid = def_wallet.sendtoaddress(wo_addr, 1000000)
@@ -86,7 +87,7 @@ class CreateWalletWatchonlyTest(BitcoinTestFramework):
         no_wo_options = {"changeAddress": wo_change, "includeWatching": False}
 
         result = wo_wallet.walletcreatefundedpsbt(
-            inputs=inputs, outputs=outputs, options=options
+            inputs=inputs, outputs=outputs, **options
         )
         assert_equal("psbt" in result, True)
         assert_raises_rpc_error(
@@ -101,7 +102,7 @@ class CreateWalletWatchonlyTest(BitcoinTestFramework):
 
         self.log.info("Testing fundrawtransaction watch-only defaults")
         rawtx = wo_wallet.createrawtransaction(inputs=inputs, outputs=outputs)
-        result = wo_wallet.fundrawtransaction(hexstring=rawtx, options=options)
+        result = wo_wallet.fundrawtransaction(hexstring=rawtx, **options)
         assert_equal("hex" in result, True)
         assert_raises_rpc_error(
             -4, "Insufficient funds", wo_wallet.fundrawtransaction, rawtx, no_wo_options

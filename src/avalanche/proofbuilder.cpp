@@ -5,7 +5,6 @@
 #include <avalanche/proofbuilder.h>
 
 #include <random.h>
-#include <util/system.h>
 
 namespace avalanche {
 
@@ -47,7 +46,7 @@ ProofRef ProofBuilder::build() {
 }
 
 LimitedProofId ProofBuilder::getLimitedProofId() const {
-    CHashWriter ss(SER_GETHASH, 0);
+    HashWriter ss{};
     ss << sequence;
     ss << expirationTime;
     ss << payoutScriptPubKey;
@@ -61,7 +60,7 @@ LimitedProofId ProofBuilder::getLimitedProofId() const {
 }
 
 ProofId ProofBuilder::getProofId() const {
-    CHashWriter ss(SER_GETHASH, 0);
+    HashWriter ss{};
     ss << getLimitedProofId();
     ss << masterKey.GetPubKey();
 

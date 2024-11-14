@@ -4,49 +4,60 @@
 
 //! Module containing [`ChronikIndexer`] to index blocks and txs.
 
-use std::{io::Write, path::PathBuf};
+use std::{collections::BTreeMap, io::Write, path::PathBuf, sync::Arc};
 
 use abc_rust_error::{Result, WrapErr};
 use bitcoinsuite_core::{
     block::BlockHash,
     tx::{Tx, TxId},
 };
+use bytes::Bytes;
 use chronik_bridge::{ffi, util::expect_unique_ptr};
 use chronik_db::{
     db::{Db, WriteBatch},
     groups::{
-        LokadIdGroup, LokadIdHistoryWriter, ScriptGroup, ScriptHistoryWriter,
-        ScriptUtxoWriter, TokenIdGroup, TokenIdGroupAux, TokenIdHistoryWriter,
-        TokenIdUtxoWriter,
+        LokadIdGroup, LokadIdHistoryReader, LokadIdHistoryWriter, ScriptGroup,
+        ScriptHistoryWriter, ScriptUtxoWriter, TokenIdGroup, TokenIdGroupAux,
+        TokenIdHistoryWriter, TokenIdUtxoWriter,
     },
     index_tx::{
         prepare_indexed_txs_cached, PrepareUpdateMode, TxNumCacheSettings,
     },
     io::{
-        merge, token::TokenWriter, BlockHeight, BlockReader, BlockStatsWriter,
-        BlockTxs, BlockWriter, DbBlock, GroupHistoryMemData, GroupUtxoMemData,
+        merge,
+        token::{ProcessedTokenTxBatch, TokenWriter},
+        BlockHeight, BlockReader, BlockStatsWriter, BlockTxs, BlockWriter,
+        DbBlock, GroupHistoryMemData, GroupHistorySettings, GroupUtxoMemData,
         MetadataReader, MetadataWriter, SchemaVersion, SpentByWriter, TxEntry,
-        TxReader, TxWriter,
+        TxNum, TxReader, TxWriter, UpgradeWriter,
     },
     mem::{MemData, MemDataConf, Mempool, MempoolTx},
+    plugins::{PluginMeta, PluginsGroup, PluginsReader, PluginsWriter},
+};
+use chronik_plugin::{
+    context::PluginContext, data::PluginNameMap, plugin::Plugin,
 };
 use chronik_util::{log, log_chronik};
 use thiserror::Error;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::{
     avalanche::Avalanche,
     indexer::ChronikIndexerError::*,
+    merkle::BlockMerkleTree,
     query::{
         QueryBlocks, QueryBroadcast, QueryGroupHistory, QueryGroupUtxos,
-        QueryTxs, UtxoProtobufOutput, UtxoProtobufValue,
+        QueryPlugins, QueryTxs, UtxoProtobufOutput, UtxoProtobufValue,
     },
     subs::{BlockMsg, BlockMsgType, Subs},
     subs_group::TxMsgType,
 };
 
-const CURRENT_INDEXER_VERSION: SchemaVersion = 11;
+const CURRENT_INDEXER_VERSION: SchemaVersion = 13;
 const LAST_UPGRADABLE_VERSION: SchemaVersion = 10;
+
+/// Function ptr to decompress script scripts
+pub type DecompressScriptFn = fn(&[u8]) -> Result<Vec<u8>>;
 
 /// Params for setting up a [`ChronikIndexer`] instance.
 #[derive(Clone)]
@@ -58,13 +69,19 @@ pub struct ChronikIndexerParams {
     /// Whether Chronik should index SLP/ALP token txs.
     pub enable_token_index: bool,
     /// Whether Chronik should index txs by LOKAD ID.
-    /// This will be overridden to `true` if the DB is empty and
-    /// `enable_lokad_id_index_specified` is false.
     pub enable_lokad_id_index: bool,
+    /// Whether Chronik should index scripts by script hash.
+    pub enable_scripthash_index: bool,
     /// Whether to output Chronik performance statistics into a perf/ folder
     pub enable_perf_stats: bool,
     /// Settings for tuning TxNumCache.
     pub tx_num_cache: TxNumCacheSettings,
+    /// Plugin context
+    pub plugin_ctx: Arc<PluginContext>,
+    /// Settings for script history indexing
+    pub script_history: GroupHistorySettings,
+    /// Function to decompress scripts
+    pub decompress_script_fn: DecompressScriptFn,
 }
 
 /// Struct for indexing blocks and txs. Maintains db handles and mempool.
@@ -82,6 +99,15 @@ pub struct ChronikIndexer {
     /// Whether the LOKAD ID index needs to be reindexed, will be set to
     /// `false` after it caught up with the rest of Chronik.
     needs_lokad_id_reindex: bool,
+    is_scripthash_index_enabled: bool,
+    needs_scripthash_reindex: bool,
+    plugin_ctx: Arc<PluginContext>,
+    plugin_name_map: PluginNameMap,
+    block_merkle_tree: Mutex<BlockMerkleTree>,
+    /// Function that can decompress the compressed scripts used as keys in
+    /// the script db. We inject it via the indexer struct to avoid
+    /// introducing a dependency on chronik_bridge in other crates.
+    pub decompress_script_fn: DecompressScriptFn,
 }
 
 /// Access to the bitcoind node.
@@ -169,11 +195,68 @@ pub enum ChronikIndexerError {
          token index again."
     )]
     CannotEnableTokenIndex,
+
+    /// Must enable -chroniklokadidindex
+    #[error(
+        "Plugin system requires the LOKAD ID index to be enabled, enable it \
+         via -chroniklokadidindex"
+    )]
+    PluginSystemRequiresLokadIdIndex,
+
+    /// Currently, plugins must match their version exactly
+    #[error(
+        "Cannot use different version for plugin {plugin_name:?}. Previously, \
+         we indexed using version {db_version}, but now version \
+         {loaded_version} has been loaded. This version of Chronik doesn't \
+         support automatically updating plugins; either downgrade the plugin \
+         or use -chronikreindex to reindex using the new version."
+    )]
+    PluginVersionMismatch {
+        /// Name of the plugin that has a version mismatch
+        plugin_name: String,
+        /// Previously used version in the DB
+        db_version: String,
+        /// New version of the loaded plugin
+        loaded_version: String,
+    },
+
+    /// Cannot load plugins as there's already matching txs in the DB
+    #[error(
+        "Loading plugins failed, there are already matching txs in the DB for \
+         their LOKAD IDs, the earliest is in transaction {desync_txid} in \
+         block {desync_hash} (height {desync_height}). Chronik is synced to \
+         height {db_height}, but this version of Chronik doesn't support \
+         automatically re-syncing plugins. Either disable the desynced \
+         plugins, use -chronikreindex to reindex, or park the block and index \
+         again."
+    )]
+    PluginsAlreadyHaveTxs {
+        /// Height Chronik is synced to
+        db_height: BlockHeight,
+        /// TxId of the tx that has the LOKAD ID
+        desync_txid: TxId,
+        /// First block that has a LOKAD ID of a plugin
+        desync_height: BlockHeight,
+        /// Hash of the min LOKAD ID height
+        desync_hash: BlockHash,
+    },
+
+    /// Inconsistent DB: Tx doesn't exist
+    #[error("Inconsistent DB: Tx with tx_num {0} doesn't exist")]
+    TxNotFound(TxNum),
+
+    /// Inconsistent DB: Block doesn't exist
+    #[error("Inconsistent DB: Block with height {0} doesn't exist")]
+    BlockNotFound(BlockHeight),
 }
 
 impl ChronikIndexer {
     /// Setup the indexer with the given parameters, e.g. open the DB etc.
-    pub fn setup(params: ChronikIndexerParams) -> Result<Self> {
+    pub fn setup(
+        params: ChronikIndexerParams,
+        load_tx: impl Fn(u32, u32, u32) -> Result<Tx>,
+        shutdown_requested: impl Fn() -> bool,
+    ) -> Result<Self> {
         let indexes_path = params.datadir_net.join("indexes");
         let perf_path = params.datadir_net.join("perf");
         if !indexes_path.exists() {
@@ -200,26 +283,51 @@ impl ChronikIndexer {
             is_db_empty,
             params.enable_lokad_id_index,
         )?;
-        upgrade_db_if_needed(&db, schema_version, params.enable_token_index)?;
+        let needs_scripthash_reindex = verify_scripthash_index(
+            &db,
+            is_db_empty,
+            params.enable_scripthash_index,
+        )?;
+        upgrade_db_if_needed(
+            &db,
+            schema_version,
+            params.enable_token_index,
+            &load_tx,
+            &shutdown_requested,
+        )?;
+
+        let plugin_name_map = update_plugins_index(
+            &db,
+            &params.plugin_ctx,
+            params.enable_lokad_id_index,
+        )?;
 
         let mempool = Mempool::new(
             ScriptGroup,
             params.enable_token_index,
             params.enable_lokad_id_index,
         );
+        let mem_data = MemData::new(MemDataConf {
+            tx_num_cache: params.tx_num_cache,
+            script_history: params.script_history,
+        });
         Ok(ChronikIndexer {
             db,
             mempool,
-            mem_data: MemData::new(MemDataConf {
-                tx_num_cache: params.tx_num_cache,
-            }),
+            mem_data,
             script_group: ScriptGroup,
             avalanche: Avalanche::default(),
             subs: RwLock::new(Subs::new(ScriptGroup)),
             perf_path: params.enable_perf_stats.then_some(perf_path),
             is_token_index_enabled: params.enable_token_index,
-            is_lokad_id_index_enabled: params.enable_token_index,
+            is_lokad_id_index_enabled: params.enable_lokad_id_index,
             needs_lokad_id_reindex,
+            is_scripthash_index_enabled: params.enable_scripthash_index,
+            needs_scripthash_reindex,
+            plugin_ctx: params.plugin_ctx,
+            plugin_name_map,
+            block_merkle_tree: Mutex::new(BlockMerkleTree::new()),
+            decompress_script_fn: params.decompress_script_fn,
         })
     }
 
@@ -267,6 +375,10 @@ impl ChronikIndexer {
         if self.needs_lokad_id_reindex {
             self.reindex_lokad_id_index(bridge, node_tip_index, start_height)?;
             self.needs_lokad_id_reindex = false;
+        }
+        if self.needs_scripthash_reindex {
+            self.reindex_scripthash_index(bridge)?;
+            self.needs_scripthash_reindex = false;
         }
         let tip_height = node_tip_info.height;
         for height in start_height + 1..=tip_height {
@@ -398,16 +510,59 @@ impl ChronikIndexer {
         Ok(())
     }
 
+    fn reindex_scripthash_index(
+        &mut self,
+        bridge: &ffi::ChronikBridge,
+    ) -> Result<()> {
+        let script_history_writer =
+            ScriptHistoryWriter::new(&self.db, ScriptGroup)?;
+        let metadata_writer = MetadataWriter::new(&self.db)?;
+
+        // First, wipe the scripthash index
+        let mut batch = WriteBatch::default();
+        script_history_writer.wipe_member_hash(&mut batch);
+        self.db.write_batch(batch)?;
+
+        script_history_writer
+            .reindex_member_hash(self.decompress_script_fn, || {
+                bridge.shutdown_requested()
+            })?;
+
+        let mut batch = WriteBatch::default();
+        // If the user requested a shutdown, it is very unlikely that the
+        // reindexing completed successfully. We don't set the flag to true,
+        // to trigger a full scripthash reindex on next restart if
+        // -chronikscripthashindex=1 is still set.
+        // We also wipe the db now to be sure to not keep a useless partial
+        // index on disk in case -chronikscripthashindex=0 is set on next
+        // restart.
+        if bridge.shutdown_requested() {
+            script_history_writer.wipe_member_hash(&mut batch);
+            self.db.write_batch(batch)?;
+            return Ok(());
+        }
+
+        metadata_writer.update_is_scripthash_index_enabled(&mut batch, true)?;
+        self.db.write_batch(batch)?;
+        Ok(())
+    }
+
     /// Add transaction to the indexer's mempool.
     pub fn handle_tx_added_to_mempool(
         &mut self,
         mempool_tx: MempoolTx,
     ) -> Result<()> {
-        let result = self.mempool.insert(&self.db, mempool_tx)?;
+        let result = self.mempool.insert(
+            &self.db,
+            mempool_tx,
+            &self.plugin_ctx,
+            &self.plugin_name_map,
+        )?;
         self.subs.get_mut().handle_tx_event(
             &result.mempool_tx.tx,
             TxMsgType::AddedToMempool,
             &result.token_id_aux,
+            &result.plugin_outputs,
         );
         Ok(())
     }
@@ -421,6 +576,7 @@ impl ChronikIndexer {
             &result.mempool_tx.tx,
             TxMsgType::RemovedFromMempool,
             &result.token_id_aux,
+            &result.plugin_outputs,
         );
         Ok(())
     }
@@ -447,6 +603,7 @@ impl ChronikIndexer {
             TokenIdUtxoWriter::new(&self.db, TokenIdGroup)?;
         let lokad_id_history_writer =
             LokadIdHistoryWriter::new(&self.db, LokadIdGroup)?;
+        let plugins_writer = PluginsWriter::new(&self.db, &self.plugin_ctx)?;
         block_writer.insert(&mut batch, &block.db_block)?;
         let first_tx_num = tx_writer.insert(
             &mut batch,
@@ -488,8 +645,9 @@ impl ChronikIndexer {
             )?;
         }
         let token_id_aux;
+        let processed_token_batch;
         if self.is_token_index_enabled {
-            let processed_token_batch =
+            processed_token_batch =
                 token_writer.insert(&mut batch, &index_txs)?;
             token_id_aux =
                 TokenIdGroupAux::from_batch(&index_txs, &processed_token_batch);
@@ -506,8 +664,20 @@ impl ChronikIndexer {
                 &mut GroupUtxoMemData::default(),
             )?;
         } else {
+            processed_token_batch = ProcessedTokenTxBatch::default();
             token_id_aux = TokenIdGroupAux::default();
         }
+        let plugin_outputs = plugins_writer.insert(
+            &mut batch,
+            &index_txs,
+            &processed_token_batch,
+            &self.plugin_name_map,
+        )?;
+        plugins_writer.update_sync_height(
+            &mut batch,
+            block.db_block.height,
+            &self.plugin_name_map,
+        )?;
         self.db.write_batch(batch)?;
         for tx in &block.block_txs.txs {
             self.mempool.remove_mined(&tx.txid)?;
@@ -518,11 +688,14 @@ impl ChronikIndexer {
             msg_type: BlockMsgType::Connected,
             hash: block.db_block.hash,
             height: block.db_block.height,
+            timestamp: block.db_block.timestamp,
+            coinbase_tx: None,
         });
         subs.handle_block_tx_events(
             &block.txs,
             TxMsgType::Confirmed,
             &token_id_aux,
+            &plugin_outputs,
         );
         Ok(())
     }
@@ -548,6 +721,7 @@ impl ChronikIndexer {
             TokenIdUtxoWriter::new(&self.db, TokenIdGroup)?;
         let lokad_id_history_writer =
             LokadIdHistoryWriter::new(&self.db, LokadIdGroup)?;
+        let plugins_writer = PluginsWriter::new(&self.db, &self.plugin_ctx)?;
         block_writer.delete(&mut batch, &block.db_block)?;
         let first_tx_num = tx_writer.delete(
             &mut batch,
@@ -606,6 +780,12 @@ impl ChronikIndexer {
             )?;
             token_writer.delete(&mut batch, &index_txs)?;
         }
+        plugins_writer.delete(&mut batch, &index_txs)?;
+        plugins_writer.update_sync_height(
+            &mut batch,
+            block.db_block.height - 1,
+            &self.plugin_name_map,
+        )?;
         self.avalanche.disconnect_block(block.db_block.height)?;
         self.db.write_batch(batch)?;
         let subs = self.subs.get_mut();
@@ -613,7 +793,15 @@ impl ChronikIndexer {
             msg_type: BlockMsgType::Disconnected,
             hash: block.db_block.hash,
             height: block.db_block.height,
+            timestamp: block.db_block.timestamp,
+            coinbase_tx: Some({
+                let mut block_txs = block.txs;
+                block_txs.remove(0)
+            }),
         });
+        self.block_merkle_tree
+            .get_mut()
+            .invalidate_block(block.db_block.height as usize);
         Ok(())
     }
 
@@ -628,6 +816,8 @@ impl ChronikIndexer {
             msg_type: BlockMsgType::Finalized,
             hash: block.db_block.hash,
             height: block.db_block.height,
+            timestamp: block.db_block.timestamp,
+            coinbase_tx: None,
         });
         let tx_reader = TxReader::new(&self.db)?;
         let first_tx_num = tx_reader
@@ -645,11 +835,37 @@ impl ChronikIndexer {
         } else {
             TokenIdGroupAux::default()
         };
+        let plugin_outputs = if !self.plugin_ctx.plugins().is_empty() {
+            let plugin_reader = PluginsReader::new(&self.db)?;
+            plugin_reader.txs_plugin_outputs(&index_txs)?
+        } else {
+            BTreeMap::new()
+        };
         subs.handle_block_tx_events(
             &block.txs,
             TxMsgType::Finalized,
             &token_id_aux,
+            &plugin_outputs,
         );
+        Ok(())
+    }
+
+    /// Block invalidated with Avalanche.
+    pub fn handle_block_invalidated(
+        &mut self,
+        block: ChronikBlock,
+    ) -> Result<()> {
+        let subs = self.subs.get_mut();
+        subs.broadcast_block_msg(BlockMsg {
+            msg_type: BlockMsgType::Invalidated,
+            hash: block.db_block.hash,
+            height: block.db_block.height,
+            timestamp: block.db_block.timestamp,
+            coinbase_tx: Some({
+                let mut block_txs = block.txs;
+                block_txs.remove(0)
+            }),
+        });
         Ok(())
     }
 
@@ -661,6 +877,7 @@ impl ChronikIndexer {
             mempool: &self.mempool,
             node,
             is_token_index_enabled: self.is_token_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
         }
     }
 
@@ -672,6 +889,8 @@ impl ChronikIndexer {
             mempool: &self.mempool,
             node,
             is_token_index_enabled: self.is_token_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
+            block_merkle_tree: &self.block_merkle_tree,
         }
     }
 
@@ -683,6 +902,7 @@ impl ChronikIndexer {
             mempool: &self.mempool,
             node,
             is_token_index_enabled: self.is_token_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
         }
     }
 
@@ -700,6 +920,8 @@ impl ChronikIndexer {
             group: self.script_group.clone(),
             node,
             is_token_index_enabled: self.is_token_index_enabled,
+            is_scripthash_index_enabled: self.is_scripthash_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
         })
     }
 
@@ -715,6 +937,8 @@ impl ChronikIndexer {
             group: self.script_group.clone(),
             utxo_mapper: UtxoProtobufValue,
             is_token_index_enabled: self.is_token_index_enabled,
+            is_scripthash_index_enabled: self.is_scripthash_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
         })
     }
 
@@ -732,6 +956,8 @@ impl ChronikIndexer {
             group: TokenIdGroup,
             node,
             is_token_index_enabled: self.is_token_index_enabled,
+            is_scripthash_index_enabled: self.is_scripthash_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
         }
     }
 
@@ -747,6 +973,8 @@ impl ChronikIndexer {
             group: TokenIdGroup,
             utxo_mapper: UtxoProtobufOutput,
             is_token_index_enabled: self.is_token_index_enabled,
+            is_scripthash_index_enabled: self.is_scripthash_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
         }
     }
 
@@ -764,12 +992,48 @@ impl ChronikIndexer {
             group: LokadIdGroup,
             node,
             is_token_index_enabled: self.is_token_index_enabled,
+            is_scripthash_index_enabled: self.is_scripthash_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
+        }
+    }
+
+    /// Return [`QueryPlugins`] to query plugin data
+    pub fn plugins(&self) -> QueryPlugins<'_> {
+        QueryPlugins {
+            db: &self.db,
+            avalanche: &self.avalanche,
+            mempool: &self.mempool,
+            is_token_index_enabled: self.is_token_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
+        }
+    }
+
+    /// Return [`QueryGroupHistory`] to query plugin group history
+    pub fn plugin_history<'a>(
+        &'a self,
+        node: &'a Node,
+    ) -> QueryGroupHistory<'a, PluginsGroup> {
+        QueryGroupHistory {
+            db: &self.db,
+            avalanche: &self.avalanche,
+            mempool: &self.mempool,
+            mempool_history: self.mempool.plugins().group_history(),
+            group: PluginsGroup,
+            node,
+            is_token_index_enabled: self.is_token_index_enabled,
+            is_scripthash_index_enabled: self.is_scripthash_index_enabled,
+            plugin_name_map: &self.plugin_name_map,
         }
     }
 
     /// Subscribers, behind read/write lock
     pub fn subs(&self) -> &RwLock<Subs> {
         &self.subs
+    }
+
+    /// Map plugin names and plugin idx
+    pub fn plugin_name_map(&self) -> &PluginNameMap {
+        &self.plugin_name_map
     }
 
     /// Build a ChronikBlock from a ffi::Block.
@@ -902,12 +1166,29 @@ fn verify_enable_token_index(db: &Db, enable_token_index: bool) -> Result<()> {
 
 fn upgrade_db_if_needed(
     db: &Db,
-    schema_version: u64,
+    mut schema_version: u64,
     enable_token_index: bool,
+    load_tx: impl Fn(u32, u32, u32) -> Result<Tx>,
+    shutdown_requested: impl Fn() -> bool,
 ) -> Result<()> {
     // DB has version 10, upgrade to 11
     if schema_version == 10 {
         upgrade_10_to_11(db, enable_token_index)?;
+        schema_version = 11;
+    }
+    // DB has version 11, upgrade to 12
+    if schema_version == 11 {
+        upgrade_11_to_12(db, enable_token_index, &load_tx)?;
+        schema_version = 12;
+    }
+    // DB has version 12, upgrade to 13
+    if schema_version == 12 {
+        upgrade_12_to_13(
+            db,
+            enable_token_index,
+            &load_tx,
+            &shutdown_requested,
+        )?;
     }
     Ok(())
 }
@@ -925,6 +1206,45 @@ fn upgrade_10_to_11(db: &Db, enable_token_index: bool) -> Result<()> {
     metadata_writer.update_schema_version(&mut batch, 11)?;
     db.write_batch(batch)?;
     log!("Successfully upgraded Chronik DB from version 10 to 11.\n");
+    Ok(())
+}
+
+fn upgrade_11_to_12(
+    db: &Db,
+    enable_token_index: bool,
+    load_tx: impl Fn(u32, u32, u32) -> Result<Tx>,
+) -> Result<()> {
+    log!("Upgrading Chronik DB from version 11 to 12...\n");
+    if enable_token_index {
+        let token_writer = TokenWriter::new(db)?;
+        token_writer.upgrade_11_to_12(load_tx)?;
+    }
+    let mut batch = WriteBatch::default();
+    let metadata_writer = MetadataWriter::new(db)?;
+    metadata_writer.update_schema_version(&mut batch, 12)?;
+    db.write_batch(batch)?;
+    log!("Successfully upgraded Chronik DB from version 11 to 12.\n");
+    Ok(())
+}
+
+fn upgrade_12_to_13(
+    db: &Db,
+    enable_token_index: bool,
+    load_tx: impl Fn(u32, u32, u32) -> Result<Tx>,
+    shutdown_requested: impl Fn() -> bool,
+) -> Result<()> {
+    log!("Upgrading Chronik DB from version 12 to 13...\n");
+    let upgrade_writer = UpgradeWriter::new(db)?;
+    if enable_token_index {
+        upgrade_writer.fix_mint_vault_txs(&load_tx)?;
+    }
+    upgrade_writer.fix_p2pk_compression(&load_tx, &shutdown_requested)?;
+    upgrade_writer.remove_opreturn_scripts()?;
+    let mut batch = WriteBatch::default();
+    let metadata_writer = MetadataWriter::new(db)?;
+    metadata_writer.update_schema_version(&mut batch, 13)?;
+    db.write_batch(batch)?;
+    log!("Successfully upgraded Chronik DB from version 12 to 13.\n");
     Ok(())
 }
 
@@ -965,6 +1285,204 @@ fn verify_lokad_id_index(
     Ok(false)
 }
 
+/// Verify user config and DB are in sync. Returns whether the scripthash index
+/// needs to be reindexed.
+fn verify_scripthash_index(
+    db: &Db,
+    is_db_empty: bool,
+    enable: bool,
+) -> Result<bool> {
+    let metadata_reader = MetadataReader::new(db)?;
+    let metadata_writer = MetadataWriter::new(db)?;
+    let script_history_writer = ScriptHistoryWriter::new(db, ScriptGroup)?;
+    let is_enabled_db = metadata_reader
+        .is_scripthash_index_enabled()?
+        .unwrap_or(false);
+    let mut batch = WriteBatch::default();
+    if !is_db_empty {
+        if enable && !is_enabled_db {
+            // DB non-empty without scripthash index, but index enabled ->
+            // reindex
+            return Ok(true);
+        }
+        if !enable && is_enabled_db {
+            // Otherwise, the scripthash index has been enabled and now
+            // specified to be disabled, so we wipe the index.
+            log!(
+                "Warning: Wiping existing scripthash index, since \
+                 -chronikscripthashindex=0\n"
+            );
+            log!(
+                "You will need to specify -chronikscripthashindex=1 to \
+                 restore\n"
+            );
+            script_history_writer.wipe_member_hash(&mut batch);
+        }
+    }
+    metadata_writer.update_is_scripthash_index_enabled(&mut batch, enable)?;
+    db.write_batch(batch)?;
+    Ok(false)
+}
+
+fn update_plugins_index(
+    db: &Db,
+    plugin_ctx: &PluginContext,
+    enable_lokad_id_index: bool,
+) -> Result<PluginNameMap> {
+    if !plugin_ctx.plugins().is_empty() && !enable_lokad_id_index {
+        return Err(PluginSystemRequiresLokadIdIndex.into());
+    }
+    let plugins_reader = PluginsReader::new(db)?;
+    let plugins_writer = PluginsWriter::new(db, plugin_ctx)?;
+    let block_reader = BlockReader::new(db)?;
+    let tx_reader = TxReader::new(db)?;
+    let db_plugins = plugins_reader
+        .metas()?
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let mut next_plugin_idx = db_plugins
+        .values()
+        .map(|plugin| plugin.plugin_idx)
+        .max()
+        .map(|max_idx| max_idx + 1)
+        .unwrap_or_default();
+    let db_block_height = block_reader.height()?;
+
+    let mut name_mapping = Vec::with_capacity(plugin_ctx.plugins().len());
+    let mut batch = WriteBatch::default();
+    let mut desynced_min_tx_num = TxNum::MAX;
+    for plugin in plugin_ctx.plugins() {
+        let plugin_lokad_ids = plugin
+            .lokad_ids
+            .iter()
+            .map(|lokad_id| Bytes::from(lokad_id.to_vec()))
+            .collect::<Vec<_>>();
+        // Plugins are identified by module name
+        match db_plugins.get(&plugin.module_name) {
+            Some(db_plugin) => {
+                // In this initial version, plugins must match exactly otherwise
+                // reindex is required
+                if plugin.version.to_string() != db_plugin.version {
+                    return Err(PluginVersionMismatch {
+                        plugin_name: plugin.module_name.clone(),
+                        db_version: db_plugin.version.clone(),
+                        loaded_version: plugin.version.to_string(),
+                    }
+                    .into());
+                }
+                if db_block_height != -1
+                    && db_plugin.sync_height != db_block_height
+                {
+                    // If the plugin is out-of-sync, allow if there's no txs yet
+                    // for the required LOKAD IDs
+                    if let Some(min_tx_num) =
+                        verify_plugin_desynced_tx_num(db, plugin)?
+                    {
+                        log!(
+                            "Plugin {:?} desynced, DB is on height \
+                             {db_block_height} but plugin is on height {} \
+                             with existing transactions for the plugin's \
+                             LOKAD IDs {plugin_lokad_ids:?}\n",
+                            plugin.module_name,
+                            db_plugin.sync_height,
+                        );
+                        if min_tx_num < desynced_min_tx_num {
+                            desynced_min_tx_num = min_tx_num;
+                            continue;
+                        }
+                    }
+                }
+                // Mark plugin as synced to the current height
+                plugins_writer.write_meta(
+                    &mut batch,
+                    &plugin.module_name,
+                    &PluginMeta {
+                        plugin_idx: db_plugin.plugin_idx,
+                        sync_height: db_block_height,
+                        version: plugin.version.to_string(),
+                    },
+                )?;
+                name_mapping
+                    .push((db_plugin.plugin_idx, plugin.module_name.clone()));
+            }
+            None => {
+                if db_block_height != -1 {
+                    // Allow new plugin if there's no txs yet for the required
+                    // LOKAD IDs
+                    if let Some(min_tx_num) =
+                        verify_plugin_desynced_tx_num(db, plugin)?
+                    {
+                        log!(
+                            "Cannot load plugin {:?}, DB is on height \
+                             {db_block_height} but plugin has existing \
+                             transactions for the plugin's LOKAD IDs \
+                             {plugin_lokad_ids:?}\n",
+                            plugin.module_name,
+                        );
+                        if min_tx_num < desynced_min_tx_num {
+                            desynced_min_tx_num = min_tx_num;
+                            continue;
+                        }
+                    }
+                }
+                plugins_writer.write_meta(
+                    &mut batch,
+                    &plugin.module_name,
+                    &PluginMeta {
+                        plugin_idx: next_plugin_idx,
+                        sync_height: -1,
+                        version: plugin.version.to_string(),
+                    },
+                )?;
+                name_mapping
+                    .push((next_plugin_idx, plugin.module_name.clone()));
+                next_plugin_idx += 1;
+            }
+        }
+    }
+    if desynced_min_tx_num != TxNum::MAX {
+        let txid = tx_reader
+            .txid_by_tx_num(desynced_min_tx_num)?
+            .ok_or(TxNotFound(desynced_min_tx_num))?;
+        let block_height =
+            tx_reader.block_height_by_tx_num(desynced_min_tx_num)?;
+        let block_hash = block_reader
+            .by_height(block_height)?
+            .ok_or(BlockNotFound(block_height))?
+            .hash;
+        return Err(PluginsAlreadyHaveTxs {
+            db_height: db_block_height,
+            desync_txid: txid,
+            desync_height: block_height,
+            desync_hash: block_hash,
+        }
+        .into());
+    }
+    db.write_batch(batch)?;
+    Ok(PluginNameMap::new(name_mapping))
+}
+
+fn verify_plugin_desynced_tx_num(
+    db: &Db,
+    plugin: &Plugin,
+) -> Result<Option<TxNum>> {
+    let lokad_id_reader = LokadIdHistoryReader::new(db)?;
+
+    let mut min_tx_num = None;
+    for lokad_id in &plugin.lokad_ids {
+        let page_tx_nums = lokad_id_reader.page_txs(lokad_id, 0)?;
+        let Some(tx_nums) = page_tx_nums else {
+            continue;
+        };
+        let Some(&first_tx_num) = tx_nums.first() else {
+            continue;
+        };
+        min_tx_num = Some(min_tx_num.unwrap_or(TxNum::MAX).min(first_tx_num));
+    }
+
+    Ok(min_tx_num)
+}
+
 impl Node {
     /// If `result` is [`Err`], logs and aborts the node.
     pub fn ok_or_abort<T>(&self, func_name: &str, result: Result<T>) {
@@ -995,16 +1513,28 @@ mod tests {
     use chronik_db::{
         db::{Db, WriteBatch, CF_META},
         io::{BlockReader, BlockTxs, DbBlock, MetadataReader, MetadataWriter},
+        plugins::{PluginMeta, PluginsReader},
     };
+    use chronik_plugin::{context::PluginContext, plugin::Plugin};
     use pretty_assertions::assert_eq;
 
     use crate::indexer::{
-        ChronikBlock, ChronikIndexer, ChronikIndexerError,
-        ChronikIndexerParams, CURRENT_INDEXER_VERSION,
+        update_plugins_index, ChronikBlock, ChronikIndexer,
+        ChronikIndexerError, ChronikIndexerParams, CURRENT_INDEXER_VERSION,
     };
+
+    /// A mock "decompression" that just prefixes with "DECOMPRESS:".
+    fn mock_decompress(script: &[u8]) -> Result<Vec<u8>> {
+        Ok([b"DECOMPRESS:".as_ref(), script.as_ref()].concat())
+    }
 
     #[test]
     fn test_indexer() -> Result<()> {
+        use bitcoinsuite_core::tx::{Tx, TxId, TxMut};
+
+        let load_tx = |_, _, _| unreachable!();
+        let shutdown_requested = || false;
+
         let tempdir = tempdir::TempDir::new("chronik-indexer--indexer")?;
         let datadir_net = tempdir.path().join("regtest");
         let params = ChronikIndexerParams {
@@ -1012,12 +1542,16 @@ mod tests {
             wipe_db: false,
             enable_token_index: false,
             enable_lokad_id_index: false,
+            enable_scripthash_index: false,
             enable_perf_stats: false,
             tx_num_cache: Default::default(),
+            plugin_ctx: Default::default(),
+            script_history: Default::default(),
+            decompress_script_fn: mock_decompress,
         };
         // regtest folder doesn't exist yet -> error
         assert_eq!(
-            ChronikIndexer::setup(params.clone())
+            ChronikIndexer::setup(params.clone(), load_tx, shutdown_requested)
                 .unwrap_err()
                 .downcast::<ChronikIndexerError>()?,
             ChronikIndexerError::CreateDirFailed(datadir_net.join("indexes")),
@@ -1025,13 +1559,17 @@ mod tests {
 
         // create regtest folder, setup will work now
         std::fs::create_dir(&datadir_net)?;
-        let mut indexer = ChronikIndexer::setup(params.clone())?;
+        let mut indexer =
+            ChronikIndexer::setup(params.clone(), load_tx, shutdown_requested)?;
         // indexes and indexes/chronik folder now exist
         assert!(datadir_net.join("indexes").exists());
         assert!(datadir_net.join("indexes").join("chronik").exists());
 
         // DB is empty
         assert_eq!(BlockReader::new(&indexer.db)?.by_height(0)?, None);
+        let coinbase = TxMut {
+            ..Default::default()
+        };
         let block = ChronikBlock {
             db_block: DbBlock {
                 hash: BlockHash::from([4; 32]),
@@ -1047,7 +1585,7 @@ mod tests {
                 txs: vec![],
             },
             size: 285,
-            txs: vec![],
+            txs: vec![Tx::with_txid(TxId::from_tx(&coinbase), coinbase)],
         };
 
         // Add block
@@ -1064,10 +1602,14 @@ mod tests {
         // Add block then wipe, block not there
         indexer.handle_block_connected(block)?;
         std::mem::drop(indexer);
-        let indexer = ChronikIndexer::setup(ChronikIndexerParams {
-            wipe_db: true,
-            ..params
-        })?;
+        let indexer = ChronikIndexer::setup(
+            ChronikIndexerParams {
+                wipe_db: true,
+                ..params
+            },
+            load_tx,
+            shutdown_requested,
+        )?;
         assert_eq!(BlockReader::new(&indexer.db)?.by_height(0)?, None);
 
         Ok(())
@@ -1075,6 +1617,8 @@ mod tests {
 
     #[test]
     fn test_schema_version() -> Result<()> {
+        let load_tx = |_, _, _| unreachable!();
+        let shutdown_requested = || false;
         let dir = tempdir::TempDir::new("chronik-indexer--schema_version")?;
         let chronik_path = dir.path().join("indexes").join("chronik");
         let params = ChronikIndexerParams {
@@ -1082,12 +1626,16 @@ mod tests {
             wipe_db: false,
             enable_token_index: false,
             enable_lokad_id_index: false,
+            enable_scripthash_index: false,
             enable_perf_stats: false,
             tx_num_cache: Default::default(),
+            plugin_ctx: Default::default(),
+            script_history: Default::default(),
+            decompress_script_fn: mock_decompress,
         };
 
         // Setting up DB first time sets the schema version
-        ChronikIndexer::setup(params.clone())?;
+        ChronikIndexer::setup(params.clone(), load_tx, shutdown_requested)?;
         {
             let db = Db::open(&chronik_path)?;
             assert_eq!(
@@ -1096,7 +1644,7 @@ mod tests {
             );
         }
         // Opening DB again works fine
-        ChronikIndexer::setup(params.clone())?;
+        ChronikIndexer::setup(params.clone(), load_tx, shutdown_requested)?;
 
         // Override DB schema version to 0
         {
@@ -1107,7 +1655,7 @@ mod tests {
         }
         // -> DB too old
         assert_eq!(
-            ChronikIndexer::setup(params.clone())
+            ChronikIndexer::setup(params.clone(), load_tx, shutdown_requested)
                 .unwrap_err()
                 .downcast::<ChronikIndexerError>()?,
             ChronikIndexerError::DatabaseOutdated(0),
@@ -1125,7 +1673,7 @@ mod tests {
         }
         // -> Chronik too old
         assert_eq!(
-            ChronikIndexer::setup(params.clone())
+            ChronikIndexer::setup(params.clone(), load_tx, shutdown_requested)
                 .unwrap_err()
                 .downcast::<ChronikIndexerError>()?,
             ChronikIndexerError::ChronikOutdated(CURRENT_INDEXER_VERSION + 1),
@@ -1140,7 +1688,7 @@ mod tests {
             db.write_batch(batch)?;
         }
         assert_eq!(
-            ChronikIndexer::setup(params.clone())
+            ChronikIndexer::setup(params.clone(), load_tx, shutdown_requested)
                 .unwrap_err()
                 .downcast::<ChronikIndexerError>()?,
             ChronikIndexerError::CorruptedSchemaVersion,
@@ -1164,16 +1712,172 @@ mod tests {
         }
         // Error: non-empty DB without schema version
         assert_eq!(
-            ChronikIndexer::setup(new_params.clone())
-                .unwrap_err()
-                .downcast::<ChronikIndexerError>()?,
+            ChronikIndexer::setup(
+                new_params.clone(),
+                load_tx,
+                shutdown_requested
+            )
+            .unwrap_err()
+            .downcast::<ChronikIndexerError>()?,
             ChronikIndexerError::MissingSchemaVersion,
         );
         // with wipe it works
-        ChronikIndexer::setup(ChronikIndexerParams {
-            wipe_db: true,
-            ..new_params
-        })?;
+        ChronikIndexer::setup(
+            ChronikIndexerParams {
+                wipe_db: true,
+                ..new_params
+            },
+            load_tx,
+            shutdown_requested,
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_plugin_versions() -> Result<()> {
+        let dir = tempdir::TempDir::new("chronik-indexer--plugin_versions")?;
+        let db = Db::open(dir.path())?;
+        let plugin_reader = PluginsReader::new(&db)?;
+
+        // Disabled LOKAD ID index is fine if plugin context is empty
+        update_plugins_index(&db, &PluginContext::default(), false)?;
+
+        // Must have LOKAD ID index if we have plugins
+        assert_eq!(
+            update_plugins_index(
+                &db,
+                &PluginContext {
+                    plugins: vec![Plugin::default()]
+                },
+                false,
+            )
+            .unwrap_err()
+            .downcast::<ChronikIndexerError>()?,
+            ChronikIndexerError::PluginSystemRequiresLokadIdIndex,
+        );
+
+        update_plugins_index(
+            &db,
+            &PluginContext {
+                plugins: vec![Plugin {
+                    module_name: "plg1".to_string(),
+                    class_name: "Plg1".to_string(),
+                    version: "0.1.0".parse()?,
+                    lokad_ids: vec![],
+                }],
+            },
+            true,
+        )?;
+        assert_eq!(
+            plugin_reader.metas()?,
+            vec![(
+                "plg1".to_string(),
+                PluginMeta {
+                    plugin_idx: 0,
+                    version: "0.1.0".to_string(),
+                    sync_height: -1,
+                },
+            )],
+        );
+
+        update_plugins_index(
+            &db,
+            &PluginContext {
+                plugins: vec![Plugin {
+                    module_name: "plg2".to_string(),
+                    class_name: "Plg2".to_string(),
+                    version: "0.2.0".parse()?,
+                    lokad_ids: vec![],
+                }],
+            },
+            true,
+        )?;
+        assert_eq!(
+            plugin_reader.metas()?,
+            vec![
+                (
+                    "plg1".to_string(),
+                    PluginMeta {
+                        plugin_idx: 0,
+                        version: "0.1.0".to_string(),
+                        sync_height: -1,
+                    },
+                ),
+                (
+                    "plg2".to_string(),
+                    PluginMeta {
+                        plugin_idx: 1,
+                        version: "0.2.0".to_string(),
+                        sync_height: -1,
+                    },
+                ),
+            ],
+        );
+
+        update_plugins_index(
+            &db,
+            &PluginContext {
+                plugins: vec![
+                    Plugin {
+                        module_name: "plg1".to_string(),
+                        class_name: "Plg1".to_string(),
+                        version: "0.1.0".parse()?,
+                        lokad_ids: vec![],
+                    },
+                    Plugin {
+                        module_name: "plg2".to_string(),
+                        class_name: "Plg2".to_string(),
+                        version: "0.2.0".parse()?,
+                        lokad_ids: vec![],
+                    },
+                ],
+            },
+            true,
+        )?;
+        assert_eq!(
+            plugin_reader.metas()?,
+            vec![
+                (
+                    "plg1".to_string(),
+                    PluginMeta {
+                        plugin_idx: 0,
+                        version: "0.1.0".to_string(),
+                        sync_height: -1,
+                    },
+                ),
+                (
+                    "plg2".to_string(),
+                    PluginMeta {
+                        plugin_idx: 1,
+                        version: "0.2.0".to_string(),
+                        sync_height: -1,
+                    },
+                ),
+            ],
+        );
+
+        assert_eq!(
+            update_plugins_index(
+                &db,
+                &PluginContext {
+                    plugins: vec![Plugin {
+                        module_name: "plg1".to_string(),
+                        class_name: "Plg1".to_string(),
+                        version: "0.2.0".parse()?,
+                        lokad_ids: vec![],
+                    }],
+                },
+                true,
+            )
+            .unwrap_err()
+            .downcast::<ChronikIndexerError>()?,
+            ChronikIndexerError::PluginVersionMismatch {
+                plugin_name: "plg1".to_string(),
+                db_version: "0.1.0".to_string(),
+                loaded_version: "0.2.0".to_string(),
+            },
+        );
 
         Ok(())
     }

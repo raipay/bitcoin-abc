@@ -47,6 +47,7 @@ SET_FALSE_POSITIVE_UNDOCUMENTED = {
     "-h",
     "-automaticunparking",
     "-avalanchepreconsensus",
+    "-avalanchestakingpreconsensus",
     "-chronikallowpause",
     "-chronikcors",
     "-dbcrashratio",
@@ -57,8 +58,8 @@ SET_FALSE_POSITIVE_UNDOCUMENTED = {
     # Removed arguments that now just print a helpful error message
     "-zapwallettxes",
     "-replayprotectionactivationtime",
-    # Remove after May. 2024 upgrade
-    "-leekuanyewactivationtime",
+    # Remove after Nov. 2024 upgrade
+    "-augustoactivationtime",
 }
 
 

@@ -30,54 +30,6 @@ export const TextImageBlockCtn = styled(motion.div).attrs(() =>
     }
 `;
 
-export const LeftTopArrow = styled.div`
-    position: absolute;
-    left: 0;
-    top: 0;
-    right: auto;
-    bottom: auto;
-    width: 40px;
-    height: 40px;
-    border-top: 2px solid ${props => props.theme.colors.contrast};
-    border-left: 2px solid ${props => props.theme.colors.contrast};
-`;
-
-export const LeftDownArrow = styled.div`
-    position: absolute;
-    left: 0;
-    top: auto;
-    right: auto;
-    bottom: 0;
-    width: 40px;
-    height: 40px;
-    border-bottom: 2px solid ${props => props.theme.colors.contrast};
-    border-left: 2px solid ${props => props.theme.colors.contrast};
-`;
-
-export const RightDownArrow = styled.div`
-    position: absolute;
-    left: auto;
-    top: auto;
-    right: 0;
-    bottom: 0;
-    width: 40px;
-    height: 40px;
-    border-right: 2px solid ${props => props.theme.colors.contrast};
-    border-bottom: 2px solid ${props => props.theme.colors.contrast};
-`;
-
-export const RightTopArrow = styled.div`
-    position: absolute;
-    left: auto;
-    top: 0;
-    right: 0;
-    bottom: auto;
-    width: 40px;
-    height: 40px;
-    border-top: 2px solid ${props => props.theme.colors.contrast};
-    border-right: 2px solid ${props => props.theme.colors.contrast};
-`;
-
 export const TextCtn = styled.div`
     display: flex;
     flex-direction: column;
@@ -105,7 +57,7 @@ export const TextCtn = styled.div`
 export const ImageCtn = styled.div`
     position: absolute;
     width: 50%;
-    height: 700px;
+    height: ${props => `${props.imageHeight}px`};
     top: 50%;
     transform: translate(10%, -50%);
     right: 0px;
@@ -115,7 +67,7 @@ export const ImageCtn = styled.div`
     ${props => props.theme.breakpoint.medium} {
         width: 100%;
         position: relative;
-        height: auto;
+        height: 400px;
         transform: none;
         margin-top: 30px;
     }
@@ -141,30 +93,4 @@ export const ButtonRow = styled.div`
             margin-top: 10px;
         }
     }
-`;
-
-export const Blob = styled.div`
-    background-color: white;
-    height: 400px;
-    aspect-ratio: 1;
-    position: absolute;
-    left: ${props => props.left};
-    top: ${props => props.top};
-    border-radius: 50%;
-    background: linear-gradient(
-        to right,
-        ${props => props.theme.colors.primary},
-        ${props => props.theme.colors.primaryLight}
-    );
-    opacity: 0.5;
-    filter: blur(150px);
-`;
-
-export const ContentCtn = styled.div`
-    height: 100%;
-    width: 100%;
-    position: relative;
-    padding-bottom: 350px;
-    margin-top: -80px;
-    padding-top: 100px;
 `;

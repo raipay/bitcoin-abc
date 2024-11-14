@@ -6,6 +6,7 @@ import struct
 from decimal import Decimal
 
 from test_framework.address import ADDRESS_ECREG_UNSPENDABLE as ADDRESS_WATCHONLY
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -45,8 +46,7 @@ class WalletTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
         self.setup_clean_chain = True
-        # whitelist peers to speed up tx relay / mempool sync
-        self.extra_args = [["-whitelist=noban@127.0.0.1"]] * self.num_nodes
+        self.noban_tx_relay = True
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -67,7 +67,7 @@ class WalletTest(BitcoinTestFramework):
         self.log.info("Mining blocks ...")
         self.generate(self.nodes[0], 1)
         self.generate(self.nodes[1], 1)
-        self.generatetoaddress(self.nodes[1], 101, ADDRESS_WATCHONLY)
+        self.generatetoaddress(self.nodes[1], COINBASE_MATURITY + 1, ADDRESS_WATCHONLY)
 
         if not self.options.descriptors:
             # Tests legacy watchonly behavior which is not present (and does not

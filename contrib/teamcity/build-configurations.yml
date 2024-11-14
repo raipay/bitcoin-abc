@@ -58,6 +58,10 @@ templates:
   #    the mock-chronik-client library, otherwise unset
   #  - DEPENDS_ECASH_LIB_WASM: "true" if these tests require ecash-lib-wasm
   #    to be built, otherwise unset
+  #  - DEPENDS_ECASH_LIB: "true" if these tests require ecash-lib to be
+  #    built, otherwise unset
+  #  - DEPENDS_ECASH_AGORA: "true" if these tests require ecash-agora to be built,
+  #    otherwise unset
   #  - DEPENDS_CHRONIK_CLIENT: "true" if these tests require chronik-client
   #    to be build, otherwise unset
   js-mocha:
@@ -108,6 +112,24 @@ templates:
         echo "Test depends on chronik-client. Building TypeScript..."
         pushd "${TOPLEVEL}/modules/chronik-client"
         npm ci
+      fi
+
+      if [ -z "${DEPENDS_ECASH_LIB+x}" ] ; then
+        echo "Test does not depend on ecash-lib"
+      else
+        echo "Test depends on ecash-lib. Building TypeScript..."
+        pushd "${TOPLEVEL}/modules/ecash-lib"
+        npm ci
+        npm run build
+      fi
+
+      if [ -z "${DEPENDS_ECASH_AGORA+x}" ] ; then
+        echo "Test does not depend on ecash-agora"
+      else
+        echo "Test depends on ecash-agora. Building TypeScript..."
+        pushd "${TOPLEVEL}/modules/ecash-agora"
+        npm ci
+        npm run build
       fi
 
       # Install ecash-script dependencies if this test uses them
@@ -188,6 +210,16 @@ templates:
 
       PROJECT_NAME="$(basename ${JS_PROJECT_ROOT})"
       TEST_SUITE_NAME="$(project_to_suite ${PROJECT_NAME})"
+
+      # Install ecashaddrjs dependencies if this test uses them
+      if [ -z "${DEPENDS_ECASHADDRJS+x}" ] ; then
+        echo "Test does not depend on ecashaddrjs, skipping ecashaddrjs dependencies..."
+      else
+        echo "Test depends on ecashaddrjs. Installing ecashaddrjs dependencies..."
+        pushd "${TOPLEVEL}/modules/ecashaddrjs"
+        npm ci
+        npm run build
+      fi
 
       # Build ecash-lib-wasm for ecash-lib's WebAssembly part
       if [ -z "${DEPENDS_ECASH_LIB_WASM+x}" ] ; then
@@ -408,16 +440,6 @@ builds:
     templates:
       - ibd-no-assumevalid-checkpoint
 
-  build-linux32:
-    cross_build:
-      static_depends: linux32
-      toolchain: Linux32
-    cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
-    templates:
-      - check+secp256k1
-    timeout: 3600
-
   build-linux64:
     cross_build:
       static_depends: linux64
@@ -460,38 +482,6 @@ builds:
     timeout: 3600
     env:
       QEMU_LD_PREFIX: /usr/aarch64-linux-gnu
-
-  build-linux-arm:
-    cross_build:
-      static_depends: linux-arm
-      toolchain: LinuxARM
-      emulator: qemu-arm-static
-    cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
-      - '-DBUILD_BITCOIN_CHAINSTATE=ON'
-      # The ZMQ functional test will fail with qemu (due to a qemu limitation),
-      # so disable it to avoid the failure.
-      # Extracted from stderr:
-      #   Unknown host QEMU_IFLA type: 50
-      #   Unknown host QEMU_IFLA type: 51
-      #   Unknown QEMU_IFLA_BRPORT type 33
-      - "-DBUILD_BITCOIN_ZMQ=OFF"
-      # This is an horrible hack to workaround a qemu bug:
-      # https://bugs.launchpad.net/qemu/+bug/1748612
-      # Qemu emits a message for unsupported features called by the guest.
-      # Because the output filtering is not working at all, it causes the
-      # qemu stderr to end up in the node stderr and fail the functional
-      # tests.
-      # Disabling the unsupported feature (here bypassing the config
-      # detection) fixes the issue.
-      # FIXME: get rid of the hack, either by using a better qemu version
-      # or by filtering stderr at the framework level.
-      - "-DHAVE_DECL_GETIFADDRS=OFF"
-    templates:
-      - check+secp256k1
-    timeout: 3600
-    env:
-      QEMU_LD_PREFIX: /usr/arm-linux-gnueabihf
 
   build-make-generator:
     generator:
@@ -571,6 +561,14 @@ builds:
     targets:
       - - install-secp256k1-bench
       - - bench-secp256k1
+    timeout: 1200
+
+  build-ecash-secp256k1:
+    runOnDiffRegex:
+      - src/secp256k1/
+      - modules/ecash-secp256k1/
+    script: |
+      "${TOPLEVEL}/modules/ecash-secp256k1/contrib/test.sh"
     timeout: 1200
 
   build-tsan:
@@ -717,7 +715,7 @@ builds:
     templates:
       - guix_builds
     env:
-      HOSTS: "x86_64-linux-gnu aarch64-linux-gnu arm-linux-gnueabihf"
+      HOSTS: "x86_64-linux-gnu aarch64-linux-gnu"
 
   guix-osx:
     templates:
@@ -742,6 +740,11 @@ builds:
     runOnDiffRegex:
       - cashtab/
       - modules/mock-chronik-client/
+      - modules/ecashaddrjs/
+      - modules/ecash-agora/
+      - modules/ecash-lib/
+      - modules/ecash-lib-wasm/
+      - src/secp256k1/
     artifacts:
       coverage.tar.gz: coverage.tar.gz
     env:
@@ -771,15 +774,25 @@ builds:
       npm ci
       npm run build
 
-      # ecash-coinselect
-      echo "Installing ecash-coinselect dependencies..."
-      pushd "${TOPLEVEL}/modules/ecash-coinselect"
-      npm ci
-
       # ecash-script
       echo "Installing ecash-script dependencies..."
       pushd "${TOPLEVEL}/modules/ecash-script"
       npm ci
+
+      # ecash-lib-wasm
+      pushd "${TOPLEVEL}/modules/ecash-lib-wasm"
+      ./build-wasm.sh
+
+      # ecash-lib
+      pushd "${TOPLEVEL}/modules/ecash-lib"
+      npm ci
+      npm run build
+
+      # ecash-agora
+      echo "Installing ecash-agora dependencies..."
+      pushd "${TOPLEVEL}/modules/ecash-agora"
+      npm ci
+      npm run build
 
       pushd "${TOPLEVEL}/cashtab"
       npm ci
@@ -809,37 +822,16 @@ builds:
       popd
       mv coverage/coverage.tar.gz "${BUILD_DIR}/"
 
-  cashtab-components-tests:
-    runOnDiffRegex:
-      - modules/cashtab-components/
-    env:
-      # Any string will work, CI just needs to be defined
-      CI: 'teamcity'
-      JEST_SUITE_NAME: "Cashtab Components Test suites"
-      JEST_JUNIT_SUITE_NAME: "CashTab Components Unit Tests"
-      JEST_JUNIT_OUTPUT_DIR: "test/junit"
-      JEST_JUNIT_OUTPUT_NAME: "cashtab-components.xml"
-    script: |
-      pushd "${TOPLEVEL}/modules/cashtab-components"
-      npm ci
-      npm run build
-
-      # Make sure the report is available even if the tests fail
-      move_junit_report() {
-        mv test "${BUILD_DIR}/"
-      }
-      trap "move_junit_report" EXIT
-
-      npm run test -- \
-        --reporters=default \
-        --reporters=jest-junit
-
   alias-server-tests:
     runOnDiffRegex:
       - apps/alias-server/
       - modules/mock-chronik-client/
+      - modules/ecashaddrjs/
     env:
       JS_PROJECT_ROOT: apps/alias-server
+      DEPENDS_ECASHADDRJS: "true"
+      DEPENDS_ECASH_SCRIPT: "true"
+      DEPENDS_CHRONIK_CLIENT: "true"
       DEPENDS_MOCK_CHRONIK_CLIENT: "true"
     templates:
       - js-mocha
@@ -848,12 +840,16 @@ builds:
     runOnDiffRegex:
       - apps/ecash-herald/
       - modules/mock-chronik-client/
+      - modules/ecashaddrjs/
     env:
       JS_PROJECT_ROOT: apps/ecash-herald
       DEPENDS_MOCK_CHRONIK_CLIENT: "true"
       DEPENDS_CHRONIK_CLIENT: "true"
       DEPENDS_ECASH_SCRIPT: "true"
       DEPENDS_ECASHADDRJS: "true"
+      DEPENDS_ECASH_LIB_WASM: "true"
+      DEPENDS_ECASH_LIB: "true"
+      DEPENDS_ECASH_AGORA: "true"
     templates:
       - js-mocha
 
@@ -861,12 +857,14 @@ builds:
     runOnDiffRegex:
       - apps/token-server/
       - modules/mock-chronik-client/
+      - modules/ecashaddrjs/
     env:
       JS_PROJECT_ROOT: apps/token-server
       DEPENDS_MOCK_CHRONIK_CLIENT: "true"
       DEPENDS_ECASHADDRJS: "true"
       DEPENDS_CHRONIK_CLIENT: "true"
-      DEPENDS_ECASH_COINSELECT: "true"
+      DEPENDS_ECASH_LIB_WASM: "true"
+      DEPENDS_ECASH_LIB: "true"
       RUN_NPM_BUILD: "true"
     templates:
       - js-mocha
@@ -874,43 +872,57 @@ builds:
   mock-chronik-client-tests:
     runOnDiffRegex:
       - modules/mock-chronik-client/
+      - modules/ecashaddrjs/
     env:
       JS_PROJECT_ROOT: modules/mock-chronik-client
-    templates:
-      - js-mocha
-
-  app-dev-examples:
-    runOnDiffRegex:
-      - apps/examples/
-      - modules/mock-chronik-client/
-    env:
-      JS_PROJECT_ROOT: apps/examples
-      DEPENDS_MOCK_CHRONIK_CLIENT: "true"
+      DEPENDS_ECASHADDRJS: "true"
     templates:
       - js-mocha
 
   chronik-client-tests:
     runOnDiffRegex:
       - modules/chronik-client/
+      - modules/ecashaddrjs/
     env:
       JS_PROJECT_ROOT: modules/chronik-client
+      DEPENDS_ECASHADDRJS: "true"
     templates:
       - js-mocha
 
   ecash-lib-tests:
     runOnDiffRegex:
       - modules/ecash-lib/
+      - modules/ecash-lib-wasm/
+      - modules/ecashaddrjs/
+      - src/secp256k1/
     env:
       JS_PROJECT_ROOT: modules/ecash-lib
       RUN_NPM_BUILD: "true"
+      DEPENDS_ECASHADDRJS: "true"
       DEPENDS_ECASH_LIB_WASM: "true"
       DEPENDS_CHRONIK_CLIENT: "true"
+    templates:
+      - js-mocha
+
+  ecash-agora-tests:
+    runOnDiffRegex:
+      - modules/ecash-agora/
+      - modules/ecash-lib/
+      - modules/ecash-lib-wasm/
+      - src/secp256k1/
+    env:
+      JS_PROJECT_ROOT: modules/ecash-agora
+      DEPENDS_ECASHADDRJS: "true"
+      DEPENDS_ECASH_LIB_WASM: "true"
+      DEPENDS_CHRONIK_CLIENT: "true"
+      DEPENDS_ECASH_LIB: "true"
     templates:
       - js-mocha
 
   ecash-agora-integration-tests:
     cmake_flags:
       - '-DBUILD_BITCOIN_CHRONIK=ON'
+      - '-DBUILD_BITCOIN_CHRONIK_PLUGINS=ON'
     targets:
       - - all
     runOnDiffRegex:
@@ -918,8 +930,12 @@ builds:
       - modules/chronik-client/
       - modules/ecash-agora/
       - modules/ecash-lib/
+      - modules/ecash-lib-wasm/
+      - modules/ecashaddrjs/
+      - src/secp256k1/
     env:
       JS_PROJECT_ROOT: modules/ecash-agora
+      DEPENDS_ECASHADDRJS: "true"
       DEPENDS_ECASH_LIB_WASM: "true"
       DEPENDS_CHRONIK_CLIENT: "true"
       DEPENDS_ECASH_LIB: "true"
@@ -935,8 +951,12 @@ builds:
       - chronik/
       - modules/chronik-client/
       - modules/ecash-lib/
+      - modules/ecash-lib-wasm/
+      - modules/ecashaddrjs/
+      - src/secp256k1/
     env:
       JS_PROJECT_ROOT: modules/ecash-lib
+      DEPENDS_ECASHADDRJS: "true"
       DEPENDS_ECASH_LIB_WASM: "true"
       DEPENDS_CHRONIK_CLIENT: "true"
     templates:
@@ -945,13 +965,16 @@ builds:
   chronik-client-integration-tests:
     cmake_flags:
       - '-DBUILD_BITCOIN_CHRONIK=ON'
+      - '-DBUILD_BITCOIN_CHRONIK_PLUGINS=ON'
     targets:
       - - all
     runOnDiffRegex:
       - chronik/
       - modules/chronik-client/
+      - modules/ecashaddrjs/
     env:
       JS_PROJECT_ROOT: modules/chronik-client
+      DEPENDS_ECASHADDRJS: "true"
     templates:
       - js-mocha-integration-tests
 
@@ -987,6 +1010,7 @@ builds:
 
   electrum-functional-tests:
     script: |
+      "${TOPLEVEL}"/electrum/contrib/make_secp
       pip3 install -r "${TOPLEVEL}/electrum/contrib/requirements/requirements.txt"
       pip3 install -r "${TOPLEVEL}/electrum/contrib/requirements/requirements-regtest.txt"
       pytest "${TOPLEVEL}/electrum/electrumabc/tests/regtest"

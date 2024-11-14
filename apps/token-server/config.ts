@@ -2,31 +2,62 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+import { Request, Response } from 'express';
+import { RateLimitExceededEventHandler } from 'express-rate-limit';
+
+interface TokenServerRateLimits {
+    windowMs: number;
+    limit: number;
+    standardHeaders: 'draft-6' | 'draft-7';
+    legacyHeaders: boolean;
+    handler: RateLimitExceededEventHandler;
+}
+
+interface DbCollections {
+    blacklist: { name: string };
+}
+
+interface DatabaseConfig {
+    name: string;
+    collections: DbCollections;
+}
+
 interface TokenServerConfig {
     port: Number;
+    db: DatabaseConfig;
     chronikUrls: string[];
     eligibilityResetSeconds: number;
     rewardsTokenId: string;
-    rewardAmountTokenSats: string;
+    rewardAmountTokenSats: bigint;
+    xecAirdropAmountSats: number;
     imageDir: string;
     rejectedDir: string;
     maxUploadSize: number;
     whitelist: string[];
+    limiter: TokenServerRateLimits;
+    tokenLimiter: TokenServerRateLimits;
     iconSizes: number[];
+    recaptchaUrl: string;
+    recaptchaThreshold: number;
 }
 
 const config: TokenServerConfig = {
     port: 3333,
+    db: {
+        name: 'tokenServerDb',
+        collections: { blacklist: { name: 'blacklist' } },
+    },
     chronikUrls: [
-        'https://chronik-native.fabien.cash',
+        'https://chronik-native1.fabien.cash',
+        'https://chronik-native2.fabien.cash',
         'https://chronik.pay2stay.com/xec',
-        'https://chronik.be.cash/xec2',
     ],
     eligibilityResetSeconds: 86400, // 24 hours
     // Cachet
     rewardsTokenId:
         'aed861a31b96934b88c0252ede135cb9700d7649f69191235087a3030e553cb1',
-    rewardAmountTokenSats: '10000', // Cachet is a 2-decimal token, so this is 100.00 Cachet
+    rewardAmountTokenSats: 10000n, // Cachet is a 2-decimal token, so this is 100.00 Cachet
+    xecAirdropAmountSats: 4200, // satoshis to send in new wallet XEC airdrops, 1000 = 10 XEC
     // Note: this must be the target= parameter for the --mount instruction of docker run
     // See Production Step 3 in README.md
     imageDir: '/token-server/token-icons',
@@ -40,7 +71,45 @@ const config: TokenServerConfig = {
         'chrome-extension://aleabaopoakgpbijdnicepefdiglggfl', // dev extension
         'chrome-extension://obldfcmebhllhjlhjbnghaipekcppeag', // prod extension
     ],
+    // Rate limits for XEC rewards
+    limiter: {
+        windowMs: 7 * 24 * 60 * 60 * 1000, // 1 week
+        limit: 3, // requests per IP per `window`
+        standardHeaders: 'draft-7', // draft-6: `RateLimit-*` headers; draft-7: combined `RateLimit` header
+        legacyHeaders: false, // Disable the `X-RateLimit-*` headers.
+        handler: (req: Request, res: Response) => {
+            // Log a rate limited request
+            const ip =
+                req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+            console.log(`${req.url} from ip="${ip}" blocked by rate limit`);
+            return res.status(429).json({
+                error: 'Too many requests',
+                msg: 'To earn more eCash, set up a staking node, or submit a diff to reviews.bitcoinabc.org.',
+            });
+        },
+    },
+    // Rate limits for token rewards
+    tokenLimiter: {
+        windowMs: 24 * 60 * 60 * 1000, // 24 hrs
+        limit: 3, // requests per IP per `window`
+        standardHeaders: 'draft-7', // draft-6: `RateLimit-*` headers; draft-7: combined `RateLimit` header
+        legacyHeaders: false, // Disable the `X-RateLimit-*` headers.
+        handler: (req: Request, res: Response) => {
+            // Log a rate limited request
+            const ip =
+                req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+            console.log(`${req.url} from ip="${ip}" blocked by rate limit`);
+            return res.status(429).json({
+                error: 'Too many requests',
+                msg: 'To earn more eCash, set up a staking node, or submit a diff to reviews.bitcoinabc.org.',
+            });
+        },
+    },
     iconSizes: [32, 64, 128, 256, 512],
+    recaptchaUrl: 'https://www.google.com/recaptcha/api/siteverify',
+    recaptchaThreshold: 0.7,
 };
 
 export default config;

@@ -9,6 +9,8 @@
 
 #include <chainparams.h>
 #include <clientversion.h>
+#include <common/args.h>
+#include <common/system.h>
 #include <compat.h>
 #include <config.h>
 #include <httprpc.h>
@@ -19,8 +21,9 @@
 #include <noui.h>
 #include <shutdown.h>
 #include <util/check.h>
+#include <util/exception.h>
 #include <util/strencodings.h>
-#include <util/system.h>
+#include <util/syserror.h>
 #include <util/threadnames.h>
 #include <util/tokenpipe.h>
 #include <util/translation.h>
@@ -179,7 +182,7 @@ static bool AppInit(int argc, char *argv[]) {
     TokenPipeEnd daemon_ep;
 #endif
     try {
-        if (!CheckDataDirOption()) {
+        if (!CheckDataDirOption(args)) {
             return InitError(Untranslated(
                 strprintf("Specified data directory \"%s\" does not exist.\n",
                           args.GetArg("-datadir", ""))));
@@ -262,7 +265,7 @@ static bool AppInit(int argc, char *argv[]) {
                 case -1:
                     // Error happened.
                     return InitError(Untranslated(strprintf(
-                        "fork_daemon() failed: %s\n", strerror(errno))));
+                        "fork_daemon() failed: %s\n", SysErrorString(errno))));
                 default: {
                     // Parent: wait and exit.
                     int token = daemon_ep.TokenRead();
@@ -314,7 +317,7 @@ static bool AppInit(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
 #ifdef WIN32
-    util::WinCmdLineArgs winArgs;
+    common::WinCmdLineArgs winArgs;
     std::tie(argc, argv) = winArgs.get();
 #endif
     SetupEnvironment();

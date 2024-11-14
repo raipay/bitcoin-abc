@@ -72,6 +72,8 @@
 #cmakedefine HAVE_FUNC_ATTRIBUTE_DLLEXPORT 1
 #cmakedefine HAVE_POSIX_FALLOCATE 1
 
+#cmakedefine HAVE_FDATASYNC 1
+
 #cmakedefine ENABLE_BIP70 1
 #cmakedefine ENABLE_WALLET 1
 #cmakedefine ENABLE_ZMQ 1
@@ -103,5 +105,8 @@
 #cmakedefine HAVE___INT128 1
 
 #cmakedefine ENABLE_TRACING 1
+
+/* Define to 1 if strerror_r returns char *. */
+#cmakedefine STRERROR_R_CHAR_P 1
 
 #endif // BITCOIN_BITCOIN_CONFIG_H

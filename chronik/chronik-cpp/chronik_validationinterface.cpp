@@ -4,7 +4,7 @@
 
 #include <blockindex.h>
 #include <chronik-cpp/util/hash.h>
-#include <chronik-lib/src/ffi.rs.h>
+#include <chronik_lib/src/ffi.rs.h>
 #include <node/context.h>
 #include <primitives/block.h>
 #include <txmempool.h>
@@ -60,6 +60,11 @@ private:
 
     void BlockFinalized(const CBlockIndex *pindex) override {
         m_chronik->handle_block_finalized(*pindex);
+    }
+
+    void BlockInvalidated(const CBlockIndex *pindex,
+                          const std::shared_ptr<const CBlock> &block) override {
+        m_chronik->handle_block_invalidated(*block, *pindex);
     }
 };
 

@@ -9,6 +9,7 @@
 #include <qt/rpcconsole.h>
 
 #include <chainparams.h>
+#include <common/system.h>
 #include <config.h>
 #include <interfaces/node.h>
 #include <netbase.h>
@@ -20,7 +21,6 @@
 #include <rpc/client.h>
 #include <rpc/server.h>
 #include <util/strencodings.h>
-#include <util/system.h>
 #include <util/threadnames.h>
 
 #ifdef ENABLE_WALLET
@@ -489,7 +489,7 @@ void RPCExecutor::request(const QString &command,
     } catch (UniValue &objError) {
         // Nice formatting for standard-format error
         try {
-            int code = objError.find_value("code").get_int();
+            int code = objError.find_value("code").getInt<int>();
             std::string message = objError.find_value("message").get_str();
             Q_EMIT reply(RPCConsole::CMD_ERROR,
                          QString::fromStdString(message) + " (code " +
@@ -1308,12 +1308,12 @@ void RPCConsole::updateDetailWidget() {
                                                          : tr("Outbound"));
     ui->peerNetwork->setText(
         GUIUtil::NetworkToQString(stats->nodeStats.m_network));
-    if (stats->nodeStats.m_permissionFlags == NetPermissionFlags::None) {
+    if (stats->nodeStats.m_permission_flags == NetPermissionFlags::None) {
         ui->peerPermissions->setText(tr("N/A"));
     } else {
         QStringList permissions;
         for (const auto &permission :
-             NetPermissions::ToStrings(stats->nodeStats.m_permissionFlags)) {
+             NetPermissions::ToStrings(stats->nodeStats.m_permission_flags)) {
             permissions.append(QString::fromStdString(permission));
         }
         ui->peerPermissions->setText(permissions.join(" & "));

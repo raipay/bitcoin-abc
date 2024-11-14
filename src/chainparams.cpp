@@ -6,10 +6,11 @@
 
 #include <chainparams.h>
 
+#include <common/args.h>
 #include <consensus/merkle.h>
 #include <currencyunit.h>
+#include <logging.h>
 #include <tinyformat.h>
-#include <util/system.h>
 
 #include <cassert>
 
@@ -26,7 +27,6 @@ void ReadChainArgs(const ArgsManager &args,
     // Only relevant for REGTEST
     options.fastprune = args.GetBoolArg("-fastprune", false);
 }
-
 
 std::unique_ptr<const CChainParams>
 CreateChainParams(const ArgsManager &args, const std::string &chain) {

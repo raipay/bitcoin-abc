@@ -18,6 +18,22 @@ message Blocks {
     repeated BlockInfo blocks = 1;
 }
 
+// Header on the blockchain
+message BlockHeader {
+    // Raw data
+    bytes raw_header = 1;
+    // Merkle root
+    bytes root = 2;
+    // Merkle branch of header up to root, deepest pairing first
+    repeated bytes branch = 3;
+}
+
+// Range of headers
+message BlockHeaders {
+    // Queried headers
+    repeated BlockHeader headers = 1;
+}
+
 // Info about the state of the blockchain.
 message BlockchainInfo {
     // Hash (little-endian) of the current tip
@@ -107,6 +123,8 @@ message ScriptUtxo {
     bool is_final = 10;
     // Token value attached to this UTXO
     Token token = 11;
+    // Data attached to this output by plugins
+    map<string, PluginEntry> plugins = 12;
 }
 
 // UTXO, but with a script attached.
@@ -125,6 +143,8 @@ message Utxo {
     bool is_final = 6;
     // Token value attached to this UTXO
     Token token = 7;
+    // Data attached to this output by plugins
+    map<string, PluginEntry> plugins = 8;
 }
 
 // COutPoint, points to a coin being spent by an input.
@@ -157,6 +177,8 @@ message TxInput {
     uint32 sequence_no = 5;
     // Token value attached to this input
     Token token = 8;
+    // Data attached to this output by plugins
+    map<string, PluginEntry> plugins = 9;
 }
 
 // CTxOut, creates a new coin.
@@ -169,6 +191,8 @@ message TxOutput {
     SpentBy spent_by = 4;
     // Token value attached to this output
     Token token = 5;
+    // Data attached to this output by plugins
+    map<string, PluginEntry> plugins = 6;
 }
 
 // Data about a block which a Tx is in.
@@ -338,6 +362,29 @@ message TokenFailedColoring {
     string error = 3;
 }
 
+// Data attached by a plugin to an output
+message PluginEntry {
+    // Groups assigned to this output
+    repeated bytes groups = 1;
+    // Data assigned to the output
+    repeated bytes data = 2;
+}
+
+// Data about a plugin group
+message PluginGroup {
+    // Group bytes
+    bytes group = 1;
+}
+
+// List of plugin groups
+message PluginGroups {
+    // Groups
+    repeated PluginGroup groups = 1;
+    // Group that if specified as `start` will give us the next groups,
+    // or empty if groups have been exausted.
+    bytes next_start = 2;
+}
+
 // Page with txs
 message TxHistoryPage {
     // Txs of the page
@@ -410,6 +457,8 @@ message WsSub {
         WsSubTokenId token_id = 4;
         // Subscription to a lokad ID
         WsSubLokadId lokad_id = 5;
+        // Subscription to a plugin group
+        WsPlugin plugin = 6;
     }
 }
 
@@ -446,6 +495,14 @@ message WsSubLokadId {
     bytes lokad_id = 1;
 }
 
+// Subscription to a group assigned by a plugin to outputs.
+message WsPlugin {
+    // Name of the plugin to subscribe to
+    string plugin_name = 1;
+    // Group assigned by the plugin to subscribe to
+    bytes group = 2;
+}
+
 // Message coming from the WebSocket
 message WsMsg {
     // Kind of message
@@ -459,7 +516,15 @@ message WsMsg {
     }
 }
 
-// Block got connected, disconnected, finalized, etc.
+// The relevant coinbase data
+message CoinbaseData {
+    // The coinbase input scriptsig
+    bytes coinbase_scriptsig = 1;
+    // Outputs of the coinbase tx
+    repeated TxOutput coinbase_outputs = 2;
+}
+
+// Block got connected, disconnected, finalized, invalidated, etc.
 message MsgBlock {
     // What happened to the block
     BlockMsgType msg_type = 1;
@@ -467,6 +532,11 @@ message MsgBlock {
     bytes block_hash = 2;
     // Height of the block
     int32 block_height = 3;
+    // Timestamp field of the block
+    int64 block_timestamp = 4;
+    // The coinbase data, only available if the block is disconnected or
+    // invalidated
+    CoinbaseData coinbase_data = 5;
 }
 
 // Type of message for the block
@@ -477,6 +547,8 @@ enum BlockMsgType {
     BLK_DISCONNECTED = 1;
     // Block has been finalized by Avalanche
     BLK_FINALIZED = 2;
+    // Block has been invalidated by Avalanche
+    BLK_INVALIDATED = 3;
 }
 
 // Tx got added to/removed from mempool, or confirmed in a block, etc.

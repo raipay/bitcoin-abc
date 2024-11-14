@@ -27,12 +27,10 @@ from test_framework.blocktools import (
 from test_framework.key import ECKey
 from test_framework.messages import COIN, COutPoint, CTransaction, CTxIn, CTxOut, ToHex
 from test_framework.p2p import P2PDataStore
-from test_framework.script import (
-    OP_CHECKSIG,
-    OP_TRUE,
+from test_framework.script import OP_CHECKSIG, OP_TRUE, CScript
+from test_framework.signature_hash import (
     SIGHASH_ALL,
     SIGHASH_FORKID,
-    CScript,
     SignatureHashForkId,
 )
 from test_framework.test_framework import BitcoinTestFramework
@@ -118,12 +116,12 @@ class MempoolCoherenceOnActivationsTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
         self.setup_clean_chain = True
+        self.noban_tx_relay = True
         self.block_heights = {}
         self.tip = None
         self.blocks = {}
         self.extra_args = [
             [
-                "-whitelist=noban@127.0.0.1",
                 EXTRA_ARG,
                 "-acceptnonstdtxn=1",
                 "-automaticunparking=1",

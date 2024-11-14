@@ -3,6 +3,7 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test descriptor wallet function."""
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -48,7 +49,9 @@ class WalletDescriptorTest(BitcoinTestFramework):
         send_wrpc = self.nodes[0].get_wallet_rpc("desc1")
 
         # Generate some coins
-        self.generatetoaddress(self.nodes[0], 101, send_wrpc.getnewaddress())
+        self.generatetoaddress(
+            self.nodes[0], COINBASE_MATURITY + 1, send_wrpc.getnewaddress()
+        )
 
         # Make transactions
         self.log.info("Test sending and receiving")
@@ -67,7 +70,7 @@ class WalletDescriptorTest(BitcoinTestFramework):
             -4,
             "This type of wallet does not support this command",
             recv_wrpc.rpc.importpubkey,
-            send_wrpc.getaddressinfo(send_wrpc.getnewaddress()),
+            send_wrpc.getaddressinfo(send_wrpc.getnewaddress())["pubkey"],
         )
         assert_raises_rpc_error(
             -4,

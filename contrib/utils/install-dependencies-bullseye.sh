@@ -4,6 +4,7 @@ export LC_ALL=C.UTF-8
 
 set -euxo pipefail
 
+# Required for wine
 dpkg --add-architecture i386
 
 PACKAGES=(
@@ -24,12 +25,10 @@ PACKAGES=(
   dput
   g++-9
   g++-9-aarch64-linux-gnu
-  g++-9-arm-linux-gnueabihf
   g++-9-multilib
   g++-mingw-w64
   gcc-9
   gcc-9-aarch64-linux-gnu
-  gcc-9-arm-linux-gnueabihf
   gcc-9-multilib
   gettext-base
   git
@@ -44,7 +43,6 @@ PACKAGES=(
   lib32stdc++-10-dev
   libboost-dev
   libbz2-dev
-  libc6-dev:i386
   libcap-dev
   libdb++-dev
   libdb-dev
@@ -76,6 +74,7 @@ PACKAGES=(
   python3-setuptools
   python3-yaml
   python3-zmq
+  qemu-user-static
   qttools5-dev
   qttools5-dev-tools
   shellcheck
@@ -99,7 +98,6 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y $(join_by ' ' "${PACKAGES[@]}"
 
 BACKPORTS=(
   git-filter-repo
-  qemu-user-static
 )
 
 echo "deb http://deb.debian.org/debian bullseye-backports main" | tee -a /etc/apt/sources.list
@@ -112,17 +110,17 @@ add-apt-repository "deb https://apt.llvm.org/bullseye/   llvm-toolchain-bullseye
 apt-get update
 
 LLVM_PACKAGES=(
-  clang-12
-  clang-format-12
-  clang-tidy-12
-  clang-tools-12
+  clang-16
+  clang-format-16
+  clang-tidy-16
+  clang-tools-16
 )
 DEBIAN_FRONTEND=noninteractive apt-get install -y $(join_by ' ' "${LLVM_PACKAGES[@]}")
 
 # Make sure our specific llvm and clang versions have highest priority
-update-alternatives --install /usr/bin/clang clang "$(command -v clang-12)" 100
-update-alternatives --install /usr/bin/clang++ clang++ "$(command -v clang++-12)" 100
-update-alternatives --install /usr/bin/llvm-symbolizer llvm-symbolizer "$(command -v llvm-symbolizer-12)" 100
+update-alternatives --install /usr/bin/clang clang "$(command -v clang-16)" 100
+update-alternatives --install /usr/bin/clang++ clang++ "$(command -v clang++-16)" 100
+update-alternatives --install /usr/bin/llvm-symbolizer llvm-symbolizer "$(command -v llvm-symbolizer-16)" 100
 
 # Use gcc-9/g++-9 by default so it uses libstdc++-9. This prevents from pulling
 # the new pthread_cond_clockwait symbol from GLIBC_30 and ensure we are testing
@@ -132,9 +130,6 @@ update-alternatives --install /usr/bin/g++ g++ "$(command -v g++-9)" 100
 
 update-alternatives --install /usr/bin/aarch64-linux-gnu-gcc aarch64-linux-gnu-gcc "$(command -v aarch64-linux-gnu-gcc-9)" 100
 update-alternatives --install /usr/bin/aarch64-linux-gnu-g++ aarch64-linux-gnu-g++ "$(command -v aarch64-linux-gnu-g++-9)" 100
-
-update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc "$(command -v arm-linux-gnueabihf-gcc-9)" 100
-update-alternatives --install /usr/bin/arm-linux-gnueabihf-g++ arm-linux-gnueabihf-g++ "$(command -v arm-linux-gnueabihf-g++-9)" 100
 
 # Use the mingw posix variant
 update-alternatives --set x86_64-w64-mingw32-g++ $(command -v x86_64-w64-mingw32-g++-posix)
@@ -153,14 +148,14 @@ pip3 install "lief==0.13.2"
 pip3 install websocket-client
 
 # Required python linters
-pip3 install black==23.3.0 isort==5.6.4 mypy==0.910 flynt==0.78 flake8==6.0.0
+pip3 install black==24.4.2 isort==5.6.4 mypy==0.910 flynt==0.78 flake8==6.0.0 flake8-builtins==2.5.0 flake8-comprehensions==3.14.0 djlint==1.34.1
 echo "export PATH=\"$(python3 -m site --user-base)/bin:\$PATH\"" >> ~/.bashrc
 # shellcheck source=/dev/null
 source ~/.bashrc
 
 # Install npm v10.x and nodejs v20.x
 wget https://deb.nodesource.com/setup_20.x -O nodesetup.sh
-echo "f8fb478685fb916cc70858200595a4f087304bcde1e69aa713bf2eb41695afc1 nodesetup.sh" | sha256sum -c
+echo "dd3bc508520fcdfdc8c4360902eac90cba411a7e59189a80fb61fcbea8f4199c nodesetup.sh" | sha256sum -c
 chmod +x nodesetup.sh
 ./nodesetup.sh
 apt-get install -y nodejs
@@ -181,10 +176,8 @@ RUST_NIGHTLY_DATE=2023-12-29
 "${RUST_HOME}/rustup" toolchain link abc-nightly "$(${RUST_HOME}/rustc +nightly-${RUST_NIGHTLY_DATE} --print sysroot)"
 
 # Install required compile platform targets on stable
-"${RUST_HOME}/rustup" target add "i686-unknown-linux-gnu" \
-                                 "x86_64-unknown-linux-gnu" \
+"${RUST_HOME}/rustup" target add "x86_64-unknown-linux-gnu" \
                                  "aarch64-unknown-linux-gnu" \
-                                 "arm-unknown-linux-gnueabihf" \
                                  "x86_64-apple-darwin" \
                                  "x86_64-pc-windows-gnu" \
                                  "wasm32-unknown-unknown"

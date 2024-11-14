@@ -29,13 +29,32 @@ import hashlib
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
-import ecdsa
-from ecdsa.curves import SECP256k1
 from mnemonic import Mnemonic
 
 from . import bitcoin, mnemo, networks
 from .address import Address, PublicKey
-from .bitcoin import SignatureType
+from .bip32 import (
+    CKD_pub,
+    bip32_private_derivation,
+    bip32_private_key,
+    bip32_public_derivation,
+    bip32_root,
+    deserialize_xprv,
+    deserialize_xpub,
+    is_xprv,
+    is_xpub,
+    xpub_from_xprv,
+)
+from .crypto import Hash, pw_decode, pw_encode
+from .ecc import (
+    CURVE_ORDER,
+    GENERATOR,
+    PRIVATE_KEY_BYTECOUNT,
+    ECPrivkey,
+    ECPubkey,
+    SignatureType,
+    be_bytes_to_number,
+)
 from .plugins import run_hook
 from .printerror import PrintError, print_error
 from .util import BitcoinException, InvalidPassword, WalletFileException, bh2u
@@ -113,12 +132,12 @@ class SoftwareKeyStore(KeyStore):
 
     def sign_message(self, sequence, message, password, sigtype=SignatureType.ECASH):
         privkey, compressed = self.get_private_key(sequence, password)
-        key = bitcoin.regenerate_key(privkey)
-        return key.sign_message(message, compressed, sigtype)
+        key = ECPrivkey(privkey)
+        return key.sign_message(message, compressed, sigtype=sigtype)
 
     def decrypt_message(self, sequence, message, password):
         privkey, compressed = self.get_private_key(sequence, password)
-        ec = bitcoin.regenerate_key(privkey)
+        ec = ECPrivkey(privkey)
         decrypted = ec.decrypt_message(message)
         return decrypted
 
@@ -193,7 +212,7 @@ class ImportedKeyStore(SoftwareKeyStore):
 
     def import_privkey(self, WIF_privkey, password):
         pubkey = PublicKey.from_WIF_privkey(WIF_privkey)
-        self.keypairs[pubkey] = bitcoin.pw_encode(WIF_privkey, password)
+        self.keypairs[pubkey] = pw_encode(WIF_privkey, password)
         self._sorted = None
         return pubkey
 
@@ -202,7 +221,7 @@ class ImportedKeyStore(SoftwareKeyStore):
 
     def export_private_key(self, pubkey, password):
         """Returns a WIF string"""
-        WIF_privkey = bitcoin.pw_decode(self.keypairs[pubkey], password)
+        WIF_privkey = pw_decode(self.keypairs[pubkey], password)
         # this checks the password
         if pubkey != PublicKey.from_WIF_privkey(WIF_privkey):
             raise InvalidPassword()
@@ -227,8 +246,8 @@ class ImportedKeyStore(SoftwareKeyStore):
         if new_password == "":
             new_password = None
         for k, v in self.keypairs.items():
-            b = bitcoin.pw_decode(v, old_password)
-            c = bitcoin.pw_encode(b, new_password)
+            b = pw_decode(v, old_password)
+            c = pw_encode(b, new_password)
             self.keypairs[k] = c
 
 
@@ -270,10 +289,10 @@ class DeterministicKeyStore(SoftwareKeyStore):
         return Mnemonic.normalize_string(seed)
 
     def get_seed(self, password):
-        return bitcoin.pw_decode(self.seed, password)
+        return pw_decode(self.seed, password)
 
     def get_passphrase(self, password):
-        return bitcoin.pw_decode(self.passphrase, password) if self.passphrase else ""
+        return pw_decode(self.passphrase, password) if self.passphrase else ""
 
     @abstractmethod
     def get_private_key(self, sequence, password) -> Tuple[bytes, bool]:
@@ -297,7 +316,7 @@ class Xpub:
     def derive_pubkey(self, for_change: bool, n):
         xpub = self.xpub_change if for_change else self.xpub_receive
         if xpub is None:
-            xpub = bitcoin.bip32_public_derivation(self.xpub, "", f"/{for_change:d}")
+            xpub = bip32_public_derivation(self.xpub, "", f"/{for_change:d}")
             if for_change:
                 self.xpub_change = xpub
             else:
@@ -306,9 +325,9 @@ class Xpub:
 
     @classmethod
     def get_pubkey_from_xpub(self, xpub, sequence) -> bytes:
-        _, _, _, _, c, cK = bitcoin.deserialize_xpub(xpub)
+        _, _, _, _, c, cK = deserialize_xpub(xpub)
         for i in sequence:
-            cK, c = bitcoin.CKD_pub(cK, c, i)
+            cK, c = CKD_pub(cK, c, i)
         return cK
 
     def get_xpubkey(self, c: int, i: int) -> bytes:
@@ -380,16 +399,16 @@ class BIP32KeyStore(DeterministicKeyStore, Xpub):
         return d
 
     def get_master_private_key(self, password):
-        return bitcoin.pw_decode(self.xprv, password)
+        return pw_decode(self.xprv, password)
 
     def check_password(self, password):
-        xprv = bitcoin.pw_decode(self.xprv, password)
+        xprv = pw_decode(self.xprv, password)
         try:
             assert bitcoin.DecodeBase58Check(xprv) is not None
         except Exception:
             # Password was None but key was encrypted.
             raise InvalidPassword()
-        if bitcoin.deserialize_xprv(xprv)[4] != bitcoin.deserialize_xpub(self.xpub)[4]:
+        if deserialize_xprv(xprv)[4] != deserialize_xpub(self.xpub)[4]:
             raise InvalidPassword()
 
     def update_password(self, old_password, new_password):
@@ -398,13 +417,13 @@ class BIP32KeyStore(DeterministicKeyStore, Xpub):
             new_password = None
         if self.has_seed():
             decoded = self.get_seed(old_password)
-            self.seed = bitcoin.pw_encode(decoded, new_password)
+            self.seed = pw_encode(decoded, new_password)
         if self.passphrase:
             decoded = self.get_passphrase(old_password)
-            self.passphrase = bitcoin.pw_encode(decoded, new_password)
+            self.passphrase = pw_encode(decoded, new_password)
         if self.xprv is not None:
-            b = bitcoin.pw_decode(self.xprv, old_password)
-            self.xprv = bitcoin.pw_encode(b, new_password)
+            b = pw_decode(self.xprv, old_password)
+            self.xprv = pw_encode(b, new_password)
 
     def has_derivation(self) -> bool:
         """Note: the derivation path may not always be saved. Older versions
@@ -416,18 +435,18 @@ class BIP32KeyStore(DeterministicKeyStore, Xpub):
 
     def add_xprv(self, xprv):
         self.xprv = xprv
-        self.xpub = bitcoin.xpub_from_xprv(xprv)
+        self.xpub = xpub_from_xprv(xprv)
 
     def add_xprv_from_seed(self, bip32_seed, xtype, derivation):
-        xprv, xpub = bitcoin.bip32_root(bip32_seed, xtype)
-        xprv, xpub = bitcoin.bip32_private_derivation(xprv, "m/", derivation)
+        xprv, xpub = bip32_root(bip32_seed, xtype)
+        xprv, xpub = bip32_private_derivation(xprv, "m/", derivation)
         self.add_xprv(xprv)
         self.derivation = derivation
 
     def get_private_key(self, sequence, password):
         xprv = self.get_master_private_key(password)
-        _, _, _, _, c, k = bitcoin.deserialize_xprv(xprv)
-        pk = bitcoin.bip32_private_key(sequence, k, c)
+        _, _, _, _, c, k = deserialize_xprv(xprv)
+        pk = bip32_private_key(sequence, k, c)
         return pk, True
 
     def set_wallet_advice(self, addr, advice):  # overrides KeyStore.set_wallet_advice
@@ -440,7 +459,7 @@ class OldKeyStore(DeterministicKeyStore):
         self.mpk = bytes.fromhex(d.get("mpk", ""))
 
     def get_hex_seed(self, password):
-        return bitcoin.pw_decode(self.seed, password).encode("utf8")
+        return pw_decode(self.seed, password).encode("utf8")
 
     def dump(self):
         d = DeterministicKeyStore.dump(self)
@@ -482,44 +501,34 @@ class OldKeyStore(DeterministicKeyStore):
     @classmethod
     def mpk_from_seed(klass, seed) -> bytes:
         secexp = klass.stretch_key(seed)
-        master_private_key = ecdsa.SigningKey.from_secret_exponent(
-            secexp, curve=SECP256k1
-        )
-        master_public_key = master_private_key.get_verifying_key().to_string()
-        return master_public_key
+        privkey = ECPrivkey.from_secret_scalar(secexp)
+        return privkey.get_public_key_bytes(compressed=False)[1:]
 
     @classmethod
     def stretch_key(self, seed):
         x = seed
         for i in range(100000):
             x = hashlib.sha256(x + seed).digest()
-        return ecdsa.util.string_to_number(x)
+        return be_bytes_to_number(x)
 
     @classmethod
     def get_sequence(self, mpk: bytes, for_change: Union[int, bool], n: int):
-        return ecdsa.util.string_to_number(
-            bitcoin.Hash(f"{n:d}:{for_change:d}:".encode("ascii") + mpk)
-        )
+        return be_bytes_to_number(Hash(f"{n:d}:{for_change:d}:".encode("ascii") + mpk))
 
     @classmethod
     def get_pubkey_from_mpk(self, mpk: bytes, for_change, n) -> bytes:
         z = self.get_sequence(mpk, for_change, n)
-        master_public_key = ecdsa.VerifyingKey.from_string(mpk, curve=SECP256k1)
-        pubkey_point = master_public_key.pubkey.point + z * SECP256k1.generator
-        public_key2 = ecdsa.VerifyingKey.from_public_point(
-            pubkey_point, curve=SECP256k1
-        )
-        # here to_string() is a misnomer dating back to Python 2. It returns bytes.
-        return b"\x04" + public_key2.to_string()
+        master_public_key = ECPubkey(b"\x04" + mpk)
+        public_key = master_public_key + z * GENERATOR
+        return public_key.get_public_key_bytes(compressed=False)
 
     def derive_pubkey(self, for_change, n) -> bytes:
         return self.get_pubkey_from_mpk(self.mpk, for_change, n)
 
     def get_private_key_from_stretched_exponent(self, for_change, n, secexp):
-        order = ecdsa.ecdsa.generator_secp256k1.order()
-        secexp = (secexp + self.get_sequence(self.mpk, for_change, n)) % order
-        pk = ecdsa.util.number_to_string(
-            secexp, ecdsa.ecdsa.generator_secp256k1.order()
+        secexp = (secexp + self.get_sequence(self.mpk, for_change, n)) % CURVE_ORDER
+        pk = int.to_bytes(
+            secexp, length=PRIVATE_KEY_BYTECOUNT, byteorder="big", signed=False
         )
         return pk
 
@@ -534,10 +543,10 @@ class OldKeyStore(DeterministicKeyStore):
         """As a performance optimization we also return the stretched key
         in case the caller needs it. Otherwise we raise InvalidPassword."""
         secexp = self.stretch_key(seed)
-        master_private_key = ecdsa.SigningKey.from_secret_exponent(
-            secexp, curve=SECP256k1
-        )
-        master_public_key = master_private_key.get_verifying_key().to_string()
+        master_private_key = ECPrivkey.from_secret_scalar(secexp)
+        master_public_key = master_private_key.get_public_key_bytes(compressed=False)[
+            1:
+        ]
         if master_public_key != self.mpk:
             print_error(
                 "invalid password (mpk)", self.mpk.hex(), bh2u(master_public_key)
@@ -583,8 +592,8 @@ class OldKeyStore(DeterministicKeyStore):
         if new_password == "":
             new_password = None
         if self.has_seed():
-            decoded = bitcoin.pw_decode(self.seed, old_password)
-            self.seed = bitcoin.pw_encode(decoded, new_password)
+            decoded = pw_decode(self.seed, old_password)
+            self.seed = pw_encode(decoded, new_password)
 
 
 class HardwareKeyStore(KeyStore, Xpub):
@@ -776,15 +785,15 @@ def is_private_key_list(text, *, allow_bip38=False):
 
 
 def is_private(text: str) -> bool:
-    return mnemo.is_seed(text) or bitcoin.is_xprv(text) or is_private_key_list(text)
+    return mnemo.is_seed(text) or is_xprv(text) or is_private_key_list(text)
 
 
 def is_master_key(text: str) -> bool:
-    return is_old_mpk(text) or bitcoin.is_xprv(text) or bitcoin.is_xpub(text)
+    return is_old_mpk(text) or is_xprv(text) or is_xpub(text)
 
 
 def is_bip32_key(text: str) -> bool:
-    return bitcoin.is_xprv(text) or bitcoin.is_xpub(text)
+    return is_xprv(text) or is_xpub(text)
 
 
 def _bip44_derivation(coin: int, account_id: int) -> str:
@@ -875,7 +884,7 @@ def from_xpub(xpub):
 
 
 def from_xprv(xprv):
-    xpub = bitcoin.xpub_from_xprv(xprv)
+    xpub = xpub_from_xprv(xprv)
     k = BIP32KeyStore({})
     k.xprv = xprv
     k.xpub = xpub
@@ -883,11 +892,11 @@ def from_xprv(xprv):
 
 
 def from_master_key(text):
-    if bitcoin.is_xprv(text):
+    if is_xprv(text):
         k = from_xprv(text)
     elif is_old_mpk(text):
         k = from_old_mpk(text)
-    elif bitcoin.is_xpub(text):
+    elif is_xpub(text):
         k = from_xpub(text)
     else:
         raise BitcoinException("Invalid master key")

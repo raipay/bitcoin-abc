@@ -4,11 +4,11 @@
 
 #include <node/utxo_snapshot.h>
 
-#include <fs.h>
+#include <common/args.h>
 #include <logging.h>
 #include <primitives/blockhash.h>
 #include <streams.h>
-#include <util/system.h>
+#include <util/fs.h>
 #include <validation.h>
 
 #include <cstdio>

@@ -10,6 +10,7 @@
 #include <addrman.h>
 #include <banman.h>
 #include <chainparams.h>
+#include <common/system.h>
 #include <config.h>
 #include <consensus/consensus.h>
 #include <consensus/merkle.h>
@@ -25,10 +26,13 @@
 #include <node/chainstate.h>
 #include <node/chainstatemanager_args.h>
 #include <node/context.h>
+#include <node/kernel_notifications.h>
 #include <node/miner.h>
+#include <node/peerman_args.h>
 #include <node/validation_cache_args.h>
 #include <noui.h>
 #include <pow/pow.h>
+#include <random.h>
 #include <rpc/blockchain.h>
 #include <rpc/register.h>
 #include <rpc/server.h>
@@ -52,6 +56,7 @@
 #include <walletinitinterface.h>
 
 #include <test/util/mining.h>
+#include <test/util/random.h>
 
 #include <algorithm>
 #include <functional>
@@ -60,47 +65,21 @@
 using kernel::ValidationCacheSizes;
 using node::ApplyArgsManOptions;
 using node::BlockAssembler;
+using node::BlockManager;
 using node::CalculateCacheSizes;
 using node::fReindex;
+using node::KernelNotifications;
 using node::LoadChainstate;
 using node::NodeContext;
 using node::VerifyLoadedChainstate;
 
 const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
-FastRandomContext g_insecure_rand_ctx;
 /**
  * Random context to get unique temp data dirs. Separate from
  * g_insecure_rand_ctx, which can be seeded from a const env var
  */
 static FastRandomContext g_insecure_rand_ctx_temp_path;
-
-/**
- * Return the unsigned from the environment var if available,
- * otherwise 0
- */
-static uint256 GetUintFromEnv(const std::string &env_name) {
-    const char *num = std::getenv(env_name.c_str());
-    if (!num) {
-        return {};
-    }
-    return uint256S(num);
-}
-
-void Seed(FastRandomContext &ctx) {
-    // Should be enough to get the seed once for the process
-    static uint256 seed{};
-    static const std::string RANDOM_CTX_SEED{"RANDOM_CTX_SEED"};
-    if (seed.IsNull()) {
-        seed = GetUintFromEnv(RANDOM_CTX_SEED);
-    }
-    if (seed.IsNull()) {
-        seed = GetRandHash();
-    }
-    LogPrintf("%s: Setting random seed for current tests to %s=%s\n", __func__,
-              RANDOM_CTX_SEED, seed.GetHex());
-    ctx = FastRandomContext(seed);
-}
 
 std::ostream &operator<<(std::ostream &os, const uint256 &num) {
     os << num.ToString();
@@ -210,15 +189,19 @@ ChainTestingSetup::ChainTestingSetup(
 
     m_cache_sizes = CalculateCacheSizes(m_args);
 
+    m_node.notifications = std::make_unique<KernelNotifications>();
+
     ChainstateManager::Options chainman_opts{
         .config = config,
         .datadir = m_args.GetDataDirNet(),
         .adjusted_time_callback = GetAdjustedTime,
         .check_block_index = true,
+        .notifications = *m_node.notifications,
     };
     ApplyArgsManOptions(*m_node.args, chainman_opts);
-    node::BlockManager::Options blockman_opts{
+    const BlockManager::Options blockman_opts{
         .chainparams = chainman_opts.config.GetChainParams(),
+        .blocks_dir = m_args.GetBlocksDirPath(),
     };
     m_node.chainman =
         std::make_unique<ChainstateManager>(chainman_opts, blockman_opts);
@@ -313,9 +296,12 @@ TestingSetup::TestingSetup(const std::string &chainName,
     // Deterministic randomness for tests.
     m_node.connman =
         std::make_unique<CConnman>(config, 0x1337, 0x1337, *m_node.addrman);
-    m_node.peerman =
-        PeerManager::make(*m_node.connman, *m_node.addrman, m_node.banman.get(),
-                          *m_node.chainman, *m_node.mempool, false);
+    PeerManager::Options peerman_opts;
+    ApplyArgsManOptions(*m_node.args, peerman_opts);
+    peerman_opts.deterministic_rng = true;
+    m_node.peerman = PeerManager::make(
+        *m_node.connman, *m_node.addrman, m_node.banman.get(), *m_node.chainman,
+        *m_node.mempool, /*avalanche=*/nullptr, peerman_opts);
     {
         CConnman::Options options;
         options.m_msgproc.push_back(m_node.peerman.get());
@@ -513,6 +499,38 @@ TestChain100Setup::PopulateMempool(FastRandomContext &det_rand,
         --num_transactions;
     }
     return mempool_transactions;
+}
+
+void TestChain100Setup::MockMempoolMinFee(const CFeeRate &target_feerate) {
+    LOCK2(cs_main, m_node.mempool->cs);
+    // Transactions in the mempool will affect the new minimum feerate.
+    assert(m_node.mempool->size() == 0);
+    // The target feerate cannot be too low...
+    // ...otherwise the transaction's feerate will need to be negative.
+    assert(target_feerate > MEMPOOL_FULL_FEE_INCREMENT);
+    // ...otherwise this is not meaningful. The feerate policy uses the maximum
+    // of both feerates.
+    assert(target_feerate > m_node.mempool->m_min_relay_feerate);
+
+    // Manually create an invalid transaction. Manually set the fee in the
+    // CTxMemPoolEntry to achieve the exact target feerate.
+    CMutableTransaction mtx = CMutableTransaction();
+    mtx.vin.push_back(CTxIn{COutPoint{TxId{g_insecure_rand_ctx.rand256()}, 0}});
+    mtx.vout.push_back(CTxOut(
+        1 * COIN, GetScriptForDestination(ScriptHash(CScript() << OP_TRUE))));
+    const auto tx{MakeTransactionRef(mtx)};
+    // The new mempool min feerate is equal to the removed package's feerate +
+    // incremental feerate.
+    const auto tx_fee =
+        target_feerate.GetFee(GetVirtualTransactionSize(*tx)) -
+        MEMPOOL_FULL_FEE_INCREMENT.GetFee(GetVirtualTransactionSize(*tx));
+    TestMemPoolEntryHelper entryHelper;
+    auto entry =
+        entryHelper.Fee(tx_fee).Time(0).Height(1).SigChecks(1).FromTx(tx);
+    m_node.mempool->addUnchecked(std::move(entry));
+
+    m_node.mempool->TrimToSize(0);
+    assert(m_node.mempool->GetMinFee() == target_feerate);
 }
 
 CTxMemPoolEntryRef

@@ -3,13 +3,14 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <chainparams.h>
+#include <common/system.h>
+#include <net_processing.h>
 #include <protocol.h>
 #include <seeder/bitcoin.h>
 #include <seeder/db.h>
 #include <seeder/test/util.h>
 #include <serialize.h>
 #include <streams.h>
-#include <util/system.h>
 #include <version.h>
 
 #include <boost/test/unit_test.hpp>
@@ -38,14 +39,18 @@ public:
     }
 
     CDataStream getSendBuffer() { return vSend; }
+
+    void setStartingHeight(int starting_height) {
+        nStartingHeight = starting_height;
+    };
 };
 } // namespace
 
 static const uint16_t SERVICE_PORT = 18444;
 
 struct SeederTestingSetup {
-    SeederTestingSetup() {
-        SelectParams(CBaseChainParams::REGTEST);
+    SeederTestingSetup(const std::string chain = CBaseChainParams::REGTEST) {
+        SelectParams(chain);
         CNetAddr ip;
         ip.SetInternal("bitcoin.test");
         CService service = {ip, SERVICE_PORT};
@@ -55,6 +60,10 @@ struct SeederTestingSetup {
 
     std::vector<CAddress> vAddr;
     std::unique_ptr<CSeederNodeTest> testNode;
+};
+
+struct MainNetSeederTestingSetup : public SeederTestingSetup {
+    MainNetSeederTestingSetup() : SeederTestingSetup(CBaseChainParams::MAIN) {}
 };
 
 BOOST_FIXTURE_TEST_SUITE(p2p_messaging_tests, SeederTestingSetup)
@@ -85,7 +94,7 @@ BOOST_AUTO_TEST_CASE(process_version_msg) {
                       versionMessage.GetVersion());
 }
 
-BOOST_AUTO_TEST_CASE(process_verack_msg) {
+BOOST_FIXTURE_TEST_CASE(process_verack_msg, MainNetSeederTestingSetup) {
     CDataStream verackMessage(SER_NETWORK, 0);
     verackMessage.SetVersion(INIT_PROTO_VERSION);
     testNode->TestProcessMessage(NetMsgType::VERACK, verackMessage,
@@ -121,7 +130,30 @@ static CDataStream CreateAddrMessage(std::vector<CAddress> sendAddrs,
     return payload;
 }
 
-BOOST_AUTO_TEST_CASE(process_addr_msg) {
+BOOST_FIXTURE_TEST_CASE(process_addr_msg, MainNetSeederTestingSetup) {
+    // First, must send headers to satisfy the criteria that both ADDR/ADDRV2
+    // *and* HEADERS must arrive before TestNode can advance to the Finished
+    // state
+    BlockHash recentCheckpoint =
+        ::Params().Checkpoints().mapCheckpoints.rbegin()->second;
+    int recentCheckpointHeight =
+        ::Params().Checkpoints().mapCheckpoints.rbegin()->first;
+    auto header = CBlockHeader{};
+    header.hashPrevBlock = recentCheckpoint;
+    testNode->setStartingHeight(recentCheckpointHeight + 1);
+    CDataStream headersMsg(SER_NETWORK, 0);
+    headersMsg.SetVersion(INIT_PROTO_VERSION);
+    WriteCompactSize(headersMsg, 1);
+    headersMsg << header;
+    // sanity check: node is expecting headers
+    BOOST_CHECK(!testNode->IsCheckpointVerified());
+    testNode->TestProcessMessage(NetMsgType::HEADERS, headersMsg,
+                                 PeerMessagingState::AwaitingMessages);
+    BOOST_CHECK_EQUAL(testNode->GetBan(), 0);
+    // node got the checkpointed header; it can advance to Finished after
+    // addr message
+    BOOST_CHECK(testNode->IsCheckpointVerified());
+
     // vAddrs starts with 1 entry.
     std::vector<CAddress> sendAddrs(ADDR_SOFT_CAP - 1, vAddr[0]);
 
@@ -152,6 +184,95 @@ BOOST_AUTO_TEST_CASE(process_addr_msg) {
         BOOST_CHECK_EQUAL(expectedSize, vAddr.size());
         ++expectedSize;
     }
+}
+
+BOOST_AUTO_TEST_CASE(ban_too_many_headers) {
+    // Process the maximum number of headers
+    auto header = CBlockHeader{};
+    CDataStream maxHeaderMessages(SER_NETWORK, 0);
+    maxHeaderMessages.SetVersion(INIT_PROTO_VERSION);
+    WriteCompactSize(maxHeaderMessages, MAX_HEADERS_RESULTS);
+    for (size_t i = 0; i < MAX_HEADERS_RESULTS; i++) {
+        maxHeaderMessages << header;
+        WriteCompactSize(maxHeaderMessages, 0);
+    }
+    testNode->TestProcessMessage(NetMsgType::HEADERS, maxHeaderMessages,
+                                 PeerMessagingState::AwaitingMessages);
+    BOOST_CHECK_EQUAL(testNode->GetBan(), 0);
+
+    // Process one too many headers
+    CDataStream tooManyHeadersMessage(SER_NETWORK, 0);
+    tooManyHeadersMessage.SetVersion(INIT_PROTO_VERSION);
+    WriteCompactSize(tooManyHeadersMessage, MAX_HEADERS_RESULTS + 1);
+    // The message processing will abort when seeing the excessive number of
+    // headers from the compact size. No need to actually pack any header data.
+    testNode->TestProcessMessage(NetMsgType::HEADERS, tooManyHeadersMessage,
+                                 PeerMessagingState::Finished);
+    BOOST_CHECK(testNode->GetBan() > 0);
+}
+
+BOOST_AUTO_TEST_CASE(empty_headers) {
+    // Check that an empty headers message does not cause issues
+    CDataStream zeroHeadersMessage(SER_NETWORK, 0);
+    zeroHeadersMessage.SetVersion(INIT_PROTO_VERSION);
+    WriteCompactSize(zeroHeadersMessage, 0);
+    testNode->TestProcessMessage(NetMsgType::HEADERS, zeroHeadersMessage,
+                                 PeerMessagingState::AwaitingMessages);
+    BOOST_CHECK_EQUAL(testNode->GetBan(), 0);
+}
+
+BOOST_FIXTURE_TEST_CASE(good_checkpoint, MainNetSeederTestingSetup) {
+    BlockHash recentCheckpoint =
+        ::Params().Checkpoints().mapCheckpoints.rbegin()->second;
+    int recentCheckpointHeight =
+        ::Params().Checkpoints().mapCheckpoints.rbegin()->first;
+
+    // Process a HEADERS message with a first header that immediately follows
+    // our most recent checkpoint, check that it is accepted.
+    auto header = CBlockHeader{};
+    header.hashPrevBlock = recentCheckpoint;
+    testNode->setStartingHeight(recentCheckpointHeight + 1);
+    CDataStream headersOnCorrectChain(SER_NETWORK, 0);
+    headersOnCorrectChain.SetVersion(INIT_PROTO_VERSION);
+    WriteCompactSize(headersOnCorrectChain, 1);
+    headersOnCorrectChain << header;
+    testNode->TestProcessMessage(NetMsgType::HEADERS, headersOnCorrectChain,
+                                 PeerMessagingState::AwaitingMessages);
+    BOOST_CHECK_EQUAL(testNode->GetBan(), 0);
+    BOOST_CHECK(testNode->IsCheckpointVerified());
+}
+
+BOOST_FIXTURE_TEST_CASE(bad_checkpoint, MainNetSeederTestingSetup) {
+    BlockHash recentCheckpoint =
+        ::Params().Checkpoints().mapCheckpoints.rbegin()->second;
+    int recentCheckpointHeight =
+        ::Params().Checkpoints().mapCheckpoints.rbegin()->first;
+    auto header = CBlockHeader{};
+
+    // We just ignore HEADERS messages sent by nodes with a chaintip before our
+    // most recent checkpoint.
+    testNode->setStartingHeight(recentCheckpointHeight - 1);
+    CDataStream shortHeaderChain(SER_NETWORK, 0);
+    shortHeaderChain.SetVersion(INIT_PROTO_VERSION);
+    WriteCompactSize(shortHeaderChain, 1);
+    shortHeaderChain << header;
+    testNode->TestProcessMessage(NetMsgType::HEADERS, shortHeaderChain,
+                                 PeerMessagingState::AwaitingMessages);
+    BOOST_CHECK_EQUAL(testNode->GetBan(), 0);
+    BOOST_CHECK(!testNode->IsCheckpointVerified());
+
+    // Process a HEADERS message with a first header that does not follow
+    // our most recent checkpoint, check that the node is banned.
+    BOOST_CHECK(header.hashPrevBlock != recentCheckpoint);
+    testNode->setStartingHeight(recentCheckpointHeight + 1);
+    CDataStream headersOnWrongChain(SER_NETWORK, 0);
+    headersOnWrongChain.SetVersion(INIT_PROTO_VERSION);
+    WriteCompactSize(headersOnWrongChain, 1);
+    headersOnWrongChain << header;
+    testNode->TestProcessMessage(NetMsgType::HEADERS, headersOnWrongChain,
+                                 PeerMessagingState::Finished);
+    BOOST_CHECK(testNode->GetBan() > 0);
+    BOOST_CHECK(!testNode->IsCheckpointVerified());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

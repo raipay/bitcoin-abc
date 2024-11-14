@@ -5,10 +5,12 @@
 import React from 'react';
 import styled from 'styled-components';
 import PropTypes from 'prop-types';
+import { CashtabScroll } from './Atoms';
 
 const ModalContainer = styled.div`
     width: ${props => props.width}px;
     height: ${props => props.height}px;
+    transition: height 1s ease-in-out;
     position: fixed;
     top: 50%;
     left: 50%;
@@ -44,25 +46,11 @@ const ModalBody = styled.div`
     width: 100%;
     height: ${props =>
         props.showButtons ? props.height - MODAL_HEIGHT_DELTA : props.height}px;
+    transition: height 1s ease-in-out;
     overflow: auto;
     padding: 6px;
     word-wrap: break-word;
-    &::-webkit-scrollbar {
-        width: 12px;
-    }
-
-    &::-webkit-scrollbar-track {
-        -webkit-box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.3);
-        background-color: ${props => props.theme.eCashBlue};
-        border-radius: 10px;
-        height: 80%;
-    }
-
-    &::-webkit-scrollbar-thumb {
-        border-radius: 10px;
-        color: ${props => props.theme.eCashBlue};
-        -webkit-box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.5);
-    }
+    ${CashtabScroll}
 `;
 const ModalDescription = styled.div`
     color: ${props => props.theme.contrast};

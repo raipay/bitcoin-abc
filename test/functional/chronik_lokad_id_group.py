@@ -11,17 +11,11 @@ from test_framework.address import (
     P2SH_OP_TRUE,
     SCRIPTSIG_OP_TRUE,
 )
-from test_framework.blocktools import create_block, create_coinbase
+from test_framework.blocktools import COINBASE_MATURITY, create_block, create_coinbase
+from test_framework.hash import hash160
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.p2p import P2PDataStore
-from test_framework.script import (
-    OP_EQUAL,
-    OP_HASH160,
-    OP_RESERVED,
-    OP_RETURN,
-    CScript,
-    hash160,
-)
+from test_framework.script import OP_EQUAL, OP_HASH160, OP_RESERVED, OP_RETURN, CScript
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, chronik_sub_lokad_id
 
@@ -52,7 +46,7 @@ class ChronikLokadIdGroup(BitcoinTestFramework):
         cointx = coinblock["tx"][0]
         coinvalue = 5000000000
 
-        self.generatetoaddress(node, 100, ADDRESS_ECREG_UNSPENDABLE)
+        self.generatetoaddress(node, COINBASE_MATURITY, ADDRESS_ECREG_UNSPENDABLE)
 
         def p2lokad(lokad_id: bytes):
             return CScript([lokad_id, OP_EQUAL])
@@ -267,6 +261,15 @@ class ChronikLokadIdGroup(BitcoinTestFramework):
         assert_equal(lokad_id_history(b"lok0"), [])
         assert_equal(lokad_id_history(b"lok1"), [])
         assert_equal(lokad_id_history(b"lok2"), [])
+
+        # Restarting with chroniklokadidindex=0 and chroniktokenindex=1 DOES NOT reindex the LOKAD ID index
+        self.restart_node(
+            0,
+            ["-chronik", "-reindex", "-chroniktokenindex=1", "-chroniklokadidindex=0"],
+        )
+        assert_equal(lokad_id_conf(b"lok0"), [])
+        assert_equal(lokad_id_conf(b"lok1"), [])
+        assert_equal(lokad_id_conf(b"lok2"), [])
 
 
 if __name__ == "__main__":

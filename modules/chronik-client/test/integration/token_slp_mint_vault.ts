@@ -7,14 +7,10 @@ import chaiAsPromised from 'chai-as-promised';
 import { ChildProcess } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import path from 'path';
-import {
-    ChronikClientNode,
-    Tx_InNode,
-    WsEndpoint_InNode,
-    WsMsgClient,
-} from '../../index';
+import { ChronikClient, Tx, WsEndpoint, WsMsgClient } from '../../index';
 import initializeTestRunner, {
     cleanupMochaRegtest,
+    expectWsMsgs,
     setMochaTimeout,
     TestInfo,
 } from '../setup/testRunner';
@@ -151,11 +147,11 @@ describe('Get blocktxs, txs, and history for SLP 2 mint vault token txs', () => 
     let slpVaultMintTxid = '';
     let validSlpVaultMintTxid = '';
 
-    let vaultSetup: Tx_InNode;
-    let slpVaultGenesis: Tx_InNode;
-    let slpVaultMint: Tx_InNode;
+    let vaultSetup: Tx;
+    let slpVaultGenesis: Tx;
+    let slpVaultMint: Tx;
 
-    let ws: WsEndpoint_InNode;
+    let ws: WsEndpoint;
 
     const BASE_CONFIRMED_WSMSG: WsMsgClient = {
         type: 'Tx',
@@ -167,10 +163,9 @@ describe('Get blocktxs, txs, and history for SLP 2 mint vault token txs', () => 
         msgType: 'TX_ADDED_TO_MEMPOOL',
         txid: '1111111111111111111111111111111111111111111111111111111111111111',
     };
-    const MSG_WAIT_MSECS = 1000;
 
     it('Gets an SLP vault setup tx from the mempool', async () => {
-        const chronik = new ChronikClientNode(chronikUrl);
+        const chronik = new ChronikClient(chronikUrl);
 
         vaultSetupTxid = await get_vault_setup_txid;
 
@@ -212,7 +207,7 @@ describe('Get blocktxs, txs, and history for SLP 2 mint vault token txs', () => 
         expect(vaultSetup.tokenStatus).to.eql('TOKEN_STATUS_NON_TOKEN');
     });
     it('Gets this tx from a block', async () => {
-        const chronik = new ChronikClientNode(chronikUrl);
+        const chronik = new ChronikClient(chronikUrl);
 
         const blockTxs = await chronik.blockTxs(CHAIN_INIT_HEIGHT + 2);
         const confirmedVaultSetup = blockTxs.txs.find(
@@ -233,7 +228,7 @@ describe('Get blocktxs, txs, and history for SLP 2 mint vault token txs', () => 
         expect(history.txs[0]).to.deep.equal(confirmedVaultSetup);
     });
     it('Gets an SLP vault genesis tx from the mempool', async () => {
-        const chronik = new ChronikClientNode(chronikUrl);
+        const chronik = new ChronikClient(chronikUrl);
 
         slpVaultGenesisTxid = await get_slp_vault_genesis_txid;
 
@@ -328,7 +323,7 @@ describe('Get blocktxs, txs, and history for SLP 2 mint vault token txs', () => 
         });
     });
     it('Gets a badly constructed SLP v2 Vault Mint tx from the mempool', async () => {
-        const chronik = new ChronikClientNode(chronikUrl);
+        const chronik = new ChronikClient(chronikUrl);
 
         slpVaultMintTxid = await get_slp_vault_mint_txid;
 
@@ -389,11 +384,8 @@ describe('Get blocktxs, txs, and history for SLP 2 mint vault token txs', () => 
     });
     it('We DO NOT see the mint tx in the websocket subscription when the genesis tx confirms (but we do see the genesis tx confirm)', async () => {
         // We see the slpVaultMintTxid from our websocket subscription to slpVaultGenesisTxid
-        while (msgCollector.length < 1) {
-            // Wait for expected ws msg
-            // If it does not come in, test will time out
-            await new Promise(resolve => setTimeout(resolve, MSG_WAIT_MSECS));
-        }
+        // Wait for expected ws msg
+        await expectWsMsgs(1, msgCollector);
         expect(msgCollector).to.deep.equal([
             { ...BASE_CONFIRMED_WSMSG, txid: slpVaultGenesisTxid },
         ]);
@@ -401,11 +393,8 @@ describe('Get blocktxs, txs, and history for SLP 2 mint vault token txs', () => 
     it('We see a new vault mint if the genesis is confirmed (and, so, it is valid)', async () => {
         validSlpVaultMintTxid = await get_slp_mint_vault_mint_tx_valid_txid;
         // We see slpMintTxid from our websocket subscription to slpGenesisTxid
-        while (msgCollector.length < 1) {
-            // Wait for expected ws msg
-            // If it does not come in, test will time out
-            await new Promise(resolve => setTimeout(resolve, MSG_WAIT_MSECS));
-        }
+        // Wait for expected ws msg
+        await expectWsMsgs(1, msgCollector);
         expect(msgCollector).to.deep.equal([
             { ...BASE_ADDEDTOMEMPOOL_WSMSG, txid: validSlpVaultMintTxid },
         ]);

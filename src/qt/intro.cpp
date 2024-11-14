@@ -6,15 +6,16 @@
 #include <config/bitcoin-config.h>
 #endif
 
+#include <common/args.h>
 #include <config.h>
-#include <fs.h>
 #include <interfaces/node.h>
 #include <qt/forms/ui_intro.h>
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 #include <qt/intro.h>
 #include <qt/optionsmodel.h>
-#include <util/system.h>
+#include <util/fs.h>
+#include <util/fs_helpers.h>
 
 #include <QFileDialog>
 #include <QMessageBox>

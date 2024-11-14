@@ -7,11 +7,11 @@
 
 #include <chain.h>
 #include <chainparams.h>
+#include <common/args.h>
 #include <config.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <consensus/validation.h>
-#include <fs.h>
 #include <interfaces/wallet.h>
 #include <key.h>
 #include <key_io.h>
@@ -29,6 +29,8 @@
 #include <util/bip32.h>
 #include <util/check.h>
 #include <util/error.h>
+#include <util/fs.h>
+#include <util/fs_helpers.h>
 #include <util/moneystr.h>
 #include <util/string.h>
 #include <util/translation.h>
@@ -3300,8 +3302,10 @@ void CWallet::SetupLegacyScriptPubKeyMan() {
     m_spk_managers[spk_manager->GetID()] = std::move(spk_manager);
 }
 
-const CKeyingMaterial &CWallet::GetEncryptionKey() const {
-    return vMasterKey;
+bool CWallet::WithEncryptionKey(
+    const std::function<bool(const CKeyingMaterial &)> &cb) const {
+    LOCK(cs_wallet);
+    return cb(vMasterKey);
 }
 
 bool CWallet::HasEncryptionKeys() const {

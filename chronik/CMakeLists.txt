@@ -7,7 +7,7 @@ include(FetchContent)
 FetchContent_Declare(
     Corrosion
     GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
-    GIT_TAG v0.4.7
+    GIT_TAG v0.5.0
 )
 FetchContent_MakeAvailable(Corrosion)
 
@@ -63,14 +63,14 @@ function(add_crate_test_targets CRATE)
     set(CLIPPY_TARGET "${CRATE_TEST_TARGET}-clippy")
     add_cargo_custom_target("${CLIPPY_TARGET}"
         clippy
-        --package "${CRATE}-*"
+        --package '${CRATE}-*'
         -- -D warnings
     )
 
     set(TEST_TARGET "${CRATE_TEST_TARGET}-test")
     add_cargo_custom_target("${TEST_TARGET}"
         test
-        --package "${CRATE}-*"
+        --package '${CRATE}-*'
     )
 
     add_dependencies("${CRATE_TEST_TARGET}"
@@ -88,7 +88,16 @@ add_crate_test_targets(abc-rust)
 add_crate_test_targets(bitcoinsuite)
 add_crate_test_targets(chronik)
 
-# Compile Rust, generates chronik-lib
+if(BUILD_BITCOIN_CHRONIK_PLUGINS)
+    add_cargo_custom_target(chronik-db-plugins-test
+        test
+        --package chronik-db
+        ${CHRONIK_FEATURE_FLAGS}
+    )
+    add_dependencies("check-crates" "chronik-db-plugins-test")
+endif()
+
+# Compile Rust, generates chronik_lib
 corrosion_import_crate(
     MANIFEST_PATH "chronik-lib/Cargo.toml"
     NO_LINKER_OVERRIDE
@@ -96,7 +105,7 @@ corrosion_import_crate(
         ${CHRONIK_CARGO_FLAGS}
         ${CHRONIK_FEATURE_FLAGS}
     CRATES
-        chronik-lib
+        chronik_lib
 )
 
 set(Rust_TRIPLE
@@ -115,7 +124,7 @@ set(CXXBRIDGE_GENERATED_FOLDER
 set(CHRONIK_BRIDGE_GENERATED_CPP_FILES
     "${CXXBRIDGE_GENERATED_FOLDER}/chronik-bridge/src/ffi.rs.cc")
 set(CHRONIK_LIB_GENERATED_CPP_FILES
-    "${CXXBRIDGE_GENERATED_FOLDER}/chronik-lib/src/ffi.rs.cc")
+    "${CXXBRIDGE_GENERATED_FOLDER}/chronik_lib/src/ffi.rs.cc")
 
 add_custom_command(
     OUTPUT
@@ -125,7 +134,7 @@ add_custom_command(
         "${CMAKE_COMMAND}"
         -E env
         "echo" "Generating cxx bridge files"
-    DEPENDS $<TARGET_PROPERTY:chronik-lib,INTERFACE_LINK_LIBRARIES>
+    DEPENDS $<TARGET_PROPERTY:chronik_lib,INTERFACE_LINK_LIBRARIES>
 )
 
 # Chronik-bridge library
@@ -155,14 +164,48 @@ add_library(chronik
 )
 target_link_libraries(chronik
     chronik-bridge
-    chronik-lib
+    chronik_lib
 )
 
-# Plugins require us to link agains libpython
+# Plugins require us to link against libpython
 if(BUILD_BITCOIN_CHRONIK_PLUGINS)
-    find_package(Python COMPONENTS Interpreter Development)
-    message("Adding Python_LIBRARIES: ${Python_LIBRARIES}")
-    target_link_libraries(chronik ${Python_LIBRARIES})
+    # Plugins require us to link against libpython, but we need the right lib
+    # when cross compiling, i.e. not the host one nor the depends native one,
+    # but the depends sysrooted one. The easiest way to tell cmake to look at
+    # right path in the absence of a package config file is to supply to root.
+    if (CMAKE_CROSSCOMPILING)
+        set(Python_ROOT_DIR "${CMAKE_SOURCE_DIR}/depends/${TOOLCHAIN_PREFIX}")
+    endif()
+
+    find_package(Python 3.9 COMPONENTS Development.Embed REQUIRED)
+    target_link_libraries(chronik Python::Python)
+
+    if (CMAKE_CROSSCOMPILING)
+        get_target_property(CROSS_PYTHON_LIB Python::Python IMPORTED_LOCATION)
+        get_filename_component(CROSS_PYTHON_LIB_DIR "${CROSS_PYTHON_LIB}" DIRECTORY)
+
+        # We need to set some environment variables in order to cross compile
+        # the pyo3 crate. See
+        # https://pyo3.rs/v0.22.2/building-and-distribution.html#cross-compiling
+        corrosion_set_env_vars(
+            chronik_lib
+            PYO3_CROSS=1
+            PYO3_CROSS_PYTHON_VERSION=${Python_VERSION_MAJOR}.${Python_VERSION_MINOR}
+            PYO3_CROSS_LIB_DIR=${CROSS_PYTHON_LIB_DIR}
+        )
+
+        # Our cross compiled cpython requires libutil. Beware that it's not the
+        # same as our util library ! So we need to pass the flag to avoid
+        # ambiguity.
+        target_link_libraries(chronik -lutil)
+
+        # For the hashlib module, we need openssl
+        find_package(OpenSSL REQUIRED)
+        target_link_libraries(chronik OpenSSL::SSL OpenSSL::Crypto)
+        # We also need to link the hacl library (built with CPython)
+        find_library(PYTHON_HACL_HASH_SHA2 Hacl_Hash_SHA2 REQUIRED)
+        target_link_libraries(chronik ${PYTHON_HACL_HASH_SHA2})
+    endif()
 endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")

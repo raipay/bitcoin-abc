@@ -15,6 +15,7 @@ from test_framework.avatools import (
     get_proof_ids,
     wait_for_proof,
 )
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import (
     MSG_AVA_PROOF,
     MSG_TYPE_MASK,
@@ -54,12 +55,12 @@ class ProofInvStoreP2PInterface(P2PInterface):
 class ProofInventoryTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 5
+        self.noban_tx_relay = True
         self.extra_args = [
             [
                 "-avaproofstakeutxodustthreshold=1000000",
                 "-avaproofstakeutxoconfirmations=2",
                 "-avacooldown=0",
-                "-whitelist=noban@127.0.0.1",
                 "-persistavapeers=0",
             ]
         ] * self.num_nodes
@@ -327,7 +328,7 @@ class ProofInventoryTest(BitcoinTestFramework):
         wait_for_proof(node, proofid_hex)
 
         # Mature the utxo then spend it
-        self.generate(node, 100, sync_fun=self.no_op)
+        self.generate(node, COINBASE_MATURITY, sync_fun=self.no_op)
         utxo = proof.stakes[0].stake.utxo
         raw_tx = node.createrawtransaction(
             inputs=[

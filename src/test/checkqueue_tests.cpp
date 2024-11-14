@@ -4,13 +4,14 @@
 
 #include <checkqueue.h>
 
+#include <common/args.h>
 #include <sync.h>
-#include <util/system.h>
 #include <util/time.h>
 
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <thread>
 #include <vector>
@@ -31,8 +32,7 @@ struct NoLockLoggingTestingSetup : public TestingSetup {
 #ifdef DEBUG_LOCKCONTENTION
         : TestingSetup{CBaseChainParams::MAIN, /*extra_args=*/{
                            "-debugexclude=lock"
-                       }} {
-    }
+                       }} {}
 #else
         : TestingSetup{CBaseChainParams::MAIN} {
     }

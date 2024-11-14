@@ -15,7 +15,6 @@ import unittest
 from base64 import b64encode
 from decimal import ROUND_DOWN, Decimal
 from functools import lru_cache
-from io import BytesIO
 from subprocess import CalledProcessError
 from typing import Callable, Dict, Optional
 
@@ -243,6 +242,10 @@ def str_to_b64str(string):
     return b64encode(string.encode("utf-8")).decode("ascii")
 
 
+def hex_to_be_bytes(hex_string: str) -> bytes:
+    return bytes.fromhex(hex_string)[::-1]
+
+
 def satoshi_round(amount):
     return Decimal(amount).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
 
@@ -463,11 +466,14 @@ def write_config(config_path, *, n, chain, extra_config="", disable_autoconnect=
         f.write(f"chronikbind=127.0.0.1:{str(chronik_port(n))}\n")
         # Chronik by default is tuned for initial sync, tune it down for regtest
         f.write("chroniktxnumcachebucketsize=100\n")
+        # FIXME fix the doc issues and turn this flag on to prevent new doc bugs
+        f.write("rpcdoccheck=0\n")
         f.write("fallbackfee=200\n")
         f.write("server=1\n")
         f.write("keypool=1\n")
         f.write("discover=0\n")
         f.write("dnsseed=0\n")
+        f.write("enablertt=0\n")
         f.write("fixedseeds=0\n")
         f.write("listenonion=0\n")
         f.write("printtoconsole=0\n")
@@ -540,6 +546,63 @@ def check_node_connections(*, node, num_in, num_out):
     assert_equal(info["connections_out"], num_out)
 
 
+def fill_mempool(test_framework, node, miniwallet):
+    """Fill mempool until eviction.
+    Allows for simpler testing of scenarios with floating mempoolminfee > minrelay
+    Requires -acceptnonstdtxn=1 and -maxmempool=5.
+    It will not ensure mempools become synced as it is based on a single node
+    and assumes -minrelaytxfee is 1 sat/vbyte.
+    """
+    test_framework.log.info(
+        "Fill the mempool until eviction is triggered and the mempoolminfee rises"
+    )
+    txouts = gen_return_txouts()
+    relayfee = node.getnetworkinfo()["relayfee"]
+
+    assert_equal(relayfee, Decimal("10"))
+
+    tx_batch_size = 1
+    num_of_batches = 75
+    # Generate UTXOs to flood the mempool
+    # 1 to create a tx initially that will be evicted from the mempool later
+    # 75 transactions each with a fee rate much higher than the previous one
+    test_framework.generate(miniwallet, 1 + (num_of_batches * tx_batch_size))
+
+    # Mine 99 blocks so that the UTXOs are allowed to be spent
+    test_framework.generate(node, 100 - 1)
+
+    test_framework.log.debug("Create a mempool tx that will be evicted")
+    tx_to_be_evicted_id = miniwallet.send_self_transfer(
+        from_node=node, fee_rate=relayfee
+    )["txid"]
+
+    # Increase the tx fee rate to give the subsequent transactions a higher
+    # priority in the mempool. The tx has an approx. vsize of 65k, i.e.
+    # multiplying the previous fee rate (in sats/kvB) by 130 should result
+    # in a fee that corresponds to 2x of that fee rate
+    base_fee = relayfee * 130
+
+    test_framework.log.debug("Fill up the mempool with txs with higher fee rate")
+    with node.assert_debug_log(["rolling minimum fee bumped"]):
+        for batch_of_txid in range(num_of_batches):
+            fee = (batch_of_txid + 1) * base_fee
+            create_lots_of_big_transactions(
+                miniwallet, node, fee, tx_batch_size, txouts
+            )
+
+    test_framework.log.debug("The tx should be evicted by now")
+    # The number of transactions created should be greater than the ones
+    # present in the mempool
+    assert_greater_than(tx_batch_size * num_of_batches, len(node.getrawmempool()))
+    # Initial tx created should not be present in the mempool anymore as it
+    # had a lower fee rate
+    assert tx_to_be_evicted_id not in node.getrawmempool()
+
+    test_framework.log.debug("Check that mempoolminfee is larger than minrelaytxfee")
+    assert_equal(node.getmempoolinfo()["minrelaytxfee"], Decimal("10.00"))
+    assert_greater_than(node.getmempoolinfo()["mempoolminfee"], Decimal("10.00"))
+
+
 # Transaction/Block functions
 #############################
 
@@ -582,28 +645,24 @@ def gen_return_txouts():
 
 # Create a spend of each passed-in utxo, splicing in "txouts" to each raw
 # transaction to make it large.  See gen_return_txouts() above.
+def create_lots_of_big_transactions(
+    mini_wallet, node, fee, tx_batch_size, txouts, utxos=None
+):
+    from .messages import XEC
 
-
-def create_lots_of_big_transactions(node, txouts, utxos, num, fee):
-    addr = node.getnewaddress()
+    fee_sats = int(fee * XEC)
     txids = []
-    from .messages import CTransaction
-
-    for _ in range(num):
-        t = utxos.pop()
-        inputs = [{"txid": t["txid"], "vout": t["vout"]}]
-        outputs = {}
-        change = t["amount"] - fee
-        outputs[addr] = satoshi_round(change)
-        rawtx = node.createrawtransaction(inputs, outputs)
-        tx = CTransaction()
-        tx.deserialize(BytesIO(bytes.fromhex(rawtx)))
-        for txout in txouts:
-            tx.vout.append(txout)
-        newtx = tx.serialize().hex()
-        signresult = node.signrawtransactionwithwallet(newtx, None, "NONE|FORKID")
-        txid = node.sendrawtransaction(signresult["hex"], 0)
-        txids.append(txid)
+    use_internal_utxos = utxos is None
+    for _ in range(tx_batch_size):
+        tx = mini_wallet.create_self_transfer(
+            utxo_to_spend=None if use_internal_utxos else utxos.pop(),
+            fee_rate=0,
+        )["tx"]
+        tx.vout[0].nValue -= fee_sats
+        tx.vout.extend(txouts)
+        res = node.testmempoolaccept([tx.serialize().hex()])[0]
+        assert_equal(res["fees"]["base"], fee)
+        txids.append(node.sendrawtransaction(tx.serialize().hex()))
     return txids
 
 
@@ -641,6 +700,14 @@ def uint256_hex(hash_int: int) -> str:
     return f"{hash_int:0{64}x}"
 
 
+def get_cli_version(framework, node):
+    """Use bitcoin-cli to get the version"""
+    version = node.cli().send_cli("-version")
+    version = version.splitlines()[0]
+    preamble = f"{framework.config['environment']['PACKAGE_NAME']} RPC client version "
+    return version[len(preamble) :]
+
+
 def chronik_sub_to_blocks(ws, node, *, is_unsub=False) -> None:
     """Subscribe to block events and make sure the subscription is active before returning"""
     subscribe_log = "unsubscribe from" if is_unsub else "subscribe to"
@@ -669,6 +736,17 @@ def chronik_sub_lokad_id(ws, node, lokad_id: bytes, *, is_unsub=False) -> None:
     subscribe_log = "unsubscribe from" if is_unsub else "subscribe to"
     with node.assert_debug_log([f"WS {subscribe_log} LOKAD ID {lokad_id.hex()}"]):
         ws.sub_lokad_id(lokad_id, is_unsub=is_unsub)
+
+
+def chronik_sub_plugin(
+    ws, node, plugin_name: str, group: bytes, *, is_unsub=False
+) -> None:
+    """Subscribe to plugin events and make sure the subscription is active before returning"""
+    subscribe_log = "unsubscribe from" if is_unsub else "subscribe to"
+    with node.assert_debug_log(
+        [f"WS {subscribe_log} plugin {plugin_name}, group {group.hex()}"]
+    ):
+        ws.sub_plugin(plugin_name, group, is_unsub=is_unsub)
 
 
 class TestFrameworkUtil(unittest.TestCase):

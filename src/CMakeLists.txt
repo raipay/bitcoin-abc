@@ -18,6 +18,7 @@ option(BUILD_BITCOIN_QT "Build bitcoin-qt" ON)
 option(BUILD_BITCOIN_SEEDER "Build bitcoin-seeder" ON)
 option(BUILD_LIBBITCOINCONSENSUS "Build the bitcoinconsenus shared library" ON)
 option(BUILD_BITCOIN_CHAINSTATE "Build bitcoin-chainstate" OFF)
+option(BUILD_BITCOIN_IGUANA "Activate the Iguana debugger" ON)
 option(ENABLE_BIP70 "Enable BIP70 (payment protocol) support in GUI" ON)
 option(ENABLE_HARDENING "Harden the executables" ON)
 option(ENABLE_REDUCE_EXPORTS "Reduce the amount of exported symbols" OFF)
@@ -413,7 +414,6 @@ add_library(util
 	compat/glibcxx_sanity.cpp
 	compat/strnlen.cpp
 	currencyunit.cpp
-	fs.cpp
 	interfaces/handler.cpp
 	logging.cpp
 	random.cpp
@@ -426,11 +426,15 @@ add_library(util
 	threadinterrupt.cpp
 	uint256.cpp
 	util/asmap.cpp
+	util/batchpriority.cpp
 	util/bip32.cpp
 	util/bytevectorhash.cpp
 	util/check.cpp
 	util/hasher.cpp
+	util/exception.cpp
 	util/error.cpp
+	util/fs.cpp
+	util/fs_helpers.cpp
 	util/getuniquepath.cpp
 	util/message.cpp
 	util/moneystr.cpp
@@ -441,7 +445,7 @@ add_library(util
 	util/spanparsing.cpp
 	util/strencodings.cpp
 	util/string.cpp
-	util/system.cpp
+	util/syserror.cpp
 	util/thread.cpp
 	util/threadnames.cpp
 	util/time.cpp
@@ -503,6 +507,7 @@ macro(link_boost_headers_only TARGET)
 endmacro()
 
 link_boost_headers_only(util headers)
+target_compile_definitions(util PUBLIC BOOST_NO_CXX98_FUNCTION_BASE)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
@@ -528,7 +533,10 @@ add_network_sources(NETWORK_SOURCES
 # Because nothing says this is different from util than "common"
 add_library(common
 	base58.cpp
+	common/args.cpp
 	common/bloom.cpp
+	common/configfile.cpp
+	common/system.cpp
 	cashaddr.cpp
 	cashaddrenc.cpp
 	chainparams.cpp
@@ -609,7 +617,6 @@ endif()
 add_library(server
 	addrdb.cpp
 	addrman.cpp
-	avalanche/avalanche.cpp
 	avalanche/compactproofs.cpp
 	avalanche/delegation.cpp
 	avalanche/delegationbuilder.cpp
@@ -619,6 +626,7 @@ add_library(server
 	avalanche/proofid.cpp
 	avalanche/proofbuilder.cpp
 	avalanche/proofpool.cpp
+	avalanche/stakecontendercache.cpp
 	avalanche/voterecord.cpp
 	banman.cpp
 	blockencodings.cpp
@@ -665,8 +673,10 @@ add_library(server
 	node/context.cpp
 	node/database_args.cpp
 	node/interfaces.cpp
+	node/kernel_notifications.cpp
 	node/mempool_persist_args.cpp
 	node/miner.cpp
+	node/peerman_args.cpp
 	node/psbt.cpp
 	node/transaction.cpp
 	node/ui_interface.cpp
@@ -675,6 +685,7 @@ add_library(server
 	noui.cpp
 	policy/block/minerfund.cpp
 	policy/block/preconsensus.cpp
+	policy/block/rtt.cpp
 	policy/block/stakingrewards.cpp
 	policy/fees.cpp
 	policy/packages.cpp
@@ -704,7 +715,7 @@ add_library(server
 	torcontrol.cpp
 	txdb.cpp
 	txmempool.cpp
-	txorphanage.cpp
+	txpool.cpp
 	validation.cpp
 	validationinterface.cpp
 	versionbits.cpp
@@ -860,7 +871,9 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		arith_uint256.cpp
 		blockfileinfo.cpp
 		blockindex.cpp
+		common/args.cpp
 		common/bloom.cpp
+		common/configfile.cpp
 		chain.cpp
 		chainparamsbase.cpp
 		chainparams.cpp
@@ -881,7 +894,6 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		eventloop.cpp
 		feerate.cpp
 		flatfile.cpp
-		fs.cpp
 		hash.cpp
 		init/common.cpp
 		key.cpp
@@ -922,16 +934,21 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		threadinterrupt.cpp
 		txdb.cpp
 		txmempool.cpp
+		txpool.cpp
 		uint256.cpp
+		util/batchpriority.cpp
 		util/bytevectorhash.cpp
 		util/check.cpp
+		util/exception.cpp
+		util/fs.cpp
+		util/fs_helpers.cpp
 		util/getuniquepath.cpp
 		util/hasher.cpp
 		util/moneystr.cpp
 		util/settings.cpp
 		util/strencodings.cpp
 		util/string.cpp
-		util/system.cpp
+		util/syserror.cpp
 		util/thread.cpp
 		util/threadnames.cpp
 		util/time.cpp
@@ -946,7 +963,6 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		addrman.cpp  # via net.cpp
 		banman.cpp   # via net.cpp
 		base58.cpp   # via key_io.cpp
-		avalanche/avalanche.cpp
 		avalanche/delegation.cpp
 		avalanche/delegationbuilder.cpp
 		avalanche/peermanager.cpp
@@ -954,6 +970,7 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		avalanche/proof.cpp
 		avalanche/proofid.cpp
 		avalanche/proofpool.cpp
+		avalanche/stakecontendercache.cpp
 		avalanche/voterecord.cpp
 		cashaddr.cpp         # via cashaddrenc.cpp
 		cashaddrenc.cpp      # via key_io.cpp
@@ -967,6 +984,7 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		net_permissions.cpp  # via net.cpp
 		policy/block/minerfund.cpp
 		policy/block/preconsensus.cpp
+		policy/block/rtt.cpp
 		policy/block/stakingrewards.cpp
 		protocol.cpp            # avalanche/processor.cpp uses NetMsgType
 		timedata.cpp            # via net.cpp
@@ -1017,4 +1035,8 @@ install_manpages(bitcoind)
 # Bitcoin-qt
 if(BUILD_BITCOIN_QT)
 	add_subdirectory(qt)
+endif()
+
+if(BUILD_BITCOIN_IGUANA)
+	add_subdirectory(iguana)
 endif()

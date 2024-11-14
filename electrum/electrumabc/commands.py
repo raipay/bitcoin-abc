@@ -38,8 +38,10 @@ from functools import wraps
 
 from . import alias, bitcoin, util, web
 from .address import Address, AddressError
-from .bitcoin import CASH, TYPE_ADDRESS, hash_160
+from .bitcoin import CASH, TYPE_ADDRESS
 from .constants import PROJECT_NAME, SCRIPT_NAME, XEC
+from .crypto import hash_160
+from .ecc import ECPrivkey, ECPubkey, verify_message_with_address
 from .json_util import json_decode
 from .mnemo import MnemonicElectrum, make_bip39_words
 from .paymentrequest import PR_EXPIRED, PR_PAID, PR_UNCONFIRMED, PR_UNKNOWN, PR_UNPAID
@@ -427,7 +429,7 @@ class Commands:
             sec = txin.get("privkey")
             if sec:
                 txin_type, privkey, compressed = bitcoin.deserialize_privkey(sec)
-                pubkey = bitcoin.public_key_from_private_key(privkey, compressed)
+                pubkey = ECPrivkey(privkey).get_public_key_bytes(compressed)
                 keypairs[pubkey] = privkey, compressed
                 txin["type"] = txin_type.name
                 txin["x_pubkeys"] = [pubkey.hex()]
@@ -458,7 +460,7 @@ class Commands:
         )
         if privkey:
             txin_type, privkey2, compressed = bitcoin.deserialize_privkey(privkey)
-            pubkey = bitcoin.public_key_from_private_key(privkey2, compressed)
+            pubkey = ECPrivkey(privkey2).get_public_key_bytes(compressed)
             tx.sign({pubkey: (privkey2, compressed)})
         else:
             self.wallet.sign_transaction(tx, password)
@@ -680,7 +682,7 @@ class Commands:
         address = Address.from_string(address)
         sig = base64.b64decode(signature)
         message = util.to_bytes(message)
-        return bitcoin.verify_message(address, sig, message)
+        return verify_message_with_address(address, sig, message)
 
     def _mktx(
         self,
@@ -970,12 +972,9 @@ class Commands:
         ):
             raise ValueError("pubkey and message text must both be strings")
         message = to_bytes(message)
-        res = bitcoin.encrypt_message(message, bytes.fromhex(pubkey))
-        if isinstance(res, (bytes, bytearray)):
-            # prevent "JSON serializable" errors in case this came from
-            # cmdline. See #1270
-            res = res.decode("utf-8")
-        return res
+        public_key = ECPubkey(bytes.fromhex(pubkey))
+        res = public_key.encrypt_message(message)
+        return res.decode("utf-8")
 
     @command("wp")
     def decrypt(self, pubkey, encrypted, password=None):

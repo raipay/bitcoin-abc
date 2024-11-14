@@ -118,7 +118,7 @@ public:
         Good(addr, true, last_success);
 
         bool count_failure = false;
-        auto last_try = AdjustedTime() - 61s;
+        auto last_try = Now<NodeSeconds>() - 61s;
         Attempt(addr, count_failure, last_try);
     }
 };
@@ -428,15 +428,15 @@ BOOST_AUTO_TEST_CASE(addrman_getaddr) {
     BOOST_CHECK_EQUAL(vAddr1.size(), 0U);
 
     CAddress addr1 = CAddress(ResolveService("250.250.2.1", 8333), NODE_NONE);
-    addr1.nTime = AdjustedTime(); // Set time so isTerrible = false
+    addr1.nTime = Now<NodeSeconds>(); // Set time so isTerrible = false
     CAddress addr2 = CAddress(ResolveService("250.251.2.2", 9999), NODE_NONE);
-    addr2.nTime = AdjustedTime();
+    addr2.nTime = Now<NodeSeconds>();
     CAddress addr3 = CAddress(ResolveService("251.252.2.3", 8333), NODE_NONE);
-    addr3.nTime = AdjustedTime();
+    addr3.nTime = Now<NodeSeconds>();
     CAddress addr4 = CAddress(ResolveService("252.253.3.4", 8333), NODE_NONE);
-    addr4.nTime = AdjustedTime();
+    addr4.nTime = Now<NodeSeconds>();
     CAddress addr5 = CAddress(ResolveService("252.254.4.5", 8333), NODE_NONE);
-    addr5.nTime = AdjustedTime();
+    addr5.nTime = Now<NodeSeconds>();
     CNetAddr source1 = ResolveIP("250.1.2.1");
     CNetAddr source2 = ResolveIP("250.2.3.3");
 
@@ -479,7 +479,7 @@ BOOST_AUTO_TEST_CASE(addrman_getaddr) {
         CAddress addr = CAddress(ResolveService(strAddr), NODE_NONE);
 
         // Ensure that for all addrs in addrman, isTerrible == false.
-        addr.nTime = AdjustedTime();
+        addr.nTime = Now<NodeSeconds>();
         addrman.Add({addr}, ResolveIP(strAddr));
         if (i % 8 == 0) {
             addrman.Good(addr);
@@ -505,8 +505,8 @@ BOOST_AUTO_TEST_CASE(caddrinfo_get_tried_bucket_legacy) {
 
     AddrInfo info1 = AddrInfo(addr1, source1);
 
-    uint256 nKey1 = (uint256)(CHashWriter(SER_GETHASH, 0) << 1).GetHash();
-    uint256 nKey2 = (uint256)(CHashWriter(SER_GETHASH, 0) << 2).GetHash();
+    uint256 nKey1 = (HashWriter{} << 1).GetHash();
+    uint256 nKey2 = (HashWriter{} << 2).GetHash();
 
     // use /16
     std::vector<bool> asmap;
@@ -561,8 +561,8 @@ BOOST_AUTO_TEST_CASE(caddrinfo_get_new_bucket_legacy) {
 
     AddrInfo info1 = AddrInfo(addr1, source1);
 
-    uint256 nKey1 = (uint256)(CHashWriter(SER_GETHASH, 0) << 1).GetHash();
-    uint256 nKey2 = (uint256)(CHashWriter(SER_GETHASH, 0) << 2).GetHash();
+    uint256 nKey1 = (HashWriter{} << 1).GetHash();
+    uint256 nKey2 = (HashWriter{} << 2).GetHash();
 
     // use /16
     std::vector<bool> asmap;
@@ -642,8 +642,8 @@ BOOST_AUTO_TEST_CASE(caddrinfo_get_tried_bucket) {
 
     AddrInfo info1 = AddrInfo(addr1, source1);
 
-    uint256 nKey1 = (uint256)(CHashWriter(SER_GETHASH, 0) << 1).GetHash();
-    uint256 nKey2 = (uint256)(CHashWriter(SER_GETHASH, 0) << 2).GetHash();
+    uint256 nKey1 = (HashWriter{} << 1).GetHash();
+    uint256 nKey2 = (HashWriter{} << 2).GetHash();
 
     std::vector<bool> asmap = FromBytes(asmap_raw, sizeof(asmap_raw) * 8);
 
@@ -697,8 +697,8 @@ BOOST_AUTO_TEST_CASE(caddrinfo_get_new_bucket) {
 
     AddrInfo info1 = AddrInfo(addr1, source1);
 
-    uint256 nKey1 = (uint256)(CHashWriter(SER_GETHASH, 0) << 1).GetHash();
-    uint256 nKey2 = (uint256)(CHashWriter(SER_GETHASH, 0) << 2).GetHash();
+    uint256 nKey1 = (HashWriter{} << 1).GetHash();
+    uint256 nKey2 = (HashWriter{} << 2).GetHash();
 
     std::vector<bool> asmap = FromBytes(asmap_raw, sizeof(asmap_raw) * 8);
 

@@ -6,9 +6,10 @@
 
 #include <cashaddrenc.h>
 #include <chainparams.h>
-#include <fs.h>
+#include <common/args.h>
 #include <interfaces/node.h>
 #include <key_io.h>
+#include <logging.h>
 #include <policy/policy.h>
 #include <primitives/transaction.h>
 #include <protocol.h>
@@ -18,8 +19,10 @@
 #include <qt/sendcoinsrecipient.h>
 #include <script/script.h>
 #include <script/standard.h>
+#include <util/exception.h>
+#include <util/fs.h>
+#include <util/fs_helpers.h>
 #include <util/strencodings.h>
-#include <util/system.h>
 #include <util/time.h>
 
 #ifdef WIN32
@@ -417,8 +420,7 @@ void openDebugLogfile() {
 }
 
 bool openBitcoinConf() {
-    fs::path pathConfig =
-        GetConfigFile(gArgs.GetArg("-conf", BITCOIN_CONF_FILENAME));
+    fs::path pathConfig = gArgs.GetConfigFilePath();
 
     /* Create the file */
     std::ofstream configFile{pathConfig, std::ios_base::app};

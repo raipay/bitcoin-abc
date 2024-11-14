@@ -13,9 +13,19 @@ import sys
 from subprocess import check_output
 from typing import Dict, NoReturn, Optional
 
+# Catches files starting with #!, but excludes Rust's #![attr] syntax
+SHEBANG_REGEXP = "^#![^[]"
+
 CMD_TOP_LEVEL = ["git", "rev-parse", "--show-toplevel"]
 CMD_ALL_FILES = ["git", "ls-files", "-z", "--full-name", "--stage"]
-CMD_SHEBANG_FILES = ["git", "grep", "--full-name", "--line-number", "-I", "^#!"]
+CMD_SHEBANG_FILES = [
+    "git",
+    "grep",
+    "--full-name",
+    "--line-number",
+    "-I",
+    SHEBANG_REGEXP,
+]
 
 ALL_SOURCE_FILENAMES_REGEXP = r"^.*\.(cpp|h|py|sh|rs)$"
 ALLOWED_FILENAME_REGEXP = "^[a-zA-Z0-9/_.@][a-zA-Z0-9/_.@-]*$"
@@ -31,7 +41,7 @@ ALLOWED_EXECUTABLE_SHEBANG = {
 # use mixedCase in their names.
 ALLOWED_FILENAME_EXCEPTION = "web/e.cash/pages/blog/[slug].js"
 ALLOWED_SOURCE_FILENAME_EXCEPTION_REGEXPS = (
-    "^src/(secp256k1/|univalue/|test/fuzz/FuzzedDataProvider.h)",
+    "^src/(secp256k1/|test/fuzz/FuzzedDataProvider.h)",
     "^cmake/utils/EventCheckVersion.cpp$",
     "^contrib/buildbot/test/test_endpoint_",
 )
@@ -156,6 +166,7 @@ def check_all_file_permissions(files) -> int:
     Additionally checks that for executable files, the file contains a shebang line
     """
     failed_tests = 0
+    shebang_regex = re.compile(SHEBANG_REGEXP.encode())
     for filename, file_meta in files.items():
         if file_meta.permissions == ALLOWED_PERMISSION_EXECUTABLES:
             with open(filename, "rb") as f:
@@ -163,7 +174,7 @@ def check_all_file_permissions(files) -> int:
 
             # For any file with executable permissions the first line must contain a shebang
             if (
-                not shebang.startswith(b"#!")
+                not shebang_regex.match(shebang)
                 and filename not in ALLOWED_PERMISSION_EXECUTABLES_EXCEPTIONS
             ):
                 print(

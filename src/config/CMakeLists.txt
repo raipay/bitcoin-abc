@@ -152,6 +152,8 @@ endif()
 check_symbol_exists(getifaddrs "sys/types.h;ifaddrs.h" HAVE_DECL_GETIFADDRS)
 check_symbol_exists(freeifaddrs "sys/types.h;ifaddrs.h" HAVE_DECL_FREEIFADDRS)
 
+check_symbol_exists(fdatasync "unistd.h" HAVE_FDATASYNC)
+
 check_cxx_source_compiles("
 	#include <unistd.h>  /* for syscall */
 	#include <sys/syscall.h>  /* for SYS_getrandom */
@@ -294,6 +296,15 @@ if(_HAVE_STD_SYSTEM OR _HAVE_WSYSTEM)
 endif()
 
 check_type_size(__int128 __INT128)
+
+check_cxx_source_compiles("
+	#include <string.h>
+	int main() {
+	  char buf[100];
+	  char* p{strerror_r(0, buf, sizeof buf)};
+	  (void)p;
+	}
+" STRERROR_R_CHAR_P)
 
 # Generate the config
 configure_file(bitcoin-config.h.cmake.in bitcoin-config.h ESCAPE_QUOTES)

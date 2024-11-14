@@ -75,7 +75,7 @@ class Variant(collections.namedtuple("Variant", "call data rescan prune")):
             }
             response = self.node.importmulti(
                 requests=[request],
-                options={"rescan": self.rescan in (Rescan.yes, Rescan.late_timestamp)},
+                rescan=self.rescan in (Rescan.yes, Rescan.late_timestamp),
             )
             assert_equal(response, [{"success": True}])
 
@@ -156,6 +156,7 @@ class ImportRescanTest(BitcoinTestFramework):
         self.num_nodes = 2 + len(IMPORT_NODES)
         self.supports_cli = False
         self.rpc_timeout = 120
+        self.noban_tx_relay = True
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()

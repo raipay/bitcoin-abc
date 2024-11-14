@@ -4,6 +4,7 @@
 """Test the wallet."""
 from decimal import Decimal
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import CTransaction, FromHex
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -19,12 +20,10 @@ from test_framework.wallet_util import test_address
 class WalletTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
+        self.noban_tx_relay = True
         self.setup_clean_chain = True
         self.extra_args = [
-            [
-                "-acceptnonstdtxn=1",
-                "-whitelist=noban@127.0.0.1",
-            ],
+            ["-acceptnonstdtxn=1"],
         ] * self.num_nodes
         self.supports_cli = False
 
@@ -62,7 +61,9 @@ class WalletTest(BitcoinTestFramework):
 
         self.sync_all(self.nodes[0:3])
         self.generate(
-            self.nodes[1], 101, sync_fun=lambda: self.sync_all(self.nodes[0:3])
+            self.nodes[1],
+            COINBASE_MATURITY + 1,
+            sync_fun=lambda: self.sync_all(self.nodes[0:3]),
         )
 
         assert_equal(self.nodes[0].getbalance(), 50000000)
@@ -208,7 +209,9 @@ class WalletTest(BitcoinTestFramework):
 
         # Have node1 generate 100 blocks (so node0 can recover the fee)
         self.generate(
-            self.nodes[1], 100, sync_fun=lambda: self.sync_all(self.nodes[0:3])
+            self.nodes[1],
+            COINBASE_MATURITY,
+            sync_fun=lambda: self.sync_all(self.nodes[0:3]),
         )
 
         # node0 should end up with 100 btc in block rewards plus fees, but
@@ -432,7 +435,9 @@ class WalletTest(BitcoinTestFramework):
         )
 
         # This will raise an exception since generate does not accept a string
-        assert_raises_rpc_error(-1, "not an integer", self.generate, self.nodes[0], "2")
+        assert_raises_rpc_error(
+            -3, "not of expected type number", self.generate, self.nodes[0], "2"
+        )
 
         # This will raise an exception for the invalid private key format
         assert_raises_rpc_error(

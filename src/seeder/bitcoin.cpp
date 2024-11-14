@@ -6,7 +6,9 @@
 
 #include <chainparams.h>
 #include <clientversion.h>
+#include <common/args.h>
 #include <hash.h>
+#include <net_processing.h>
 #include <netbase.h>
 #include <primitives/blockhash.h>
 #include <seeder/db.h>
@@ -15,6 +17,7 @@
 #include <uint256.h>
 #include <util/sock.h>
 #include <util/time.h>
+#include <validation.h>
 
 #include <algorithm>
 
@@ -69,20 +72,30 @@ PeerMessagingState CSeederNode::ProcessMessage(std::string strCommand,
         vRecv.SetVersion(std::min(nVersion, PROTOCOL_VERSION));
         // tfm::format(std::cout, "\n%s: version %i\n", ToString(you),
         // nVersion);
+        auto doneAfterDelta{1s};
+        // Note in the current codebase: vAddr is non-nullptr only once per day
+        // for each node we check
         if (vAddr) {
             MessageWriter::WriteMessage(vSend, NetMsgType::GETADDR);
+            doneAfterDelta = GetTimeout();
+            needAddrReply = true;
+        }
+
+        // request headers starting after last checkpoint (only if we have
+        // checkpoints for this network)
+        if (HasCheckpoint()) {
             std::vector<BlockHash> locatorHash(
                 1, Params().Checkpoints().mapCheckpoints.rbegin()->second);
             MessageWriter::WriteMessage(vSend, NetMsgType::GETHEADERS,
-                                        CBlockLocator(locatorHash), uint256());
-            doneAfter = Now<NodeSeconds>() + GetTimeout();
-        } else {
-            doneAfter = Now<NodeSeconds>() + 1s;
+                                        CBlockLocator(std::move(locatorHash)),
+                                        uint256());
         }
+        doneAfter = Now<NodeSeconds>() + doneAfterDelta;
         return PeerMessagingState::AwaitingMessages;
     }
 
     if (strCommand == NetMsgType::ADDR && vAddr) {
+        needAddrReply = false;
         std::vector<CAddress> vAddrNew;
         recv >> vAddrNew;
         // tfm::format(std::cout, "%s: got %i addresses\n",
@@ -91,8 +104,9 @@ PeerMessagingState CSeederNode::ProcessMessage(std::string strCommand,
         auto now = Now<NodeSeconds>();
         std::vector<CAddress>::iterator it = vAddrNew.begin();
         if (vAddrNew.size() > 1) {
-            if (TicksSinceEpoch<std::chrono::seconds>(doneAfter) == 0 ||
-                doneAfter > now + 1s) {
+            if (checkpointVerified &&
+                (TicksSinceEpoch<std::chrono::seconds>(doneAfter) == 0 ||
+                 doneAfter > now + 1s)) {
                 doneAfter = now + 1s;
             }
         }
@@ -113,11 +127,58 @@ PeerMessagingState CSeederNode::ProcessMessage(std::string strCommand,
             // ToString(you),
             //        addr.ToString(), (int)(vAddr->size()));
             if (vAddr->size() > ADDR_SOFT_CAP) {
-                doneAfter = NodeSeconds{1s};
+                if (!checkpointVerified) {
+                    // stop processing addresses now since we hit the soft cap,
+                    // but we will continue to await headers
+                    break;
+                }
+                // stop processing addresses and since we aren't waiting for
+                // headers, stop processing immediately
+                doneAfter = now;
                 return PeerMessagingState::Finished;
             }
         }
         return PeerMessagingState::AwaitingMessages;
+    }
+
+    if (strCommand == NetMsgType::HEADERS) {
+        uint64_t nCount = ReadCompactSize(recv);
+        if (nCount == 0) {
+            // Empty HEADERS messages can be sent when the peer does not have
+            // enough chainwork.
+            return PeerMessagingState::AwaitingMessages;
+        }
+        if (nCount > MAX_HEADERS_RESULTS) {
+            ban = 100000;
+            return PeerMessagingState::Finished;
+        }
+
+        CBlockHeader header;
+        recv >> header;
+
+        // If the peer has a chain longer than our last checkpoint, we expect
+        // that the first header it will send will be the one just after
+        // that checkpoint, as we claim to have the checkpoint as our starting
+        // height in the version message.
+        if (HasCheckpoint() && nStartingHeight > GetRequireHeight()) {
+            if (header.hashPrevBlock !=
+                Params().Checkpoints().mapCheckpoints.rbegin()->second) {
+                // This node is synced higher than the last checkpoint height
+                // but does not have the checkpoint block in its chain.
+                // This means it must be on the wrong chain. We treat these
+                // nodes the same as nodes with the wrong net magic.
+                // std::fprintf(stdout, "%s: BAD \"%s\" (wrong chain)\n",
+                //              ToString(you).c_str(), strSubVer.c_str());
+                ban = 100000;
+                return PeerMessagingState::Finished;
+            }
+            checkpointVerified = true;
+            if (!needAddrReply) {
+                // we are no longer waiting for headers or addr, so we can
+                // stop processing this node
+                doneAfter = Now<NodeSeconds>();
+            }
+        }
     }
 
     return PeerMessagingState::AwaitingMessages;
@@ -186,10 +247,8 @@ bool CSeederNode::ProcessMessages() {
 }
 
 CSeederNode::CSeederNode(const CService &ip, std::vector<CAddress> *vAddrIn)
-    : vSend(SER_NETWORK, 0), vRecv(SER_NETWORK, 0), nHeaderStart(-1),
-      nMessageStart(-1), nVersion(0), vAddr(vAddrIn), ban(0),
-      doneAfter(NodeSeconds{0s}), you(ip),
-      yourServices(ServiceFlags(NODE_NETWORK)) {
+    : vSend(SER_NETWORK, 0), vRecv(SER_NETWORK, 0), vAddr(vAddrIn), you(ip),
+      checkpointVerified(!HasCheckpoint()) {
     if (GetTime() > 1329696000) {
         vSend.SetVersion(209);
         vRecv.SetVersion(209);

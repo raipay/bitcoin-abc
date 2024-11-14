@@ -2,11 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-import {
-    ChronikClientNode,
-    TxHistoryPage_InNode,
-    Tx_InNode,
-} from 'chronik-client';
+import { ChronikClient, TxHistoryPage, Tx } from 'chronik-client';
 import { getTxTimestamp } from './parse';
 
 /**
@@ -15,18 +11,18 @@ import { getTxTimestamp } from './parse';
  */
 
 /**
- * @param chronik initialized ChronikClientNode
+ * @param chronik initialized ChronikClient
  * @param address a valid ecash address
  * @param timestamp timestamp in seconds.
  * We only return txs with timestamp >= this value, i.e. txs that were broadcast after timestamp
  * @param pageSize txs per page, chronik defaults to 25
  */
 export async function getHistoryAfterTimestamp(
-    chronik: ChronikClientNode,
+    chronik: ChronikClient,
     address: string,
     timestamp: number,
     pageSize = 25,
-): Promise<Tx_InNode[]> {
+): Promise<Tx[]> {
     // The history endpoint is called with (pageNumber, pageSize), where 0 is the first page
     const firstPageHistory = await getTxHistoryPage(
         chronik,
@@ -81,10 +77,10 @@ export async function getHistoryAfterTimestamp(
  * @returns
  */
 async function getTxHistoryPage(
-    chronik: ChronikClientNode,
+    chronik: ChronikClient,
     address: string,
     pageNumber: number,
     pageSize = 25,
-): Promise<TxHistoryPage_InNode> {
+): Promise<TxHistoryPage> {
     return await chronik.address(address).history(pageNumber, pageSize);
 }

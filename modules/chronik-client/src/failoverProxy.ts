@@ -7,7 +7,6 @@ import WebSocket from 'isomorphic-ws';
 import * as ws from 'ws';
 import * as proto from '../proto/chronik';
 import { WsEndpoint } from './ChronikClient';
-import { WsEndpoint_InNode } from './ChronikClientNode';
 
 type MessageEvent = ws.MessageEvent | { data: Blob };
 
@@ -133,7 +132,15 @@ export class FailoverProxy {
                 this._workingIndex = index;
                 return response;
             } catch (err) {
-                if (err instanceof Error && 'code' in err) {
+                if (
+                    err instanceof Error &&
+                    ('code' in err ||
+                        err
+                            .toString()
+                            .includes(
+                                'Unable to decode error msg, chronik server is indexing or in error state',
+                            ))
+                ) {
                     // Server outage, skip to next url in loop
                     // Connection error msgs have a 'code' key of 'ECONNREFUSED'
                     // Error messages from the chronik server (i.e. error
@@ -192,10 +199,24 @@ export class FailoverProxy {
 
     public ensureResponseErrorThrown(response: AxiosResponse, path: string) {
         if (response.status != 200) {
-            const error = proto.Error.decode(new Uint8Array(response.data));
-            throw new Error(
-                `Failed getting ${path} (${error.errorCode}): ${error.msg}`,
-            );
+            let errorCanBeDecoded = false;
+            let error;
+            try {
+                // If we can decode this error with proto, it is an expected chronik error
+                // from a working server and we should return it to the user
+                error = proto.Error.decode(new Uint8Array(response.data));
+                errorCanBeDecoded = true;
+            } catch (err) {
+                // If we can't decode this error with proto, something is wrong with this server instance
+                // It may be indexing
+                // In this case, we should try the next server
+                throw new Error(
+                    'Unable to decode error msg, chronik server is indexing or in error state',
+                );
+            }
+            if (errorCanBeDecoded) {
+                throw new Error(`Failed getting ${path}: ${error.msg}`);
+            }
         }
     }
 
@@ -234,7 +255,7 @@ export class FailoverProxy {
     // Iterates through available websocket urls and attempts connection.
     // Upon a successful connection it handles the various websocket callbacks.
     // Upon an unsuccessful connection it iterates to the next websocket url in the array.
-    public async connectWs(wsEndpoint: WsEndpoint | WsEndpoint_InNode) {
+    public async connectWs(wsEndpoint: WsEndpoint) {
         for (let i = 0; i < this._endpointArray.length; i += 1) {
             const index = this.deriveEndpointIndex(i);
             const thisProxyWsUrl = this._endpointArray[index].wsUrl;
@@ -269,54 +290,36 @@ export class FailoverProxy {
                     this.connectWs(wsEndpoint);
                 };
                 wsEndpoint.ws = ws;
-                wsEndpoint.connected =
-                    wsEndpoint instanceof WsEndpoint
-                        ? new Promise(resolve => {
-                              ws.onopen = msg => {
-                                  wsEndpoint.subs.forEach(sub =>
-                                      wsEndpoint.subUnsub(
-                                          true,
-                                          sub.scriptType,
-                                          sub.scriptPayload,
-                                      ),
-                                  );
-                                  resolve(msg);
-                                  if (wsEndpoint.onConnect !== undefined) {
-                                      wsEndpoint.onConnect(msg);
-                                  }
-                              };
-                          })
-                        : new Promise(resolve => {
-                              // WsEndpoint_InNode has a slightly different API vs NNG
-                              ws.onopen = msg => {
-                                  // Subscribe to all previously-subscribed scripts
-                                  wsEndpoint.subs.scripts.forEach(sub =>
-                                      wsEndpoint.subscribeToScript(
-                                          sub.scriptType,
-                                          sub.payload,
-                                      ),
-                                  );
-                                  // Subscribe to all previously-subscribed lokadIds
-                                  wsEndpoint.subs.lokadIds.forEach(lokadId =>
-                                      wsEndpoint.subscribeToLokadId(lokadId),
-                                  );
-                                  // Subscribe to all previously-subscribed tokenIds
-                                  wsEndpoint.subs.tokens.forEach(tokenId =>
-                                      wsEndpoint.subscribeToTokenId(tokenId),
-                                  );
+                wsEndpoint.connected = new Promise(resolve => {
+                    ws.onopen = msg => {
+                        // Subscribe to all previously-subscribed scripts
+                        wsEndpoint.subs.scripts.forEach(sub =>
+                            wsEndpoint.subscribeToScript(
+                                sub.scriptType,
+                                sub.payload,
+                            ),
+                        );
+                        // Subscribe to all previously-subscribed lokadIds
+                        wsEndpoint.subs.lokadIds.forEach(lokadId =>
+                            wsEndpoint.subscribeToLokadId(lokadId),
+                        );
+                        // Subscribe to all previously-subscribed tokenIds
+                        wsEndpoint.subs.tokens.forEach(tokenId =>
+                            wsEndpoint.subscribeToTokenId(tokenId),
+                        );
 
-                                  // Subscribe to blocks method, if previously subscribed
-                                  if (wsEndpoint.subs.blocks === true) {
-                                      wsEndpoint.subscribeToBlocks();
-                                  }
-                                  resolve(msg);
-                                  if (wsEndpoint.onConnect !== undefined) {
-                                      wsEndpoint.onConnect(msg);
-                                  }
-                                  // If no errors thrown from above call then set this index to state
-                                  this._workingIndex = index;
-                              };
-                          });
+                        // Subscribe to blocks method, if previously subscribed
+                        if (wsEndpoint.subs.blocks === true) {
+                            wsEndpoint.subscribeToBlocks();
+                        }
+                        resolve(msg);
+                        if (wsEndpoint.onConnect !== undefined) {
+                            wsEndpoint.onConnect(msg);
+                        }
+                        // If no errors thrown from above call then set this index to state
+                        this._workingIndex = index;
+                    };
+                });
                 return;
             }
         }

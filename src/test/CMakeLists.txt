@@ -33,6 +33,8 @@ gen_json_header(JSON_HEADERS
 	data/blockfilters.json
 	data/key_io_valid.json
 	data/key_io_invalid.json
+	data/intcode_valid.json
+	data/intcode_invalid.json
 	data/script_tests.json
 	data/sighash.json
 	data/tx_invalid.json
@@ -47,12 +49,15 @@ add_dependencies(check check-bitcoin)
 add_library(testutil OBJECT
 	util/blockfilter.cpp
 	util/blockindex.cpp
+	util/coins.cpp
 	util/logging.cpp
 	util/mining.cpp
 	util/net.cpp
+	util/random.cpp
 	util/setup_common.cpp
 	util/str.cpp
 	util/transaction_utils.cpp
+	util/txmempool.cpp
 	util/validation.cpp
 	util/wallet.cpp
 )
@@ -191,10 +196,12 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		net_tests.cpp
 		netbase_tests.cpp
 		op_reversebytes_tests.cpp
+		orphanage_tests.cpp
 		pmt_tests.cpp
 		policy_block_tests.cpp
 		policy_fee_tests.cpp
 		policyestimator_tests.cpp
+		pool_tests.cpp
 		prevector_tests.cpp
 		radix_tests.cpp
 		raii_event_tests.cpp
@@ -204,6 +211,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		reverselock_tests.cpp
 		rpc_tests.cpp
 		rpc_server_tests.cpp
+		rtt_tests.cpp
 		rwcollection_tests.cpp
 		sanity_tests.cpp
 		scheduler_tests.cpp
@@ -213,7 +221,9 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		script_standard_tests.cpp
 		script_tests.cpp
 		scriptnum_tests.cpp
+		scriptinterpreter_tests.cpp
 		serialize_tests.cpp
+		serialize_intcode_tests.cpp
 		settings_tests.cpp
 		shortidprocessor_tests.cpp
 		sigcache_tests.cpp
@@ -231,6 +241,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		translation_tests.cpp
 		txindex_tests.cpp
 		txpackage_tests.cpp
+		txpool_tests.cpp
 		txrequest_tests.cpp
 		txvalidation_tests.cpp
 		txvalidationcache_tests.cpp
@@ -290,9 +301,10 @@ function(add_boost_test_runners_with_upgrade_activated SUITE EXECUTABLE)
 			"--logger=${HRF_LOGGER}${JUNIT_LOGGER}"
 			"--catch_system_errors=no"
 			--
+			"-printtoconsole=1"
 			"-testsuitename=Bitcoin ABC unit tests with next upgrade activated"
-			# Nov. 20th, 2023 at 12:00:00
-			-leekuanyewactivationtime=1700481600
+			# May. 16th, 2024 at 08:00:00
+			-augustoactivationtime=1715846400
 		)
 	endforeach()
 endfunction()

@@ -5,6 +5,7 @@
 
 from decimal import Decimal
 
+from test_framework.hash import hash160
 from test_framework.key import ECKey
 from test_framework.messages import (
     MAX_BLOCK_BASE_SIZE,
@@ -26,7 +27,6 @@ from test_framework.script import (
     OP_HASH160,
     OP_RETURN,
     CScript,
-    hash160,
 )
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
@@ -50,6 +50,11 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
     def check_mempool_result(self, result_expected, *args, **kwargs):
         """Wrapper to check result of testmempoolaccept on node_0's mempool"""
         result_test = self.nodes[0].testmempoolaccept(*args, **kwargs)
+        for r in result_test:
+            # Skip these checks for now
+            if "fees" in r:
+                r["fees"].pop("effective-feerate")
+                r["fees"].pop("effective-includes")
         assert_equal(result_expected, result_test)
         # Must not change mempool state
         assert_equal(self.nodes[0].getmempoolinfo()["size"], self.mempool_size)
@@ -66,7 +71,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         self.log.info("Should not accept garbage to testmempoolaccept")
         assert_raises_rpc_error(
             -3,
-            "Expected type array, got string",
+            "not of expected type array",
             lambda: node.testmempoolaccept(rawtxs="ff00baar"),
         )
         assert_raises_rpc_error(

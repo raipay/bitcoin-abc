@@ -135,6 +135,49 @@ class ChronikLokadIdClient:
         )
 
 
+class ChronikPluginClient:
+    def __init__(self, client: "ChronikClient", plugin_name: str) -> None:
+        self.client = client
+        self.plugin_name = plugin_name
+
+    def utxos(self, group: bytes):
+        return self.client._request_get(
+            f"/plugin/{self.plugin_name}/{group.hex()}/utxos", pb.Utxos
+        )
+
+    def groups(
+        self,
+        *,
+        prefix: Optional[bytes] = None,
+        start: Optional[bytes] = None,
+        page_size: Optional[int] = None,
+    ):
+        return self.client._request_get(
+            f"/plugin/{self.plugin_name}/groups{_group_query_params(prefix, start, page_size)}",
+            pb.PluginGroups,
+        )
+
+    def confirmed_txs(self, group: bytes, page=None, page_size=None):
+        query = _page_query_params(page, page_size)
+        return self.client._request_get(
+            f"/plugin/{self.plugin_name}/{group.hex()}/confirmed-txs{query}",
+            pb.TxHistoryPage,
+        )
+
+    def history(self, group: bytes, page=None, page_size=None):
+        query = _page_query_params(page, page_size)
+        return self.client._request_get(
+            f"/plugin/{self.plugin_name}/{group.hex()}/history{query}",
+            pb.TxHistoryPage,
+        )
+
+    def unconfirmed_txs(self, group: bytes):
+        return self.client._request_get(
+            f"/plugin/{self.plugin_name}/{group.hex()}/unconfirmed-txs",
+            pb.TxHistoryPage,
+        )
+
+
 class ChronikWs:
     def __init__(self, client: "ChronikClient", **kwargs) -> None:
         self.messages: List[pb.WsMsg] = []
@@ -237,6 +280,13 @@ class ChronikWs:
         )
         self.send_bytes(sub.SerializeToString())
 
+    def sub_plugin(self, plugin_name: str, group: bytes, *, is_unsub=False) -> None:
+        sub = pb.WsSub(
+            is_unsub=is_unsub,
+            plugin=pb.WsPlugin(plugin_name=plugin_name, group=group),
+        )
+        self.send_bytes(sub.SerializeToString())
+
     def close(self):
         self.ws.close()
         self.ws_thread.join(self.timeout)
@@ -308,6 +358,33 @@ class ChronikClient:
     def blocks(self, start_height: int, end_height: int) -> ChronikResponse:
         return self._request_get(f"/blocks/{start_height}/{end_height}", pb.Blocks)
 
+    def block_header(
+        self, hash_or_height: Union[str, int], checkpoint_height: Optional[int] = None
+    ) -> ChronikResponse:
+        query = (
+            f"?checkpoint_height={checkpoint_height}"
+            if checkpoint_height is not None
+            else ""
+        )
+        return self._request_get(
+            f"/block-header/{hash_or_height}{query}", pb.BlockHeader
+        )
+
+    def block_headers(
+        self,
+        start_height: int,
+        end_height: int,
+        checkpoint_height: Optional[int] = None,
+    ) -> ChronikResponse:
+        query = (
+            f"?checkpoint_height={checkpoint_height}"
+            if checkpoint_height is not None
+            else ""
+        )
+        return self._request_get(
+            f"/block-headers/{start_height}/{end_height}{query}", pb.BlockHeaders
+        )
+
     def chronik_info(self) -> ChronikResponse:
         return self._request_get("/chronik-info", pb.ChronikInfo)
 
@@ -358,6 +435,9 @@ class ChronikClient:
     def lokad_id(self, lokad_id_hex: str) -> ChronikLokadIdClient:
         return ChronikLokadIdClient(self, lokad_id_hex)
 
+    def plugin(self, plugin_name: str) -> ChronikPluginClient:
+        return ChronikPluginClient(self, plugin_name)
+
     def pause(self) -> ChronikResponse:
         return self._request_get("/pause", pb.Empty)
 
@@ -377,3 +457,20 @@ def _page_query_params(page=None, page_size=None) -> str:
         return f"?page_size={page_size}"
     else:
         return ""
+
+
+def _group_query_params(prefix=None, start=None, page_size=None) -> str:
+    if prefix is None and start is None and page_size is None:
+        return ""
+    query_string = ""
+    if prefix is not None:
+        query_string += f"prefix={prefix.hex()}"
+    if start is not None:
+        if query_string:
+            query_string += "&"
+        query_string += f"start={start.hex()}"
+    if page_size is not None:
+        if query_string:
+            query_string += "&"
+        query_string += f"page_size={page_size}"
+    return "?" + query_string

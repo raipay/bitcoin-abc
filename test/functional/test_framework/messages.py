@@ -57,11 +57,13 @@ NODE_COMPACT_FILTERS = 1 << 6
 NODE_NETWORK_LIMITED = 1 << 10
 NODE_AVALANCHE = 1 << 24
 
+MSG_UNDEFINED = 0
 MSG_TX = 1
 MSG_BLOCK = 2
 MSG_FILTERED_BLOCK = 3
 MSG_CMPCT_BLOCK = 4
 MSG_AVA_PROOF = 0x1F000001
+MSG_AVA_STAKE_CONTENDER = 0x1F000002
 MSG_TYPE_MASK = 0xFFFFFFFF >> 2
 
 FILTER_TYPE_BASIC = 0
@@ -111,27 +113,15 @@ def ser_string(s):
 
 
 def deser_uint256(f):
-    r = 0
-    for i in range(8):
-        t = struct.unpack("<I", f.read(4))[0]
-        r += t << (i * 32)
-    return r
+    return int.from_bytes(f.read(32), "little")
 
 
 def ser_uint256(u):
-    rs = b""
-    for _ in range(8):
-        rs += struct.pack("<I", u & 0xFFFFFFFF)
-        u >>= 32
-    return rs
+    return u.to_bytes(32, "little")
 
 
 def uint256_from_str(s):
-    r = 0
-    t = struct.unpack("<IIIIIIII", s[:32])
-    for i in range(8):
-        r += t[i] << (i * 32)
-    return r
+    return int.from_bytes(s[:32], "little")
 
 
 def uint256_from_compact(c):
@@ -296,12 +286,13 @@ class CInv:
     __slots__ = ("hash", "type")
 
     typemap = {
-        0: "Error",
+        MSG_UNDEFINED: "Error",
         MSG_TX: "TX",
         MSG_BLOCK: "Block",
         MSG_FILTERED_BLOCK: "filtered Block",
         MSG_CMPCT_BLOCK: "CompactBlock",
         MSG_AVA_PROOF: "avalanche proof",
+        MSG_AVA_STAKE_CONTENDER: "avalanche stake contender",
     }
 
     def __init__(self, t=0, h=0):
@@ -774,7 +765,6 @@ class HeaderAndShortIDs:
         key1 = struct.unpack("<Q", hash_header_nonce_as_str[8:16])[0]
         return [key0, key1]
 
-    # Version 2 compact blocks use wtxid in shortids (rather than txid)
     def initialize_from_block(self, block, nonce=0, prefill_list=None):
         if prefill_list is None:
             prefill_list = [0]
@@ -1070,6 +1060,7 @@ class AvalancheProofVoteResponse(IntEnum):
 class AvalancheTxVoteError(IntEnum):
     ACCEPTED = 0
     INVALID = 1
+    CONFLICTING = 2
     UNKNOWN = -1
     ORPHAN = -2
 

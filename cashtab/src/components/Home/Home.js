@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-import React from 'react';
+import React, { useState } from 'react';
 import styled from 'styled-components';
 import { WalletContext } from 'wallet/context';
 import { Link } from 'react-router-dom';
@@ -10,9 +10,18 @@ import TxHistory from './TxHistory';
 import ApiError from 'components/Common/ApiError';
 import { getWalletState } from 'utils/cashMethods';
 import Receive from 'components/Receive/Receive';
-import { Alert } from 'components/Common/Atoms';
+import { Alert, Info } from 'components/Common/Atoms';
 import { getUserLocale } from 'helpers';
 import { getHashes } from 'wallet';
+import PrimaryButton, {
+    SecondaryButton,
+    PrimaryLink,
+    SecondaryLink,
+} from 'components/Common/Buttons';
+import { toast } from 'react-toastify';
+import { token as tokenConfig } from 'config/token';
+import { InlineLoader } from 'components/Common/Spinner';
+import { load } from 'recaptcha-v3';
 
 export const Tabs = styled.div`
     margin: auto;
@@ -61,29 +70,10 @@ export const TxHistoryCtn = styled.div`
     margin-top: 24px;
 `;
 
-export const Links = styled(Link)`
-    color: ${props => props.theme.darkBlue};
-    width: 100%;
-    font-size: 16px;
-    margin: 10px 0 20px 0;
-    border: 1px solid ${props => props.theme.darkBlue};
-    padding: 14px 0;
-    display: inline-block;
-    border-radius: 3px;
-    transition: all 200ms ease-in-out;
-    svg {
-        fill: ${props => props.theme.darkBlue};
-    }
+export const AlertLink = styled(Link)`
+    color: red;
     :hover {
-        color: ${props => props.theme.eCashBlue};
-        border-color: ${props => props.theme.eCashBlue};
-        svg {
-            fill: ${props => props.theme.eCashBlue};
-        }
-    }
-    @media (max-width: 768px) {
-        padding: 10px 0;
-        font-size: 14px;
+        color: #000;
     }
 `;
 
@@ -119,6 +109,19 @@ export const AddrSwitchContainer = styled.div`
     padding: 6px 0 12px 0;
 `;
 
+export const AirdropButton = styled(PrimaryButton)`
+    margin-bottom: 0;
+    div {
+        margin: auto;
+    }
+`;
+export const TokenRewardButton = styled(SecondaryButton)`
+    margin-bottom: 0;
+    div {
+        margin: auto;
+    }
+`;
+
 const Home = () => {
     const ContextValue = React.useContext(WalletContext);
     const {
@@ -135,7 +138,92 @@ const Home = () => {
     const { parsedTxHistory } = walletState;
     const hasHistory = parsedTxHistory && parsedTxHistory.length > 0;
 
+    // Want to show a msg to users who have just claimed a free XEC reward, or users who have just received
+    // a few txs
+    const isNewishWallet =
+        hasHistory &&
+        parsedTxHistory &&
+        parsedTxHistory.length < 3 &&
+        wallet.state.balanceSats > 0;
+
     const userLocale = getUserLocale(navigator);
+
+    const [airdropPending, setAirdropPending] = useState(false);
+    const [tokenRewardsPending, setTokenRewardsPending] = useState(false);
+
+    const claimAirdropForNewWallet = async () => {
+        // Disable the button to prevent double claims
+        setAirdropPending(true);
+        const recaptcha = await load(process.env.REACT_APP_RECAPTCHA_SITE_KEY);
+        const token = await recaptcha.execute('claimxec');
+
+        // Claim rewards
+        // We only show this option if wallet has no tx history. Such a wallet is always
+        // expected to be eligible.
+        let claimResponse;
+        try {
+            claimResponse = await (
+                await fetch(
+                    `${tokenConfig.rewardsServerBaseUrl}/claimxec/${
+                        wallet.paths.get(1899).address
+                    }`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ token }),
+                    },
+                )
+            ).json();
+            // Could help in debugging from user reports
+            console.info(claimResponse);
+            if ('error' in claimResponse) {
+                throw new Error(`${claimResponse.error}:${claimResponse.msg}`);
+            }
+            toast.success('Free eCash claimed!');
+            // Note we do not setAirdropPending(false) on a successful claim
+            // The button will disappear when the tx is seen by the wallet
+            // We do not want the button to be enabled before this
+        } catch (err) {
+            setAirdropPending(false);
+            console.error(err);
+            toast.error(`${err}`);
+        }
+    };
+
+    const claimTokenRewardsForNewWallet = async () => {
+        // Disable the button to prevent double claims
+        setTokenRewardsPending(true);
+        // Claim rewards
+        // We only show this option if wallet has no tx history. Such a wallet is always
+        // expected to be eligible.
+        let claimResponse;
+        try {
+            claimResponse = await (
+                await fetch(
+                    `${tokenConfig.rewardsServerBaseUrl}/claim/${
+                        wallet.paths.get(1899).address
+                    }`,
+                )
+            ).json();
+            // Could help in debugging from user reports
+            console.info(claimResponse);
+            if ('error' in claimResponse) {
+                throw new Error(`${claimResponse.error}:${claimResponse.msg}`);
+            }
+            toast.success(
+                'Token rewards claimed! Check "Rewards" menu option for more.',
+            );
+            // Note we do not setTokenRewardsPending(false) on a successful claim
+            // The button will disappear when the tx is seen by the wallet
+            // We do not want the button to be enabled before this
+        } catch (err) {
+            setTokenRewardsPending(false);
+            console.error(err);
+            toast.error(`${err}`);
+        }
+    };
 
     return (
         <>
@@ -155,11 +243,39 @@ const Home = () => {
                     userLocale={userLocale}
                     chaintipBlockheight={chaintipBlockheight}
                 />
+                {isNewishWallet && (
+                    <>
+                        <Info style={{ marginBottom: '20px' }}>
+                            ℹ️ Nice, you have some eCash. What can you do?
+                        </Info>
+                        <PrimaryLink to="/create-token">
+                            Create a token
+                        </PrimaryLink>
+                        <SecondaryLink to="/create-nft-collection">
+                            Mint an NFT
+                        </SecondaryLink>
+                        <Info>
+                            💰 You could also earn more by monetizing your
+                            content at{' '}
+                            <a
+                                href="https://ecashchat.com/"
+                                target="_blank"
+                                rel="noreferrer"
+                            >
+                                eCashChat.
+                            </a>
+                        </Info>
+                    </>
+                )}
                 {!hasHistory && (
                     <>
                         <Alert>
                             <p>
-                                <b>Backup your wallet</b>
+                                <b>
+                                    <AlertLink to="/backup">
+                                        Backup your wallet
+                                    </AlertLink>
+                                </b>
                             </p>
                             <p>
                                 Write down your 12-word seed and keep it in a
@@ -167,6 +283,38 @@ const Home = () => {
                                 <em>Do not share your backup with anyone.</em>
                             </p>
                         </Alert>
+                        {process.env.REACT_APP_TESTNET !== 'true' && (
+                            <>
+                                {wallets.length === 1 ? (
+                                    <AirdropButton
+                                        onClick={claimAirdropForNewWallet}
+                                        disabled={airdropPending}
+                                    >
+                                        {airdropPending ? (
+                                            <InlineLoader
+                                                style={{ margin: 'auto' }}
+                                            />
+                                        ) : (
+                                            'Claim Free XEC'
+                                        )}
+                                    </AirdropButton>
+                                ) : (
+                                    <TokenRewardButton
+                                        onClick={claimTokenRewardsForNewWallet}
+                                        disabled={tokenRewardsPending}
+                                    >
+                                        {tokenRewardsPending ? (
+                                            <InlineLoader
+                                                style={{ margin: 'auto' }}
+                                            />
+                                        ) : (
+                                            'Claim Token Rewards'
+                                        )}
+                                    </TokenRewardButton>
+                                )}
+                            </>
+                        )}
+
                         <Receive />
                     </>
                 )}

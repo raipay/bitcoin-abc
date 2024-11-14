@@ -10,6 +10,7 @@
 #include <avalanche/proof.h>
 #include <avalanche/proofcomparator.h>
 #include <avalanche/protocol.h>
+#include <avalanche/stakecontendercache.h>
 #include <avalanche/voterecord.h> // For AVALANCHE_MAX_INFLIGHT_POLL
 #include <blockindex.h>
 #include <blockindexcomparators.h>
@@ -98,13 +99,7 @@ public:
     const AnyVoteItem &getVoteItem() const { return item; }
 };
 
-class VoteMapComparator {
-    const CTxMemPool *mempool{nullptr};
-
-public:
-    VoteMapComparator() {}
-    VoteMapComparator(const CTxMemPool *mempoolIn) : mempool(mempoolIn) {}
-
+struct VoteMapComparator {
     bool operator()(const AnyVoteItem &lhs, const AnyVoteItem &rhs) const {
         // If the variants are of different types, sort them by variant index
         if (lhs.index() != rhs.index()) {
@@ -120,36 +115,8 @@ public:
                     // Reverse ordering so we get the highest work first
                     return CBlockIndexWorkComparator()(rhs, lhs);
                 },
-                [this](const CTransactionRef &lhs, const CTransactionRef &rhs) {
-                    const TxId &lhsTxId = lhs->GetId();
-                    const TxId &rhsTxId = rhs->GetId();
-
-                    // If there is no mempool, sort by TxId. Note that polling
-                    // for txs is currently not supported if there is no mempool
-                    // so this is only a safety net.
-                    if (!mempool) {
-                        return lhsTxId < rhsTxId;
-                    }
-
-                    LOCK(mempool->cs);
-
-                    auto lhsOptIter = mempool->GetIter(lhsTxId);
-                    auto rhsOptIter = mempool->GetIter(rhsTxId);
-
-                    // If the transactions are not in the mempool, tie by TxId
-                    if (!lhsOptIter && !rhsOptIter) {
-                        return lhsTxId < rhsTxId;
-                    }
-
-                    // If only one is in the mempool, pick that one
-                    if (lhsOptIter.has_value() != rhsOptIter.has_value()) {
-                        return !!lhsOptIter;
-                    }
-
-                    // Both are in the mempool, select the highest fee rate
-                    // including the fee deltas
-                    return CompareTxMemPoolEntryByModifiedFeeRate{}(
-                        **lhsOptIter, **rhsOptIter);
+                [](const CTransactionRef &lhs, const CTransactionRef &rhs) {
+                    return lhs->GetId() < rhs->GetId();
                 },
                 [](const auto &lhs, const auto &rhs) {
                     // This serves 2 purposes:
@@ -271,14 +238,15 @@ class Processor final : public NetEventsInterface {
     struct StakingReward {
         int blockheight;
         // Ordered list of acceptable winners, only the first is used for mining
-        std::vector<CScript> winners;
+        std::vector<std::pair<ProofId, CScript>> winners;
     };
 
     mutable Mutex cs_stakingRewards;
     std::unordered_map<BlockHash, StakingReward, SaltedUint256Hasher>
         stakingRewards GUARDED_BY(cs_stakingRewards);
 
-    const bool m_preConsensus{false};
+    mutable Mutex cs_stakeContenderCache;
+    StakeContenderCache stakeContenderCache GUARDED_BY(cs_stakeContenderCache);
 
     Processor(Config avaconfig, interfaces::Chain &chain, CConnman *connmanIn,
               ChainstateManager &chainman, CTxMemPool *mempoolIn,
@@ -287,9 +255,12 @@ class Processor final : public NetEventsInterface {
               double minQuorumConnectedScoreRatioIn,
               int64_t minAvaproofsNodeCountIn, uint32_t staleVoteThresholdIn,
               uint32_t staleVoteFactorIn, Amount stakeUtxoDustThresholdIn,
-              bool preConsensus);
+              bool preConsensus, bool stakingPreConsensus);
 
 public:
+    const bool m_preConsensus{false};
+    const bool m_stakingPreConsensus{false};
+
     ~Processor();
 
     static std::unique_ptr<Processor>
@@ -349,6 +320,12 @@ public:
      */
     bool isAvalancheServiceAvailable() { return !!peerData; }
 
+    /** Whether there is a finalized tip */
+    bool hasFinalizedTip() const EXCLUSIVE_LOCKS_REQUIRED(!cs_finalizationTip) {
+        LOCK(cs_finalizationTip);
+        return finalizationTip != nullptr;
+    }
+
     bool startEventLoop(CScheduler &scheduler);
     bool stopEventLoop();
 
@@ -366,13 +343,17 @@ public:
     bool eraseStakingRewardWinner(const BlockHash &prevBlockHash)
         EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards);
     void cleanupStakingRewards(const int minHeight)
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards, !cs_stakeContenderCache);
+    bool getStakingRewardWinners(
+        const BlockHash &prevBlockHash,
+        std::vector<std::pair<ProofId, CScript>> &winners) const
         EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards);
     bool getStakingRewardWinners(const BlockHash &prevBlockHash,
-                                 std::vector<CScript> &winners) const
+                                 std::vector<CScript> &payouts) const
         EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards);
     bool setStakingRewardWinners(const CBlockIndex *pprev,
-                                 const std::vector<CScript> &winners)
-        EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards);
+                                 const std::vector<CScript> &payouts)
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_stakingRewards, !cs_stakeContenderCache);
 
     // Implement NetEventInterface. Only FinalizeNode is of interest.
     void InitializeNode(const ::Config &config, CNode &pnode,
@@ -390,9 +371,21 @@ public:
                       const CNode &node) override LOCKS_EXCLUDED(cs_main)
         EXCLUSIVE_LOCKS_REQUIRED(!cs_peerManager, !cs_delayedAvahelloNodeIds);
 
+    /** Track votes on stake contenders */
+    void addStakeContender(const ProofRef &proof)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main, !cs_stakeContenderCache);
+    int getStakeContenderStatus(const StakeContenderId &contenderId) const
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_stakeContenderCache);
+
+    /** Promote stake contender cache entries to the latest chain tip */
+    void promoteStakeContendersToTip()
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_stakeContenderCache, !cs_peerManager,
+                                 !cs_finalizationTip);
+
 private:
     void updatedBlockTip()
-        EXCLUSIVE_LOCKS_REQUIRED(!cs_peerManager, !cs_finalizedItems);
+        EXCLUSIVE_LOCKS_REQUIRED(!cs_peerManager, !cs_finalizedItems,
+                                 !cs_finalizationTip, !cs_stakeContenderCache);
     void transactionAddedToMempool(const CTransactionRef &tx)
         EXCLUSIVE_LOCKS_REQUIRED(!cs_finalizedItems);
     void runEventLoop()

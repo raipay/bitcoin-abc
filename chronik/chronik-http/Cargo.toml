@@ -7,6 +7,10 @@ edition = "2021"
 rust-version.workspace = true
 license = "MIT"
 
+[features]
+default = []
+plugins = ["chronik-db/plugins", "chronik-indexer/plugins"]
+
 [dependencies]
 abc-rust-error = { path = "../abc-rust-error" }
 abc-rust-lint = { path = "../abc-rust-lint" }
@@ -18,6 +22,7 @@ chronik-bridge = { path = "../chronik-bridge" }
 chronik-db = { path = "../chronik-db" }
 chronik-indexer = { path = "../chronik-indexer" }
 chronik-proto = { path = "../chronik-proto" }
+chronik-plugin = { path = "../chronik-plugin" }
 chronik-util = { path = "../chronik-util" }
 
 # Allow traits to use async functions

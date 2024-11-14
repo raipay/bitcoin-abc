@@ -6,6 +6,7 @@
 
 #include <uint256.h>
 
+#include <test/util/random.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -466,8 +467,7 @@ BOOST_AUTO_TEST_CASE(unicodepath) {
     // On Windows this test will fail if the directory is created using
     // the ANSI CreateDirectoryA call and the code page isn't UTF8.
     // It will succeed if created with CreateDirectoryW.
-    fs::path ph =
-        m_args.GetDataDirBase() / "test_runner_₿_🏃_20191128_104644";
+    fs::path ph = m_args.GetDataDirBase() / "test_runner_₿_🏃_20191128_104644";
     CDBWrapper dbw({.path = ph, .cache_bytes = 1 << 20});
 
     fs::path lockPath = ph / "LOCK";

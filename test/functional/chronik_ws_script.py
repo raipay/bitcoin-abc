@@ -10,13 +10,15 @@ from test_framework.address import (
 )
 from test_framework.avatools import can_find_inv_in_poll, get_ava_p2p_interface
 from test_framework.blocktools import (
+    COINBASE_MATURITY,
     create_block,
     create_coinbase,
     make_conform_to_ctor,
 )
+from test_framework.hash import hash160
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.p2p import P2PDataStore
-from test_framework.script import OP_EQUAL, OP_HASH160, CScript, hash160
+from test_framework.script import OP_EQUAL, OP_HASH160, CScript
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
 from test_framework.util import assert_equal, chronik_sub_script
@@ -28,6 +30,7 @@ class ChronikWsScriptTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 1
+        self.noban_tx_relay = True
         self.extra_args = [
             [
                 "-avaproofstakeutxodustthreshold=1000000",
@@ -36,7 +39,6 @@ class ChronikWsScriptTest(BitcoinTestFramework):
                 "-avaminquorumstake=0",
                 "-avaminavaproofsnodecount=0",
                 "-chronik",
-                "-whitelist=noban@127.0.0.1",
             ],
         ]
         self.supports_cli = False
@@ -71,7 +73,9 @@ class ChronikWsScriptTest(BitcoinTestFramework):
 
         assert node.getavalancheinfo()["ready_to_poll"] is True
 
-        tip = self.generatetoaddress(node, 100, ADDRESS_ECREG_UNSPENDABLE)[-1]
+        tip = self.generatetoaddress(
+            node, COINBASE_MATURITY, ADDRESS_ECREG_UNSPENDABLE
+        )[-1]
 
         # Tx sending to 4 different scripts
         coinvalue = 5000000000

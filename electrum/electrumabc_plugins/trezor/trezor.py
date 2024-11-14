@@ -6,13 +6,10 @@ from binascii import unhexlify
 from typing import TYPE_CHECKING
 
 from electrumabc.base_wizard import HWD_SETUP_NEW_WALLET
-from electrumabc.bitcoin import (
-    TYPE_ADDRESS,
-    TYPE_SCRIPT,
-    SignatureType,
-    deserialize_xpub,
-)
+from electrumabc.bip32 import deserialize_xpub
+from electrumabc.bitcoin import TYPE_ADDRESS, TYPE_SCRIPT
 from electrumabc.constants import DEFAULT_TXIN_SEQUENCE
+from electrumabc.ecc import SignatureType
 from electrumabc.i18n import _
 from electrumabc.keystore import HardwareKeyStore, is_xpubkey, parse_xpubkey
 from electrumabc.networks import NetworkConstants
@@ -28,13 +25,13 @@ if TYPE_CHECKING:
 try:
     import trezorlib
     import trezorlib.transport
+    from trezorlib.client import PASSPHRASE_ON_DEVICE
     from trezorlib.messages import (
         HDNodePathType,
         HDNodeType,
         InputScriptType,
         MultisigRedeemScriptType,
         OutputScriptType,
-        RecoveryDeviceType,
         TransactionType,
         TxInputType,
         TxOutputBinType,
@@ -42,11 +39,7 @@ try:
     )
 
     from .clientbase import TrezorClientBase, parse_path
-
-    RECOVERY_TYPE_SCRAMBLED_WORDS = RecoveryDeviceType.ScrambledWords
-    RECOVERY_TYPE_MATRIX = RecoveryDeviceType.Matrix
-
-    from trezorlib.client import PASSPHRASE_ON_DEVICE
+    from .compat import RECOVERY_TYPE_MATRIX, RECOVERY_TYPE_SCRAMBLED_WORDS
 
     TREZORLIB = True
 except Exception:

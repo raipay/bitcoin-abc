@@ -56,7 +56,6 @@ GIT_COMMIT_HASH=$(git rev-parse HEAD)
 
 # Paramterize
 BUILDDIR=/tmp/electrumabc-build
-LIBSECP_COMMIT="69ccf0d2f758b1a4df9cde8222459381e08fc1dc"
 # Compute major.minor Python version from above using Bash array magic
 MAJ_MIN=(${PYTHON_VERSION//./ })
 MAJ_MIN=${MAJ_MIN[0]}.${MAJ_MIN[1]}
@@ -146,11 +145,8 @@ mkdir -p "$BUILDDIR"
 
 info "Building PyInstaller."
 PYINSTALLER_REPO="https://github.com/pyinstaller/pyinstaller.git"
-PYINSTALLER_COMMIT="90256f93ed943daf6de53c7dd39710a415f705cb"
-# ^ tag "v6.4.0"
-# TODO test newer versions of pyinstaller for build-reproducibility.
-#      we are using this version for now due to change in code-signing behaviour
-#      (https://github.com/pyinstaller/pyinstaller/pull/5581)
+PYINSTALLER_COMMIT="085296f616a4b7eff4614710f9527b164c463c21"
+# ^ tag "v6.10.0"
 (
     if [ -f "$BUILDDIR/pyinstaller/PyInstaller/bootloader/Darwin-64bit/runw" || -f "$BUILDDIR/pyinstaller/PyInstaller/bootloader/Darwin-64bit-arm/runw" ]; then
         info "pyinstaller already built, skipping"
@@ -192,8 +188,20 @@ pyinstaller --version
 
 rm -rf ./dist
 
-info "Making locale..."
-python3 ./contrib/make_locale || fail "Failed to make locale..."
+info "Installing locale files"
+(
+    cd "${ELECTRUM_ROOT}"
+    setup_pkg "electrum-locale" ${ELECTRUM_LOCALE_REPO} ${ELECTRUM_LOCALE_COMMIT} "$CONTRIB"
+    if ! which msgfmt > /dev/null 2>&1; then
+        fail "Please install gettext"
+    fi
+    for i in ./locale/*; do
+        dir="${ELECTRUM_ROOT}/electrumabc/$i/LC_MESSAGES"
+        mkdir -p $dir
+        msgfmt --output-file="$dir/electron-cash.mo" "$i/electron-cash.po" || true
+    done
+    popd_pkg
+)
 
 info "Downloading libusb..."
 curl -L https://github.com/PiRK/Electrum-ABC-Build-Tools/releases/download/v1.0/libusb-1.0.21.el_capitan.bottle.tar.gz | \

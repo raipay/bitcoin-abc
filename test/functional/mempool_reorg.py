@@ -7,6 +7,7 @@ Test re-org scenarios with a mempool that contains transactions
 that spend (directly or indirectly) coinbase transactions.
 """
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 from test_framework.wallet import MiniWallet
@@ -15,13 +16,7 @@ from test_framework.wallet import MiniWallet
 class MempoolCoinbaseTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
-        self.extra_args = [
-            # immediate tx relay
-            [
-                "-whitelist=noban@127.0.0.1",
-            ],
-            [],
-        ]
+        self.noban_tx_relay = True
 
     def run_test(self):
         wallet = MiniWallet(self.nodes[0])
@@ -142,7 +137,7 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
             "Use invalidateblock to re-org back and make all those coinbase spends"
             " immature/invalid"
         )
-        b = self.nodes[0].getblockhash(first_block + 100)
+        b = self.nodes[0].getblockhash(first_block + COINBASE_MATURITY)
         for node in self.nodes:
             node.invalidateblock(b)
 

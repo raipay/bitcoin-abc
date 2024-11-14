@@ -43,6 +43,13 @@ import {
     SlpNftMint,
     SlpParentGenesisTxMock,
     oneOutputReceivedTx,
+    agoraAdSetupTxSlpNft,
+    agoraOneshotSaleTx,
+    AgoraOneshotCancelTx,
+    agoraPartialCancelTx,
+    agoraPartialBuxBuyTx,
+    agoraPartialCancelTwo,
+    SlpNftParentMintTx,
 } from './mocks';
 import { mockChronikUtxos, mockOrganizedUtxosByType } from './chronikUtxos';
 import { getHashes } from 'wallet';
@@ -227,6 +234,61 @@ export default {
                 tx: oneOutputReceivedTx.tx,
                 hashes: ['601efc2aa406fe9eaedd41d2b5d95d1f4db9041d'],
                 parsed: oneOutputReceivedTx.parsed,
+            },
+            {
+                description: 'SLP ad setup tx, NFT',
+                tx: agoraAdSetupTxSlpNft.tx,
+                // Cashtab alpha one sent hash
+                hashes: ['95e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d'],
+                parsed: agoraAdSetupTxSlpNft.parsed,
+            },
+            {
+                description: 'Agora one-shot buy',
+                tx: agoraOneshotSaleTx.tx,
+                hashes: ['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6'],
+                parsed: agoraOneshotSaleTx.parsed,
+            },
+            {
+                description: 'Agora one-shot sale',
+                tx: agoraOneshotSaleTx.tx,
+                hashes: ['95e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d'],
+                parsed: {
+                    ...agoraOneshotSaleTx.parsed,
+                    recipients: [
+                        'ecash:qpmytrdsakt0axrrlswvaj069nat3p9s7cjctmjasj',
+                    ],
+                    xecTxType: 'Received',
+                },
+            },
+            {
+                description: 'Agora one-shot listing cancellation',
+                tx: AgoraOneshotCancelTx.tx,
+                hashes: ['95e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d'],
+                parsed: AgoraOneshotCancelTx.parsed,
+            },
+            {
+                description: 'Agora partial listing cancellation',
+                tx: agoraPartialCancelTx.tx,
+                hashes: ['7847fe7070bec8567b3e810f543f2f80cc3e03be'],
+                parsed: agoraPartialCancelTx.parsed,
+            },
+            {
+                description: 'Buy 14 bux is rendered as buy 14',
+                tx: agoraPartialBuxBuyTx.tx,
+                hashes: ['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6'],
+                parsed: agoraPartialBuxBuyTx.parsed,
+            },
+            {
+                description: 'Another agora partial cancel',
+                tx: agoraPartialCancelTwo.tx,
+                hashes: [agoraPartialCancelTwo.hash],
+                parsed: agoraPartialCancelTwo.parsed,
+            },
+            {
+                description: 'SLP1 NFT Parent mint tx',
+                tx: SlpNftParentMintTx.tx,
+                hashes: [SlpNftParentMintTx.sendingHash],
+                parsed: SlpNftParentMintTx.parsed,
             },
         ],
     },

@@ -9,15 +9,16 @@ import { ChildProcess } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import path from 'path';
 import {
-    ChronikClientNode,
+    ChronikClient,
     MsgTxClient,
-    ScriptType_InNode,
-    WsEndpoint_InNode,
+    ScriptType,
+    WsEndpoint,
     WsMsgClient,
     WsSubScriptClient,
 } from '../../index';
 import initializeTestRunner, {
     cleanupMochaRegtest,
+    expectWsMsgs,
     setMochaTimeout,
     TestInfo,
 } from '../setup/testRunner';
@@ -120,7 +121,7 @@ describe('Test expected websocket behavior of chronik-client when txs are remove
     let tx2Txid = '';
     let tx3Txid = '';
 
-    let ws: WsEndpoint_InNode;
+    let ws: WsEndpoint;
 
     let subscriptions: Array<WsSubScriptClient> = [];
 
@@ -128,8 +129,8 @@ describe('Test expected websocket behavior of chronik-client when txs are remove
         const { type, hash } =
             cashaddr.getTypeAndHashFromOutputScript(P2SH_OP_TRUE);
 
-        // Initialize a new instance of ChronikClientNode
-        const chronik = new ChronikClientNode(chronikUrl);
+        // Initialize a new instance of ChronikClient
+        const chronik = new ChronikClient(chronikUrl);
 
         // Connect to the websocket with a testable onMessage handler
         ws = chronik.ws({
@@ -142,7 +143,7 @@ describe('Test expected websocket behavior of chronik-client when txs are remove
         // Subscribe to addresses and scripts
         subscriptions = [
             {
-                scriptType: type as ScriptType_InNode,
+                scriptType: type as ScriptType,
                 payload: hash,
             },
         ];
@@ -161,6 +162,9 @@ describe('Test expected websocket behavior of chronik-client when txs are remove
         tx1Txid = await get_tx1_txid;
         tx2Txid = await get_tx2_txid;
         tx3Txid = await get_tx3_txid;
+
+        // Wait for expected ws msgs
+        await expectWsMsgs(4, msgCollector);
 
         // The first msg will be for the cointx
         const coinTxMsg = msgCollector.shift();
@@ -187,6 +191,8 @@ describe('Test expected websocket behavior of chronik-client when txs are remove
         expect(msgCollector.length).to.eql(0);
     });
     it('Conflicting block is mined', async () => {
+        // Wait for expected ws msgs
+        await expectWsMsgs(4, msgCollector);
         // The three txs AddedToMempool in the previous step are now RemovedFromMempool
         // Msgs come in order, with the most-recently broadcast tx removed first
         for (const txid of [tx3Txid, tx2Txid, tx1Txid]) {

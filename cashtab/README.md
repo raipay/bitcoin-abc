@@ -13,7 +13,20 @@
 
 ## Development
 
+Note that some Cashtab dependencies are pulled locally from the monorepo. These dependencies must be prepared before running `npm install` for Cashtab.
+
+-   `ecash-lib-wasm` (dependency of `ecash-lib`)
+-   `ecash-lib`
+-   `ecash-agora`
+-   `ecashaddrjs`
+-   `ecash-script`
+-   `chronik-client`
+-   `mock-chronik-client` (for tests)
+
+Please refer to the build instructions in each of these modules in the monorepo.
+
 ```
+cd cashtab/
 npm install
 npm start
 ```
@@ -81,6 +94,8 @@ This includes but is not limited to:
 
 ## Production
 
+Define any environment variables important for deployment, e.g. your Google Analytics key in `.env.`
+
 In the project directory, run:
 
 ```
@@ -110,10 +125,13 @@ A web app can request an extension user's active address. For an example impleme
 
 ## Docker deployment
 
+See `cashtab.Dockerfile` in the top level of the monorepo. To test this build locally, you must manually change `ARG NGINX_CONF=nginx.conf` to `ARG NGINX_CONF=nginx-preview.conf`.
+
+Then,
+
 ```
-npm install
-docker-compose build
-docker-compose up
+docker build -f cashtab.Dockerfile -t cashtab_local .
+docker run --rm -p 8080:80 --name cashtab cashtab_local
 ```
 
 Navigate to `localhost:8080` to see the app.

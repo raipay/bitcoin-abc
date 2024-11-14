@@ -20,33 +20,6 @@ import { when } from 'jest-when';
 import appConfig from 'config/app';
 import CashtabTestWrapper from 'components/App/fixtures/CashtabTestWrapper';
 
-// https://stackoverflow.com/questions/39830580/jest-test-fails-typeerror-window-matchmedia-is-not-a-function
-Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: jest.fn().mockImplementation(query => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: jest.fn(), // Deprecated
-        removeListener: jest.fn(), // Deprecated
-        addEventListener: jest.fn(),
-        removeEventListener: jest.fn(),
-        dispatchEvent: jest.fn(),
-    })),
-});
-
-// https://stackoverflow.com/questions/64813447/cannot-read-property-addlistener-of-undefined-react-testing-library
-window.matchMedia = query => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener: jest.fn(), // deprecated
-    removeListener: jest.fn(), // deprecated
-    addEventListener: jest.fn(),
-    removeEventListener: jest.fn(),
-    dispatchEvent: jest.fn(),
-});
-
 describe('<Etokens />', () => {
     beforeEach(() => {
         // Mock the fetch call for Cashtab's price API
@@ -95,8 +68,15 @@ describe('<Etokens />', () => {
 
         const renderedTokens = screen.getAllByTitle('Token List Item');
 
-        // We render all 55 tokens
-        expect(renderedTokens.length).toBe(55);
+        // The 'All' switch is "on" on load
+        const showAllSwitch = screen.getByTitle('Toggle All');
+        expect(showAllSwitch).toHaveProperty('checked', true);
+        // The 'All' switch is disabled when it is on
+        expect(showAllSwitch).toHaveProperty('disabled', true);
+
+        // We render all 57 tokens
+        expect(renderedTokens.length).toBe(57);
+
         // Tokens are sorted alphabetically
         expect(renderedTokens[0]).toHaveTextContent('223');
         expect(renderedTokens[1]).toHaveTextContent('ABC');
@@ -122,21 +102,49 @@ describe('<Etokens />', () => {
         // The lone rendered token is what we searched for
         expect(screen.getByTitle('Token List Item')).toHaveTextContent('VSP');
 
+        // If we switch to "Show NFTs" while the search is showing one non-NFT, we see no tokens
+        await userEvent.click(screen.getByTitle('Toggle NFTs'));
+
+        // The 'All' switch is toggled off automatically
+        expect(showAllSwitch).toHaveProperty('checked', false);
+        // The 'All' switch is NOT disabled when another switch is toggled
+        expect(showAllSwitch).toHaveProperty('disabled', false);
+
+        // we see no tokens, as 'vsp' only matches a fungible token, and now we are showing NFTs
+        // We get expected msg for no search result
+        expect(screen.getByText('No tokens matching vsp')).toBeInTheDocument();
+
+        // If we delete the query, now we see only NFTs
+        await userEvent.clear(searchInput);
+
+        expect(screen.getAllByTitle('Token List Item').length).toBe(1);
+        expect(screen.getAllByTitle('Token List Item')[0]).toHaveTextContent(
+            'S5',
+        );
+
+        // If we hit the switch to show collections, we see the only collection
+        // If we switch to "Show NFTs" while the search is showing one non-NFT, we see no tokens
+        await userEvent.click(screen.getByTitle('Toggle Collections'));
+        expect(screen.getAllByTitle('Token List Item').length).toBe(1);
+        expect(screen.getAllByTitle('Token List Item')[0]).toHaveTextContent(
+            /MASCOTS/,
+        );
+
         // We can also search by the name
         await userEvent.clear(searchInput);
         await userEvent.type(searchInput, 'vespene gas');
 
-        // We get the same token, and only this token
+        // But, because the collections switch is on, we have no collections that match this
+        expect(
+            screen.getByText('No tokens matching vespene gas'),
+        ).toBeInTheDocument();
+
+        // Ok, let's hit the switch to show fungible tokens
+        await userEvent.click(screen.getByTitle('Toggle Fungible Tokens'));
+
+        // Now we get the expected token, and only this token
         expect(screen.getAllByTitle('Token List Item').length).toBe(1);
         expect(screen.getByTitle('Token List Item')).toHaveTextContent('VSP');
-
-        // We can also search by the name
-        await userEvent.clear(searchInput);
-        await userEvent.type(searchInput, 'vespene gas');
-
-        // We get the same token, and only this token
-        expect(screen.getAllByTitle('Token List Item').length).toBe(1);
-        expect(screen.getByTitle('Token List Item')).toHaveTextContent('VSP'); // We can also search by the name
 
         // We get expected msg if our search has no results
         await userEvent.clear(searchInput);
@@ -147,5 +155,23 @@ describe('<Etokens />', () => {
 
         // We get expected msg for no search result
         expect(screen.getByText('No tokens matching zz')).toBeInTheDocument();
+
+        // We can't find MASCOTS because it's a collection and the Show Fungible Tokens toggle is on
+        await userEvent.clear(searchInput);
+        await userEvent.type(searchInput, 'masc');
+
+        // No tokens are found
+        expect(screen.queryByTitle('Token List Item')).not.toBeInTheDocument();
+
+        // We get expected msg for no search result
+        expect(screen.getByText('No tokens matching masc')).toBeInTheDocument();
+
+        // We hit show all and now it's there
+        await userEvent.click(screen.getByTitle('Toggle All'));
+        expect(showAllSwitch).toHaveProperty('checked', true);
+        expect(screen.getAllByTitle('Token List Item').length).toBe(1);
+        expect(screen.getByTitle('Token List Item')).toHaveTextContent(
+            'MASCOTS',
+        );
     });
 });

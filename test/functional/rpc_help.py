@@ -87,8 +87,8 @@ class HelpRpcTest(BitcoinTestFramework):
 
         for argname, convert in converts_by_argname.items():
             if all(convert) != any(convert):
-                # Only allow dummy to fail consistency check
-                assert argname == "dummy", (
+                # Only allow dummy and psbt to fail consistency check
+                assert argname in ["dummy", "psbt"], (
                     "WARNING: conversion mismatch for argument named "
                     f"{argname} ({list(zip(all_methods_by_argname[argname], converts_by_argname[argname]))})"
                 )
@@ -100,9 +100,7 @@ class HelpRpcTest(BitcoinTestFramework):
         assert_raises_rpc_error(-1, "help", node.help, "foo", "bar")
 
         # invalid argument
-        assert_raises_rpc_error(
-            -1, "JSON value is not a string as expected", node.help, 0
-        )
+        assert_raises_rpc_error(-3, "not of expected type string", node.help, 0)
 
         # help of unknown command
         assert_equal(node.help("foo"), "help: unknown command: foo")

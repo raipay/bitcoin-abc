@@ -6,6 +6,7 @@
 import os
 import shutil
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -15,9 +16,7 @@ class WalletHDTest(BitcoinTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 2
         self.extra_args = [[], ["-keypool=0"]]
-        # whitelist peers to speed up tx relay / mempool sync
-        for args in self.extra_args:
-            args.append("-whitelist=noban@127.0.0.1")
+        self.noban_tx_relay = True
 
         self.supports_cli = False
 
@@ -51,7 +50,7 @@ class WalletHDTest(BitcoinTestFramework):
 
         # Derive some HD addresses and remember the last
         # Also send funds to each add
-        self.generate(self.nodes[0], 101)
+        self.generate(self.nodes[0], COINBASE_MATURITY + 1)
         hd_add = None
         NUM_HD_ADDS = 10
         for i in range(1, NUM_HD_ADDS + 1):
@@ -210,14 +209,14 @@ class WalletHDTest(BitcoinTestFramework):
                 -5, "Invalid private key", self.nodes[1].sethdseed, False, "not_wif"
             )
             assert_raises_rpc_error(
-                -1,
-                "JSON value is not a boolean as expected",
+                -3,
+                "not of expected type bool",
                 self.nodes[1].sethdseed,
                 "Not_bool",
             )
             assert_raises_rpc_error(
-                -1,
-                "JSON value is not a string as expected",
+                -3,
+                "not of expected type string",
                 self.nodes[1].sethdseed,
                 False,
                 True,

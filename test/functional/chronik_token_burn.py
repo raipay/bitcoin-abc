@@ -11,6 +11,7 @@ from test_framework.address import (
     P2SH_OP_TRUE,
     SCRIPTSIG_OP_TRUE,
 )
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.chronik.alp import alp_burn, alp_genesis, alp_opreturn, alp_send
 from test_framework.chronik.slp import slp_burn, slp_genesis
 from test_framework.chronik.token_tx import TokenTx
@@ -52,14 +53,24 @@ class ChronikTokenBurn(BitcoinTestFramework):
         coinblock = node.getblock(coinblockhash)
         cointx = coinblock["tx"][0]
 
-        self.generatetoaddress(node, 100, ADDRESS_ECREG_UNSPENDABLE)
+        self.generatetoaddress(node, COINBASE_MATURITY, ADDRESS_ECREG_UNSPENDABLE)
 
         coinvalue = 5000000000
+
+        # Make a normal non-token tx
+        non_token_tx = CTransaction()
+        non_token_tx.vin = [CTxIn(COutPoint(int(cointx, 16), 0), SCRIPTSIG_OP_TRUE)]
+        non_token_tx.vout = [
+            CTxOut(coinvalue - 1000, P2SH_OP_TRUE),
+            CTxOut(546, P2SH_OP_TRUE),
+        ]
+        non_token_tx.rehash()
+        node.sendrawtransaction(non_token_tx.serialize().hex())
 
         txs = []
 
         tx = CTransaction()
-        tx.vin = [CTxIn(COutPoint(int(cointx, 16), 0), SCRIPTSIG_OP_TRUE)]
+        tx.vin = [CTxIn(COutPoint(int(non_token_tx.hash, 16), 0), SCRIPTSIG_OP_TRUE)]
         tx.vout = [
             CTxOut(
                 0,
@@ -213,6 +224,7 @@ class ChronikTokenBurn(BitcoinTestFramework):
         # Burns SLP mint baton + ALP tokens without any OP_RETURN
         tx = CTransaction()
         tx.vin = [
+            CTxIn(COutPoint(int(non_token_tx.hash, 16), 1), SCRIPTSIG_OP_TRUE),
             CTxIn(COutPoint(int(genesis_slp.txid, 16), 2), SCRIPTSIG_OP_TRUE),
             CTxIn(COutPoint(int(burn_alp.txid, 16), 1), SCRIPTSIG_OP_TRUE),
         ]
@@ -240,6 +252,7 @@ class ChronikTokenBurn(BitcoinTestFramework):
                 ),
             ],
             inputs=[
+                pb.Token(),
                 slp_token(token_id=genesis_slp.txid, is_mint_baton=True),
                 alp_token(token_id=genesis_alp.txid, amount=400, entry_idx=1),
             ],

@@ -24,7 +24,6 @@
 # SOFTWARE.
 from __future__ import annotations
 
-import hashlib
 import json
 import queue
 import random
@@ -36,8 +35,6 @@ from collections import defaultdict
 from contextlib import suppress
 from io import BytesIO
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
-
-import ecdsa
 
 from . import bitcoin, schnorr
 from .address import (
@@ -55,6 +52,8 @@ from .address import (
 from .bitcoin import TYPE_SCRIPT, OpCodes, ScriptType
 from .caches import ExpiringCache
 from .constants import DEFAULT_TXIN_SEQUENCE
+from .crypto import Hash, hash_160
+from .ecc import ECPrivkey, ECPubkey, sig_string_from_der_sig
 
 #
 # Workalike python implementation of Bitcoin's CDataStream class.
@@ -362,10 +361,11 @@ class TxInput:
             self._address = address
             return
 
-        # p2sh transaction, m of n
         if not matches_p2sh_ecdsa_multisig_scriptsig(decoded):
+            self._type = ScriptType.unknown
             print_error("cannot find address in input script", bh2u(self.scriptsig))
             return
+        # p2sh transaction, m of n
         x_sig = [x[1] for x in decoded[1:-1]]
         m, n, x_pubkeys, pubkeys, redeemScript = parse_redeemScript(decoded[-1][1])
         # write result in d
@@ -376,7 +376,7 @@ class TxInput:
         self._pubkeys = pubkeys
         assert len(self._signatures) in (m, n)
         assert len(self._pubkeys) == n
-        self._address = Address.from_P2SH_hash(bitcoin.hash_160(redeemScript))
+        self._address = Address.from_P2SH_hash(hash_160(redeemScript))
 
     @property
     def type(self) -> ScriptType:
@@ -507,18 +507,10 @@ class TxInput:
         d["num_sig"] = 0
 
         if self.scriptsig is not None:
-            try:
-                self.parse_scriptsig()
-            except Exception as e:
-                print_error(
-                    f"{__name__}: Failed to parse tx input {self.outpoint}, probably a "
-                    f"p2sh (non multisig?). Exception was: {repr(e)}"
-                )
-                # that whole heuristic codepath is fragile; just ignore it when it dies.
-                # failing tx examples:
-                # 1c671eb25a20aaff28b2fa4254003c201155b54c73ac7cf9c309d835deed85ee
-                # 08e1026eaf044127d7103415570afd564dfac3131d7a5e4b645f591cd349bb2c
-                # override these once more just to make sure
+            self.parse_scriptsig()
+
+            if self.type == ScriptType.unknown:
+                # Unsupported p2sh type (only standard multisig schemes are supported)
                 d["address"] = UnknownAddress()
                 d["type"] = "unknown"
                 return d
@@ -1147,7 +1139,7 @@ class Transaction:
             if sig_final in txin.signatures:
                 # skip if we already have this signature
                 continue
-            pre_hash = bitcoin.Hash(self.serialize_preimage(i))
+            pre_hash = Hash(self.serialize_preimage(i))
             added = False
             reason = []
             for j, pubkey in enumerate(pubkeys):
@@ -1322,13 +1314,11 @@ class Transaction:
                 else:
                     del cmeta, res, self._cached_sighash_tup
 
-        hashPrevouts = bitcoin.Hash(
-            b"".join(txin.outpoint.serialize() for txin in inputs)
-        )
-        hashSequence = bitcoin.Hash(
+        hashPrevouts = Hash(b"".join(txin.outpoint.serialize() for txin in inputs))
+        hashSequence = Hash(
             b"".join(txin.sequence.to_bytes(4, "little") for txin in inputs)
         )
-        hashOutputs = bitcoin.Hash(b"".join(o.serialize() for o in outputs))
+        hashOutputs = Hash(b"".join(o.serialize() for o in outputs))
 
         res = hashPrevouts, hashSequence, hashOutputs
         # cach resulting value, along with some minimal metadata to defensively
@@ -1395,7 +1385,7 @@ class Transaction:
 
     @staticmethod
     def _txid(raw_hex: bytes) -> str:
-        return bitcoin.Hash(raw_hex)[::-1].hex()
+        return Hash(raw_hex)[::-1].hex()
 
     def add_inputs(self, inputs: List[TxInput]):
         assert all(isinstance(txin, TxInput) for txin in inputs)
@@ -1504,53 +1494,24 @@ class Transaction:
         if len(sig) == 64:
             # Schnorr signatures are always exactly 64 bytes
             return schnorr.verify(pubkey, sig, msghash)
-        else:
-            from ecdsa import BadDigestError, BadSignatureError
-            from ecdsa.der import UnexpectedDER
 
-            # ECDSA signature
-            try:
-                pubkey_point = bitcoin.ser_to_point(pubkey)
-                vk = bitcoin.MyVerifyingKey.from_public_point(
-                    pubkey_point, curve=ecdsa.curves.SECP256k1
-                )
-                if vk.verify_digest(sig, msghash, sigdecode=ecdsa.util.sigdecode_der):
-                    return True
-            except (
-                AssertionError,
-                ValueError,
-                TypeError,
-                BadSignatureError,
-                BadDigestError,
-                UnexpectedDER,
-            ) as e:
-                # ser_to_point will fail if pubkey is off-curve, infinity, or garbage.
-                # verify_digest may also raise BadDigestError and BadSignatureError
-                if isinstance(reason, list):
-                    reason.insert(0, repr(e))
-            except Exception as e:
-                print_error(
-                    "[Transaction.verify_signature] unexpected exception", repr(e)
-                )
-                if isinstance(reason, list):
-                    reason.insert(0, repr(e))
-            return False
+        # ECDSA signature
+        try:
+            public_key = ECPubkey(pubkey)
+            sig_string = sig_string_from_der_sig(sig)
+            return public_key.verify_message_hash(sig_string, msghash)
+        except Exception as e:
+            # ser_to_point will fail if pubkey is off-curve, infinity, or garbage.
+            # verify_digest may also raise BadDigestError and BadSignatureError
+            print_error("[Transaction.verify_signature] unexpected exception", repr(e))
+            if isinstance(reason, list):
+                reason.insert(0, repr(e))
+        return False
 
     @staticmethod
     def _ecdsa_sign(sec, pre_hash):
-        pkey = bitcoin.regenerate_key(sec)
-        secexp = pkey.secret
-        private_key = bitcoin.MySigningKey.from_secret_exponent(
-            secexp, curve=ecdsa.curves.SECP256k1
-        )
-        public_key = private_key.get_verifying_key()
-        sig = private_key.sign_digest_deterministic(
-            pre_hash, hashfunc=hashlib.sha256, sigencode=ecdsa.util.sigencode_der
-        )
-        assert public_key.verify_digest(
-            sig, pre_hash, sigdecode=ecdsa.util.sigdecode_der
-        )
-        return sig
+        privkey = ECPrivkey(sec)
+        return privkey.sign_transaction(pre_hash)
 
     @staticmethod
     def _schnorr_sign(pubkey: bytes, sec: bytes, pre_hash: bytes) -> bytes:
@@ -1582,14 +1543,12 @@ class Transaction:
 
     def _sign_txin(self, i, j, sec, compressed, *, use_cache=False):
         """Note: precondition is self._inputs is valid (ie: tx is already deserialized)"""
-        pubkey = bitcoin.public_key_from_private_key(sec, compressed)
+        pubkey = ECPrivkey(sec).get_public_key_bytes(compressed)
         # add signature
         nHashType = (
             0x00000041  # hardcoded, perhaps should be taken from unsigned input dict
         )
-        pre_hash = bitcoin.Hash(
-            self.serialize_preimage(i, nHashType, use_cache=use_cache)
-        )
+        pre_hash = Hash(self.serialize_preimage(i, nHashType, use_cache=use_cache))
         if self._sign_schnorr:
             sig = self._schnorr_sign(pubkey, sec, pre_hash)
         else:
@@ -1977,7 +1936,7 @@ class Transaction:
             # potential race condition here, popping wrong t -- but in practice w/
             # CPython threading it won't matter
             eph.pop("_fetch", None)
-            print_error(f"fetch_input_data: elapsed {(time.time()-t0):.4f} sec")
+            print_error(f"fetch_input_data: elapsed {(time.time() - t0):.4f} sec")
             if done_callback:
                 done_callback(*done_args)
 

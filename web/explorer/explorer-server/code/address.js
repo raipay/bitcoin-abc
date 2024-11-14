@@ -236,7 +236,7 @@ const renderTxID = data => {
 };
 
 const renderBlockHeight = (_value, _type, row) => {
-    if (row.blockHeight === 0) {
+    if (row.blockHeight === null) {
         return '<div class="ui red horizontal label">Unconfirmed</div>';
     }
     return (
@@ -294,7 +294,7 @@ const datatable = () => {
     const address = getAddress();
 
     $('#address-txs-table').DataTable({
-        dom: 'Bfrtip',
+        paging: false,
         buttons: [
             {
                 extend: 'csv',
@@ -431,6 +431,10 @@ const reRenderPage = params => {
     const { currentPage, pageArray } =
         window.pagination.generatePaginationUIParams();
     window.pagination.generatePaginationUI(currentPage, pageArray);
+};
+
+const rotateArrow = element => {
+    $(element).find('.chevron').toggleClass('rotate-arrow');
 };
 
 $(document).ready(() => {

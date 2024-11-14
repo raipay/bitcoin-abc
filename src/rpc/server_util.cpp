@@ -4,12 +4,14 @@
 
 #include <rpc/server_util.h>
 
+#include <avalanche/processor.h>
+#include <common/args.h>
 #include <net_processing.h>
 #include <node/context.h>
 #include <rpc/protocol.h>
 #include <rpc/request.h>
 #include <txmempool.h>
-#include <util/system.h>
+#include <util/any.h>
 #include <validation.h>
 
 #include <any>
@@ -74,4 +76,12 @@ PeerManager &EnsurePeerman(const NodeContext &node) {
             "Error: Peer-to-peer functionality missing or disabled");
     }
     return *node.peerman;
+}
+
+avalanche::Processor &EnsureAvalanche(const NodeContext &node) {
+    if (!node.avalanche) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR,
+                           "Error: Avalanche processor missing or disabled");
+    }
+    return *node.avalanche;
 }
