@@ -97,8 +97,10 @@ private:
     FlatFileSeq BlockFileSeq() const;
     FlatFileSeq UndoFileSeq() const;
 
+public:
     FILE *OpenUndoFile(const FlatFilePos &pos, bool fReadOnly = false) const;
 
+private:
     bool
     WriteBlockToDisk(const CBlock &block, FlatFilePos &pos,
                      const CMessageHeader::MessageMagic &messageStart) const;

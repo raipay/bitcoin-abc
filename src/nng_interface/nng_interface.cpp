@@ -6,6 +6,7 @@
 #include <optional>
 
 #include <chainparams.h>
+#include <common/args.h>
 #include <consensus/validation.h>
 #include <logging.h>
 #include <node/blockstorage.h>
@@ -118,18 +119,22 @@ class NngRpcServer {
     const node::NodeContext &m_node;
 
     NngRpcErrorCode GetBlock(flatbuffers::FlatBufferBuilder &builder,
+                             const node::BlockManager &blockman,
                              const NngInterface::GetBlockRequest *request);
 
     NngRpcErrorCode
     GetBlockRange(flatbuffers::FlatBufferBuilder &builder,
+                  const node::BlockManager &blockman,
                   const NngInterface::GetBlockRangeRequest *request);
 
     NngRpcErrorCode
     GetBlockSlice(flatbuffers::FlatBufferBuilder &builder,
+                  const node::BlockManager &blockman,
                   const NngInterface::GetBlockSliceRequest *request);
 
     NngRpcErrorCode
     GetUndoSlice(flatbuffers::FlatBufferBuilder &builder,
+                 const node::BlockManager &blockman,
                  const NngInterface::GetUndoSliceRequest *request);
 
     NngRpcErrorCode GetMempool(flatbuffers::FlatBufferBuilder &builder,
@@ -241,16 +246,23 @@ NngRpcErrorCode NngRpcServer::HandleMsg(flatbuffers::FlatBufferBuilder &fbb,
         flatbuffers::GetRoot<NngInterface::RpcCall>(nng_msg_body(incoming_msg));
     switch (rpc->rpc_type()) {
         case NngInterface::RpcRequest_GetBlockRequest: {
-            return GetBlock(fbb, rpc->rpc_as_GetBlockRequest());
+            return GetBlock(fbb, m_node.chainman->ActiveChainstate().m_blockman,
+                            rpc->rpc_as_GetBlockRequest());
         }
         case NngInterface::RpcRequest_GetBlockRangeRequest: {
-            return GetBlockRange(fbb, rpc->rpc_as_GetBlockRangeRequest());
+            return GetBlockRange(fbb,
+                                 m_node.chainman->ActiveChainstate().m_blockman,
+                                 rpc->rpc_as_GetBlockRangeRequest());
         }
         case NngInterface::RpcRequest_GetBlockSliceRequest: {
-            return GetBlockSlice(fbb, rpc->rpc_as_GetBlockSliceRequest());
+            return GetBlockSlice(fbb,
+                                 m_node.chainman->ActiveChainstate().m_blockman,
+                                 rpc->rpc_as_GetBlockSliceRequest());
         }
         case NngInterface::RpcRequest_GetUndoSliceRequest: {
-            return GetUndoSlice(fbb, rpc->rpc_as_GetUndoSliceRequest());
+            return GetUndoSlice(fbb,
+                                m_node.chainman->ActiveChainstate().m_blockman,
+                                rpc->rpc_as_GetUndoSliceRequest());
         }
         case NngInterface::RpcRequest_GetMempoolRequest: {
             return GetMempool(fbb, rpc->rpc_as_GetMempoolRequest());
@@ -397,14 +409,15 @@ size_t GetFirstUndoOffset(const CBlock &block, const CBlockIndex *pindex) {
 }
 
 flatbuffers::Offset<NngInterface::Block>
-CreateFbsBlock(flatbuffers::FlatBufferBuilder &fbb, const CBlock &block,
+CreateFbsBlock(flatbuffers::FlatBufferBuilder &fbb,
+               const node::BlockManager &blockman, const CBlock &block,
                const CBlockIndex *pindex) {
     size_t nDataPos = GetFirstBlockTxOffset(block, pindex);
     size_t nUndoPos = 0;
     CBlockUndo block_undo;
     if (pindex->nHeight) { // Genesis block doesn't have undo data
         nUndoPos = GetFirstUndoOffset(block, pindex);
-        if (!node::UndoReadFromDisk(block_undo, pindex)) {
+        if (!blockman.UndoReadFromDisk(block_undo, *pindex)) {
             return 0;
         }
     }
@@ -426,6 +439,7 @@ CreateFbsBlock(flatbuffers::FlatBufferBuilder &fbb, const CBlock &block,
 
 NngRpcErrorCode
 NngRpcServer::GetBlock(flatbuffers::FlatBufferBuilder &fbb,
+                       const node::BlockManager &blockman,
                        const NngInterface::GetBlockRequest *request) {
     LOCK(cs_main);
     NngRpcErrorCode code;
@@ -435,16 +449,17 @@ NngRpcServer::GetBlock(flatbuffers::FlatBufferBuilder &fbb,
         return code;
     }
     CBlock block;
-    if (!node::ReadBlockFromDisk(block, pindex, m_consensus)) {
+    if (!blockman.ReadBlockFromDisk(block, *pindex)) {
         return NngRpcErrorCode::BLOCK_DATA_CORRUPTED;
     }
     fbb.Finish(NngInterface::CreateGetBlockResponse(
-        fbb, CreateFbsBlock(fbb, block, pindex)));
+        fbb, CreateFbsBlock(fbb, blockman, block, pindex)));
     return NngRpcErrorCode::NO_RPC_ERROR;
 }
 
 NngRpcErrorCode
 NngRpcServer::GetBlockRange(flatbuffers::FlatBufferBuilder &fbb,
+                            const node::BlockManager &blockman,
                             const NngInterface::GetBlockRangeRequest *request) {
     LOCK(cs_main);
     const int32_t chain_height = m_node.chainman->ActiveChain().Height();
@@ -467,10 +482,10 @@ NngRpcServer::GetBlockRange(flatbuffers::FlatBufferBuilder &fbb,
     for (auto block_fbs = blocks_fbs.rbegin();
          block_fbs != blocks_fbs.rend() && pindex != nullptr; ++block_fbs) {
         CBlock block;
-        if (!node::ReadBlockFromDisk(block, pindex, m_consensus)) {
+        if (!blockman.ReadBlockFromDisk(block, *pindex)) {
             return NngRpcErrorCode::BLOCK_DATA_CORRUPTED;
         }
-        *block_fbs = CreateFbsBlock(fbb, block, pindex);
+        *block_fbs = CreateFbsBlock(fbb, blockman, block, pindex);
         pindex = pindex->pprev;
     }
     fbb.Finish(NngInterface::CreateGetBlockRangeResponse(
@@ -480,9 +495,10 @@ NngRpcServer::GetBlockRange(flatbuffers::FlatBufferBuilder &fbb,
 
 NngRpcErrorCode
 NngRpcServer::GetBlockSlice(flatbuffers::FlatBufferBuilder &fbb,
+                            const node::BlockManager &blockman,
                             const NngInterface::GetBlockSliceRequest *request) {
     const FlatFilePos filePos(request->file_num(), request->data_pos());
-    CAutoFile file(node::OpenBlockFile(filePos, true), SER_DISK,
+    CAutoFile file(blockman.OpenBlockFile(filePos, true), SER_DISK,
                    CLIENT_VERSION);
     std::vector<uint8_t> data(request->num_bytes());
     try {
@@ -497,9 +513,11 @@ NngRpcServer::GetBlockSlice(flatbuffers::FlatBufferBuilder &fbb,
 
 NngRpcErrorCode
 NngRpcServer::GetUndoSlice(flatbuffers::FlatBufferBuilder &fbb,
+                           const node::BlockManager &blockman,
                            const NngInterface::GetUndoSliceRequest *request) {
     const FlatFilePos filePos(request->file_num(), request->undo_pos());
-    CAutoFile file(node::OpenUndoFile(filePos, true), SER_DISK, CLIENT_VERSION);
+    CAutoFile file(blockman.OpenUndoFile(filePos, true), SER_DISK,
+                   CLIENT_VERSION);
     std::vector<uint8_t> data(request->num_bytes());
     try {
         file.read(MakeWritableByteSpan(data));
@@ -538,8 +556,9 @@ NngRpcServer::GetMempool(flatbuffers::FlatBufferBuilder &fbb,
 
 class NngPubServer final : public CValidationInterface {
 public:
-    NngPubServer(std::set<std::string> enabled_messages)
-        : m_enabled_messages(enabled_messages) {}
+    NngPubServer(std::set<std::string> enabled_messages,
+                 const node::NodeContext &node)
+        : m_enabled_messages(enabled_messages), m_node(node) {}
 
     bool Listen(const std::string &pub_url) {
         NNG_TRY_ERROR(nng_pub0_open(&m_sock),
@@ -558,6 +577,7 @@ public:
 private:
     nng_socket m_sock;
     std::set<std::string> m_enabled_messages;
+    const node::NodeContext &m_node;
 
     void BroadcastMessage(const std::string msg_type,
                           const flatbuffers::FlatBufferBuilder &fbb) {
@@ -615,7 +635,10 @@ private:
         }
         flatbuffers::FlatBufferBuilder fbb;
         fbb.Finish(NngInterface::CreateBlockConnected(
-            fbb, CreateFbsBlock(fbb, *block, pindex), /*txs_conflicted=*/0));
+            fbb,
+            CreateFbsBlock(fbb, m_node.chainman->ActiveChainstate().m_blockman,
+                           *block, pindex),
+            /*txs_conflicted=*/0));
         BroadcastMessage(MSG_BLKCONNECTED, fbb);
     }
 
@@ -626,7 +649,9 @@ private:
         }
         flatbuffers::FlatBufferBuilder fbb;
         fbb.Finish(NngInterface::CreateBlockDisconnected(
-            fbb, CreateFbsBlock(fbb, *block, pindex)));
+            fbb,
+            CreateFbsBlock(fbb, m_node.chainman->ActiveChainstate().m_blockman,
+                           *block, pindex)));
         BroadcastMessage(MSG_BLKDISCONCTD, fbb);
     }
 
@@ -665,7 +690,7 @@ bool RunRpcServer(const node::NodeContext &node,
     return true;
 }
 
-bool RunPubServer() {
+bool RunPubServer(const node::NodeContext &node) {
     if (gArgs.IsArgSet("-nngpub")) {
         std::string pub_url = gArgs.GetArg("-nngpub", "");
         std::vector<std::string> vEnabledMessages = gArgs.GetArgs("-nngpubmsg");
@@ -684,7 +709,7 @@ bool RunPubServer() {
             LogPrintf("Warning: Specified -nngpub, but no -nngpubmsg "
                       "enabled.\n");
         }
-        g_pub_server = std::make_unique<NngPubServer>(enabled_messages);
+        g_pub_server = std::make_unique<NngPubServer>(enabled_messages, node);
         if (!g_pub_server->Listen(pub_url)) {
             return false;
         }
@@ -699,7 +724,7 @@ bool StartNngInterface(const node::NodeContext &node,
     if (!RunRpcServer(node, consensus)) {
         return false;
     }
-    if (!RunPubServer()) {
+    if (!RunPubServer(node)) {
         return false;
     }
     return true;
