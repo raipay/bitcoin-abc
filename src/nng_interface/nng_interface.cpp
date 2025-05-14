@@ -628,7 +628,8 @@ private:
         BroadcastMessage(MSG_MEMPOOLTXREM, fbb);
     }
 
-    void BlockConnected(const std::shared_ptr<const CBlock> &block,
+    void BlockConnected(ChainstateRole role,
+                        const std::shared_ptr<const CBlock> &block,
                         const CBlockIndex *pindex) override {
         if (!IsMessageEnabled(MSG_BLKCONNECTED)) {
             return;
@@ -655,7 +656,8 @@ private:
         BroadcastMessage(MSG_BLKDISCONCTD, fbb);
     }
 
-    void ChainStateFlushed(const CBlockLocator &locator) override {
+    void ChainStateFlushed(ChainstateRole role,
+                           const CBlockLocator &locator) override {
         if (!IsMessageEnabled(MSG_CHAINSTFLUSH)) {
             return;
         }
