@@ -147,24 +147,25 @@ class P2PLeakTest(BitcoinTestFramework):
 
         # Peer that sends a version but not a verack.
         no_verack_idle_peer = self.nodes[0].add_p2p_connection(
-            NoVerackIdlePeer(), wait_for_verack=False
+            NoVerackIdlePeer(), wait_for_connection=False, wait_for_verack=False
         )
 
-        # Send enough ping messages (any non-version message will do) prior
+        # Send a ping message (any non-version message will do) prior
         # to sending version to reach the peer discouragement threshold. This
         # should get us disconnected.
-        for _ in range(DISCOURAGEMENT_THRESHOLD):
-            no_version_disconnect_peer.send_message(msg_ping())
+        no_version_disconnect_peer.send_message(msg_ping())
 
         # Wait until we got the verack in response to the version. Though, don't wait for the node to receive the
         # verack, since we never sent one
-        no_verack_idle_peer.wait_for_verack()
+        no_verack_idle_peer.wait_for_verack(check_connected=False)
 
         no_version_disconnect_peer.wait_until(
             lambda: no_version_disconnect_peer.ever_connected, check_connected=False
         )
         no_version_idle_peer.wait_until(lambda: no_version_idle_peer.ever_connected)
-        no_verack_idle_peer.wait_until(lambda: no_verack_idle_peer.version_received)
+        no_verack_idle_peer.wait_until(
+            lambda: no_verack_idle_peer.version_received, check_connected=False
+        )
 
         # Mine a block and make sure that it's not sent to the connected peers
         self.generate(self.nodes[0], nblocks=1)

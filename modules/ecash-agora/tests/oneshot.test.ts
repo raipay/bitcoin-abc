@@ -17,7 +17,6 @@ import {
     TxInput,
     TxOutput,
     fromHex,
-    initWasm,
     shaRmd160,
     slpGenesis,
     slpSend,
@@ -37,7 +36,7 @@ import { EventEmitter, once } from 'node:events';
 use(chaiAsPromised);
 
 const NUM_COINS = 500;
-const COIN_VALUE = 100000;
+const COIN_VALUE = 100000n;
 
 const SLP_TOKEN_TYPE_NFT1_GROUP = {
     number: 0x81,
@@ -54,13 +53,11 @@ const SLP_TOKEN_TYPE_NFT1_CHILD = {
 describe('SLP', () => {
     let runner: TestRunner;
     let chronik: ChronikClient;
-    let ecc: Ecc;
+    const ecc = new Ecc();
 
     before(async () => {
-        await initWasm();
         runner = await TestRunner.setup('setup_scripts/ecash-agora_base');
         chronik = runner.chronik;
-        ecc = runner.ecc;
         await runner.setupCoins(NUM_COINS, COIN_VALUE);
     });
 
@@ -95,7 +92,7 @@ describe('SLP', () => {
         const buyerPkh = shaRmd160(buyerPk);
         const buyerP2pkh = Script.p2pkh(buyerPkh);
 
-        await runner.sendToScript(50000, sellerP2pkh);
+        await runner.sendToScript(50000n, sellerP2pkh);
 
         const utxos = await chronik.script('p2pkh', toHex(sellerPkh)).utxos();
         expect(utxos.utxos.length).to.equal(1);
@@ -108,7 +105,7 @@ describe('SLP', () => {
                     input: {
                         prevOut: utxo.outpoint,
                         signData: {
-                            value: utxo.value,
+                            sats: utxo.sats,
                             outputScript: sellerP2pkh,
                         },
                     },
@@ -117,20 +114,20 @@ describe('SLP', () => {
             ],
             outputs: [
                 {
-                    value: 0,
+                    sats: 0n,
                     script: slpGenesis(
                         SLP_NFT1_GROUP,
                         {
                             tokenTicker: 'SLP NFT1 GROUP TOKEN',
                             decimals: 4,
                         },
-                        1,
+                        1n,
                     ),
                 },
-                { value: 10000, script: sellerP2pkh },
+                { sats: 10000n, script: sellerP2pkh },
             ],
         });
-        const genesisTx = txBuildGenesisGroup.sign(ecc);
+        const genesisTx = txBuildGenesisGroup.sign();
         const genesisTxid = (await chronik.broadcastTx(genesisTx.ser())).txid;
         const groupTokenId = genesisTxid;
 
@@ -157,7 +154,7 @@ describe('SLP', () => {
                             outIdx: 1,
                         },
                         signData: {
-                            value: 10000,
+                            sats: 10000n,
                             outputScript: sellerP2pkh,
                         },
                     },
@@ -166,20 +163,20 @@ describe('SLP', () => {
             ],
             outputs: [
                 {
-                    value: 0,
+                    sats: 0n,
                     script: slpGenesis(
                         SLP_NFT1_CHILD,
                         {
                             tokenTicker: 'SLP NFT1 CHILD TOKEN',
                             decimals: 0,
                         },
-                        1,
+                        1n,
                     ),
                 },
-                { value: 8000, script: sellerP2pkh },
+                { sats: 8000n, script: sellerP2pkh },
             ],
         });
-        const genesisChildTx = txBuildGenesisChild.sign(ecc);
+        const genesisChildTx = txBuildGenesisChild.sign();
         const genesisChildTxid = (
             await chronik.broadcastTx(genesisChildTx.ser())
         ).txid;
@@ -217,10 +214,10 @@ describe('SLP', () => {
         //    covenant that asks for 80000 sats
         const enforcedOutputs: TxOutput[] = [
             {
-                value: BigInt(0),
-                script: slpSend(childTokenId, SLP_NFT1_CHILD, [0, 1]),
+                sats: BigInt(0),
+                script: slpSend(childTokenId, SLP_NFT1_CHILD, [0n, 1n]),
             },
-            { value: BigInt(80000), script: sellerP2pkh },
+            { sats: BigInt(80000), script: sellerP2pkh },
         ];
         const agoraOneshot = new AgoraOneshot({
             enforcedOutputs,
@@ -237,7 +234,7 @@ describe('SLP', () => {
                             outIdx: 1,
                         },
                         signData: {
-                            value: 8000,
+                            sats: 8000n,
                             outputScript: sellerP2pkh,
                         },
                     },
@@ -246,13 +243,13 @@ describe('SLP', () => {
             ],
             outputs: [
                 {
-                    value: 0,
-                    script: slpSend(childTokenId, SLP_NFT1_CHILD, [1]),
+                    sats: 0n,
+                    script: slpSend(childTokenId, SLP_NFT1_CHILD, [1n]),
                 },
-                { value: 7000, script: agoraAdP2sh },
+                { sats: 7000n, script: agoraAdP2sh },
             ],
         });
-        const adSetupTx = txBuildAdSetup.sign(ecc);
+        const adSetupTx = txBuildAdSetup.sign();
         const adSetupTxid = (await chronik.broadcastTx(adSetupTx.ser())).txid;
 
         // 4. Seller finishes offer setup + sends NFT to the advertised P2SH
@@ -267,7 +264,7 @@ describe('SLP', () => {
                             outIdx: 1,
                         },
                         signData: {
-                            value: 7000,
+                            sats: 7000n,
                             redeemScript: agoraAdScript,
                         },
                     },
@@ -276,13 +273,13 @@ describe('SLP', () => {
             ],
             outputs: [
                 {
-                    value: 0,
-                    script: slpSend(childTokenId, SLP_NFT1_CHILD, [1]),
+                    sats: 0n,
+                    script: slpSend(childTokenId, SLP_NFT1_CHILD, [1n]),
                 },
-                { value: 546, script: agoraP2sh },
+                { sats: 546n, script: agoraP2sh },
             ],
         });
-        const offerTx = txBuildOffer.sign(ecc);
+        const offerTx = txBuildOffer.sign();
         const offerPromise = listenNext();
         const offerTxid = (await chronik.broadcastTx(offerTx.ser())).txid;
         const offerOutpoint: OutPoint = {
@@ -293,7 +290,7 @@ describe('SLP', () => {
             prevOut: offerOutpoint,
             signData: {
                 redeemScript: agoraScript,
-                value: 546,
+                sats: 546n,
             },
         };
 
@@ -308,7 +305,7 @@ describe('SLP', () => {
             token: {
                 tokenId: childTokenId,
                 tokenType: SLP_TOKEN_TYPE_NFT1_CHILD,
-                amount: '1',
+                atoms: 1n,
                 isMintBaton: false,
             },
             status: 'OPEN',
@@ -349,7 +346,7 @@ describe('SLP', () => {
             [expectedOffer],
         );
 
-        // Use LOKAD ID enpoint + parseAgoraTx to find offers
+        // Use LOKAD ID endpoint + parseAgoraTx to find offers
         const agoraTxs = (
             await chronik.lokadId(toHex(AGORA_LOKAD_ID)).history()
         ).txs;
@@ -372,7 +369,7 @@ describe('SLP', () => {
         });
 
         // 6. Buyer attempts to buy the NFT using 79999 sats, which is rejected
-        const buyerSatsTxid = await runner.sendToScript(90000, buyerP2pkh);
+        const buyerSatsTxid = await runner.sendToScript(90000n, buyerP2pkh);
         const txBuildAcceptFail = new TxBuilder({
             version: 2,
             inputs: [
@@ -391,7 +388,7 @@ describe('SLP', () => {
                             outIdx: 0,
                         },
                         signData: {
-                            value: 90000,
+                            sats: 90000n,
                             outputScript: buyerP2pkh,
                         },
                     },
@@ -400,17 +397,17 @@ describe('SLP', () => {
             ],
             outputs: [
                 {
-                    value: 0,
-                    script: slpSend(childTokenId, SLP_NFT1_CHILD, [0, 1]),
+                    sats: 0n,
+                    script: slpSend(childTokenId, SLP_NFT1_CHILD, [0n, 1n]),
                 },
                 // failure: one sat missing
-                { value: 79999, script: sellerP2pkh },
-                { value: 546, script: buyerP2pkh },
+                { sats: 79999n, script: sellerP2pkh },
+                { sats: 546n, script: buyerP2pkh },
             ],
         });
 
         // Accepting trade failed, must send 80000 sats to seller, but sent 79999
-        const acceptFailTx = txBuildAcceptFail.sign(ecc);
+        const acceptFailTx = txBuildAcceptFail.sign();
         // OP_EQUALVERIFY failed
         assert.isRejected(chronik.broadcastTx(acceptFailTx.ser()));
 
@@ -418,10 +415,10 @@ describe('SLP', () => {
         //    with a new advertisement
         const newEnforcedOutputs: TxOutput[] = [
             {
-                value: BigInt(0),
-                script: slpSend(childTokenId, SLP_NFT1_CHILD, [0, 1]),
+                sats: BigInt(0),
+                script: slpSend(childTokenId, SLP_NFT1_CHILD, [0n, 1n]),
             },
-            { value: BigInt(70000), script: sellerP2pkh },
+            { sats: BigInt(70000), script: sellerP2pkh },
         ];
         const newAgoraOneshot = new AgoraOneshot({
             enforcedOutputs: newEnforcedOutputs,
@@ -430,7 +427,7 @@ describe('SLP', () => {
         const newAgoraScript = newAgoraOneshot.script();
         const newAgoraP2sh = Script.p2sh(shaRmd160(newAgoraScript.bytecode));
         const newAgoraAdScript = newAgoraOneshot.adScript();
-        const cancelFeeSats = 600;
+        const cancelFeeSats = 600n;
         const newAdSetupTxid = await runner.sendToScript(
             cancelFeeSats,
             Script.p2sh(shaRmd160(newAgoraAdScript.bytecode)),
@@ -444,7 +441,7 @@ describe('SLP', () => {
                     outIdx: 0,
                 },
                 signData: {
-                    value: cancelFeeSats,
+                    sats: cancelFeeSats,
                     redeemScript: newAgoraAdScript,
                 },
             },
@@ -456,14 +453,13 @@ describe('SLP', () => {
                 recipientScript: newAgoraP2sh,
                 extraInputs: [offer1AdInput],
             }),
-        ).to.equal(BigInt(cancelFeeSats));
+        ).to.equal(cancelFeeSats);
         const cancelTx = offer1.cancelTx({
-            ecc,
             cancelSk: sellerSk,
             fuelInputs: [offer1AdInput],
             recipientScript: newAgoraP2sh,
         });
-        expect(cancelTx.serSize()).to.equal(cancelFeeSats);
+        expect(cancelTx.serSize()).to.equal(Number(cancelFeeSats));
         const newOfferTxid = (await chronik.broadcastTx(cancelTx.ser())).txid;
         const newOfferOutpoint: OutPoint = {
             txid: newOfferTxid,
@@ -473,7 +469,7 @@ describe('SLP', () => {
             prevOut: newOfferOutpoint,
             signData: {
                 redeemScript: newAgoraScript,
-                value: 546,
+                sats: 546n,
             },
         };
 
@@ -576,7 +572,7 @@ describe('SLP', () => {
             token: {
                 tokenId: childTokenId,
                 tokenType: SLP_TOKEN_TYPE_NFT1_CHILD,
-                amount: '1',
+                atoms: 1n,
                 isMintBaton: false,
             },
             status: 'OPEN',
@@ -624,8 +620,8 @@ describe('SLP', () => {
         // 9. Buyer successfully accepts advertized NFT offer for 70000 sats
         const offer2 = (await agora.activeOffersByTokenId(childTokenId))[0];
         expect(offer2.askedSats()).to.equal(70000n);
-        const acceptFeeSats = 740;
-        const acceptSats = acceptFeeSats + Number(offer2.askedSats());
+        const acceptFeeSats = 740n;
+        const acceptSats = acceptFeeSats + offer2.askedSats();
         const acceptSatsTxid = await runner.sendToScript(
             acceptSats,
             buyerP2pkh,
@@ -637,7 +633,7 @@ describe('SLP', () => {
                     outIdx: 0,
                 },
                 signData: {
-                    value: acceptSats,
+                    sats: acceptSats,
                     outputScript: buyerP2pkh,
                 },
             },
@@ -648,15 +644,14 @@ describe('SLP', () => {
                 recipientScript: buyerP2pkh,
                 extraInputs: [offer2AcceptInput],
             }),
-        ).to.equal(BigInt(acceptFeeSats));
+        ).to.equal(acceptFeeSats);
         const acceptSuccessTx = offer2.acceptTx({
-            ecc,
             covenantSk: buyerSk,
             covenantPk: buyerPk,
             fuelInputs: [offer2AcceptInput],
             recipientScript: buyerP2pkh,
         });
-        expect(acceptSuccessTx.serSize()).to.equal(acceptFeeSats);
+        expect(acceptSuccessTx.serSize()).to.equal(Number(acceptFeeSats));
         const acceptPromise = listenNext();
         const acceptSuccessTxid = (
             await chronik.broadcastTx(acceptSuccessTx.ser())
@@ -696,6 +691,12 @@ describe('SLP', () => {
                 },
                 {
                     ...newExpectedOffer,
+                    takenInfo: {
+                        sats: 70000n,
+                        takerScriptHex:
+                            '76a914531260aa2a199e228c537dfa42c82bea2c7c1f4d88ac',
+                        atoms: 1n,
+                    },
                     status: 'TAKEN',
                 },
             ],

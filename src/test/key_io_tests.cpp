@@ -10,6 +10,7 @@
 #include <key_io.h>
 #include <script/script.h>
 #include <test/util/setup_common.h>
+#include <util/chaintype.h>
 #include <util/strencodings.h>
 
 #include <boost/test/unit_test.hpp>
@@ -25,10 +26,10 @@ BOOST_AUTO_TEST_CASE(key_io_valid_parse) {
     UniValue tests = read_json(json_tests::key_io_valid);
     CKey privkey;
     CTxDestination destination;
-    SelectParams(CBaseChainParams::MAIN);
+    SelectParams(ChainType::MAIN);
 
     for (unsigned int idx = 0; idx < tests.size(); idx++) {
-        UniValue test = tests[idx];
+        const UniValue &test = tests[idx];
         std::string strTest = test.write();
         // Allow for extra stuff (useful for comments)
         if (test.size() < 3) {
@@ -36,10 +37,12 @@ BOOST_AUTO_TEST_CASE(key_io_valid_parse) {
             continue;
         }
         std::string exp_base58string = test[0].get_str();
-        std::vector<uint8_t> exp_payload = ParseHex(test[1].get_str());
+        const std::vector<std::byte> exp_payload{
+            ParseHex<std::byte>(test[1].get_str())};
         const UniValue &metadata = test[2].get_obj();
         bool isPrivkey = metadata.find_value("isPrivkey").get_bool();
-        SelectParams(metadata.find_value("chain").get_str());
+        SelectParams(ChainTypeFromString(metadata.find_value("chain").get_str())
+                         .value());
         bool try_case_flip =
             metadata.find_value("tryCaseFlip").isNull()
                 ? false
@@ -51,9 +54,7 @@ BOOST_AUTO_TEST_CASE(key_io_valid_parse) {
             BOOST_CHECK_MESSAGE(privkey.IsValid(), "!IsValid:" + strTest);
             BOOST_CHECK_MESSAGE(privkey.IsCompressed() == isCompressed,
                                 "compressed mismatch:" + strTest);
-            BOOST_CHECK_MESSAGE(privkey.size() == exp_payload.size() &&
-                                    std::equal(privkey.begin(), privkey.end(),
-                                               exp_payload.begin()),
+            BOOST_CHECK_MESSAGE(Span{privkey} == Span{exp_payload},
                                 "key mismatch:" + strTest);
 
             // Private key must be invalid public key
@@ -98,7 +99,7 @@ BOOST_AUTO_TEST_CASE(key_io_valid_gen) {
     UniValue tests = read_json(json_tests::key_io_valid);
 
     for (unsigned int idx = 0; idx < tests.size(); idx++) {
-        UniValue test = tests[idx];
+        const UniValue &test = tests[idx];
         std::string strTest = test.write();
         // Allow for extra stuff (useful for comments)
         if (test.size() < 3) {
@@ -109,7 +110,8 @@ BOOST_AUTO_TEST_CASE(key_io_valid_gen) {
         std::vector<uint8_t> exp_payload = ParseHex(test[1].get_str());
         const UniValue &metadata = test[2].get_obj();
         bool isPrivkey = metadata.find_value("isPrivkey").get_bool();
-        SelectParams(metadata.find_value("chain").get_str());
+        SelectParams(ChainTypeFromString(metadata.find_value("chain").get_str())
+                         .value());
         if (isPrivkey) {
             bool isCompressed = metadata.find_value("isCompressed").get_bool();
             CKey key;
@@ -127,7 +129,7 @@ BOOST_AUTO_TEST_CASE(key_io_valid_gen) {
         }
     }
 
-    SelectParams(CBaseChainParams::MAIN);
+    SelectParams(ChainType::MAIN);
 }
 
 // Goal: check that base58 parsing code is robust against a variety of corrupted
@@ -139,7 +141,7 @@ BOOST_AUTO_TEST_CASE(key_io_invalid) {
     CTxDestination destination;
 
     for (unsigned int idx = 0; idx < tests.size(); idx++) {
-        UniValue test = tests[idx];
+        const UniValue &test = tests[idx];
         std::string strTest = test.write();
         // Allow for extra stuff (useful for comments)
         if (test.size() < 1) {
@@ -150,8 +152,7 @@ BOOST_AUTO_TEST_CASE(key_io_invalid) {
 
         // must be invalid as public and as private key
         for (const auto &chain :
-             {CBaseChainParams::MAIN, CBaseChainParams::TESTNET,
-              CBaseChainParams::REGTEST}) {
+             {ChainType::MAIN, ChainType::TESTNET, ChainType::REGTEST}) {
             SelectParams(chain);
             destination = DecodeLegacyAddr(exp_base58string, Params());
             BOOST_CHECK_MESSAGE(!IsValidDestination(destination),

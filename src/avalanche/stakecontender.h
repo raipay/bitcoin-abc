@@ -24,6 +24,7 @@ struct ProofId;
  */
 struct StakeContenderId : public uint256 {
     explicit StakeContenderId() : uint256() {}
+    explicit StakeContenderId(const uint256 &b) : uint256(b) {}
     explicit StakeContenderId(const BlockHash &prevblockhash,
                               const ProofId &proofid)
         : uint256(Hash(prevblockhash, proofid)) {}
@@ -35,7 +36,7 @@ struct StakeContenderId : public uint256 {
      * scale-independent, we can simplify by removing constants and use base 2
      * logarithm. Inspired by: https://stackoverflow.com/a/30226926.
      */
-    double ComputeProofRewardRank(uint32_t proofScore) {
+    double ComputeProofRewardRank(uint32_t proofScore) const {
         return (256.0 - std::log2(UintToArith256(*this).getdouble())) /
                proofScore;
     }

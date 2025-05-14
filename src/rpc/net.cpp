@@ -22,6 +22,7 @@
 #include <rpc/util.h>
 #include <sync.h>
 #include <timedata.h>
+#include <util/chaintype.h>
 #include <util/strencodings.h>
 #include <util/string.h>
 #include <util/time.h>
@@ -195,7 +196,7 @@ static RPCHelpMan getpeerinfo() {
                        "the bytes sent are 0.\n"
                        "Only known message types can appear as keys in the "
                        "object."}}},
-                    {RPCResult::Type::OBJ,
+                    {RPCResult::Type::OBJ_DYN,
                      "bytesrecv_per_msg",
                      "",
                      {{RPCResult::Type::NUM, "msg",
@@ -207,7 +208,9 @@ static RPCHelpMan getpeerinfo() {
                        "of unknown message types are listed under '" +
                            NET_MESSAGE_COMMAND_OTHER + "'."}}},
                     {RPCResult::Type::NUM, "availability_score",
-                     "Avalanche availability score of this node (if any)"},
+                     "DEPRECATED: Avalanche availability score of this node "
+                     "(if any). Only present if the "
+                     "deprecatedrpc=node_availability_score option is enabled"},
                 }},
             }},
         },
@@ -218,6 +221,7 @@ static RPCHelpMan getpeerinfo() {
             NodeContext &node = EnsureAnyNodeContext(request.context);
             const CConnman &connman = EnsureConnman(node);
             const PeerManager &peerman = EnsurePeerman(node);
+            const ArgsManager &argsman = EnsureArgsman(node);
 
             std::vector<CNodeStats> vstats;
             connman.GetNodeStats(vstats);
@@ -323,7 +327,9 @@ static RPCHelpMan getpeerinfo() {
                 obj.pushKV("connection_type",
                            ConnectionTypeAsString(stats.m_conn_type));
 
-                if (stats.m_availabilityScore) {
+                if (IsDeprecatedRPCEnabled(argsman,
+                                           "node_availability_score") &&
+                    stats.m_availabilityScore) {
                     obj.pushKV("availability_score",
                                *stats.m_availabilityScore);
                 }
@@ -347,7 +353,7 @@ static RPCHelpMan addnode() {
         "will not be synced from).\n",
         {
             {"node", RPCArg::Type::STR, RPCArg::Optional::NO,
-             "The node (see getpeerinfo for nodes)"},
+             "The address of the peer to connect to"},
             {"command", RPCArg::Type::STR, RPCArg::Optional::NO,
              "'add' to add a node to the list, 'remove' to remove a "
              "node from the list, 'onetry' to try a connection to the "
@@ -359,34 +365,31 @@ static RPCHelpMan addnode() {
             HelpExampleRpc("addnode", "\"192.168.0.6:8333\", \"onetry\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            std::string strCommand;
-            if (!request.params[1].isNull()) {
-                strCommand = request.params[1].get_str();
-            }
-
-            if (strCommand != "onetry" && strCommand != "add" &&
-                strCommand != "remove") {
+            const auto command{self.Arg<std::string>("command")};
+            if (command != "onetry" && command != "add" &&
+                command != "remove") {
                 throw std::runtime_error(self.ToString());
             }
 
             NodeContext &node = EnsureAnyNodeContext(request.context);
             CConnman &connman = EnsureConnman(node);
 
-            std::string strNode = request.params[0].get_str();
+            const auto node_arg{self.Arg<std::string>("node")};
+            // TODO: apply core#29277 when backporting the "v2transport" arg
 
-            if (strCommand == "onetry") {
+            if (command == "onetry") {
                 CAddress addr;
-                connman.OpenNetworkConnection(addr, false, nullptr,
-                                              strNode.c_str(),
-                                              ConnectionType::MANUAL);
+                connman.OpenNetworkConnection(
+                    addr, /*fCountFailure=*/false, /*grantOutbound=*/nullptr,
+                    node_arg.c_str(), ConnectionType::MANUAL);
                 return NullUniValue;
             }
 
-            if ((strCommand == "add") && (!connman.AddNode(strNode))) {
+            if ((command == "add") && (!connman.AddNode(node_arg))) {
                 throw JSONRPCError(RPC_CLIENT_NODE_ALREADY_ADDED,
                                    "Error: Node already added");
-            } else if ((strCommand == "remove") &&
-                       (!connman.RemoveAddedNode(strNode))) {
+            } else if ((command == "remove") &&
+                       (!connman.RemoveAddedNode(node_arg))) {
                 throw JSONRPCError(
                     RPC_CLIENT_NODE_NOT_ADDED,
                     "Error: Node could not be removed. It has not been "
@@ -427,8 +430,7 @@ static RPCHelpMan addconnection() {
                            "\"192.168.0.6:8333\" \"outbound-full-relay\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            if (config.GetChainParams().NetworkIDString() !=
-                CBaseChainParams::REGTEST) {
+            if (config.GetChainParams().GetChainType() != ChainType::REGTEST) {
                 throw std::runtime_error("addconnection is for regression "
                                          "testing (-regtest mode) only.");
             }
@@ -1182,6 +1184,65 @@ static RPCHelpMan addpeeraddress() {
     };
 }
 
+static RPCHelpMan sendmsgtopeer() {
+    return RPCHelpMan{
+        "sendmsgtopeer",
+        "Send a p2p message to a peer specified by id.\n"
+        "The message type and body must be provided, the message header will "
+        "be generated.\n"
+        "This RPC is for testing only.",
+        {
+            {"peer_id", RPCArg::Type::NUM, RPCArg::Optional::NO,
+             "The peer to send the message to."},
+            {"msg_type", RPCArg::Type::STR, RPCArg::Optional::NO,
+             strprintf("The message type (maximum length %i)",
+                       CMessageHeader::COMMAND_SIZE)},
+            {"msg", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The serialized message body to send, in hex, without a message "
+             "header"},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", std::vector<RPCResult>{}},
+        RPCExamples{HelpExampleCli("sendmsgtopeer", "0 \"addr\" \"ffffff\"") +
+                    HelpExampleRpc("sendmsgtopeer", "0 \"addr\" \"ffffff\"")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            const NodeId peer_id{request.params[0].getInt<int64_t>()};
+            const std::string &msg_type{request.params[1].get_str()};
+            if (msg_type.size() > CMessageHeader::COMMAND_SIZE) {
+                throw JSONRPCError(
+                    RPC_INVALID_PARAMETER,
+                    strprintf("Error: msg_type too long, max length is %i",
+                              CMessageHeader::COMMAND_SIZE));
+            }
+            auto msg{TryParseHex<uint8_t>(request.params[2].get_str())};
+            if (!msg.has_value()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "Error parsing input for msg");
+            }
+
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+            CConnman &connman = EnsureConnman(node);
+
+            CSerializedNetMsg msg_ser;
+            msg_ser.data = msg.value();
+            msg_ser.m_type = msg_type;
+
+            bool success = connman.ForNode(peer_id, [&](CNode *node) {
+                connman.PushMessage(node, std::move(msg_ser));
+                return true;
+            });
+
+            if (!success) {
+                throw JSONRPCError(RPC_MISC_ERROR,
+                                   "Error: Could not send message to peer");
+            }
+
+            UniValue ret{UniValue::VOBJ};
+            return ret;
+        },
+    };
+}
+
 void RegisterNetRPCCommands(CRPCTable &t) {
     // clang-format off
     static const CRPCCommand commands[] = {
@@ -1202,6 +1263,7 @@ void RegisterNetRPCCommands(CRPCTable &t) {
         { "network",            getnodeaddresses,        },
         { "hidden",             addconnection,           },
         { "hidden",             addpeeraddress,          },
+        { "hidden",             sendmsgtopeer            },
     };
     // clang-format on
     for (const auto &c : commands) {

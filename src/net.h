@@ -32,6 +32,7 @@
 #include <threadinterrupt.h>
 #include <uint256.h>
 #include <util/check.h>
+#include <util/sock.h>
 #include <util/time.h>
 
 #include <atomic>
@@ -465,8 +466,18 @@ public:
     std::unique_ptr<TransportSerializer> m_serializer;
 
     const NetPermissionFlags m_permission_flags{NetPermissionFlags::None};
-    // socket
-    SOCKET hSocket GUARDED_BY(cs_hSocket);
+
+    /**
+     * Socket used for communication with the node.
+     * May not own a Sock object (after `CloseSocketDisconnect()` or during
+     * tests).
+     * `shared_ptr` (instead of `unique_ptr`) is used to avoid premature close
+     * of the underlying file descriptor by one thread while another thread is
+     * poll(2)-ing it for activity.
+     * @see https://github.com/bitcoin/bitcoin/issues/21744 for details.
+     */
+    std::shared_ptr<Sock> m_sock GUARDED_BY(m_sock_mutex);
+
     /** Total size of all vSendMsg entries. */
     size_t nSendSize GUARDED_BY(cs_vSend){0};
     /** Offset inside the first vSendMsg already sent */
@@ -474,7 +485,7 @@ public:
     uint64_t nSendBytes GUARDED_BY(cs_vSend){0};
     std::deque<std::vector<uint8_t>> vSendMsg GUARDED_BY(cs_vSend);
     Mutex cs_vSend;
-    Mutex cs_hSocket;
+    Mutex m_sock_mutex;
     Mutex cs_vRecv;
 
     RecursiveMutex cs_vProcessMsg;
@@ -653,8 +664,17 @@ public:
 
     // The last time the node sent us a faulty message
     std::atomic<std::chrono::seconds> m_avalanche_last_message_fault{0s};
-    // How much faulty messages did this node accumulate
+    /**
+     * How much faulty messages did this node accumulate. This is reset if no
+     * fault occured for one hour.
+     */
     std::atomic<int> m_avalanche_message_fault_counter{0};
+    /**
+     * This score is incremented for every new faulty message received when
+     * m_avalanche_message_fault_counter is higher than a threshold.
+     * A score of 100 results in a disconnection.
+     */
+    std::atomic<int> m_avalanche_message_fault_score{0};
 
     SteadyMilliseconds m_last_poll{};
 
@@ -693,12 +713,11 @@ public:
     std::atomic<std::chrono::microseconds> m_min_ping_time{
         std::chrono::microseconds::max()};
 
-    CNode(NodeId id, SOCKET hSocketIn, const CAddress &addrIn,
+    CNode(NodeId id, std::shared_ptr<Sock> sock, const CAddress &addrIn,
           uint64_t nKeyedNetGroupIn, uint64_t nLocalHostNonceIn,
           uint64_t nLocalExtraEntropyIn, const CAddress &addrBindIn,
           const std::string &addrNameIn, ConnectionType conn_type_in,
           bool inbound_onion, CNodeOptions &&node_opts = {});
-    ~CNode();
     CNode(const CNode &) = delete;
     CNode &operator=(const CNode &) = delete;
 
@@ -751,7 +770,7 @@ public:
 
     void Release() { nRefCount--; }
 
-    void CloseSocketDisconnect() EXCLUSIVE_LOCKS_REQUIRED(!cs_hSocket);
+    void CloseSocketDisconnect() EXCLUSIVE_LOCKS_REQUIRED(!m_sock_mutex);
 
     void copyStats(CNodeStats &stats)
         EXCLUSIVE_LOCKS_REQUIRED(!m_subver_mutex, !m_addr_local_mutex,
@@ -1033,6 +1052,7 @@ public:
 
     size_t GetNodeCount(ConnectionDirection) const;
     void GetNodeStats(std::vector<CNodeStats> &vstats) const;
+    bool GetNodeStats(NodeId id, CNodeStats &stats) const;
     bool DisconnectNode(const std::string &node);
     bool DisconnectNode(const CSubNet &subnet);
     bool DisconnectNode(const CNetAddr &addr);
@@ -1045,6 +1065,15 @@ public:
     //! which is used to advertise which services we are offering
     //! that peer during `net_processing.cpp:PushNodeVersion()`.
     ServiceFlags GetLocalServices() const;
+
+    //! Updates the local services that this node advertises to other peers
+    //! during connection handshake.
+    void AddLocalServices(ServiceFlags services) {
+        nLocalServices = ServiceFlags(nLocalServices | services);
+    };
+    void RemoveLocalServices(ServiceFlags services) {
+        nLocalServices = ServiceFlags(nLocalServices & ~services);
+    }
 
     uint64_t GetMaxOutboundTarget() const;
     std::chrono::seconds GetMaxOutboundTimeframe() const;
@@ -1082,12 +1111,13 @@ public:
 private:
     struct ListenSocket {
     public:
-        SOCKET socket;
+        std::shared_ptr<Sock> sock;
         inline void AddSocketPermissionFlags(NetPermissionFlags &flags) const {
             NetPermissions::AddFlag(flags, m_permissions);
         }
-        ListenSocket(SOCKET socket_, NetPermissionFlags permissions_)
-            : socket(socket_), m_permissions(permissions_) {}
+        ListenSocket(std::shared_ptr<Sock> sock_,
+                     NetPermissionFlags permissions_)
+            : sock(sock_), m_permissions(permissions_) {}
 
     private:
         NetPermissionFlags m_permissions;
@@ -1117,12 +1147,12 @@ private:
     /**
      * Create a `CNode` object from a socket that has just been accepted and add
      * the node to the `m_nodes` member.
-     * @param[in] hSocket Connected socket to communicate with the peer.
+     * @param[in] sock Connected socket to communicate with the peer.
      * @param[in] permission_flags The peer's permissions.
      * @param[in] addr_bind The address and port at our side of the connection.
      * @param[in] addr The address and port at the peer's side of the connection
      */
-    void CreateNodeFromAcceptedSocket(SOCKET hSocket,
+    void CreateNodeFromAcceptedSocket(std::unique_ptr<Sock> &&sock,
                                       NetPermissionFlags permission_flags,
                                       const CAddress &addr_bind,
                                       const CAddress &addr);
@@ -1135,28 +1165,9 @@ private:
     /**
      * Generate a collection of sockets to check for IO readiness.
      * @param[in] nodes Select from these nodes' sockets.
-     * @param[out] recv_set Sockets to check for read readiness.
-     * @param[out] send_set Sockets to check for write readiness.
-     * @param[out] error_set Sockets to check for errors.
-     * @return true if at least one socket is to be checked
-     *     (the returned set is not empty)
+     * @return sockets to check for readiness
      */
-    bool GenerateSelectSet(const std::vector<CNode *> &nodes,
-                           std::set<SOCKET> &recv_set,
-                           std::set<SOCKET> &send_set,
-                           std::set<SOCKET> &error_set);
-
-    /**
-     * Check which sockets are ready for IO.
-     * @param[in] nodes Select from these nodes' sockets.
-     * @param[out] recv_set Sockets which are ready for read.
-     * @param[out] send_set Sockets which are ready for write.
-     * @param[out] error_set Sockets which have errors.
-     * This calls `GenerateSelectSet()` to gather a list of sockets to check.
-     */
-    void SocketEvents(const std::vector<CNode *> &nodes,
-                      std::set<SOCKET> &recv_set, std::set<SOCKET> &send_set,
-                      std::set<SOCKET> &error_set);
+    Sock::EventsPerSock GenerateWaitSockets(Span<CNode *const> nodes);
 
     /**
      * Check connected and listening sockets for IO readiness and process them
@@ -1167,22 +1178,18 @@ private:
     /**
      * Do the read/write for connected sockets that are ready for IO.
      * @param[in] nodes Nodes to process. The socket of each node is checked
-     * against `recv_set`, `send_set` and `error_set`.
-     * @param[in] recv_set Sockets that are ready for read.
-     * @param[in] send_set Sockets that are ready for send.
-     * @param[in] error_set Sockets that have an exceptional condition (error).
+     *     against `what`.
+     * @param[in] events_per_sock Sockets that are ready for IO.
      */
     void SocketHandlerConnected(const std::vector<CNode *> &nodes,
-                                const std::set<SOCKET> &recv_set,
-                                const std::set<SOCKET> &send_set,
-                                const std::set<SOCKET> &error_set)
+                                const Sock::EventsPerSock &events_per_sock)
         EXCLUSIVE_LOCKS_REQUIRED(!mutexMsgProc);
 
     /**
      * Accept incoming connections, one from each read-ready listening socket.
-     * @param[in] recv_set Sockets that are ready for read.
+     * @param[in] events_per_sock Sockets that are ready for IO.
      */
-    void SocketHandlerListening(const std::set<SOCKET> &recv_set);
+    void SocketHandlerListening(const Sock::EventsPerSock &events_per_sock);
 
     void ThreadSocketHandler() EXCLUSIVE_LOCKS_REQUIRED(!mutexMsgProc);
     void ThreadDNSAddressSeed()
@@ -1212,8 +1219,13 @@ private:
 
     NodeId GetNewNodeId();
 
-    size_t SocketSendData(CNode &node) const
+    /**
+     * (Try to) send data from node's vSendMsg.
+     * Returns (bytes_sent, data_left).
+     */
+    std::pair<size_t, bool> SocketSendData(CNode &node) const
         EXCLUSIVE_LOCKS_REQUIRED(node.cs_vSend);
+
     void DumpAddresses();
 
     // Network stats
@@ -1300,11 +1312,12 @@ private:
      * This data is replicated in each Peer instance we create.
      *
      * This data is not marked const, but after being set it should not
-     * change.
+     * change. Unless AssumeUTXO is started, in which case, the peer
+     * will be limited until the background chain sync finishes.
      *
      * \sa Peer::m_our_services
      */
-    ServiceFlags nLocalServices;
+    std::atomic<ServiceFlags> nLocalServices;
 
     std::unique_ptr<CSemaphore> semOutbound;
     std::unique_ptr<CSemaphore> semAddnode;

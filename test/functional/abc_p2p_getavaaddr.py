@@ -138,13 +138,34 @@ class AvaAddrTest(BitcoinTestFramework):
         for p in peers[:8]:
             node.add_p2p_connection(p)
 
-        # Build some statistics to ensure some addresses will be returned
-        def all_peers_received_poll(avapeers):
-            with p2p_lock:
-                return all(avapeer.poll_received > 0 for avapeer in avapeers)
+        def wait_for_finalized_proofs(peers):
+            return all(
+                node.getrawavalancheproof(uint256_hex(p.proof.proofid)).get(
+                    "finalized", False
+                )
+                for p in peers
+            )
 
-        self.wait_until(lambda: all_peers_received_poll(peers[:8]))
-        node.mockscheduler(AVALANCHE_STATISTICS_INTERVAL)
+        tip = node.getbestblockhash()
+        self.wait_until(lambda: node.isfinalblock(tip))
+        self.wait_until(lambda: wait_for_finalized_proofs(peers[:8]))
+
+        # Build some statistics to ensure some addresses will be returned
+        def all_peers_addr_are_relayable(avapeers):
+            proofids = [uint256_hex(p.proof.proofid) for p in avapeers]
+            valid_proofids = node.getavalancheproofs()["valid"]
+
+            node.mockscheduler(AVALANCHE_STATISTICS_INTERVAL)
+
+            nodeids = []
+            for p in node.getavalanchepeerinfo():
+                nodeids += p["node_list"]
+
+            return all(proofid in valid_proofids for proofid in proofids) and all(
+                node.getavailabilityscore(nodeid) > 0 for nodeid in nodeids
+            )
+
+        self.wait_until(lambda: all_peers_addr_are_relayable(peers[:8]))
 
         requester = node.add_p2p_connection(AddrReceiver())
         requester.send_message(msg_getavaaddr())
@@ -168,8 +189,12 @@ class AvaAddrTest(BitcoinTestFramework):
         # Add some more address so the node has something to respond
         for p in peers[8:]:
             node.add_p2p_connection(p)
-        self.wait_until(lambda: all_peers_received_poll(peers))
-        node.mockscheduler(AVALANCHE_STATISTICS_INTERVAL)
+
+        tip = node.getbestblockhash()
+        self.wait_until(lambda: node.isfinalblock(tip))
+        self.wait_until(lambda: wait_for_finalized_proofs(peers))
+
+        self.wait_until(lambda: all_peers_addr_are_relayable(peers))
 
         # Check our message is now accepted again now that the getavaaddr
         # interval is elapsed
@@ -256,18 +281,18 @@ class AvaAddrTest(BitcoinTestFramework):
             avanode.addr for avanode in avanodes if not avanode.is_responding
         ]
         assert all(
-            p["availability_score"] < 0
+            node.getavailabilityscore(p["id"]) < 0
             for p in peerinfo
             if p["addr"] in muted_addresses
         )
         assert all(
-            p["availability_score"] > 0
+            node.getavailabilityscore(p["id"]) > 0
             for p in peerinfo
             if p["addr"] in responding_addresses
         )
         # Requester has no availability_score because it's not an avalanche
         # peer
-        assert "availability_score" not in peerinfo[-1].keys()
+        assert_equal(node.getavailabilityscore(peerinfo[-1]["id"]), None)
 
         mock_time += MAX_ADDR_SEND_DELAY
         node.setmocktime(mock_time)
@@ -410,7 +435,7 @@ class AvaAddrTest(BitcoinTestFramework):
         def wait_for_availability_score():
             peerinfo = node.getpeerinfo()
             return all(
-                p.get("availability_score", None) == Decimal(0) for p in peerinfo
+                node.getavailabilityscore(p["id"]) == Decimal(0) for p in peerinfo
             )
 
         self.wait_until(wait_for_availability_score)

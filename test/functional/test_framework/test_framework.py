@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2019 The Bitcoin Core developers
+# Copyright (c) 2014-present The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Base class for RPC testing."""
@@ -30,6 +30,7 @@ from .util import (
     assert_equal,
     check_json_precision,
     chronik_port,
+    chronikelectrum_port,
     get_datadir_path,
     initialize_datadir,
     p2p_port,
@@ -122,6 +123,9 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         # skipped. If list is truncated, wallet creation is skipped and keys
         # are not imported.
         self.wallet_names = None
+        # By default the wallet is not required. Set to true by skip_if_no_wallet().
+        # When False, we ignore wallet_names regardless of what it is.
+        self._requires_wallet = False
         # Disable ThreadOpenConnections by default, so that adding entries to
         # addrman will not result in automatic connections to them.
         self.disable_autoconnect = True
@@ -287,11 +291,11 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             help="Run test using a descriptor wallet",
         )
         parser.add_argument(
-            "--with-augustoactivation",
-            dest="augustoactivation",
+            "--with-schumpeteractivation",
+            dest="schumpeteractivation",
             default=False,
             action="store_true",
-            help=f"Activate Augusto update on timestamp {TIMESTAMP_IN_THE_PAST}",
+            help=f"Activate Schumpeter update on timestamp {TIMESTAMP_IN_THE_PAST}",
         )
         parser.add_argument(
             "--timeout-factor",
@@ -307,6 +311,10 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         self.add_options(parser)
         self.options = parser.parse_args()
 
+        config = configparser.ConfigParser()
+        config.read_file(open(self.options.configfile, encoding="utf-8"))
+        self.config = config
+
         PortSeed.n = self.options.port_seed
 
     def setup(self):
@@ -315,9 +323,8 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
 
         self.options.cachedir = os.path.abspath(self.options.cachedir)
 
-        config = configparser.ConfigParser()
-        config.read_file(open(self.options.configfile, encoding="utf-8"))
-        self.config = config
+        config = self.config
+
         fname_bitcoind = os.path.join(
             config["environment"]["BUILDDIR"],
             "src",
@@ -513,7 +520,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             extra_args = self.extra_args
         self.add_nodes(self.num_nodes, extra_args)
         self.start_nodes()
-        if self.is_wallet_compiled():
+        if self._requires_wallet:
             self.import_deterministic_coinbase_privkeys()
         if not self.setup_clean_chain:
             for n in self.nodes:
@@ -589,6 +596,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
                     rpc_port=rpc_port(i),
                     p2p_port=p2p_port(i),
                     chronik_port=chronik_port(i),
+                    chronik_electrum_port=chronikelectrum_port(i),
                     timewait=self.rpc_timeout,
                     timeout_factor=self.options.timeout_factor,
                     bitcoind=binary[i],
@@ -605,9 +613,9 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
                 )
             )
 
-            if self.options.augustoactivation:
+            if self.options.schumpeteractivation:
                 self.nodes[i].extend_default_args(
-                    [f"-augustoactivationtime={TIMESTAMP_IN_THE_PAST}"]
+                    [f"-schumpeteractivationtime={TIMESTAMP_IN_THE_PAST}"]
                 )
 
     def start_node(self, i, *args, **kwargs):
@@ -663,27 +671,71 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
     def wait_for_node_exit(self, i, timeout):
         self.nodes[i].process.wait(timeout)
 
-    def connect_nodes(self, a, b):
-        from_node = self.nodes[a]
-        to_node = self.nodes[b]
+    def connect_nodes(self, a, b, *, wait_for_connect: bool = True):
+        """
+        Kwargs:
+            wait_for_connect: if True, block until the nodes are verified as connected. You might
+                want to disable this when using -stopatheight with one of the connected nodes,
+                since there will be a race between the actual connection and performing
+                the assertions before one node shuts down.
+        """
+        from_connection = self.nodes[a]
+        to_connection = self.nodes[b]
 
-        host = to_node.host
+        host = to_connection.host
         if host is None:
             host = "127.0.0.1"
-        ip_port = f"{host}:{str(to_node.p2p_port)}"
-        from_node.addnode(ip_port, "onetry")
-        # poll until version handshake complete to avoid race conditions
-        # with transaction relaying
-        # See comments in net_processing:
-        # * Must have a version message before anything else
-        # * Must have a verack message before anything else
-        wait_until_helper(
-            lambda: all(peer["version"] != 0 for peer in from_node.getpeerinfo())
+        ip_port = f"{host}:{str(to_connection.p2p_port)}"
+        from_connection.addnode(ip_port, "onetry")
+
+        if not wait_for_connect:
+            return
+
+        # Use subversion as peer id. Test nodes have their node number appended to the user agent string
+        from_connection_subver = from_connection.getnetworkinfo()["subversion"]
+        to_connection_subver = to_connection.getnetworkinfo()["subversion"]
+
+        def find_conn(node, peer_subversion, inbound):
+            return next(
+                filter(
+                    lambda peer: peer["subver"] == peer_subversion
+                    and peer["inbound"] == inbound,
+                    node.getpeerinfo(),
+                ),
+                None,
+            )
+
+        self.wait_until(
+            lambda: find_conn(from_connection, to_connection_subver, inbound=False)
+            is not None
         )
-        wait_until_helper(
-            lambda: all(
-                peer["bytesrecv_per_msg"].pop("verack", 0) == 24
-                for peer in from_node.getpeerinfo()
+        self.wait_until(
+            lambda: find_conn(to_connection, from_connection_subver, inbound=True)
+            is not None
+        )
+
+        def check_bytesrecv(peer, msg_type, min_bytes_recv):
+            assert peer is not None, "Error: peer disconnected"
+            return peer["bytesrecv_per_msg"].pop(msg_type, 0) >= min_bytes_recv
+
+        # Poll until version handshake (fSuccessfullyConnected) is complete to
+        # avoid race conditions, because some message types are blocked from
+        # being sent or received before fSuccessfullyConnected.
+        #
+        # As the flag fSuccessfullyConnected is not exposed, check it by
+        # waiting for a pong, which can only happen after the flag was set.
+        self.wait_until(
+            lambda: check_bytesrecv(
+                find_conn(from_connection, to_connection_subver, inbound=False),
+                "pong",
+                32,
+            )
+        )
+        self.wait_until(
+            lambda: check_bytesrecv(
+                find_conn(to_connection, from_connection_subver, inbound=True),
+                "pong",
+                32,
             )
         )
 
@@ -717,7 +769,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
                     raise
 
         # wait to disconnect
-        wait_until_helper(lambda: not get_peer_ids(), timeout=5)
+        self.wait_until(lambda: not get_peer_ids(), timeout=5)
 
     def split_network(self):
         """
@@ -800,9 +852,17 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
 
     def sync_proofs(self, nodes=None, wait=1, timeout=60):
         """
-        Wait until everybody has the same proofs in their proof pools
+        Wait until everybody has the same proofs in their proof pools.
+        If the nodes have avalanche disabled they are skipped.
         """
-        rpc_connections = nodes or self.nodes
+        rpc_connections = []
+        for candidate in nodes or self.nodes:
+            if candidate.getinfo()["avalanche"]:
+                rpc_connections.append(candidate)
+
+        if not rpc_connections:
+            return
+
         timeout = int(timeout * self.options.timeout_factor)
         stop_time = time.time() + timeout
 
@@ -906,6 +966,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
                     rpc_port=rpc_port(CACHE_NODE_ID),
                     p2p_port=p2p_port(CACHE_NODE_ID),
                     chronik_port=chronik_port(CACHE_NODE_ID),
+                    chronik_electrum_port=chronikelectrum_port(CACHE_NODE_ID),
                     timewait=self.rpc_timeout,
                     timeout_factor=self.options.timeout_factor,
                     bitcoind=self.options.bitcoind,
@@ -917,9 +978,9 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
                 )
             )
 
-            if self.options.augustoactivation:
+            if self.options.schumpeteractivation:
                 self.nodes[CACHE_NODE_ID].extend_default_args(
-                    [f"-augustoactivationtime={TIMESTAMP_IN_THE_PAST}"]
+                    [f"-schumpeteractivationtime={TIMESTAMP_IN_THE_PAST}"]
                 )
 
             self.start_node(CACHE_NODE_ID)
@@ -1051,6 +1112,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
 
     def skip_if_no_wallet(self):
         """Skip the running test if wallet has not been compiled."""
+        self._requires_wallet = True
         if not self.is_wallet_compiled():
             raise SkipTest("wallet has not been compiled.")
 
@@ -1105,3 +1167,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
     def is_nng_interface_compiled(self):
         """Checks whether the NNG inferface module was compiled."""
         return self.config["components"].getboolean("ENABLE_NNG")
+
+    def has_blockfile(self, node, filenum: str):
+        blocksdir = os.path.join(node.datadir, self.chain, "blocks", "")
+        return os.path.isfile(os.path.join(blocksdir, f"blk{filenum}.dat"))

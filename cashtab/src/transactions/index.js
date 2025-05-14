@@ -2,10 +2,9 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-import * as wif from 'wif';
 import { isValidMultiSendUserInput } from 'validation';
 import { toSatoshis } from 'wallet';
-import { isTokenDustChangeOutput } from 'slpv1';
+import { isTokenDustChangeOutput } from 'token-protocols/slpv1';
 import {
     Script,
     fromHex,
@@ -33,7 +32,7 @@ const DUMMY_P2PKH = Script.p2pkh(
  * @param {Ecc} ecc
  * @param {object} wallet
  * @param {array} targetOutputs
- * @param {number} satsPerKb integer, fee in satoshis per kb
+ * @param {bigint} satsPerKb integer, fee in satoshis per kb
  * @param {number} chaintipBlockheight
  * @param {array} requiredInputs inputs that must be included in this tx
  * e.g. token utxos for token txs, or p2sh scripts with lokadid for ecash-agora ad txs
@@ -42,7 +41,8 @@ const DUMMY_P2PKH = Script.p2pkh(
  */
 export const sendXec = async (
     chronik,
-    ecc,
+    // TODO: remove
+    _ecc,
     wallet,
     targetOutputs,
     satsPerKb,
@@ -59,21 +59,24 @@ export const sendXec = async (
         }
         if (isTokenDustChangeOutput(targetOutput)) {
             // Add script for the address of the sending wallet to token dust change outputs
-            targetOutput.script = Script.p2pkh(
-                fromHex(wallet.paths.get(1899).hash),
-            );
-            outputs.push(targetOutput);
+            // Note we do not modify this targetOutput in place as this would modify
+            // TOKEN_DUST_CHANGE_OUTPUT, meaning future txs could get change to the wrong
+            // wallet
+            const tokenChangeTargetOutput = {
+                sats: BigInt(appConfig.dustSats),
+                script: Script.p2pkh(fromHex(wallet.paths.get(1899).hash)),
+            };
+            outputs.push(tokenChangeTargetOutput);
             continue;
         }
     }
 
     // Get the total amount of satoshis being sent in this tx
     const satoshisToSend = outputs.reduce(
-        (prevSatoshis, output) => prevSatoshis + BigInt(output.value),
+        (prevSatoshis, output) => prevSatoshis + output.sats,
         0n,
     );
-
-    if (satoshisToSend < appConfig.dustSats) {
+    if (satoshisToSend < BigInt(appConfig.dustSats)) {
         throw new Error(
             `Transaction output amount must be at least the dust threshold of ${appConfig.dustSats} satoshis`,
         );
@@ -102,26 +105,22 @@ export const sendXec = async (
             // i.e. it has a custom signatory from ecash-agora and does
             // require a p2pkh signature
             inputs.push(requiredInput);
-            inputSatoshis += BigInt(requiredInput.input.signData.value);
+            inputSatoshis += requiredInput.input.signData.sats;
         } else {
-            const sk = wif.decode(
-                wallet.paths.get(requiredInput.path).wif,
-            ).privateKey;
-            const pk = ecc.derivePubkey(sk);
+            const pathInfo = wallet.paths.get(requiredInput.path);
+            const { sk, pk, hash } = pathInfo;
             inputs.push({
                 input: {
                     prevOut: requiredInput.outpoint,
                     signData: {
-                        value: requiredInput.value,
+                        sats: requiredInput.sats,
                         // Cashtab inputs will always be p2pkh utxos
-                        outputScript: Script.p2pkh(
-                            fromHex(wallet.paths.get(requiredInput.path).hash),
-                        ),
+                        outputScript: Script.p2pkh(fromHex(hash)),
                     },
                 },
                 signatory: P2PKHSignatory(sk, pk, ALL_BIP143),
             });
-            inputSatoshis += BigInt(requiredInput.value);
+            inputSatoshis += requiredInput.sats;
         }
     }
 
@@ -132,22 +131,20 @@ export const sendXec = async (
         if (needsAnotherUtxo) {
             // If inputSatoshis is less than or equal to satoshisToSend, we know we need
             // to add another input
-            const sk = wif.decode(wallet.paths.get(utxo.path).wif).privateKey;
-            const pk = ecc.derivePubkey(sk);
+            const pathInfo = wallet.paths.get(utxo.path);
+            const { sk, pk, hash } = pathInfo;
             inputs.push({
                 input: {
                     prevOut: utxo.outpoint,
                     signData: {
-                        value: utxo.value,
+                        sats: utxo.sats,
                         // Cashtab inputs will always be p2pkh utxos
-                        outputScript: Script.p2pkh(
-                            fromHex(wallet.paths.get(utxo.path).hash),
-                        ),
+                        outputScript: Script.p2pkh(fromHex(hash)),
                     },
                 },
                 signatory: P2PKHSignatory(sk, pk, ALL_BIP143),
             });
-            inputSatoshis += BigInt(utxo.value);
+            inputSatoshis += utxo.sats;
 
             needsAnotherUtxo = inputSatoshis <= satoshisToSend;
 
@@ -166,11 +163,14 @@ export const sendXec = async (
         });
         let tx;
         try {
-            tx = txBuilder.sign(ecc, satsPerKb, appConfig.dustSats);
+            tx = txBuilder.sign({
+                feePerKb: satsPerKb,
+                dustSats: appConfig.dustSats,
+            });
         } catch (err) {
             if (
                 typeof err.message !== 'undefined' &&
-                err.message.startsWith('Insufficient input value')
+                err.message.startsWith('Insufficient input sats')
             ) {
                 // If we have insufficient funds to cover satoshisToSend + fee
                 // we need to add another input
@@ -199,7 +199,7 @@ export const sendXec = async (
  * Determine the max amount a wallet can send
  * @param {object} wallet Cashtab wallet
  * @param {[] or [{script: <script>}]} scriptOutputs other output e.g. a Cashtab Msg to be sent in a max send tx
- * @param {integer} satsPerKb
+ * @param {bigint} satsPerKb
  * @returns {integer} max amount of satoshis that a Cashtab wallet can send
  */
 export const getMaxSendAmountSatoshis = (
@@ -216,8 +216,8 @@ export const getMaxSendAmountSatoshis = (
 
     // Get total send qty of all non-token
     const totalSatsInWallet = xecInputs.reduce(
-        (previousBalance, utxo) => previousBalance + utxo.value,
-        0,
+        (prev, curr) => prev + curr.sats,
+        0n,
     );
     // prepare inputs, i.e. all XEC utxos
     const inputs = [];
@@ -226,7 +226,7 @@ export const getMaxSendAmountSatoshis = (
             input: {
                 prevOut: input.outpoint,
                 signData: {
-                    value: input.value,
+                    sats: input.sats,
                     // Cashtab inputs will always be p2pkh utxos
                     outputScript: DUMMY_P2PKH,
                 },
@@ -240,7 +240,7 @@ export const getMaxSendAmountSatoshis = (
     // allows you to get a max value without inputting an address, better UX
     const outputs = scriptOutputs.concat([
         {
-            value: totalSatsInWallet,
+            sats: totalSatsInWallet,
             script: DUMMY_P2PKH,
         },
     ]);
@@ -251,12 +251,16 @@ export const getMaxSendAmountSatoshis = (
         outputs,
     });
 
-    const tx = txBuilder.sign(eccDummy, satsPerKb, appConfig.dustSats);
+    const tx = txBuilder.sign({
+        feePerKb: satsPerKb,
+        dustSats: BigInt(appConfig.dustSats),
+        ecc: eccDummy,
+    });
     // Calculate the tx fee
     const txFeeInSatoshis = calcTxFee(tx.serSize(), satsPerKb);
     // The max send amount is totalSatsInWallet less txFeeInSatoshis
-    const maxSendAmountSatoshis = totalSatsInWallet - Number(txFeeInSatoshis);
-    return maxSendAmountSatoshis;
+    const maxSendAmountSatoshis = totalSatsInWallet - txFeeInSatoshis;
+    return Number(maxSendAmountSatoshis);
 };
 
 /**
@@ -282,7 +286,7 @@ export const getMultisendTargetOutputs = userMultisendInput => {
         const valueSats = toSatoshis(valueXec);
         targetOutputs.push({
             script: Script.fromAddress(addressValueLineArray[0].trim()),
-            value: valueSats,
+            sats: BigInt(valueSats),
         });
     }
     return targetOutputs;

@@ -34,6 +34,7 @@
 #include <rpc/util.h>
 #include <script/descriptor.h>
 #include <script/script.h>
+#include <script/standard.h>
 #include <shutdown.h>
 #include <timedata.h>
 #include <txmempool.h>
@@ -126,12 +127,9 @@ static RPCHelpMan getnetworkhashps() {
             const JSONRPCRequest &request) -> UniValue {
             ChainstateManager &chainman = EnsureAnyChainman(request.context);
             LOCK(cs_main);
-            return GetNetworkHashPS(
-                !request.params[0].isNull() ? request.params[0].getInt<int>()
-                                            : 120,
-                !request.params[1].isNull() ? request.params[1].getInt<int>()
-                                            : -1,
-                chainman.ActiveChain());
+            return GetNetworkHashPS(self.Arg<int>("nblocks"),
+                                    self.Arg<int>("height"),
+                                    chainman.ActiveChain());
         },
     };
 }
@@ -268,14 +266,12 @@ static RPCHelpMan generatetodescriptor() {
                     HelpExampleCli("generatetodescriptor", "11 \"mydesc\"")},
         [&](const RPCHelpMan &self, const Config &config,
             const JSONRPCRequest &request) -> UniValue {
-            const int num_blocks{request.params[0].getInt<int>()};
-            const uint64_t max_tries{request.params[2].isNull()
-                                         ? DEFAULT_MAX_TRIES
-                                         : request.params[2].getInt<int>()};
+            const int num_blocks{self.Arg<int>("num_blocks")};
+            const auto max_tries{self.Arg<uint64_t>("maxtries")};
 
             CScript coinbase_script;
             std::string error;
-            if (!getScriptFromDescriptor(request.params[1].get_str(),
+            if (!getScriptFromDescriptor(self.Arg<std::string>("descriptor"),
                                          coinbase_script, error)) {
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, error);
             }
@@ -550,7 +546,7 @@ static RPCHelpMan getmininginfo() {
             obj.pushKV("networkhashps",
                        getnetworkhashps().HandleRequest(config, request));
             obj.pushKV("pooledtx", uint64_t(mempool.size()));
-            obj.pushKV("chain", config.GetChainParams().NetworkIDString());
+            obj.pushKV("chain", config.GetChainParams().GetChainTypeString());
             obj.pushKV("warnings", GetWarnings(false).original);
             return obj;
         },
@@ -567,7 +563,7 @@ static RPCHelpMan prioritisetransaction() {
         {
             {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
              "The transaction id."},
-            {"dummy", RPCArg::Type::NUM, RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"dummy", RPCArg::Type::NUM, RPCArg::Optional::OMITTED,
              "API-Compatibility for previous API. Must be zero or null.\n"
              "                  DEPRECATED. For forward compatibility "
              "use named arguments and omit this parameter."},
@@ -587,10 +583,10 @@ static RPCHelpMan prioritisetransaction() {
             LOCK(cs_main);
 
             TxId txid(ParseHashV(request.params[0], "txid"));
+            const auto dummy{self.MaybeArg<double>(1)};
             Amount nAmount = request.params[2].getInt<int64_t>() * SATOSHI;
 
-            if (!(request.params[1].isNull() ||
-                  request.params[1].get_real() == 0)) {
+            if (dummy && *dummy != 0) {
                 throw JSONRPCError(
                     RPC_INVALID_PARAMETER,
                     "Priority is no longer supported, dummy argument to "
@@ -653,14 +649,14 @@ static RPCHelpMan getblocktemplate() {
              "Format of the template",
              {
                  {"mode", RPCArg::Type::STR, /* treat as named arg */
-                  RPCArg::Optional::OMITTED_NAMED_ARG,
+                  RPCArg::Optional::OMITTED,
                   "This must be set to \"template\", \"proposal\" (see BIP "
                   "23), or omitted"},
                  {
                      "capabilities",
                      RPCArg::Type::ARR,
                      /* treat as named arg */
-                     RPCArg::Optional::OMITTED_NAMED_ARG,
+                     RPCArg::Optional::OMITTED,
                      "A list of strings",
                      {
                          {"support", RPCArg::Type::STR,
@@ -747,7 +743,8 @@ static RPCHelpMan getblocktemplate() {
                      {
                          {RPCResult::Type::OBJ,
                           "minerfund",
-                          "information related to the coinbase miner fund",
+                          "information related to the coinbase miner fund."
+                          "This will NOT be set if -simplegbt is enabled",
                           {
 
                               {RPCResult::Type::ARR,
@@ -766,10 +763,10 @@ static RPCHelpMan getblocktemplate() {
                          {RPCResult::Type::OBJ,
                           "stakingrewards",
                           "information related to the coinbase staking reward "
-                          "output, only set after the Nov. 15, 2023 upgrade "
-                          "activated and the -avalanchestakingrewards option "
-                          "is "
-                          "enabled",
+                          "output, only set if the -avalanchestakingrewards "
+                          "option is enabled and if the node is able to "
+                          "determine a winner. This will NOT be set if "
+                          "-simplegbt is enabled",
                           {
                               {RPCResult::Type::OBJ,
                                "payoutscript",
@@ -847,6 +844,34 @@ static RPCHelpMan getblocktemplate() {
                          {RPCResult::Type::STR_HEX, "nexttarget",
                           "The real-time target in compact format"},
                      }},
+                    {RPCResult::Type::OBJ,
+                     "minerfund",
+                     "information related to the coinbase miner fund."
+                     "This will ONLY be set if -simplegbt is enabled",
+                     {
+                         {RPCResult::Type::STR_HEX, "script",
+                          "The scriptpubkey for the miner fund output in "
+                          "hex format"},
+                         {RPCResult::Type::STR_AMOUNT, "amount",
+                          "The minimum value the miner fund output must "
+                          "pay in satoshis"},
+
+                     }},
+                    {RPCResult::Type::OBJ,
+                     "stakingrewards",
+                     "information related to the coinbase staking reward "
+                     "output, only set if the -avalanchestakingrewards "
+                     "option is enabled and if the node is able to "
+                     "determine a winner. This will ONLY be set if "
+                     "-simplegbt is enabled",
+                     {
+                         {RPCResult::Type::STR_HEX, "script",
+                          "The scriptpubkey for the staking reward "
+                          "output in hex format"},
+                         {RPCResult::Type::STR_AMOUNT, "amount",
+                          "The minimum value the staking reward output must "
+                          "pay in satoshis"},
+                     }},
                 }},
         },
         RPCExamples{HelpExampleCli("getblocktemplate", "") +
@@ -855,6 +880,7 @@ static RPCHelpMan getblocktemplate() {
             const JSONRPCRequest &request) -> UniValue {
             NodeContext &node = EnsureAnyNodeContext(request.context);
             ChainstateManager &chainman = EnsureChainman(node);
+            ArgsManager &argsman = EnsureArgsman(node);
             LOCK(cs_main);
 
             const CChainParams &chainparams = config.GetChainParams();
@@ -929,7 +955,7 @@ static RPCHelpMan getblocktemplate() {
                                    "Bitcoin is not connected!");
             }
 
-            if (active_chainstate.IsInitialBlockDownload()) {
+            if (chainman.IsInitialBlockDownload()) {
                 throw JSONRPCError(
                     RPC_CLIENT_IN_INITIAL_DOWNLOAD, PACKAGE_NAME
                     " is in initial sync and waiting for blocks...");
@@ -950,7 +976,7 @@ static RPCHelpMan getblocktemplate() {
 
                 if (lpval.isStr()) {
                     // Format: <hashBestChain><nTransactionsUpdatedLast>
-                    std::string lpstr = lpval.get_str();
+                    const std::string &lpstr = lpval.get_str();
 
                     hashWatchedChain =
                         ParseHashV(lpstr.substr(0, 64), "longpollid");
@@ -1090,15 +1116,15 @@ static RPCHelpMan getblocktemplate() {
                 index_in_template++;
             }
 
+            const bool simplifyGbt = argsman.GetBoolArg("-simplegbt", false);
+
+            UniValue result(UniValue::VOBJ);
             UniValue aux(UniValue::VOBJ);
+            UniValue coinbasetxn(UniValue::VOBJ);
 
-            UniValue minerFundList(UniValue::VARR);
-            for (const auto &fundDestination :
-                 GetMinerFundWhitelist(consensusParams)) {
-                minerFundList.push_back(
-                    EncodeDestination(fundDestination, config));
-            }
-
+            // Compute the miner fund parameters
+            const auto minerFundWhitelist =
+                GetMinerFundWhitelist(consensusParams);
             int64_t minerFundMinValue = 0;
             if (IsAxionEnabled(consensusParams, pindexPrev)) {
                 minerFundMinValue =
@@ -1107,30 +1133,61 @@ static RPCHelpMan getblocktemplate() {
                             SATOSHI);
             }
 
-            UniValue minerFund(UniValue::VOBJ);
-            minerFund.pushKV("addresses", minerFundList);
-            minerFund.pushKV("minimumvalue", minerFundMinValue);
-
-            UniValue coinbasetxn(UniValue::VOBJ);
-            coinbasetxn.pushKV("minerfund", minerFund);
-
+            // Compute the staking reward parameters
             std::vector<CScript> stakingRewardsPayoutScripts;
+            int64_t stakingRewardsAmount =
+                GetStakingRewardsAmount(coinbasevalue) / SATOSHI;
             if (node.avalanche &&
-                IsStakingRewardsActivated(consensusParams, pindexPrev) &&
-                node.avalanche->getStakingRewardWinners(
-                    pindexPrev->GetBlockHash(), stakingRewardsPayoutScripts)) {
-                UniValue stakingRewards(UniValue::VOBJ);
-                UniValue stakingRewardsPayoutScriptObj(UniValue::VOBJ);
-                ScriptPubKeyToUniv(stakingRewardsPayoutScripts[0],
-                                   stakingRewardsPayoutScriptObj,
-                                   /*fIncludeHex=*/true);
-                stakingRewards.pushKV("payoutscript",
-                                      stakingRewardsPayoutScriptObj);
-                stakingRewards.pushKV(
-                    "minimumvalue",
-                    int64_t(GetStakingRewardsAmount(coinbasevalue) / SATOSHI));
+                IsStakingRewardsActivated(consensusParams, pindexPrev)) {
+                if (!node.avalanche->getStakingRewardWinners(
+                        pindexPrev->GetBlockHash(),
+                        stakingRewardsPayoutScripts)) {
+                    stakingRewardsPayoutScripts.clear();
+                }
+            }
 
-                coinbasetxn.pushKV("stakingrewards", stakingRewards);
+            if (simplifyGbt) {
+                UniValue minerFund(UniValue::VOBJ);
+                if (!minerFundWhitelist.empty()) {
+                    minerFund.pushKV("script",
+                                     HexStr(GetScriptForDestination(
+                                         *minerFundWhitelist.begin())));
+                    minerFund.pushKV("amount", minerFundMinValue);
+                }
+                result.pushKV("minerfund", minerFund);
+
+                if (!stakingRewardsPayoutScripts.empty()) {
+                    UniValue stakingRewards(UniValue::VOBJ);
+                    stakingRewards.pushKV(
+                        "script", HexStr(stakingRewardsPayoutScripts[0]));
+                    stakingRewards.pushKV("amount", stakingRewardsAmount);
+                    result.pushKV("stakingrewards", stakingRewards);
+                }
+            } else {
+                UniValue minerFund(UniValue::VOBJ);
+                UniValue minerFundList(UniValue::VARR);
+                for (const auto &fundDestination : minerFundWhitelist) {
+                    minerFundList.push_back(
+                        EncodeDestination(fundDestination, config));
+                }
+
+                minerFund.pushKV("addresses", minerFundList);
+                minerFund.pushKV("minimumvalue", minerFundMinValue);
+
+                coinbasetxn.pushKV("minerfund", minerFund);
+
+                if (!stakingRewardsPayoutScripts.empty()) {
+                    UniValue stakingRewards(UniValue::VOBJ);
+                    UniValue stakingRewardsPayoutScriptObj(UniValue::VOBJ);
+                    ScriptPubKeyToUniv(stakingRewardsPayoutScripts[0],
+                                       stakingRewardsPayoutScriptObj,
+                                       /*fIncludeHex=*/true);
+                    stakingRewards.pushKV("payoutscript",
+                                          stakingRewardsPayoutScriptObj);
+                    stakingRewards.pushKV("minimumvalue", stakingRewardsAmount);
+
+                    coinbasetxn.pushKV("stakingrewards", stakingRewards);
+                }
             }
 
             arith_uint256 hashTarget =
@@ -1141,7 +1198,6 @@ static RPCHelpMan getblocktemplate() {
             aMutable.push_back("transactions");
             aMutable.push_back("prevblock");
 
-            UniValue result(UniValue::VOBJ);
             result.pushKV("capabilities", aCaps);
 
             result.pushKV("version", pblock->nVersion);

@@ -124,6 +124,7 @@ std::string CRPCTable::help(const Config &config, const std::string &strCommand,
     std::string category;
     std::set<intptr_t> setDone;
     std::vector<std::pair<std::string, const CRPCCommand *>> vCommands;
+    vCommands.reserve(mapCommands.size());
 
     for (const auto &entry : mapCommands) {
         vCommands.push_back(
@@ -217,7 +218,7 @@ static RPCHelpMan stop() {
         // returning to the client (intended for testing)
         "\nRequest a graceful shutdown of " PACKAGE_NAME ".",
         {
-            {"wait", RPCArg::Type::NUM, RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"wait", RPCArg::Type::NUM, RPCArg::Optional::OMITTED,
              "how long to wait in ms", RPCArgOptions{.hidden = true}},
         },
         RPCResult{RPCResult::Type::STR, "",
@@ -622,6 +623,7 @@ static bool ExecuteCommand(const Config &config, const CRPCCommand &command,
 
 std::vector<std::string> CRPCTable::listCommands() const {
     std::vector<std::string> commandList;
+    commandList.reserve(mapCommands.size());
     for (const auto &i : mapCommands) {
         commandList.emplace_back(i.first);
     }

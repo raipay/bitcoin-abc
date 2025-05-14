@@ -5,6 +5,8 @@
 import * as React from 'react';
 import styled from 'styled-components';
 import PayButton from 'assets/paybutton.webp';
+import XecxSrc from 'assets/xecx-logomark.png';
+import FirmaSrc from 'assets/firma-icon.png';
 import { ReactComponent as QRCode } from 'assets/qrcode.svg';
 import { ReactComponent as Send } from 'assets/send.svg';
 import { ReactComponent as CopyPaste } from 'assets/copypaste.svg';
@@ -46,12 +48,13 @@ import { ReactComponent as FanOut } from 'assets/fanout.svg';
 import { ReactComponent as MintNft } from 'assets/mintnft.svg';
 import { ReactComponent as Nft } from 'assets/nft.svg';
 import { ReactComponent as AgoraOffer } from 'assets/agora-offer.svg';
-import { ReactComponent as AgoraTx } from 'assets/agora-tx.svg';
 import { ReactComponent as AgoraBuy } from 'assets/agora-buy.svg';
 import { ReactComponent as AgoraSale } from 'assets/agora-sale.svg';
 import { ReactComponent as AgoraCancel } from 'assets/agora-cancel.svg';
 import { ReactComponent as Doge } from 'assets/doge.svg';
 import { ReactComponent as CollapseDown } from 'assets/collapse-down.svg';
+import { ReactComponent as TokenSend } from 'assets/tokensend.svg';
+import { ReactComponent as IsMintAddress } from 'assets/is-mint-address.svg';
 
 import appConfig from 'config/app';
 
@@ -63,14 +66,14 @@ export const TokenNotificationIcon = () => (
 );
 
 export const ThemedLinkSolid = styled(LinkSolid)`
-    fill: ${props => props.theme.contrast};
+    fill: ${props => props.theme.primaryText};
     padding: 0.15rem 0rem 0.18rem 0rem;
     height: 1.3em;
     width: 1.3em;
 `;
 
 export const ThemedPdfSolid = styled(Pdf)`
-    fill: ${props => props.theme.contrast};
+    fill: ${props => props.theme.primaryText};
     padding: 0.15rem 0rem 0.18rem 0rem;
     height: 1.3em;
     width: 1.3em;
@@ -80,10 +83,6 @@ export const ThemedSignAndVerifyMsg = styled(Audit)`
     min-width: 24px;
 `;
 
-export const ThemedUserProfileIcon = styled(User)`
-    height: 33px;
-    width: 30px;
-`;
 export const SocialContainer = styled.div`
     margin: auto;
     display: flex;
@@ -100,9 +99,9 @@ export const SocialLink = styled.a`
     @media (hover: hover) {
         :hover {
             svg {
-                fill: ${props => props.theme.eCashPurple};
+                fill: ${props => props.theme.secondaryAccent};
                 path:not(#F) {
-                    fill: ${props => props.theme.eCashPurple};
+                    fill: ${props => props.theme.secondaryAccent};
                 }
             }
         }
@@ -117,12 +116,6 @@ export const ThemedFacebookIcon = styled(Facebook)`
     width: 100%;
 `;
 
-export const ThemedAliasOutlined = styled(User)`
-    fill: ${props => props.theme.icons.outlined} !important;
-    height: 12px;
-    width: 12px;
-`;
-
 export const LoadingBlock = styled.div`
     width: 100%;
     display: flex;
@@ -133,20 +126,14 @@ export const LoadingBlock = styled.div`
     svg {
         width: 50px;
         height: 50px;
-        fill: ${props => props.theme.eCashBlue};
+        fill: ${props => props.theme.accent};
     }
 `;
-const Rotate = styled.div`
-    transform: rotate(-45deg);
-`;
+
 const MineRotate = styled.div`
     transform: rotate(45deg);
 `;
-export const SendIcon = () => (
-    <Rotate>
-        <Send title="tx-sent" />
-    </Rotate>
-);
+export const SendIcon = () => <Send title="tx-sent" />;
 
 export const MinedIcon = () => (
     <MineRotate>
@@ -161,16 +148,20 @@ export const EncryptedMsgIcon = () => (
     <CashtabEncrypted title="tx-encrypted-msg" />
 );
 export const TokenBurnIcon = () => <TokenBurn title="tx-token-burn" />;
+export const TokenSendIcon = () => <TokenSend title="Token Send" />;
 export const PayButtonIcon = () => (
     <PayButtonImg src={PayButton} alt="tx-paybutton" />
 );
+export const XecxIcon = () => <img src={XecxSrc} alt="XECX reward" />;
+export const FirmaIcon = () => <img src={FirmaSrc} alt="Firma reward" />;
+
 const PaywallPaymentIconWrapper = styled.div`
     svg,
     g,
     path {
-        fill: ${props => props.theme.eCashBlue};
+        fill: ${props => props.theme.accent};
     }
-    fill: ${props => props.theme.eCashBlue};
+    fill: ${props => props.theme.accent};
 `;
 export const PaywallPaymentIcon = () => (
     <PaywallPaymentIconWrapper>
@@ -179,11 +170,14 @@ export const PaywallPaymentIcon = () => (
 );
 export const ChatIcon = () => <Chat title="tx-chat" />;
 export const MintIcon = () => <Mint title="tx-mint" />;
+export const IsMintAddressIcon = () => (
+    <IsMintAddress title="Listed by token creator" />
+);
 export const CopyPasteIcon = () => <CopyPaste title="copy-paste" />;
 export const AddContactIcon = () => <AddContact title="add-contact" />;
 const TrashCanWrapper = styled.div`
-    stroke: ${props => props.theme.eCashBlue};
-    fill: ${props => props.theme.eCashBlue};
+    stroke: ${props => props.theme.accent};
+    fill: ${props => props.theme.accent};
     cursor: pointer;
 `;
 export const TrashcanIcon = () => (
@@ -192,8 +186,8 @@ export const TrashcanIcon = () => (
     </TrashCanWrapper>
 );
 const EditWrapper = styled.div`
-    stroke: ${props => props.theme.eCashBlue};
-    fill: ${props => props.theme.eCashBlue};
+    stroke: ${props => props.theme.accent};
+    fill: ${props => props.theme.accent};
     cursor: pointer;
 `;
 export const EditIcon = () => (
@@ -222,7 +216,6 @@ export const FanOutIcon = () => <FanOut title="Fan Out" />;
 export const MintNftIcon = () => <MintNft title="Mint NFT" />;
 export const NftIcon = () => <Nft title="NFT" />;
 export const AgoraOfferIcon = () => <AgoraOffer title="Agora Offer" />;
-export const AgoraTxIcon = () => <AgoraTx title="Agora Tx" />;
 export const AgoraBuyIcon = () => <AgoraBuy title="Agora Purchase" />;
 export const AgoraSaleIcon = () => <AgoraSale title="Agora Sale" />;
 export const AgoraCancelIcon = () => <AgoraCancel title="Agora Cancel" />;
@@ -237,9 +230,9 @@ const GithubIconWrapper = styled.div`
     svg,
     g,
     path {
-        fill: ${props => props.theme.contrast};
+        fill: ${props => props.theme.primaryText};
     }
-    fill: ${props => props.theme.contrast};
+    fill: ${props => props.theme.primaryText};
 `;
 export const GithubIcon = () => (
     <GithubIconWrapper>

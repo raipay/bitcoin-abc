@@ -18,8 +18,8 @@ import configparser
 import datetime
 import json
 import logging
-import multiprocessing
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -133,6 +133,7 @@ TEST_PARAMS = {
     "wallet_createwallet.py": [["--usecli"], ["--descriptors"]],
     "wallet_encryption.py": [["--descriptors"]],
     "wallet_hd.py": [["--descriptors"]],
+    "wallet_assumeutxo.py": [["--descriptors"]],
     "wallet_importprunedfunds.py": [["--descriptors"]],
     # FIXME: "wallet_keypool.py": [["--descriptors"]],
     "wallet_keypool_topup.py": [["--descriptors"]],
@@ -150,7 +151,7 @@ TEST_PARAMS = {
 # we only run a test if its execution time in seconds does not exceed
 # EXTENDED_CUTOFF
 DEFAULT_EXTENDED_CUTOFF = 40
-DEFAULT_JOBS = (multiprocessing.cpu_count() // 3) + 1
+DEFAULT_JOBS = os.cpu_count() or 1
 
 SETUP_SCRIPTS_SUBDIR = "setup_scripts"
 
@@ -340,6 +341,16 @@ def main():
             " report."
         ),
     )
+    parser.add_argument(
+        "--repeat",
+        "-r",
+        type=int,
+        default=1,
+        help=(
+            "Number of times to repeat the selected tests. "
+            "Useful for troubleshooting intermittent failures."
+        ),
+    )
     args, unknown_args = parser.parse_known_args()
 
     # args to be passed on always start with two dashes; tests are the
@@ -356,7 +367,7 @@ def main():
     # Create base test directory
     tmpdir = os.path.join(
         f"{args.tmpdirprefix}",
-        f"test_runner_₿₵_🏃_{datetime.datetime.now():%Y%m%d_%H%M%S}",
+        f"test_runner_₿₵_🏃_{datetime.datetime.now():%Y%m%d_%H%M%S}_{random.getrandbits(16)}",
     )
 
     os.makedirs(tmpdir)
@@ -438,8 +449,9 @@ def main():
     # Always use timings from src_dir if present
     src_timings = Timings(os.path.join(src_dir, "test", "functional", "timing.json"))
 
-    # Add test parameters and remove long running tests if needed
-    test_list = get_tests_to_run(test_list, TEST_PARAMS, cutoff, src_timings)
+    test_list = args.repeat * get_tests_to_run(
+        test_list, TEST_PARAMS, cutoff, src_timings
+    )
 
     if not test_list:
         print(
@@ -558,7 +570,7 @@ def run_tests(
     # Run Tests
     start_time = time.time()
     test_results = execute_test_processes(
-        num_jobs, test_list, tests_dir, tmpdir, flags, failfast
+        num_jobs, test_list, build_dir, tests_dir, tmpdir, flags, failfast
     )
     runtime = time.time() - start_time
 
@@ -589,7 +601,7 @@ def run_tests(
 
 
 def execute_test_processes(
-    num_jobs, test_list, tests_dir, tmpdir, flags, failfast=False
+    num_jobs, test_list, build_dir, tests_dir, tmpdir, flags, failfast=False
 ):
     update_queue = Queue()
     job_queue = Queue()
@@ -632,6 +644,19 @@ def execute_test_processes(
                 print(test_result.stdout)
                 print(bold("stderr:"))
                 print(test_result.stderr)
+
+                # Write a symlink to the failed test directory for easy inspection
+                lastfailurepath = os.path.join(build_dir, "lastfailure")
+                if os.path.lexists(lastfailurepath):
+                    os.remove(lastfailurepath)
+                try:
+                    os.symlink(
+                        test_result.testdir, lastfailurepath, target_is_directory=True
+                    )
+                except OSError as e:
+                    if os.name == "nt":
+                        pass
+                    raise e
 
                 if failfast:
                     logging.debug("Early exiting after test failure")

@@ -7,24 +7,25 @@ import styled from 'styled-components';
 export const WelcomeCtn = styled.div`
     margin-top: 20px;
     padding: 0px 30px;
-    color: ${props => props.theme.contrast};
+    color: ${props => props.theme.primaryText};
     h2 {
-        color: ${props => props.theme.contrast};
+        color: ${props => props.theme.primaryText};
     }
 `;
 
 export const WelcomeText = styled.p`
     width: 100%;
-    font-size: 16px;
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
     margin-bottom: 60px;
     text-align: left;
 `;
 
 export const WelcomeLink = styled.a`
     text-decoration: underline;
-    color: ${props => props.theme.eCashBlue};
+    color: ${props => props.theme.accent};
     :hover {
-        color: ${props => props.theme.eCashPurple} !important;
+        color: ${props => props.theme.secondaryAccent} !important;
         text-decoration: underline !important;
     }
 `;

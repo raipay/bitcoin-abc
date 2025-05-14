@@ -29,9 +29,14 @@ jest.mock('bip39', () => ({
     ),
 }));
 
-// Mock a valid sideshift object in window
-window.sideshift = {
-    show: jest.fn(),
-    hide: jest.fn(),
-    addEventListener: jest.fn(),
-};
+/**
+ * Mock ResizeObserver class as this is not available in JSDOM
+ * Need to mock so that react-tooltip does not break tests
+ */
+const mockResizeObserver = jest.fn().mockImplementation(() => ({
+    observe: jest.fn(),
+    unobserve: jest.fn(),
+    disconnect: jest.fn(),
+}));
+
+global.ResizeObserver = mockResizeObserver;

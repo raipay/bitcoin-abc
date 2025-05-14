@@ -6,7 +6,6 @@
 #define BITCOIN_TEST_FUZZ_UTIL_H
 
 #include <arith_uint256.h>
-#include <chainparamsbase.h>
 #include <coins.h>
 #include <consensus/amount.h>
 #include <net.h>
@@ -24,8 +23,10 @@
 #include <test/util/net.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -35,6 +36,33 @@ constexpr int64_t MAX_MONEY_AS_INT = int64_t(21000000) * int64_t(100000000);
 } // end namespace fuzzer
 
 using namespace fuzzer;
+
+class FuzzedSock : public Sock {
+    FuzzedDataProvider &m_fuzzed_data_provider;
+
+public:
+    explicit FuzzedSock(FuzzedDataProvider &fuzzed_data_provider);
+
+    ~FuzzedSock() override {}
+
+    FuzzedSock &operator=(Sock &&other) override;
+
+    SOCKET Get() const override;
+
+    SOCKET Release() override;
+
+    void Reset() override;
+
+    ssize_t Send(const void *data, size_t len, int flags) const override;
+
+    ssize_t Recv(void *buf, size_t len, int flags) const override;
+
+    std::unique_ptr<Sock> Accept(sockaddr *addr,
+                                 socklen_t *addr_len) const override;
+
+    bool Wait(std::chrono::milliseconds timeout, Event requested,
+              Event *occurred = nullptr) const override;
+};
 
 template <typename... Callables>
 void CallOneOf(FuzzedDataProvider &fuzzed_data_provider,
@@ -235,6 +263,15 @@ ContainsSpentInput(const CTransaction &tx,
 }
 
 /**
+ * Sets errno to a value selected from the given std::array `errnos`.
+ */
+template <typename T, size_t size>
+void SetFuzzedErrNo(FuzzedDataProvider &fuzzed_data_provider,
+                    const std::array<T, size> &errnos) {
+    errno = fuzzed_data_provider.PickValueInArray(errnos);
+}
+
+/**
  * Sets a fuzzed errno in the range [0, 133 (EHWPOISON)]. Can be used from
  * functions emulating standard library functions that set errno, or in other
  * contexts where the value of errno might be relevant for the execution path
@@ -313,7 +350,7 @@ auto ConsumeNode(
     const std::optional<NodeId> &node_id_in = std::nullopt) noexcept {
     const NodeId node_id =
         node_id_in.value_or(fuzzed_data_provider.ConsumeIntegral<NodeId>());
-    const SOCKET socket = INVALID_SOCKET;
+    const auto sock = std::make_shared<FuzzedSock>(fuzzed_data_provider);
     const CAddress address = ConsumeAddress(fuzzed_data_provider);
     const uint64_t keyed_net_group =
         fuzzed_data_provider.ConsumeIntegral<uint64_t>();
@@ -328,15 +365,16 @@ auto ConsumeNode(
         fuzzed_data_provider.PickValueInArray(ALL_CONNECTION_TYPES);
     const bool inbound_onion = fuzzed_data_provider.ConsumeBool();
     if constexpr (ReturnUniquePtr) {
-        return std::make_unique<CNode>(node_id, socket, address,
-                                       keyed_net_group, local_host_nonce,
-                                       local_extra_entropy, addr_bind,
-                                       addr_name, conn_type, inbound_onion);
+        return std::make_unique<CNode>(node_id, sock, address, keyed_net_group,
+                                       local_host_nonce, local_extra_entropy,
+                                       addr_bind, addr_name, conn_type,
+                                       inbound_onion);
     } else {
-        return CNode{node_id,         socket,           address,
-                     keyed_net_group, local_host_nonce, local_extra_entropy,
-                     addr_bind,       addr_name,        conn_type,
-                     inbound_onion};
+        return CNode{node_id,          sock,
+                     address,          keyed_net_group,
+                     local_host_nonce, local_extra_entropy,
+                     addr_bind,        addr_name,
+                     conn_type,        inbound_onion};
     }
 }
 inline std::unique_ptr<CNode>
@@ -553,6 +591,11 @@ void ReadFromStream(FuzzedDataProvider &fuzzed_data_provider,
             break;
         }
     }
+}
+
+[[nodiscard]] inline FuzzedSock
+ConsumeSock(FuzzedDataProvider &fuzzed_data_provider) {
+    return FuzzedSock{fuzzed_data_provider};
 }
 
 #endif // BITCOIN_TEST_FUZZ_UTIL_H

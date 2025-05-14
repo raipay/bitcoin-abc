@@ -33,13 +33,7 @@ The ZMQ functional test requires a python ZMQ library. To install it:
 
 #### Running the tests
 
-Individual tests can be run by directly calling the test script, eg:
-
-```
-test/functional/example_test.py
-```
-
-or can be run through the test_runner harness, eg:
+Individual tests can be run through the test_runner harness, eg:
 
 ```
 test/functional/test_runner.py example_test
@@ -62,7 +56,7 @@ Run all possible tests with
 test/functional/test_runner.py --extended
 ```
 
-By default, up to 4 tests will be run in parallel by test_runner. To specify
+By default, the test_runner will run many tests in parallel. To specify
 how many jobs to run, append `--jobs=n`
 
 The individual tests and the test_runner harness have many command-line
@@ -89,6 +83,13 @@ debugging an issue you know about. Use --timeout-factor while you iterate on a
 solution:
 ```
 test/functional/test_runner.py --timeout-factor=0.3 abc_rpc_isfinal
+```
+
+**Use --repeat when debugging intermittent issues**
+
+Run a test multiple times in parallel to look for intermittent issues.
+```
+test/functional/test_runner.py --repeat 100 p2p_leak
 ```
 
 ##### Resource contention
@@ -166,6 +167,9 @@ test/functional/combine_logs.py -c <test data directory> | less -r
 ```
 
 will pipe the colorized logs from the test into less.
+
+The last failed test data directory can also be accessed via the ./lastfailure
+symlink to avoid copy-pasting a new directory on each iterated test run.
 
 Use `--tracerpc` to trace out all the RPC calls and responses to the console.
 For some tests (eg any that use `submitblock` to submit a full block over RPC),

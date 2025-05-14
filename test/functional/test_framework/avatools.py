@@ -8,13 +8,14 @@ import struct
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .authproxy import JSONRPCException
-from .key import ECKey
+from .key import ECKey, ECPubKey
 from .messages import (
     MSG_AVA_PROOF,
     MSG_BLOCK,
     NODE_AVALANCHE,
     NODE_NETWORK,
     AvalancheDelegation,
+    AvalanchePrefilledProof,
     AvalancheProof,
     AvalancheResponse,
     AvalancheVote,
@@ -38,8 +39,8 @@ from .p2p import P2PInterface, p2p_lock
 if TYPE_CHECKING:
     from .test_framework import BitcoinTestFramework
 
-from .test_node import TestNode
-from .util import satoshi_round, uint256_hex, wait_until_helper
+from .test_node import ADDRESS_ECREG_UNSPENDABLE, TestNode
+from .util import assert_equal, satoshi_round, uint256_hex, wait_until_helper
 from .wallet_util import bytes_to_wif
 
 
@@ -297,7 +298,9 @@ class NoHandshakeAvaP2PInterface(P2PInterface):
 
 
 class AvaP2PInterface(NoHandshakeAvaP2PInterface):
-    def __init__(self, test_framework=None, node=None):
+    def __init__(
+        self, test_framework=None, node=None, payoutAddress=ADDRESS_ECREG_UNSPENDABLE
+    ):
         if (test_framework is not None and node is None) or (
             node is not None and test_framework is None
         ):
@@ -315,7 +318,9 @@ class AvaP2PInterface(NoHandshakeAvaP2PInterface):
         self.delegation = None
 
         if test_framework is not None and node is not None:
-            self.master_privkey, self.proof = gen_proof(test_framework, node)
+            self.master_privkey, self.proof = gen_proof(
+                test_framework, node, payoutAddress=payoutAddress
+            )
             delegation_hex = node.delegateavalancheproof(
                 uint256_hex(self.proof.limited_proofid),
                 bytes_to_wif(self.master_privkey.get_bytes()),
@@ -380,9 +385,10 @@ def get_ava_p2p_interface(
     services=NODE_NETWORK | NODE_AVALANCHE,
     stake_utxo_confirmations=1,
     sync_fun=None,
+    payoutAddress=ADDRESS_ECREG_UNSPENDABLE,
 ) -> AvaP2PInterface:
     """Build and return an AvaP2PInterface connected to the specified TestNode."""
-    n = AvaP2PInterface(test_framework, node)
+    n = AvaP2PInterface(test_framework, node, payoutAddress=payoutAddress)
 
     # Make sure the proof utxos are mature
     if stake_utxo_confirmations > 1:
@@ -412,7 +418,14 @@ def get_ava_p2p_interface(
     return n
 
 
-def gen_proof(test_framework, node, coinbase_utxos=1, expiry=0, sync_fun=None):
+def gen_proof(
+    test_framework,
+    node,
+    coinbase_utxos=1,
+    expiry=0,
+    sync_fun=None,
+    payoutAddress=ADDRESS_ECREG_UNSPENDABLE,
+):
     blockhashes = test_framework.generate(
         node,
         coinbase_utxos,
@@ -426,15 +439,15 @@ def gen_proof(test_framework, node, coinbase_utxos=1, expiry=0, sync_fun=None):
         node, blockhashes, node.get_deterministic_priv_key().key
     )
     proof_hex = node.buildavalancheproof(
-        42, expiry, bytes_to_wif(privkey.get_bytes()), stakes
+        42, expiry, bytes_to_wif(privkey.get_bytes()), stakes, payoutAddress
     )
 
     return privkey, avalanche_proof_from_hex(proof_hex)
 
 
-def build_msg_avaproofs(
+def build_raw_msg_avaproofs(
     proofs: List[AvalancheProof],
-    prefilled_proofs: Optional[List[AvalancheProof]] = None,
+    prefilled_proofs: Optional[List[AvalanchePrefilledProof]] = None,
     key_pair: Optional[List[int]] = None,
 ) -> msg_avaproofs:
     if key_pair is None:
@@ -451,11 +464,28 @@ def build_msg_avaproofs(
     return msg
 
 
+def build_msg_avaproofs(
+    proofs: List[AvalancheProof],
+    prefilled_proofs: Optional[List[AvalancheProof]] = None,
+    key_pair: Optional[List[int]] = None,
+) -> msg_avaproofs:
+    proofids = sorted([p.proofid for p in proofs])
+    indexed_prefilled_proofs = []
+    if prefilled_proofs:
+        for proof in sorted(prefilled_proofs, key=lambda p: p.proofid):
+            indexed_prefilled_proofs.append(
+                AvalanchePrefilledProof(proofids.index(proof.proofid), proof)
+            )
+    return build_raw_msg_avaproofs(proofs, indexed_prefilled_proofs, key_pair)
+
+
 def can_find_inv_in_poll(
     quorum,
     inv_hash,
     response=AvalancheVoteError.ACCEPTED,
     other_response=AvalancheVoteError.ACCEPTED,
+    unexpected_hashes=None,
+    response_map={},
 ):
     found_hash = False
     for n in quorum:
@@ -471,13 +501,36 @@ def can_find_inv_in_poll(
             # Vote to everything but our searched inv
             r = other_response
 
+            if response_map.get(inv.type, None):
+                r = response_map[inv.type]
+
             # Look for what we expect
             if inv.hash == inv_hash:
                 r = response
                 found_hash = True
+
+            assert inv.hash not in (
+                unexpected_hashes or []
+            ), f"Unexpected inv hash {inv.hash} found in list {unexpected_hashes}"
 
             votes.append(AvalancheVote(r, inv.hash))
 
         n.send_avaresponse(poll.round, votes, n.delegated_privkey)
 
     return found_hash
+
+
+def assert_response(
+    poll_node: AvaP2PInterface, avakey: ECPubKey, expected: List[AvalancheVote]
+):
+    response = poll_node.wait_for_avaresponse()
+    r = response.response
+
+    # Verify signature.
+    assert avakey.verify_schnorr(response.sig, r.get_hash())
+
+    # Verify correct votes list
+    votes = r.votes
+    assert_equal(len(votes), len(expected))
+    for i in range(0, len(votes)):
+        assert_equal(repr(votes[i]), repr(expected[i]))

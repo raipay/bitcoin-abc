@@ -184,29 +184,26 @@ export const formatXecAmount = (xecAmount: number): string => {
 /**
  * Return a formatted string of fiat if price info is available and > $1
  * Otherwise return formatted XEC amount
- * @param {integer} satoshis
- * @param {array or false} coingeckoPrices [{fiat, price}...{fiat, price}] with xec price at index 0
+ * @param satoshis
+ * @param xecPrice [{fiat, price}...{fiat, price}] with xec price at index 0
  */
 export const satsToFormattedValue = (
-    satoshis: number,
-    coingeckoPrices?: false | CoinGeckoPrice[],
+    satoshis: number | bigint,
+    xecPrice?: number,
 ) => {
     // Get XEC qty
-    const xecAmount = satoshis / 100;
+    const xecAmount = Number(satoshis) / 100;
 
-    if (!coingeckoPrices) {
+    if (typeof xecPrice === 'undefined') {
         return formatXecAmount(xecAmount);
     }
-    // Get XEC price from index 0
-    const { fiat, price } = coingeckoPrices[0];
 
     // Get fiat price
-    const fiatAmount = xecAmount * price;
-    const fiatSymbol: string = config.fiatReference[fiat] as string;
+    const fiatAmount = xecAmount * xecPrice;
 
     // Format fiatAmount for different tiers
     let displayedAmount;
-    let localeOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 0 };
+    let localeOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 2 };
     let descriptor = '';
 
     if (fiatAmount === 0) {
@@ -217,8 +214,11 @@ export const satsToFormattedValue = (
             minimumFractionDigits: -Math.floor(Math.log10(fiatAmount)),
         };
     } else if (fiatAmount < 1) {
-        // TODO two decimal places
+        // Two decimal places
         localeOptions = { minimumFractionDigits: 2 };
+    } else if (fiatAmount < 1000) {
+        // No decimal places for values 1-1000
+        localeOptions = { maximumFractionDigits: 0 };
     }
 
     if (fiatAmount < 1000) {
@@ -238,14 +238,13 @@ export const satsToFormattedValue = (
         descriptor = 'B';
     }
 
-    return `${fiatSymbol}${displayedAmount!.toLocaleString(
+    return `$${displayedAmount!.toLocaleString(
         'en-US',
         localeOptions,
     )}${descriptor}`;
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const jsonReplacer = function (key: string, value: any) {
+export const jsonReplacer = function (_key: string, value: any) {
     if (value instanceof Map) {
         const keyValueArray = Array.from(value.entries());
 
@@ -266,6 +265,12 @@ export const jsonReplacer = function (key: string, value: any) {
                         dataType: 'BigNumberReplacer',
                         value: thisKeyValue[1].toString(),
                     };
+                } else if (typeof thisKeyValue[1] === 'bigint') {
+                    // Replace it
+                    thisKeyValue[1] = {
+                        dataType: 'BigIntReplacer',
+                        value: thisKeyValue[1].toString(),
+                    };
                 }
             }
         }
@@ -279,13 +284,17 @@ export const jsonReplacer = function (key: string, value: any) {
             dataType: 'Set',
             value: Array.from(value.keys()),
         };
+    } else if (typeof value === 'bigint') {
+        return {
+            dataType: 'BigIntReplacer',
+            value: value.toString(),
+        };
     } else {
         return value;
     }
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const jsonReviver = (key: string, value: any) => {
+export const jsonReviver = (_key: string, value: any) => {
     if (typeof value === 'object' && value !== null) {
         if (value.dataType === 'Map') {
             // If the map is not empty
@@ -302,16 +311,17 @@ export const jsonReviver = (key: string, value: any) => {
                 for (let i = 0; i < value.value.length; i += 1) {
                     const thisKeyValuePair = value.value[i]; // [key, value]
                     const thisValue = thisKeyValuePair[1];
-                    if (
-                        thisValue &&
-                        thisValue.dataType === 'BigNumberReplacer'
-                    ) {
-                        // If this is saved BigNumber, replace it with an actual BigNumber
-                        // note, you can't use thisValue = new BigNumber(thisValue.value)
-                        // Need to use this specific array entry
-                        value.value[i][1] = new BigNumber(
-                            value.value[i][1].value,
-                        );
+                    if (thisValue) {
+                        if (thisValue.dataType === 'BigNumberReplacer') {
+                            // If this is saved BigNumber, replace it with an actual BigNumber
+                            // note, you can't use thisValue = new BigNumber(thisValue.value)
+                            // Need to use this specific array entry
+                            value.value[i][1] = new BigNumber(
+                                value.value[i][1].value,
+                            );
+                        } else if (thisValue.dataType === 'BigIntReplacer') {
+                            value.value[i][1] = BigInt(value.value[i][1].value);
+                        }
                     }
                 }
             }
@@ -319,6 +329,9 @@ export const jsonReviver = (key: string, value: any) => {
         }
         if (value.dataType === 'Set') {
             return new Set(value.value);
+        }
+        if (value.dataType === 'BigIntReplacer') {
+            return BigInt(value.value);
         }
     }
     return value;
@@ -330,9 +343,8 @@ export const jsonReviver = (key: string, value: any) => {
  * @param {map} map
  * @returns array
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 export const mapToKeyValueArray = (map: Map<any, any>): Array<[any, any]> => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const kvArray: Array<[any, any]> = [];
     map.forEach((value, key) => {
         kvArray.push([key, value]);
@@ -345,7 +357,7 @@ export const mapToKeyValueArray = (map: Map<any, any>): Array<[any, any]> => {
  * @param  balanceSats
  * @returns  emoji determined by thresholds set in config
  */
-export const getEmojiFromBalanceSats = (balanceSats: number): string => {
+export const getEmojiFromBalanceSats = (balanceSats: bigint): string => {
     const { whaleSats, emojis } = config;
     if (balanceSats >= whaleSats.bigWhale) {
         return emojis.bigWhale;
@@ -487,4 +499,28 @@ export const getNextStakingReward = async (
     );
 
     return false;
+};
+
+const ECASH_DECIMALS = 2;
+/**
+ * Divide satoshis by 100 using string methods and no bn lib
+ * @param satoshis
+ */
+export const toXec = (satoshis: bigint): number => {
+    // Convert to string
+    let satsStr = satoshis.toString();
+
+    // Pad with zeros if we have less than 1.00 XEC
+    const satsStrLength = satsStr.length;
+    if (satsStrLength === 1) {
+        satsStr = `0${satsStr}`;
+    } else if (satsStrLength === 2) {
+        satsStr = `00${satsStr}`;
+    }
+
+    // Add decimal place
+    const beforeDecimal = satsStr.slice(0, -1 * ECASH_DECIMALS);
+    const afterDecimal = satsStr.slice(-1 * ECASH_DECIMALS);
+
+    return parseFloat(`${beforeDecimal}.${afterDecimal}`);
 };

@@ -72,7 +72,7 @@ struct CConnmanTest : public CConnman {
     }
 
     void AddNode(const CAddress &addr, ConnectionType type) {
-        CNode *pnode = new CNode(nodeid++, INVALID_SOCKET, addr,
+        CNode *pnode = new CNode(nodeid++, /*sock=*/nullptr, addr,
                                  CalculateKeyedNetGroup(addr),
                                  /* nLocalHostNonceIn */ 0,
                                  /* nLocalExtraEntropyIn */ 0, addr,
@@ -99,8 +99,6 @@ struct CConnmanTest : public CConnman {
         options.m_max_avalanche_outbound = maxAvalancheOutbounds;
         Init(options);
     };
-
-    void MakeAddrmanDeterministic() { addrman.MakeDeterministic(); }
 
     void Init(const Options &connOptions) {
         CConnman::Init(connOptions);
@@ -160,7 +158,6 @@ struct CConnmanTest : public CConnman {
             avalancheOutboundsCount = 0;
         }
 
-        addrman.Clear();
         ClearNodes();
 
         struct IpGen {
@@ -269,7 +266,6 @@ BOOST_AUTO_TEST_CASE(cnode_listen_port) {
 }
 
 BOOST_AUTO_TEST_CASE(cnode_simple_test) {
-    SOCKET hSocket = INVALID_SOCKET;
     NodeId id = 0;
 
     in_addr ipv4Addr;
@@ -279,7 +275,7 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
     std::string pszDest;
 
     auto pnode1 =
-        std::make_unique<CNode>(id++, hSocket, addr,
+        std::make_unique<CNode>(id++, /*sock=*/nullptr, addr,
                                 /* nKeyedNetGroupIn = */ 0,
                                 /* nLocalHostNonceIn = */ 0,
                                 /* nLocalExtraEntropyIn */ 0, CAddress(),
@@ -294,9 +290,9 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
     BOOST_CHECK(pnode1->m_inbound_onion == false);
     BOOST_CHECK_EQUAL(pnode1->ConnectedThroughNetwork(), Network::NET_IPV4);
 
-    auto pnode2 =
-        std::make_unique<CNode>(id++, hSocket, addr, 1, 1, 1, CAddress(),
-                                pszDest, ConnectionType::INBOUND, false);
+    auto pnode2 = std::make_unique<CNode>(id++, /*sock=*/nullptr, addr, 1, 1, 1,
+                                          CAddress(), pszDest,
+                                          ConnectionType::INBOUND, false);
     BOOST_CHECK(pnode2->IsFullOutboundConn() == false);
     BOOST_CHECK(pnode2->IsManualConn() == false);
     BOOST_CHECK(pnode2->IsBlockOnlyConn() == false);
@@ -307,7 +303,7 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
     BOOST_CHECK_EQUAL(pnode2->ConnectedThroughNetwork(), Network::NET_IPV4);
 
     auto pnode3 = std::make_unique<CNode>(
-        id++, hSocket, addr, 0, 0, 0, CAddress(), pszDest,
+        id++, /*sock=*/nullptr, addr, 0, 0, 0, CAddress(), pszDest,
         ConnectionType::OUTBOUND_FULL_RELAY, false);
     BOOST_CHECK(pnode3->IsFullOutboundConn() == true);
     BOOST_CHECK(pnode3->IsManualConn() == false);
@@ -318,9 +314,9 @@ BOOST_AUTO_TEST_CASE(cnode_simple_test) {
     BOOST_CHECK(pnode3->m_inbound_onion == false);
     BOOST_CHECK_EQUAL(pnode3->ConnectedThroughNetwork(), Network::NET_IPV4);
 
-    auto pnode4 =
-        std::make_unique<CNode>(id++, hSocket, addr, 1, 1, 1, CAddress(),
-                                pszDest, ConnectionType::INBOUND, true);
+    auto pnode4 = std::make_unique<CNode>(id++, /*sock=*/nullptr, addr, 1, 1, 1,
+                                          CAddress(), pszDest,
+                                          ConnectionType::INBOUND, true);
     BOOST_CHECK(pnode4->IsFullOutboundConn() == false);
     BOOST_CHECK(pnode4->IsManualConn() == false);
     BOOST_CHECK(pnode4->IsBlockOnlyConn() == false);
@@ -908,7 +904,7 @@ BOOST_AUTO_TEST_CASE(ipv4_peer_with_ipv6_addrMe_test) {
     ipv4AddrPeer.s_addr = 0xa0b0c001;
     CAddress addr = CAddress(CService(ipv4AddrPeer, 7777), NODE_NETWORK);
     std::unique_ptr<CNode> pnode = std::make_unique<CNode>(
-        0, INVALID_SOCKET, addr, /* nKeyedNetGroupIn */ 0,
+        0, /*sock=*/nullptr, addr, /* nKeyedNetGroupIn */ 0,
         /* nLocalHostNonceIn */ 0, /* nLocalExtraEntropyIn */ 0, CAddress{},
         /* pszDest */ std::string{}, ConnectionType::OUTBOUND_FULL_RELAY,
         /* inbound_onion = */ false);
@@ -964,7 +960,7 @@ BOOST_AUTO_TEST_CASE(get_local_addr_for_peer_port) {
     peer_out_in_addr.s_addr = htonl(0x01020304);
     CNode peer_out{
         /*id=*/0,
-        /*hSocketIn=*/INVALID_SOCKET,
+        /*sock=*/nullptr,
         /*addrIn=*/CAddress{CService{peer_out_in_addr, 8333}, NODE_NETWORK},
         /*nKeyedNetGroupIn=*/0,
         /*nLocalHostNonceIn=*/0,
@@ -988,7 +984,7 @@ BOOST_AUTO_TEST_CASE(get_local_addr_for_peer_port) {
     peer_in_in_addr.s_addr = htonl(0x05060708);
     CNode peer_in{
         /*id=*/0,
-        /*hSocketIn=*/INVALID_SOCKET,
+        /*sock=*/nullptr,
         /*addrIn=*/CAddress{CService{peer_in_in_addr, 8333}, NODE_NETWORK},
         /*nKeyedNetGroupIn=*/0,
         /*nLocalHostNonceIn=*/0,
@@ -1023,7 +1019,7 @@ BOOST_AUTO_TEST_CASE(avalanche_statistics) {
         ipv4Addr.s_addr = 0xa0b0c001;
         CAddress addr = CAddress(CService(ipv4Addr, 7777), NODE_NETWORK);
         std::unique_ptr<CNode> pnode = std::make_unique<CNode>(
-            0, INVALID_SOCKET, addr, 0, 0, 0, CAddress(), std::string{},
+            0, /*sock=*/nullptr, addr, 0, 0, 0, CAddress(), std::string{},
             ConnectionType::OUTBOUND_FULL_RELAY, false);
         pnode->m_avalanche_enabled = true;
 
@@ -1142,20 +1138,26 @@ BOOST_AUTO_TEST_CASE(get_extra_full_outbound_count) {
 }
 
 BOOST_AUTO_TEST_CASE(net_group_limit) {
-    m_node.connman = std::make_unique<CConnmanTest>(
-        m_node.chainman->GetConfig(), 0x1337, 0x1337, *m_node.addrman);
-
     CConnman::Options options;
-    options.nMaxConnections = 200;
-    options.m_max_outbound_full_relay = 8;
-    options.m_max_avalanche_outbound = 60;
+    auto freshConnman = [&]() {
+        m_node.addrman = std::make_unique<AddrMan>(
+            /*asmap=*/std::vector<bool>(), /*deterministic=*/true,
+            /*consistency_check_ratio=*/0);
+        m_node.connman = std::make_unique<CConnmanTest>(
+            m_node.chainman->GetConfig(), 0x1337, 0x1337, *m_node.addrman);
 
-    auto connman = static_cast<CConnmanTest *>(m_node.connman.get());
-    connman->MakeAddrmanDeterministic();
-    connman->Init(options);
+        options.nMaxConnections = 200;
+        options.m_max_outbound_full_relay = 8;
+        options.m_max_avalanche_outbound = 60;
+
+        auto connman = static_cast<CConnmanTest *>(m_node.connman.get());
+        connman->Init(options);
+
+        return connman;
+    };
 
     // Single full relay outbound is no problem
-    BOOST_CHECK(connman->checkContiguousAddressesConnection(
+    BOOST_CHECK(freshConnman()->checkContiguousAddressesConnection(
         {
             // group, services, quantity
             {0, NODE_NETWORK, 1},
@@ -1166,7 +1168,7 @@ BOOST_AUTO_TEST_CASE(net_group_limit) {
 
     // Adding more contiguous full relay outbounds fails due to network group
     // limitation
-    BOOST_CHECK(connman->checkContiguousAddressesConnection(
+    BOOST_CHECK(freshConnman()->checkContiguousAddressesConnection(
         {
             // group, services, quantity
             {0, NODE_NETWORK, 3},
@@ -1176,7 +1178,7 @@ BOOST_AUTO_TEST_CASE(net_group_limit) {
         ));
 
     // Outbounds from different groups can be connected
-    BOOST_CHECK(connman->checkContiguousAddressesConnection(
+    BOOST_CHECK(freshConnman()->checkContiguousAddressesConnection(
         {
             // group, services, quantity
             {0, NODE_NETWORK, 1},
@@ -1188,7 +1190,7 @@ BOOST_AUTO_TEST_CASE(net_group_limit) {
         ));
 
     // Up to the max
-    BOOST_CHECK(connman->checkContiguousAddressesConnection(
+    BOOST_CHECK(freshConnman()->checkContiguousAddressesConnection(
         {
             // group, services, quantity
             {0, NODE_NETWORK, 1},
@@ -1210,7 +1212,7 @@ BOOST_AUTO_TEST_CASE(net_group_limit) {
 
     // Avalanche outbounds are prioritized, so contiguous full relay outbounds
     // will fail due to network group limitation
-    BOOST_CHECK(connman->checkContiguousAddressesConnection(
+    BOOST_CHECK(freshConnman()->checkContiguousAddressesConnection(
         {
             // group, services, quantity
             {0, NODE_NETWORK | NODE_AVALANCHE, 1},
@@ -1221,7 +1223,7 @@ BOOST_AUTO_TEST_CASE(net_group_limit) {
         ));
 
     // Adding more avalanche outbounds is fine
-    BOOST_CHECK(connman->checkContiguousAddressesConnection(
+    BOOST_CHECK(freshConnman()->checkContiguousAddressesConnection(
         {
             // group, services, quantity
             {0, NODE_NETWORK | NODE_AVALANCHE, 3},
@@ -1233,7 +1235,7 @@ BOOST_AUTO_TEST_CASE(net_group_limit) {
 
     // Group limit still applies to non avalanche outbounds, which also remain
     // capped to the max from the connman options.
-    BOOST_CHECK(connman->checkContiguousAddressesConnection(
+    BOOST_CHECK(freshConnman()->checkContiguousAddressesConnection(
         {
             // group, services, quantity
             {0, NODE_NETWORK | NODE_AVALANCHE, 50},
@@ -1280,7 +1282,7 @@ BOOST_AUTO_TEST_CASE(initial_advertise_from_version_message) {
     in_addr peer_in_addr;
     peer_in_addr.s_addr = htonl(0x01020304);
     CNode peer{/*id=*/0,
-               /*hSocketIn=*/INVALID_SOCKET,
+               /*sock=*/nullptr,
                /*addrIn=*/CAddress{CService{peer_in_addr, 8333}, NODE_NETWORK},
                /*nKeyedNetGroupIn=*/0,
                /*nLocalHostNonceIn=*/0,
@@ -1291,14 +1293,13 @@ BOOST_AUTO_TEST_CASE(initial_advertise_from_version_message) {
                /*inbound_onion=*/false};
 
     const uint64_t services{NODE_NETWORK};
-    const int64_t time{0};
+    const int64_t time{Params().GenesisBlock().nTime};
     const CNetMsgMaker msg_maker{PROTOCOL_VERSION};
 
-    // Force CChainState::IsInitialBlockDownload() to return false.
+    // Force ChainstateManager::IsInitialBlockDownload() to return false.
     // Otherwise PushAddress() isn't called by PeerManager::ProcessMessage().
-    TestChainState &chainstate =
-        *static_cast<TestChainState *>(&m_node.chainman->ActiveChainstate());
-    chainstate.JumpOutOfIbd();
+    auto &chainman = static_cast<TestChainstateManager &>(*m_node.chainman);
+    chainman.JumpOutOfIbd();
 
     const Config &config = m_node.chainman->GetConfig();
 
@@ -1355,7 +1356,7 @@ BOOST_AUTO_TEST_CASE(initial_advertise_from_version_message) {
     BOOST_CHECK(sent);
 
     CaptureMessage = CaptureMessageOrig;
-    chainstate.ResetIbd();
+    chainman.ResetIbd();
 
     m_node.peerman->FinalizeNode(config, peer);
 

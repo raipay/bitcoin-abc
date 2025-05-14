@@ -2,6 +2,8 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test node responses to invalid network messages."""
+
+import random
 import struct
 import time
 
@@ -13,10 +15,12 @@ from test_framework.messages import (
     MSG_TX,
     CBlockHeader,
     CInv,
+    FromHex,
     msg_getdata,
     msg_headers,
     msg_inv,
     msg_ping,
+    msg_version,
     ser_string,
 )
 from test_framework.p2p import P2PDataStore, P2PInterface
@@ -57,6 +61,7 @@ class InvalidMessagesTest(BitcoinTestFramework):
 
     def run_test(self):
         self.test_buffer()
+        self.test_duplicate_version_msg()
         self.test_magic_bytes()
         self.test_checksum()
         self.test_size()
@@ -69,6 +74,8 @@ class InvalidMessagesTest(BitcoinTestFramework):
         self.test_oversized_getdata_msg()
         self.test_oversized_headers_msg()
         self.test_oversized_block_msg()
+        self.test_invalid_pow_headers_msg()
+        self.test_noncontinuous_headers_msg()
         self.test_resource_exhaustion()
 
     def test_buffer(self):
@@ -91,6 +98,13 @@ class InvalidMessagesTest(BitcoinTestFramework):
         assert_equal(middle, before + cut_pos)
         conn.send_raw_message(msg[cut_pos:])
         conn.sync_with_ping()
+        self.nodes[0].disconnect_p2ps()
+
+    def test_duplicate_version_msg(self):
+        self.log.info("Test duplicate version message is ignored")
+        conn = self.nodes[0].add_p2p_connection(P2PDataStore())
+        with self.nodes[0].assert_debug_log(["redundant version message from peer"]):
+            conn.send_and_ping(msg_version())
         self.nodes[0].disconnect_p2ps()
 
     def test_magic_bytes(self):
@@ -276,7 +290,9 @@ class InvalidMessagesTest(BitcoinTestFramework):
         with self.nodes[0].assert_debug_log(
             ["Misbehaving", f"{msg_type} message size = {size}"]
         ):
-            self.nodes[0].add_p2p_connection(P2PInterface()).send_and_ping(msg)
+            conn = self.nodes[0].add_p2p_connection(P2PInterface())
+            conn.send_message(msg)
+            conn.wait_for_disconnect()
         self.nodes[0].disconnect_p2ps()
 
     def test_not_oversized_msg(self, msg_type, msg_size):
@@ -290,7 +306,8 @@ class InvalidMessagesTest(BitcoinTestFramework):
 
         conn = self.nodes[0].add_p2p_connection(P2PDataStore())
         with self.nodes[0].assert_debug_log(
-            [f"received: {msg_type.decode('ascii')} ({msg_size} bytes)"]
+            [f"received: {msg_type.decode('ascii')} ({msg_size} bytes)"],
+            unexpected_msgs=["Misbehaving"],
         ):
             conn.send_and_ping(msg)
         self.nodes[0].disconnect_p2ps()
@@ -326,7 +343,8 @@ class InvalidMessagesTest(BitcoinTestFramework):
         size = MAX_HEADERS_RESULTS + 1
         msg = msg_headers([CBlockHeader()] * size)
         self.test_oversized_msg(msg, size)
-        self.test_not_oversized_msg_boundaries(msg.msgtype)
+        # test_not_oversized_msg_boundaries is not tested here because the max headers
+        # msg size is well below the boundaries tested
         self.restart_node(0)
 
     def test_oversized_block_msg(self):
@@ -371,6 +389,74 @@ class InvalidMessagesTest(BitcoinTestFramework):
         self.test_not_oversized_msg(b"block", size * 2)
 
         self.restart_node(0)
+
+    def test_invalid_pow_headers_msg(self):
+        self.log.info(
+            "Test headers message with invalid proof-of-work is logged as misbehaving and disconnects peer"
+        )
+        blockheader_tip_hash = self.nodes[0].getbestblockhash()
+        blockheader_tip = FromHex(
+            CBlockHeader(), self.nodes[0].getblockheader(blockheader_tip_hash, False)
+        )
+
+        # send valid headers message first
+        assert_equal(self.nodes[0].getblockchaininfo()["headers"], 0)
+        blockheader = CBlockHeader()
+        blockheader.hashPrevBlock = int(blockheader_tip_hash, 16)
+        blockheader.nTime = int(time.time())
+        blockheader.nBits = blockheader_tip.nBits
+        blockheader.rehash()
+        while not blockheader.hash.startswith("0"):
+            blockheader.nNonce += 1
+            blockheader.rehash()
+        peer = self.nodes[0].add_p2p_connection(P2PInterface())
+        peer.send_and_ping(msg_headers([blockheader]))
+        assert_equal(self.nodes[0].getblockchaininfo()["headers"], 1)
+        chaintips = self.nodes[0].getchaintips()
+        assert_equal(chaintips[0]["status"], "headers-only")
+        assert_equal(chaintips[0]["hash"], blockheader.hash)
+
+        # invalidate PoW
+        while not blockheader.hash.startswith("f"):
+            blockheader.nNonce += 1
+            blockheader.rehash()
+        with self.nodes[0].assert_debug_log(
+            ["Misbehaving", "header with invalid proof of work"]
+        ):
+            peer.send_message(msg_headers([blockheader]))
+            peer.wait_for_disconnect()
+
+    def test_noncontinuous_headers_msg(self):
+        self.log.info(
+            "Test headers message with non-continuous headers sequence is logged as misbehaving"
+        )
+        block_hashes = self.generate(self.nodes[0], 10)
+        block_headers = []
+        for block_hash in block_hashes:
+            block_headers.append(
+                FromHex(CBlockHeader(), self.nodes[0].getblockheader(block_hash, False))
+            )
+
+        # continuous headers sequence should be fine
+        MISBEHAVING_NONCONTINUOUS_HEADERS_MSGS = [
+            "Misbehaving",
+            "non-continuous headers sequence",
+        ]
+        peer = self.nodes[0].add_p2p_connection(P2PInterface())
+        with self.nodes[0].assert_debug_log(
+            ["received: headers"],
+            unexpected_msgs=MISBEHAVING_NONCONTINUOUS_HEADERS_MSGS,
+        ):
+            peer.send_and_ping(msg_headers(block_headers))
+
+        # delete arbitrary block header somewhere in the middle to break link
+        del block_headers[random.randrange(1, len(block_headers) - 1)]
+        with self.nodes[0].assert_debug_log(
+            expected_msgs=MISBEHAVING_NONCONTINUOUS_HEADERS_MSGS
+        ):
+            peer.send_message(msg_headers(block_headers))
+            peer.wait_for_disconnect()
+        self.nodes[0].disconnect_p2ps()
 
     def test_resource_exhaustion(self):
         self.log.info("Test node stays up despite many large junk messages")

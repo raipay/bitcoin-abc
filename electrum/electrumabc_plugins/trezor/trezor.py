@@ -3,8 +3,10 @@ from __future__ import annotations
 import sys
 import traceback
 from binascii import unhexlify
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Tuple
 
+from electrumabc.avalanche.primitives import PublicKey
+from electrumabc.avalanche.proof import Stake
 from electrumabc.base_wizard import HWD_SETUP_NEW_WALLET
 from electrumabc.bip32 import deserialize_xpub
 from electrumabc.bitcoin import TYPE_ADDRESS, TYPE_SCRIPT
@@ -27,6 +29,8 @@ try:
     import trezorlib.transport
     from trezorlib.client import PASSPHRASE_ON_DEVICE
     from trezorlib.messages import (
+        BackupType,
+        Capability,
         HDNodePathType,
         HDNodeType,
         InputScriptType,
@@ -49,6 +53,20 @@ except Exception:
     RECOVERY_TYPE_SCRAMBLED_WORDS, RECOVERY_TYPE_MATRIX = range(2)
 
     PASSPHRASE_ON_DEVICE = object()
+
+    class _EnumMissing:
+        def __init__(self):
+            self.counter = 0
+            self.values = {}
+
+        def __getattr__(self, key):
+            if key not in self.values:
+                self.values[key] = self.counter
+                self.counter += 1
+            return self.values[key]
+
+    Capability = _EnumMissing()
+    BackupType = _EnumMissing()
 
 
 # TREZOR initialization methods
@@ -73,11 +91,15 @@ class TrezorKeyStore(HardwareKeyStore):
         )
 
     def sign_message(self, sequence, message, password, sigtype=SignatureType.BITCOIN):
-        if sigtype == SignatureType.ECASH:
+        client = self.get_client()
+        if self.plugin.has_native_ecash_support and sigtype == SignatureType.BITCOIN:
+            raise RuntimeError(
+                _("Bitcoin message signing is not available for {}").format(self.device)
+            )
+        if not self.plugin.has_native_ecash_support and sigtype == SignatureType.ECASH:
             raise RuntimeError(
                 _("eCash message signing is not available for {}").format(self.device)
             )
-        client = self.get_client()
         address_path = self.get_derivation() + "/%d/%d" % sequence
         msg_sig = client.sign_message(address_path, message)
         return msg_sig.signature
@@ -107,14 +129,48 @@ class TrezorKeyStore(HardwareKeyStore):
 
         self.plugin.sign_transaction(self, tx, prev_tx, xpub_path)
 
+    def sign_stake(
+        self,
+        stake: Stake,
+        index: Tuple[int],
+        expiration_time: int,
+        master_pubkey: PublicKey,
+        password: Optional[str],
+    ):
+        client = self.get_client()
+        if not self.supports_stake_signature():
+            raise NotImplementedError(
+                f"Stake signing is not available for {self.device}. Please make sure your firmware is up-to-date"
+            )
+
+        address_path = self.get_derivation() + "/%d/%d" % index
+        stake_sig = client.sign_stake(
+            address_path, stake, expiration_time, master_pubkey
+        )
+        stake.pubkey = PublicKey.from_hex(stake_sig.pubkey.hex())
+        return stake_sig.signature
+
     def needs_prevtx(self):
-        # Trezor does need previous transactions for Bitcoin Cash
+        # Trezor does need previous transactions for eCash
         return True
+
+    def supports_stake_signature(self):
+        return self.plugin.has_stake_signature_support
 
 
 class LibraryFoundButUnusable(Exception):
     def __init__(self, library_version="unknown"):
         self.library_version = library_version
+
+
+class TrezorInitSettings(NamedTuple):
+    word_count: int
+    label: str
+    pin_enabled: bool
+    passphrase_enabled: bool
+    recovery_type: Any = None
+    backup_type: int = BackupType.Bip39
+    no_backup: bool = False
 
 
 class TrezorPlugin(HWPluginBase):
@@ -141,6 +197,8 @@ class TrezorPlugin(HWPluginBase):
         self.libraries_available = self.check_libraries_available()
         if not self.libraries_available:
             return
+        self.has_native_ecash_support = False
+        self.has_stake_signature_support = False
         self.device_manager().register_enumerate_func(self.enumerate)
 
     def check_libraries_available(self) -> bool:
@@ -215,9 +273,36 @@ class TrezorPlugin(HWPluginBase):
             return
 
         self.print_error("connected to device at", device.path)
-        return TrezorClientBase(transport, handler, self)
+        client = TrezorClientBase(transport, handler, self)
+
+        # Note that this can be toggled from True to False if the wallet doesn't
+        # use the eCash derivation path.
+        self.has_native_ecash_support = client.atleast_version(2, 8, 6) or (
+            client.get_trezor_model() == "1" and client.atleast_version(1, 13, 0)
+        )
+        # Override the class attribute if this trezor supports the 899'
+        # derivation path
+        TrezorPlugin.SUPPORTS_XEC_BIP44_DERIVATION = self.has_native_ecash_support
+
+        # Stake signature support is set once for all
+        self.has_stake_signature_support = (
+            "Ecash" in Capability.__members__
+            and Capability.Ecash in client.features.capabilities
+        )
+
+        return client
 
     def get_client(self, keystore, force_pair=True):
+        # We are going to interact with the device. At this stage we need to
+        # determine whether we should use the native eCash mode or the "Bitcoin
+        # Cash compatibility" mode.
+        # It is possible that the device is an up-to-date Trezor that supports
+        # eCash, but the wallet has been created from a previous version and
+        # therefore should not use the eCash derivation path. In this case we
+        # should reset the has_native_ecash_support flag to avoid making the
+        # wallet unusable.
+        self.has_native_ecash_support &= keystore.get_derivation() == "m/44'/899'/0'"
+
         devmgr = self.device_manager()
         handler = keystore.handler
         client = devmgr.client_for_keystore(self, handler, keystore, force_pair)
@@ -228,15 +313,18 @@ class TrezorPlugin(HWPluginBase):
 
     def get_coin_name(self):
         # Note: testnet supported only by unofficial firmware
+        if self.has_native_ecash_support:
+            return "Ecash Testnet" if NetworkConstants.TESTNET else "Ecash"
         return "Bcash Testnet" if NetworkConstants.TESTNET else "Bcash"
 
-    def _chk_settings_do_popup_maybe(self, handler, method, model, settings):
-        recovery_type = settings and settings[-1]
+    def _chk_settings_do_popup_maybe(
+        self, handler, method, model, settings: TrezorInitSettings
+    ):
         if (
             method == TIM_RECOVER
-            and recovery_type == RECOVERY_TYPE_SCRAMBLED_WORDS
-            and model != "T"
-        ):  # I'm pretty sure this only applies to the '1' not the 'T'
+            and settings.recovery_type == RECOVERY_TYPE_SCRAMBLED_WORDS
+            and model == "1"  # This only applies to the model '1'
+        ):
             handler.show_error(
                 _(
                     "You will be asked to enter 24 words regardless of your "
@@ -271,7 +359,7 @@ class TrezorPlugin(HWPluginBase):
             try:
                 import threading
 
-                settings = self.request_trezor_init_settings(wizard, method, model)
+                settings = self.request_trezor_init_settings(wizard, method, device_id)
                 # We do this popup business here because doing it in the
                 # thread interferes with whatever other popups may happen
                 # from trezorlib.  So we do this all-stop popup first if needed.
@@ -322,25 +410,28 @@ class TrezorPlugin(HWPluginBase):
                 lc[0].exit(exit_code)
 
     def _initialize_device(self, settings, method, device_id):
-        item, label, pin_protection, passphrase_protection, recovery_type = settings
-
         devmgr = self.device_manager()
         client = devmgr.client_by_id(device_id)
+        if not client:
+            raise Exception(_("The device was disconnected."))
 
         if method == TIM_NEW:
+            strength_from_word_count = {12: 128, 18: 192, 20: 128, 24: 256, 33: 256}
             client.reset_device(
-                strength=64 * (item + 2),  # 128, 192 or 256
-                passphrase_protection=passphrase_protection,
-                pin_protection=pin_protection,
-                label=label,
+                strength=strength_from_word_count[settings.word_count],
+                passphrase_protection=settings.passphrase_enabled,
+                pin_protection=settings.pin_enabled,
+                label=settings.label,
+                backup_type=settings.backup_type,
+                no_backup=settings.no_backup,
             )
         elif method == TIM_RECOVER:
             client.recover_device(
-                recovery_type=recovery_type,
-                word_count=6 * (item + 2),  # 12, 18 or 24
-                passphrase_protection=passphrase_protection,
-                pin_protection=pin_protection,
-                label=label,
+                recovery_type=settings.recovery_type,
+                word_count=settings.word_count,
+                passphrase_protection=settings.passphrase_enabled,
+                pin_protection=settings.pin_enabled,
+                label=settings.label,
             )
         else:
             raise RuntimeError("Unsupported recovery method")
@@ -527,9 +618,11 @@ class TrezorPlugin(HWPluginBase):
                 else:
                     raise Exception(_("Unsupported output script."))
             elif _type == TYPE_ADDRESS:
-                # ecash: addresses are not supported yet by trezor
                 ui_addr_fmt = address.FMT_UI
-                if ui_addr_fmt == address.FMT_CASHADDR:
+                if (
+                    not self.has_native_ecash_support
+                    and ui_addr_fmt == address.FMT_CASHADDR
+                ):
                     ui_addr_fmt = address.FMT_CASHADDR_BCH
 
                 addr_format = address.FMT_LEGACY

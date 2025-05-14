@@ -9,6 +9,7 @@
 #include <avalanche/processor.h>
 #include <avalanche/proof.h>
 #include <avalanche/proofbuilder.h>
+#include <avalanche/stakecontender.h>
 #include <avalanche/validation.h>
 #include <common/args.h>
 #include <config.h>
@@ -47,7 +48,7 @@ static RPCHelpMan getavalanchekey() {
 }
 
 static CPubKey ParsePubKey(const UniValue &param) {
-    const std::string keyHex = param.get_str();
+    const std::string &keyHex = param.get_str();
     if ((keyHex.length() != 2 * CPubKey::COMPRESSED_SIZE &&
          keyHex.length() != 2 * CPubKey::SIZE) ||
         !IsHex(keyHex)) {
@@ -845,7 +846,11 @@ static RPCHelpMan getavalanchepeerinfo() {
                     {RPCResult::Type::NUM, "avalanche_peerid",
                      "The avalanche internal peer identifier"},
                     {RPCResult::Type::NUM, "availability_score",
-                     "The agreggated availability score of this peer's nodes"},
+                     "DEPRECATED: The agreggated availability score of this "
+                     "peer's nodes. This score is no longer computed starting "
+                     "with version 0.30.12 and is always 0. This field is only "
+                     "returned if the -deprecatedrpc=peer_availability_score "
+                     "option is enabled."},
                     {RPCResult::Type::STR_HEX, "proofid",
                      "The avalanche proof id used by this peer"},
                     {RPCResult::Type::STR_HEX, "proof",
@@ -870,13 +875,17 @@ static RPCHelpMan getavalanchepeerinfo() {
             const JSONRPCRequest &request) -> UniValue {
             NodeContext &node = EnsureAnyNodeContext(request.context);
             avalanche::Processor &avalanche = EnsureAvalanche(node);
+            const ArgsManager &argsman = EnsureArgsman(node);
 
-            auto peerToUniv = [](const avalanche::PeerManager &pm,
-                                 const avalanche::Peer &peer) {
+            auto peerToUniv = [&argsman](const avalanche::PeerManager &pm,
+                                         const avalanche::Peer &peer) {
                 UniValue obj(UniValue::VOBJ);
 
                 obj.pushKV("avalanche_peerid", uint64_t(peer.peerid));
-                obj.pushKV("availability_score", peer.availabilityScore);
+                if (IsDeprecatedRPCEnabled(argsman,
+                                           "peer_availability_score")) {
+                    obj.pushKV("availability_score", 0);
+                }
                 obj.pushKV("proofid", peer.getProofId().ToString());
                 obj.pushKV("proof", peer.proof->ToHex());
 
@@ -1088,6 +1097,58 @@ static RPCHelpMan getstakingreward() {
             }
 
             return winnersArr;
+        },
+    };
+}
+
+static RPCHelpMan hasstakingreward() {
+    return RPCHelpMan{
+        "hasstakingreward",
+        "Return true if a staking reward winner exists based on the previous "
+        "block hash.\n",
+        {
+            {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The previous block hash, hex encoded."},
+        },
+        RPCResult{RPCResult::Type::BOOL, "success",
+                  "Whether staking reward winner has been computed for "
+                  "previous block hash or not."},
+        RPCExamples{HelpExampleRpc("hasstakingreward", "<blockhash>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            const NodeContext &node = EnsureAnyNodeContext(request.context);
+            ChainstateManager &chainman = EnsureChainman(node);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
+
+            const BlockHash blockhash(
+                ParseHashV(request.params[0], "blockhash"));
+
+            const CBlockIndex *pprev;
+            {
+                LOCK(cs_main);
+                pprev = chainman.m_blockman.LookupBlockIndex(blockhash);
+            }
+
+            if (!pprev) {
+                throw JSONRPCError(
+                    RPC_INVALID_PARAMETER,
+                    strprintf("Block not found: %s\n", blockhash.ToString()));
+            }
+
+            if (!IsStakingRewardsActivated(
+                    config.GetChainParams().GetConsensus(), pprev)) {
+                throw JSONRPCError(
+                    RPC_INTERNAL_ERROR,
+                    strprintf(
+                        "Staking rewards are not activated for block %s\n",
+                        blockhash.ToString()));
+            }
+
+            std::vector<std::pair<avalanche::ProofId, CScript>> winners;
+            if (!avalanche.getStakingRewardWinners(blockhash, winners)) {
+                return false;
+            }
+            return winners.size() > 0;
         },
     };
 }
@@ -1751,6 +1812,66 @@ static RPCHelpMan getflakyproofs() {
         }};
 }
 
+static RPCHelpMan getavailabilityscore() {
+    return RPCHelpMan{
+        "getavailabilityscore",
+        "Return the node availability score.\n",
+        {
+            {"nodeid", RPCArg::Type::NUM, RPCArg::Optional::NO, "The node id."},
+        },
+        RPCResult{RPCResult::Type::NUM, "availability_score",
+                  "The node availability score (if any)."},
+        RPCExamples{HelpExampleRpc("getavailabilityscore", "<nodeid>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            const NodeContext &node = EnsureAnyNodeContext(request.context);
+            const CConnman &connman = EnsureConnman(node);
+
+            const NodeId nodeid(request.params[0].getInt<int64_t>());
+
+            CNodeStats nodeStats;
+            if (connman.GetNodeStats(nodeid, nodeStats) &&
+                nodeStats.m_availabilityScore) {
+                return *nodeStats.m_availabilityScore;
+            }
+
+            return UniValue::VNULL;
+        },
+    };
+}
+
+static RPCHelpMan getstakecontendervote() {
+    return RPCHelpMan{
+        "getstakecontendervote",
+        "Return the stake contender avalanche vote.\n",
+        {
+            {"prevblockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The prevblockhash used to compute the stake contender ID, hex "
+             "encoded."},
+            {"proofid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The proofid used to compute the stake contender ID, hex "
+             "encoded."},
+        },
+        RPCResult{RPCResult::Type::NUM, "vote",
+                  "The vote that would be returned if polled."},
+        RPCExamples{HelpExampleRpc("getstakecontendervote",
+                                   "<prevblockhash> <proofid>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            const NodeContext &node = EnsureAnyNodeContext(request.context);
+            avalanche::Processor &avalanche = EnsureAvalanche(node);
+
+            const BlockHash prevblockhash(
+                ParseHashV(request.params[0], "prevblockhash"));
+            const avalanche::ProofId proofid(
+                ParseHashV(request.params[1], "proofid"));
+            const avalanche::StakeContenderId contenderId(prevblockhash,
+                                                          proofid);
+            return avalanche.getStakeContenderStatus(contenderId);
+        },
+    };
+}
+
 void RegisterAvalancheRPCCommands(CRPCTable &t) {
     // clang-format off
     static const CRPCCommand commands[] = {
@@ -1766,6 +1887,7 @@ void RegisterAvalancheRPCCommands(CRPCTable &t) {
         { "avalanche",         getavalanchepeerinfo,      },
         { "avalanche",         getavalancheproofs,        },
         { "avalanche",         getstakingreward,          },
+        { "hidden",            hasstakingreward,          },
         { "avalanche",         setstakingreward,          },
         { "avalanche",         getremoteproofs,           },
         { "avalanche",         getrawavalancheproof,      },
@@ -1778,6 +1900,8 @@ void RegisterAvalancheRPCCommands(CRPCTable &t) {
         { "avalanche",         verifyavalanchedelegation, },
         { "avalanche",         setflakyproof,             },
         { "avalanche",         getflakyproofs,            },
+        { "hidden",            getavailabilityscore,      },
+        { "hidden",            getstakecontendervote,     },
     };
     // clang-format on
 

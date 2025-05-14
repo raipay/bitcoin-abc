@@ -3,13 +3,13 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <bench/bench.h>
-#include <chainparamsbase.h>
 #include <consensus/amount.h>
 #include <kernel/cs_main.h>
 #include <kernel/mempool_entry.h>
 #include <rpc/mempool.h>
 #include <test/util/setup_common.h>
 #include <txmempool.h>
+#include <util/chaintype.h>
 
 #include <univalue.h>
 
@@ -23,7 +23,7 @@ static void AddTx(const CTransactionRef &tx, const Amount &fee,
 
 static void RpcMempool(benchmark::Bench &bench) {
     const TestingSetup test_setup{
-        CBaseChainParams::MAIN,
+        ChainType::MAIN,
         /* extra_args */
         {
             "-nodebuglogfile",

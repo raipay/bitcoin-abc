@@ -18,6 +18,7 @@
 #include <key_io.h>
 #include <memusage.h>
 #include <netbase.h>
+#include <policy/policy.h>
 #include <policy/settings.h>
 #include <pow/pow.h>
 #include <protocol.h>
@@ -29,6 +30,7 @@
 #include <streams.h>
 #include <uint256.h>
 #include <univalue.h>
+#include <util/chaintype.h>
 #include <util/check.h>
 #include <util/moneystr.h>
 #include <util/strencodings.h>
@@ -48,7 +50,7 @@
 #include <vector>
 
 void initialize_integer() {
-    SelectParams(CBaseChainParams::REGTEST);
+    SelectParams(ChainType::REGTEST);
 }
 
 FUZZ_TARGET_INIT(integer, initialize_integer) {

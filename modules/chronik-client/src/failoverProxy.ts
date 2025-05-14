@@ -20,6 +20,29 @@ interface Endpoint {
 
 const WEBSOCKET_TIMEOUT_MS = 5000;
 
+// Converts an array of chronik http/https urls into
+// websocket equivalents and combines them into an object array
+export function appendWsUrls(urls: string[]): Endpoint[] {
+    const combinedUrls = [];
+    for (const thisUrl of urls) {
+        if (thisUrl.startsWith('https://')) {
+            combinedUrls.push({
+                url: thisUrl,
+                wsUrl: 'wss://' + thisUrl.substring('https://'.length) + '/ws',
+            });
+        } else if (thisUrl.startsWith('http://')) {
+            combinedUrls.push({
+                url: thisUrl,
+                wsUrl: 'ws://' + thisUrl.substring('http://'.length) + '/ws',
+            });
+        } else {
+            throw new Error(`Invalid url found in array: ${thisUrl}`);
+        }
+    }
+
+    return combinedUrls;
+}
+
 /**
  * Handles the networking to Chronik `Endpoint`s, including cycling
  * through both types of endpoints.
@@ -50,7 +73,7 @@ export class FailoverProxy {
 
         // Initializes _endpointArray with an object Array containing
         // 'url' and 'wsUrl' props
-        this._endpointArray = this.appendWsUrls(urlsArray);
+        this._endpointArray = appendWsUrls(urlsArray);
         this._workingIndex = 0;
     }
 
@@ -66,33 +89,6 @@ export class FailoverProxy {
     // Overriding working index for unit testing purposes
     public setWorkingIndex(newIndex: number) {
         this._workingIndex = newIndex;
-    }
-
-    // Converts an array of chronik http/https urls into
-    // websocket equivalents and combines them into an object array
-    // Note: this function is declared as public in order to access it
-    // via unit tests to validate the websocket url parsing logic below.
-    public appendWsUrls(urls: string[]): Endpoint[] {
-        const combinedUrls = [];
-        for (const thisUrl of urls) {
-            if (thisUrl.startsWith('https://')) {
-                combinedUrls.push({
-                    url: thisUrl,
-                    wsUrl:
-                        'wss://' + thisUrl.substring('https://'.length) + '/ws',
-                });
-            } else if (thisUrl.startsWith('http://')) {
-                combinedUrls.push({
-                    url: thisUrl,
-                    wsUrl:
-                        'ws://' + thisUrl.substring('http://'.length) + '/ws',
-                });
-            } else {
-                throw new Error(`Invalid url found in array: ${thisUrl}`);
-            }
-        }
-
-        return combinedUrls;
     }
 
     public async post(path: string, data: Uint8Array): Promise<Uint8Array> {
@@ -139,7 +135,11 @@ export class FailoverProxy {
                             .toString()
                             .includes(
                                 'Unable to decode error msg, chronik server is indexing or in error state',
-                            ))
+                            ) ||
+                        // We can see this type of error msg from an indexing server
+                        // Observed when a chronik node is down (e.g. bitcoin-cli stop) but
+                        // server is reachable, nginx running
+                        err.toString().trim().endsWith(':'))
                 ) {
                     // Server outage, skip to next url in loop
                     // Connection error msgs have a 'code' key of 'ECONNREFUSED'
@@ -206,7 +206,7 @@ export class FailoverProxy {
                 // from a working server and we should return it to the user
                 error = proto.Error.decode(new Uint8Array(response.data));
                 errorCanBeDecoded = true;
-            } catch (err) {
+            } catch {
                 // If we can't decode this error with proto, something is wrong with this server instance
                 // It may be indexing
                 // In this case, we should try the next server
@@ -232,10 +232,10 @@ export class FailoverProxy {
         return new Promise(resolve => {
             // If we do not connect in appropriate timeframe,
             // call it a failure and try the next websocket
-            const timeoutFailure = setTimeout(
-                () => resolve(false),
-                WEBSOCKET_TIMEOUT_MS,
-            );
+            const timeoutFailure = setTimeout(() => {
+                testWs.close();
+                resolve(false);
+            }, WEBSOCKET_TIMEOUT_MS);
             const testWs = new WebSocket(wsUrl);
             testWs.onerror = function () {
                 testWs.close();
@@ -287,6 +287,10 @@ export class FailoverProxy {
                     if (wsEndpoint.onReconnect !== undefined) {
                         wsEndpoint.onReconnect(e);
                     }
+
+                    this._workingIndex =
+                        (this._workingIndex + 1) % this._endpointArray.length;
+
                     this.connectWs(wsEndpoint);
                 };
                 wsEndpoint.ws = ws;

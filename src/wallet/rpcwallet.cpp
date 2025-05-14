@@ -23,6 +23,7 @@
 #include <util/bip32.h>
 #include <util/error.h>
 #include <util/moneystr.h>
+#include <util/result.h>
 #include <util/string.h>
 #include <util/translation.h>
 #include <util/url.h>
@@ -106,13 +107,6 @@ static RPCHelpMan getnewaddress() {
              "string \"\" to represent the default label. The label does not "
              "need to exist, it will be created if there is no label by the "
              "given name."},
-            // Deprecated in v0.30.4
-            {"address_type", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
-             "DEPRECATED: The Bitcoin address type to use. Only available for "
-             "compatibility with Bitcoin and will be removed in the future. "
-             "The only valid value is \"legacy\". Note that this does not "
-             "change the output of this RPC; in order to get a Bitcoin address "
-             "the -usecashaddr option should be disabled."},
         },
         RPCResult{RPCResult::Type::STR, "address", "The new eCash address"},
         RPCExamples{HelpExampleCli("getnewaddress", "") +
@@ -139,23 +133,14 @@ static RPCHelpMan getnewaddress() {
                 label = LabelFromValue(request.params[0]);
             }
 
-            OutputType output_type = pwallet->m_default_address_type;
-            if (!request.params[1].isNull()) {
-                if (!ParseOutputType(request.params[1].get_str(),
-                                     output_type)) {
-                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                                       strprintf("Unknown address type '%s'",
-                                                 request.params[1].get_str()));
-                }
+            auto op_dest =
+                pwallet->GetNewDestination(OutputType::LEGACY, label);
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT,
+                                   util::ErrorString(op_dest).original);
             }
 
-            CTxDestination dest;
-            std::string error;
-            if (!pwallet->GetNewDestination(output_type, label, dest, error)) {
-                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, error);
-            }
-
-            return EncodeDestination(dest, config);
+            return EncodeDestination(*op_dest, config);
         },
     };
 }
@@ -196,12 +181,12 @@ static RPCHelpMan getrawchangeaddress() {
                 }
             }
 
-            CTxDestination dest;
-            std::string error;
-            if (!pwallet->GetNewChangeDestination(output_type, dest, error)) {
-                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, error);
+            auto op_dest = pwallet->GetNewChangeDestination(output_type);
+            if (!op_dest) {
+                throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT,
+                                   util::ErrorString(op_dest).original);
             }
-            return EncodeDestination(dest, config);
+            return EncodeDestination(*op_dest, config);
         },
     };
 }
@@ -301,18 +286,16 @@ UniValue SendMoney(CWallet *const pwallet, const CCoinControl &coin_control,
     std::shuffle(recipients.begin(), recipients.end(), FastRandomContext());
 
     // Send
-    Amount nFeeRequired = Amount::zero();
-    int nChangePosRet = -1;
-    bilingual_str error;
-    CTransactionRef tx;
-    bool fCreated = CreateTransaction(
-        *pwallet, recipients, tx, nFeeRequired, nChangePosRet, error,
-        coin_control,
+    constexpr int RANDOM_CHANGE_POSITION = -1;
+    auto res = CreateTransaction(
+        *pwallet, recipients, RANDOM_CHANGE_POSITION, coin_control,
         !pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS));
-    if (!fCreated) {
-        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, error.original);
+    if (!res) {
+        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS,
+                           util::ErrorString(res).original);
     }
-    pwallet->CommitTransaction(tx, std::move(map_value), {} /* orderForm */,
+    const CTransactionRef &tx = res->tx;
+    pwallet->CommitTransaction(tx, std::move(map_value), /*orderForm=*/{},
                                broadcast);
     return tx->GetId().GetHex();
 }
@@ -326,12 +309,11 @@ static RPCHelpMan sendtoaddress() {
              "The bitcoin address to send to."},
             {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO,
              "The amount in " + Currency::get().ticker + " to send. eg 0.1"},
-            {"comment", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"comment", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "A comment used to store what the transaction is for.\n"
              "                             This is not part of the "
              "transaction, just kept in your wallet."},
-            {"comment_to", RPCArg::Type::STR,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"comment_to", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "A comment to store the name of the person or organization\n"
              "                             to which you're sending the "
              "transaction. This is not part of the \n"
@@ -646,7 +628,7 @@ static RPCHelpMan getbalance() {
         "thus affected by options which limit spendability such as "
         "-spendzeroconfchange.\n",
         {
-            {"dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "Remains for backward compatibility. Must be excluded or set to "
              "\"*\"."},
             {"minconf", RPCArg::Type::NUM, RPCArg::Default{0},
@@ -686,17 +668,14 @@ static RPCHelpMan getbalance() {
 
             LOCK(pwallet->cs_wallet);
 
-            const UniValue &dummy_value = request.params[0];
-            if (!dummy_value.isNull() && dummy_value.get_str() != "*") {
+            const auto dummy_value{self.MaybeArg<std::string>("dummy")};
+            if (dummy_value && *dummy_value != "*") {
                 throw JSONRPCError(
                     RPC_METHOD_DEPRECATED,
                     "dummy first argument must be excluded or set to \"*\".");
             }
 
-            int min_depth = 0;
-            if (!request.params[1].isNull()) {
-                min_depth = request.params[1].getInt<int>();
-            }
+            const auto min_depth{self.Arg<int>("minconf")};
 
             bool include_watchonly =
                 ParseIncludeWatchonly(request.params[2], *pwallet);
@@ -753,7 +732,7 @@ static RPCHelpMan sendmany() {
                            .oneline_description = "\"\""}},
             {
                 "amounts",
-                RPCArg::Type::OBJ,
+                RPCArg::Type::OBJ_USER_KEYS,
                 RPCArg::Optional::NO,
                 "The addresses and amounts",
                 {
@@ -765,12 +744,12 @@ static RPCHelpMan sendmany() {
             },
             {"minconf", RPCArg::Type::NUM, RPCArg::Default{1},
              "Only use the balance confirmed at least this many times."},
-            {"comment", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"comment", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "A comment"},
             {
                 "subtractfeefrom",
                 RPCArg::Type::ARR,
-                RPCArg::Optional::OMITTED_NAMED_ARG,
+                RPCArg::Optional::OMITTED,
                 "The addresses.\n"
                 "                           The fee will be equally deducted "
                 "from the amount of each selected address.\n"
@@ -896,7 +875,7 @@ static RPCHelpMan addmultisigaddress() {
                      "bitcoin address or hex-encoded public key"},
                 },
             },
-            {"label", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"label", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "A label to assign the addresses to."},
         },
         RPCResult{RPCResult::Type::OBJ,
@@ -1155,8 +1134,7 @@ static RPCHelpMan listreceivedbyaddress() {
              RPCArg::DefaultHint{
                  "true for watch-only wallets, otherwise false"},
              "Whether to include watch-only addresses (see 'importaddress')."},
-            {"address_filter", RPCArg::Type::STR,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"address_filter", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "If present, only return information on this address."},
         },
         RPCResult{
@@ -1381,7 +1359,7 @@ static void ListTransactions(const CWallet *const pwallet, const CWalletTx &wtx,
     }
 }
 
-static const std::vector<RPCResult> TransactionDescriptionString() {
+static std::vector<RPCResult> TransactionDescriptionString() {
     return {
         {RPCResult::Type::NUM, "confirmations",
          "The number of confirmations for the transaction. Negative "
@@ -1426,8 +1404,7 @@ RPCHelpMan listtransactions() {
         "\nReturns up to 'count' most recent transactions skipping the first "
         "'from' transactions.\n",
         {
-            {"label|dummy", RPCArg::Type::STR,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"label|dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "If set, should be a valid label name to return only incoming "
              "transactions with the specified label, or \"*\" to disable "
              "filtering and return all transactions."},
@@ -1587,8 +1564,7 @@ static RPCHelpMan listsinceblock() {
         "Additionally, if include_removed is set, transactions affecting the "
         "wallet which were removed are returned in the \"removed\" array.\n",
         {
-            {"blockhash", RPCArg::Type::STR,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"blockhash", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "If set, the block hash to list transactions since, otherwise "
              "list all transactions."},
             {"target_confirmations", RPCArg::Type::NUM, RPCArg::Default{1},
@@ -2665,7 +2641,8 @@ static RPCHelpMan listwallets() {
             const JSONRPCRequest &request) -> UniValue {
             UniValue obj(UniValue::VARR);
 
-            for (const std::shared_ptr<CWallet> &wallet : GetWallets()) {
+            WalletContext &context = EnsureWalletContext(request.context);
+            for (const std::shared_ptr<CWallet> &wallet : GetWallets(context)) {
                 LOCK(wallet->cs_wallet);
                 obj.push_back(wallet->GetName());
             }
@@ -2685,8 +2662,7 @@ static RPCHelpMan loadwallet() {
         {
             {"filename", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The wallet directory or .dat file."},
-            {"load_on_startup", RPCArg::Type::BOOL,
-             RPCArg::Default{UniValue::VNULL},
+            {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED,
              "Save wallet name to persistent settings and load on startup. "
              "True to add wallet to startup list, false to remove, null to "
              "leave unchanged."},
@@ -2707,8 +2683,19 @@ static RPCHelpMan loadwallet() {
             WalletContext &context = EnsureWalletContext(request.context);
             const std::string name(request.params[0].get_str());
 
-            auto [wallet, warnings] =
-                LoadWalletHelper(context, request.params[1], name);
+            DatabaseOptions options;
+            DatabaseStatus status;
+            options.require_existing = true;
+            bilingual_str error;
+            std::vector<bilingual_str> warnings;
+            std::optional<bool> load_on_start =
+                request.params[1].isNull()
+                    ? std::nullopt
+                    : std::optional<bool>(request.params[1].get_bool());
+            std::shared_ptr<CWallet> const wallet = LoadWallet(
+                context, name, load_on_start, options, status, error, warnings);
+
+            HandleWalletError(wallet, status, error);
 
             UniValue obj(UniValue::VOBJ);
             obj.pushKV("name", wallet->GetName());
@@ -2825,8 +2812,7 @@ static RPCHelpMan createwallet() {
             {"descriptors", RPCArg::Type::BOOL, RPCArg::Default{false},
              "Create a native descriptor wallet. The wallet will use "
              "descriptors internally to handle address creation"},
-            {"load_on_startup", RPCArg::Type::BOOL,
-             RPCArg::Default{UniValue::VNULL},
+            {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED,
              "Save wallet name to persistent settings and load on startup. "
              "True to add wallet to startup list, false to remove, null to "
              "leave unchanged."},
@@ -2898,7 +2884,7 @@ static RPCHelpMan createwallet() {
                     ? std::nullopt
                     : std::make_optional<bool>(request.params[6].get_bool());
             std::shared_ptr<CWallet> wallet =
-                CreateWallet(*context.chain, request.params[0].get_str(),
+                CreateWallet(context, request.params[0].get_str(),
                              load_on_start, options, status, error, warnings);
             if (!wallet) {
                 RPCErrorCode code = status == DatabaseStatus::FAILED_ENCRYPT
@@ -2926,8 +2912,7 @@ static RPCHelpMan unloadwallet() {
             {"wallet_name", RPCArg::Type::STR,
              RPCArg::DefaultHint{"the wallet name from the RPC request"},
              "The name of the wallet to unload."},
-            {"load_on_startup", RPCArg::Type::BOOL,
-             RPCArg::Default{UniValue::VNULL},
+            {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED,
              "Save wallet name to persistent settings and load on startup. "
              "True to add wallet to startup list, false to remove, null to "
              "leave unchanged."},
@@ -2953,7 +2938,8 @@ static RPCHelpMan unloadwallet() {
                 wallet_name = request.params[0].get_str();
             }
 
-            std::shared_ptr<CWallet> wallet = GetWallet(wallet_name);
+            WalletContext &context = EnsureWalletContext(request.context);
+            std::shared_ptr<CWallet> wallet = GetWallet(context, wallet_name);
             if (!wallet) {
                 throw JSONRPCError(
                     RPC_WALLET_NOT_FOUND,
@@ -2964,11 +2950,8 @@ static RPCHelpMan unloadwallet() {
             // notifications. Note that any attempt to load the same wallet
             // would fail until the wallet is destroyed (see CheckUniqueFileid).
             std::vector<bilingual_str> warnings;
-            std::optional<bool> load_on_start =
-                request.params[1].isNull()
-                    ? std::nullopt
-                    : std::make_optional<bool>(request.params[1].get_bool());
-            if (!RemoveWallet(wallet, load_on_start, warnings)) {
+            std::optional<bool> load_on_start{self.MaybeArg<bool>(1)};
+            if (!RemoveWallet(context, wallet, load_on_start, warnings)) {
                 throw JSONRPCError(RPC_MISC_ERROR,
                                    "Requested wallet already unloaded");
             }
@@ -3011,7 +2994,7 @@ static RPCHelpMan listunspent() {
              "                  See description of \"safe\" attribute below."},
             {"query_options",
              RPCArg::Type::OBJ_NAMED_PARAMS,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+             RPCArg::Optional::OMITTED,
              "JSON with query options",
              {
                  {"minimumAmount", RPCArg::Type::AMOUNT,
@@ -3466,7 +3449,7 @@ static RPCHelpMan fundrawtransaction() {
              "The hex string of the raw transaction"},
             {"options",
              RPCArg::Type::OBJ_NAMED_PARAMS,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+             RPCArg::Optional::OMITTED,
              "For backward compatibility: passing in a true instead of an "
              "object will result in {\"includeWatching\":true}",
              {
@@ -3596,7 +3579,7 @@ RPCHelpMan signrawtransactionwithwallet() {
             {
                 "prevtxs",
                 RPCArg::Type::ARR,
-                RPCArg::Optional::OMITTED_NAMED_ARG,
+                RPCArg::Optional::OMITTED,
                 "The previous dependent transaction outputs",
                 {
                     {
@@ -3721,8 +3704,7 @@ RPCHelpMan rescanblockchain() {
         {
             {"start_height", RPCArg::Type::NUM, RPCArg::Default{0},
              "block height where the rescan should start"},
-            {"stop_height", RPCArg::Type::NUM,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"stop_height", RPCArg::Type::NUM, RPCArg::Optional::OMITTED,
              "the last block height that should be scanned"},
         },
         RPCResult{
@@ -3783,14 +3765,29 @@ RPCHelpMan rescanblockchain() {
                     }
                 }
 
-                // We can't rescan beyond non-pruned blocks, stop and throw an
-                // error
+                // We can't rescan unavailable blocks, stop and throw an error
                 if (!pwallet->chain().hasBlocks(pwallet->GetLastBlockHash(),
                                                 start_height, stop_height)) {
+                    if (pwallet->chain().havePruned() &&
+                        pwallet->chain().getPruneHeight() >= start_height) {
+                        throw JSONRPCError(RPC_MISC_ERROR,
+                                           "Can't rescan beyond pruned data. "
+                                           "Use RPC call getblockchaininfo to "
+                                           "determine your pruned height.");
+                    }
+                    if (pwallet->chain().hasAssumedValidChain()) {
+                        throw JSONRPCError(
+                            RPC_MISC_ERROR,
+                            "Failed to rescan unavailable blocks likely due to "
+                            "an in-progress assumeutxo background sync. Check "
+                            "logs or getchainstates RPC for assumeutxo "
+                            "background sync progress and try again later.");
+                    }
                     throw JSONRPCError(
                         RPC_MISC_ERROR,
-                        "Can't rescan beyond pruned data. Use RPC call "
-                        "getblockchaininfo to determine your pruned height.");
+                        "Failed to rescan unavailable blocks, potentially "
+                        "caused by data corruption. If the issue persists you "
+                        "may want to reindex (see -reindex option).");
                 }
 
                 CHECK_NONFATAL(pwallet->chain().findAncestorByHeight(
@@ -4165,7 +4162,7 @@ RPCHelpMan listlabels() {
         "Returns the list of all labels, or labels that are assigned to "
         "addresses with a specific purpose.\n",
         {
-            {"purpose", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"purpose", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "Address purpose to list labels for ('send','receive'). An empty "
              "string is the same as not providing this argument."},
         },
@@ -4239,7 +4236,7 @@ static RPCHelpMan send() {
              {
                  {
                      "",
-                     RPCArg::Type::OBJ,
+                     RPCArg::Type::OBJ_USER_KEYS,
                      RPCArg::Optional::OMITTED,
                      "",
                      {
@@ -4265,7 +4262,7 @@ static RPCHelpMan send() {
              RPCArgOptions{.skip_type_check = true}},
             {"options",
              RPCArg::Type::OBJ_NAMED_PARAMS,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+             RPCArg::Optional::OMITTED,
              "",
              {
                  {"add_inputs", RPCArg::Type::BOOL, RPCArg::Default{false},
@@ -4661,7 +4658,7 @@ static RPCHelpMan walletcreatefundedpsbt() {
             {
                 "inputs",
                 RPCArg::Type::ARR,
-                RPCArg::Optional::OMITTED_NAMED_ARG,
+                RPCArg::Optional::OMITTED,
                 "Leave empty to add inputs automatically. See add_inputs "
                 "option.",
                 {
@@ -4697,7 +4694,7 @@ static RPCHelpMan walletcreatefundedpsbt() {
              {
                  {
                      "",
-                     RPCArg::Type::OBJ,
+                     RPCArg::Type::OBJ_USER_KEYS,
                      RPCArg::Optional::OMITTED,
                      "",
                      {
@@ -4728,7 +4725,7 @@ static RPCHelpMan walletcreatefundedpsbt() {
              "an error if explicit sequence numbers are incompatible."},
             {"options",
              RPCArg::Type::OBJ_NAMED_PARAMS,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+             RPCArg::Optional::OMITTED,
              "",
              {
                  {"add_inputs", RPCArg::Type::BOOL, RPCArg::Default{false},

@@ -23,13 +23,13 @@ bytes = "1.6"
 convert_case = "0.6"
 
 # Rust bindings for the Python interpreter 
-pyo3 = { version = "0.22" }
+pyo3 = { version = "0.23.2" }
 
 # Serialize structs
 serde = { version = "1.0", features = ["derive"] }
 
 # Derive error enums
-thiserror = "1.0"
+thiserror = "2.0.3"
 
 # TOML parser
 toml = "0.8"

@@ -4,10 +4,11 @@
 
 import assert from 'assert';
 import config from '../config';
+import secrets from '../secrets';
 import unrevivedBlock from './mocks/block';
 import { jsonReviver, getCoingeckoApiUrl } from '../src/utils';
 import { blockInvalidedTgMsg } from './mocks/blockInvalidated';
-import cashaddr from 'ecashaddrjs';
+import { getTypeAndHashFromOutputScript } from 'ecashaddrjs';
 import {
     handleBlockFinalized,
     handleBlockInvalidated,
@@ -19,12 +20,13 @@ import axios from 'axios';
 import MockAdapter from 'axios-mock-adapter';
 import { caching, MemoryCache } from 'cache-manager';
 import FakeTimers, { InstalledClock } from '@sinonjs/fake-timers';
+import { ChronikClient, TokenInfo } from 'chronik-client';
 const block: StoredMock = JSON.parse(
     JSON.stringify(unrevivedBlock),
     jsonReviver,
 );
 
-describe('ecash-herald events.js', async function () {
+describe('ecash-herald events.js', function () {
     let memoryCache: MemoryCache;
     before(async () => {
         const CACHE_TTL = config.cacheTtlMsecs;
@@ -57,11 +59,13 @@ describe('ecash-herald events.js', async function () {
         // Tell mockedChronik what response we expect for chronik.script(type, hash).utxos
         const { outputScriptInfoMap } = thisBlock;
         outputScriptInfoMap.forEach((info, outputScript) => {
-            const { type, hash } =
-                cashaddr.getTypeAndHashFromOutputScript(outputScript);
+            const { type, hash } = getTypeAndHashFromOutputScript(outputScript);
             const { utxos } = info;
-            mockedChronik.setScript(type, hash);
-            mockedChronik.setUtxos(type, hash, { outputScript, utxos });
+            mockedChronik.setUtxosByScript(
+                type as 'p2pkh' | 'p2sh',
+                hash,
+                utxos,
+            );
         });
 
         // Tell mockedChronik what response we expect for chronik.tx
@@ -72,12 +76,9 @@ describe('ecash-herald events.js', async function () {
             // Instead of saving all the chronik responses as mocks, which would be very large
             // Just set them as mocks based on tokenInfoMap, which contains the info we need
             tokenIds.forEach(tokenId => {
-                mockedChronik.setMock('token', {
-                    input: tokenId,
-                    output: {
-                        genesisInfo: tokenInfoMap.get(tokenId),
-                    },
-                });
+                mockedChronik.setToken(tokenId, {
+                    genesisInfo: tokenInfoMap.get(tokenId),
+                } as TokenInfo);
             });
         }
 
@@ -97,8 +98,13 @@ describe('ecash-herald events.js', async function () {
         // Mock a successful API request
         mock.onGet(getCoingeckoApiUrl(config)).reply(200, mockResult);
 
+        // Mock a successful staker info request
+        mock.onGet(
+            `https://coin.dance/api/stakers/${secrets.prod.stakerApiKey}`,
+        ).reply(200, thisBlock.activeStakers);
+
         const result = await handleBlockFinalized(
-            mockedChronik,
+            mockedChronik as unknown as ChronikClient,
             telegramBot,
             channelId,
             thisBlock.parsedBlock.hash,
@@ -146,18 +152,12 @@ describe('ecash-herald events.js', async function () {
             tokenIds.forEach(tokenId => {
                 // If this is the first one, set an error response
                 if (index === 0) {
-                    mockedChronik.setMock('token', {
-                        input: tokenId,
-                        output: new Error('some error'),
-                    });
+                    mockedChronik.setToken(tokenId, new Error('some error'));
                 } else {
                     index += 1;
-                    mockedChronik.setMock('token', {
-                        input: tokenId,
-                        output: {
-                            genesisInfo: tokenInfoMap.get(tokenId),
-                        },
-                    });
+                    mockedChronik.setToken(tokenId, {
+                        genesisInfo: tokenInfoMap.get(tokenId),
+                    } as TokenInfo);
                 }
             });
         }
@@ -176,7 +176,7 @@ describe('ecash-herald events.js', async function () {
         mock.onGet(getCoingeckoApiUrl(config)).reply(500, { error: 'error' });
 
         const result = await handleBlockFinalized(
-            mockedChronik,
+            mockedChronik as unknown as ChronikClient,
             telegramBot,
             channelId,
             thisBlock.parsedBlock.hash,
@@ -217,7 +217,7 @@ describe('ecash-herald events.js', async function () {
         const channelId = mockChannelId;
 
         const result = await handleBlockFinalized(
-            mockedChronik,
+            mockedChronik as unknown as ChronikClient,
             telegramBot,
             channelId,
             thisBlock.parsedBlock.hash,
@@ -268,18 +268,12 @@ describe('ecash-herald events.js', async function () {
             tokenIds.forEach(tokenId => {
                 // If this is the first one, set an error response
                 if (index === 0) {
-                    mockedChronik.setMock('token', {
-                        input: tokenId,
-                        output: new Error('some error'),
-                    });
+                    mockedChronik.setToken(tokenId, new Error('some error'));
                 } else {
                     index += 1;
-                    mockedChronik.setMock('token', {
-                        input: tokenId,
-                        output: {
-                            genesisInfo: tokenInfoMap.get(tokenId),
-                        },
-                    });
+                    mockedChronik.setToken(tokenId, {
+                        genesisInfo: tokenInfoMap.get(tokenId),
+                    } as TokenInfo);
                 }
             });
         }
@@ -292,7 +286,7 @@ describe('ecash-herald events.js', async function () {
         const channelId = mockChannelId;
 
         const result = await handleBlockFinalized(
-            mockedChronik,
+            mockedChronik as unknown as ChronikClient,
             telegramBot,
             channelId,
             thisBlock.parsedBlock.hash,
@@ -313,7 +307,7 @@ describe('ecash-herald events.js', async function () {
         const channelId = mockChannelId;
 
         const result = await handleBlockInvalidated(
-            mockedChronik,
+            mockedChronik as unknown as ChronikClient,
             telegramBot,
             channelId,
             thisBlock.blockTxs[0].block!.hash,

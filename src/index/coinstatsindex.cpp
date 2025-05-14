@@ -101,8 +101,9 @@ struct DBHashKey {
 
 std::unique_ptr<CoinStatsIndex> g_coin_stats_index;
 
-CoinStatsIndex::CoinStatsIndex(size_t n_cache_size, bool f_memory,
-                               bool f_wipe) {
+CoinStatsIndex::CoinStatsIndex(std::unique_ptr<interfaces::Chain> chain,
+                               size_t n_cache_size, bool f_memory, bool f_wipe)
+    : BaseIndex(std::move(chain), "coinstatsindex") {
     fs::path path{gArgs.GetDataDirNet() / "indexes" / "coinstats"};
     fs::create_directories(path);
 
@@ -320,23 +321,23 @@ bool CoinStatsIndex::Rewind(const CBlockIndex *current_tip,
     return BaseIndex::Rewind(current_tip, new_tip);
 }
 
-static bool LookUpOne(const CDBWrapper &db, const CBlockIndex *block_index,
+static bool LookUpOne(const CDBWrapper &db, const interfaces::BlockKey &block,
                       DBVal &result) {
     // First check if the result is stored under the height index and the value
     // there matches the block hash. This should be the case if the block is on
     // the active chain.
     std::pair<BlockHash, DBVal> read_out;
-    if (!db.Read(DBHeightKey(block_index->nHeight), read_out)) {
+    if (!db.Read(DBHeightKey(block.height), read_out)) {
         return false;
     }
-    if (read_out.first == block_index->GetBlockHash()) {
+    if (read_out.first == block.hash) {
         result = std::move(read_out.second);
         return true;
     }
 
     // If value at the height index corresponds to an different block, the
     // result will be stored in the hash index.
-    return db.Read(DBHashKey(block_index->GetBlockHash()), result);
+    return db.Read(DBHashKey(block.hash), result);
 }
 
 std::optional<CCoinsStats>
@@ -346,7 +347,8 @@ CoinStatsIndex::LookUpStats(const CBlockIndex *block_index) const {
     stats.index_used = true;
 
     DBVal entry;
-    if (!LookUpOne(*m_db, block_index, entry)) {
+    if (!LookUpOne(*m_db, {block_index->GetBlockHash(), block_index->nHeight},
+                   entry)) {
         return std::nullopt;
     }
 
@@ -370,7 +372,8 @@ CoinStatsIndex::LookUpStats(const CBlockIndex *block_index) const {
     return stats;
 }
 
-bool CoinStatsIndex::Init() {
+bool CoinStatsIndex::CustomInit(
+    const std::optional<interfaces::BlockKey> &block) {
     if (!m_db->Read(DB_MUHASH, m_muhash)) {
         // Check that the cause of the read failure is that the key does not
         // exist. Any other errors indicate database corruption or a disk
@@ -382,15 +385,9 @@ bool CoinStatsIndex::Init() {
         }
     }
 
-    if (!BaseIndex::Init()) {
-        return false;
-    }
-
-    const CBlockIndex *pindex{CurrentIndex()};
-
-    if (pindex) {
+    if (block) {
         DBVal entry;
-        if (!LookUpOne(*m_db, pindex, entry)) {
+        if (!LookUpOne(*m_db, *block, entry)) {
             return error(
                 "%s: Cannot read current %s state; index may be corrupted",
                 __func__, GetName());
@@ -424,11 +421,11 @@ bool CoinStatsIndex::Init() {
     return true;
 }
 
-bool CoinStatsIndex::CommitInternal(CDBBatch &batch) {
+bool CoinStatsIndex::CustomCommit(CDBBatch &batch) {
     // DB_MUHASH should always be committed in a batch together with
     // DB_BEST_BLOCK to prevent an inconsistent state of the DB.
     batch.Write(DB_MUHASH, m_muhash);
-    return BaseIndex::CommitInternal(batch);
+    return true;
 }
 
 // Reverse a single block as part of a reorg

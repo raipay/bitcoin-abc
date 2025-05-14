@@ -2,8 +2,6 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 import styled from 'styled-components';
-import { motion } from 'framer-motion';
-import { getAnimationSettings } from '/styles/framer-motion';
 
 export const LeftTopArrow = styled.div`
     position: absolute;
@@ -77,4 +75,11 @@ export const ContentCtn = styled.div`
     padding-bottom: 350px;
     margin-top: -80px;
     padding-top: 100px;
+`;
+
+export const FlexButtons = styled.div`
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 12px;
 `;

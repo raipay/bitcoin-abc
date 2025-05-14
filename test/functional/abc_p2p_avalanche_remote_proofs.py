@@ -2,7 +2,6 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the avalanche remote proofs feature."""
-import random
 import time
 
 from test_framework.avatools import (
@@ -16,9 +15,7 @@ from test_framework.avatools import (
 from test_framework.messages import (
     NODE_AVALANCHE,
     NODE_NETWORK,
-    AvalanchePrefilledProof,
     AvalancheProofVoteResponse,
-    calculate_shortid,
 )
 from test_framework.p2p import p2p_lock
 from test_framework.test_framework import BitcoinTestFramework
@@ -60,7 +57,7 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
             services=NODE_NETWORK | NODE_AVALANCHE,
         )
 
-        assert_equal(len(node.getpeerinfo()), 2)
+        self.wait_until(lambda: len(node.getpeerinfo()) == 2)
         outbound.nodeid = node.getpeerinfo()[-1]["id"]
 
         self.log.info("Check we save the remote proofs for our avalanche peers")
@@ -81,8 +78,15 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
             lhs, rhs = check_remote_proofs(node, nodeid, remote_proofs)
             assert_equal(lhs, rhs)
 
-        assert_remote_proofs(inbound.nodeid, [remoteFromProof(inbound.proof)])
-        assert_remote_proofs(outbound.nodeid, [remoteFromProof(outbound.proof)])
+        def wait_for_remote_proofs(nodeid, remote_proofs):
+            def equal_remote_proofs():
+                lhs, rhs = check_remote_proofs(node, nodeid, remote_proofs)
+                return lhs == rhs
+
+            self.wait_until(equal_remote_proofs)
+
+        wait_for_remote_proofs(inbound.nodeid, [remoteFromProof(inbound.proof)])
+        wait_for_remote_proofs(outbound.nodeid, [remoteFromProof(outbound.proof)])
 
         proofs = []
         for _ in range(10):
@@ -91,7 +95,6 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
 
             inbound.send_avaproof(proof)
             outbound.send_avaproof(proof)
-
         inbound.sync_with_ping()
         outbound.sync_with_ping()
 
@@ -108,7 +111,7 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
 
         outbound.peer_disconnect()
         outbound.wait_for_disconnect()
-        self.wait_until(lambda: check_remote_proofs(node, outbound.nodeid, [])[0] == [])
+        wait_for_remote_proofs(outbound.nodeid, [])
 
         self.log.info("Check the compact proofs update the remote proofs status")
 
@@ -124,8 +127,9 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
             connection_type="avalanche",
             services=NODE_NETWORK | NODE_AVALANCHE,
         )
+        self.wait_until(lambda: len(node.getpeerinfo()) == 1)
         outbound.nodeid = node.getpeerinfo()[-1]["id"]
-        assert_remote_proofs(outbound.nodeid, [remoteFromProof(outbound.proof)])
+        wait_for_remote_proofs(outbound.nodeid, [remoteFromProof(outbound.proof)])
 
         now += 1
         node.setmocktime(now)
@@ -145,30 +149,11 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
 
             assert False, "Failed to update the remote proofs after 3 retries"
 
-        def build_compactproofs_msg(prefilled_proof, proofs_to_announce):
-            key0 = random.randint(0, 2**64 - 1)
-            key1 = random.randint(0, 2**64 - 1)
-
-            shortid_map = {}
-            for proofid in [proof.proofid for proof in proofs_to_announce]:
-                shortid_map[proofid] = calculate_shortid(key0, key1, proofid)
-            index_prefilled_proof = list(shortid_map.keys()).index(
-                prefilled_proof.proofid
-            )
-
-            return build_msg_avaproofs(
-                proofs_to_announce,
-                prefilled_proofs=[
-                    AvalanchePrefilledProof(index_prefilled_proof, prefilled_proof)
-                ],
-                key_pair=[key0, key1],
-            )
-
         # Build a compact proofs message, including a prefilled proof that node
         # doesn't know yet.
         _, prefilled_proof = gen_proof(self, node)
-        compactproofs_msg = build_compactproofs_msg(
-            prefilled_proof, [outbound.proof] + [prefilled_proof] + proofs
+        compactproofs_msg = build_msg_avaproofs(
+            [outbound.proof] + [prefilled_proof] + proofs, [prefilled_proof]
         )
         trigger_avaproofs(compactproofs_msg)
 
@@ -203,8 +188,8 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
         now += 1
         node.setmocktime(now)
 
-        compactproofs_msg = build_compactproofs_msg(
-            prefilled_proof, [outbound.proof] + [prefilled_proof]
+        compactproofs_msg = build_msg_avaproofs(
+            [outbound.proof] + [prefilled_proof], [prefilled_proof]
         )
         trigger_avaproofs(compactproofs_msg)
 
@@ -224,8 +209,8 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
         now += 1
         node.setmocktime(now)
 
-        compactproofs_msg = build_compactproofs_msg(
-            prefilled_proof, [outbound.proof] + [prefilled_proof] + proofs_present
+        compactproofs_msg = build_msg_avaproofs(
+            [outbound.proof] + [prefilled_proof] + proofs_present, [prefilled_proof]
         )
         trigger_avaproofs(compactproofs_msg)
 
@@ -295,7 +280,7 @@ class AvalancheRemoteProofsTest(BitcoinTestFramework):
         for peer in quorum[:5]:
             peer.peer_disconnect()
             peer.wait_for_disconnect()
-        assert_equal(len(node.getpeerinfo()), 6)
+        self.wait_until(lambda: len(node.getpeerinfo()) == 6)
 
         proofs_absent = [peer.proof for peer in quorum[:5]]
 

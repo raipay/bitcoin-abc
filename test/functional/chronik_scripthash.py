@@ -15,7 +15,6 @@ from test_framework.blocktools import (
     GENESIS_CB_SCRIPT_PUBKEY,
     GENESIS_CB_TXID,
     create_block,
-    make_conform_to_ctor,
 )
 from test_framework.hash import hex_be_sha256
 from test_framework.messages import XEC, CTransaction, FromHex, ToHex
@@ -78,29 +77,25 @@ class ChronikScriptHashTest(BitcoinTestFramework):
         # Potentially valid sha256 hash, but unlikely to collide with any existing
         # scripthash
         valid_payload = 32 * "ff"
-        err_msg = f'404: Script hash "{valid_payload}" not found'
-        assert_equal(
-            self.chronik.script("scripthash", valid_payload)
-            .confirmed_txs()
-            .err(404)
-            .msg,
-            err_msg,
-        )
-        assert_equal(
-            self.chronik.script("scripthash", valid_payload)
-            .unconfirmed_txs()
-            .err(404)
-            .msg,
-            err_msg,
-        )
         assert_equal(
             self.chronik.script("scripthash", valid_payload).utxos().err(404).msg,
-            err_msg,
+            f'404: Script hash "{valid_payload}" not found',
         )
 
     def test_valid_requests(self):
         from test_framework.chronik.client import pb
         from test_framework.chronik.test_data import genesis_cb_tx
+
+        # Unknown scripthash yields an empty history
+        valid_payload = 32 * "ff"
+        for resp in (
+            self.chronik.script("scripthash", valid_payload).confirmed_txs(),
+            self.chronik.script("scripthash", valid_payload).unconfirmed_txs(),
+        ):
+            assert_equal(
+                resp.ok(),
+                pb.TxHistoryPage(),
+            )
 
         expected_cb_history = pb.TxHistoryPage(
             txs=[genesis_cb_tx()], num_pages=1, num_txs=1
@@ -127,7 +122,7 @@ class ChronikScriptHashTest(BitcoinTestFramework):
                         ),
                         block_height=0,
                         is_coinbase=True,
-                        value=50_000_000 * XEC,
+                        sats=50_000_000 * XEC,
                         is_final=False,
                     )
                 ],
@@ -239,11 +234,8 @@ class ChronikScriptHashTest(BitcoinTestFramework):
 
         # Ensure that this script was never seen before.
         assert_equal(
-            self.chronik.script("scripthash", scripthash_hex)
-            .unconfirmed_txs()
-            .err(404)
-            .msg,
-            f'404: Script hash "{scripthash_hex}" not found',
+            self.chronik.script("scripthash", scripthash_hex).unconfirmed_txs().ok(),
+            pb.TxHistoryPage(),
         )
         assert_equal(
             self.chronik.script("scripthash", scripthash_hex).utxos().err(404).msg,
@@ -268,7 +260,7 @@ class ChronikScriptHashTest(BitcoinTestFramework):
         proto = self.chronik.script("scripthash", scripthash_hex).utxos().ok()
         assert_equal(len(proto.utxos), 1)
         assert_equal(proto.utxos[0].block_height, -1)
-        assert_equal(proto.utxos[0].value, 1337)
+        assert_equal(proto.utxos[0].sats, 1337)
 
     def test_conflicts(self):
         self.log.info("A mempool transaction is replaced by a mined transaction")
@@ -278,20 +270,20 @@ class ChronikScriptHashTest(BitcoinTestFramework):
         script_pubkey = wallet.get_scriptPubKey()
         scripthash_hex1 = hex_be_sha256(script_pubkey)
 
-        def assert_404(scripthash_hex):
+        def assert_blank_history(scripthash_hex):
             assert_equal(
                 self.chronik.script("scripthash", scripthash_hex)
                 .confirmed_txs()
-                .err(404)
-                .msg,
-                f'404: Script hash "{scripthash_hex}" not found',
+                .ok()
+                .num_txs,
+                0,
             )
             assert_equal(
                 self.chronik.script("scripthash", scripthash_hex).utxos().err(404).msg,
                 f'404: Script hash "{scripthash_hex}" not found',
             )
 
-        assert_404(scripthash_hex1)
+        assert_blank_history(scripthash_hex1)
 
         # Create two spendable utxos with this script and confirm them. Fund them with
         # the OP_TRUE wallet used in the previous test which should have plenty of
@@ -375,10 +367,9 @@ class ChronikScriptHashTest(BitcoinTestFramework):
         replacement_tx = wallet.create_self_transfer(utxo_to_spend=utxo_to_spend1)
         assert replacement_tx["txid"] != mempool_tx_to_be_replaced["txid"]
 
-        block = create_block(tmpl=self.node.getblocktemplate())
-        block.vtx.append(replacement_tx["tx"])
-        make_conform_to_ctor(block)
-        block.hashMerkleRoot = block.calc_merkle_root()
+        block = create_block(
+            tmpl=self.node.getblocktemplate(), txlist=[replacement_tx["tx"]]
+        )
         block.solve()
         self.node.submitblock(ToHex(block))
 
@@ -423,19 +414,21 @@ class ChronikScriptHashTest(BitcoinTestFramework):
         replacement_tx.vout[out_idx].scriptPubKey = b"\x21\x03" + 32 * b"\xee" + b"\xac"
         replacement_tx.rehash()
 
-        block = create_block(tmpl=self.node.getblocktemplate())
-        block.vtx.append(replacement_tx)
-        make_conform_to_ctor(block)
-        block.hashMerkleRoot = block.calc_merkle_root()
+        block = create_block(tmpl=self.node.getblocktemplate(), txlist=[replacement_tx])
         block.solve()
         self.node.submitblock(ToHex(block))
 
         # There is no transaction left for this script.
-        assert_404(scripthash_hex2)
+        assert_blank_history(scripthash_hex2)
 
     def test_wipe_index(self):
         self.log.info("Restarting with chronikscripthashindex=0 wipes the index")
-        self.restart_node(0, ["-chronik", "-chronikscripthashindex=0"])
+        with self.node.assert_debug_log(
+            [
+                " Warning: Wiping existing scripthash index, since -chronikscripthashindex=0",
+            ]
+        ):
+            self.restart_node(0, ["-chronik", "-chronikscripthashindex=0"])
         assert_equal(
             self.chronik.script("scripthash", GENESIS_CB_SCRIPTHASH)
             .confirmed_txs()

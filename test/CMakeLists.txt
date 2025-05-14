@@ -49,12 +49,16 @@ function(add_functional_test_check TARGET DESCRIPTION)
 
 	# Sanitizers, coverage and quemu introduce a lot of overhead, so double the
 	# timeout to prevent false positives.
-	if(ENABLE_SANITIZERS OR ENABLE_COVERAGE OR CMAKE_CROSSCOMPILING_EMULATOR)
+	if(ENABLE_SANITIZERS OR ENABLE_COVERAGE OR CMAKE_CROSSCOMPILING_EMULATOR OR CMAKE_BUILD_TYPE STREQUAL "Debug")
 		message(
 			STATUS
 			"Slow build detected, doubling timeout for ${DESCRIPTION} (target '${TARGET}')"
 		)
 		set(EXTENDED_TIMEOUT "--timeout-factor=2")
+	endif()
+
+	if (FUNCTIONAL_TESTS_TMPDIRPREFIX)
+		set(TMPDIRPREFIX "--tmpdirprefix=${FUNCTIONAL_TESTS_TMPDIRPREFIX}")
 	endif()
 
 	add_test_custom_target(${TARGET}
@@ -64,6 +68,7 @@ function(add_functional_test_check TARGET DESCRIPTION)
 			"--testsuitename=Bitcoin ABC ${DESCRIPTION}"
 			${JUNIT_OUTPUT}
 			${EXTENDED_TIMEOUT}
+			${TMPDIRPREFIX}
 			${ARGN}
 		CUSTOM_TARGET_ARGS
 			COMMENT "Running ${DESCRIPTION}"
@@ -91,14 +96,14 @@ add_dependencies(check-extended check-functional-extended)
 
 add_functional_test_check(check-functional-upgrade-activated
 	"functional tests with the next upgrade activated"
-	--with-augustoactivation
+	--with-schumpeteractivation
 )
 add_dependencies(check-upgrade-activated check-functional-upgrade-activated)
 
 add_functional_test_check(check-functional-upgrade-activated-extended
 	"extended functional tests with the next upgrade activated"
 	--extended
-	--with-augustoactivation
+	--with-schumpeteractivation
 )
 add_dependencies(check-upgrade-activated-extended check-functional-upgrade-activated-extended)
 

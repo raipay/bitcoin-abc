@@ -23,7 +23,6 @@ option(ENABLE_BIP70 "Enable BIP70 (payment protocol) support in GUI" ON)
 option(ENABLE_HARDENING "Harden the executables" ON)
 option(ENABLE_REDUCE_EXPORTS "Reduce the amount of exported symbols" OFF)
 option(ENABLE_STATIC_LIBSTDCXX "Statically link libstdc++" OFF)
-option(ENABLE_GLIBC_BACK_COMPAT "Enable Glibc compatibility features" OFF)
 option(ENABLE_QRCODE "Enable QR code display" ON)
 option(ENABLE_UPNP "Enable UPnP support" ON)
 option(START_WITH_UPNP "Make UPnP the default to map ports" OFF)
@@ -222,8 +221,15 @@ if(ENABLE_HARDENING)
 	check_pie_supported()
 
 	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-		# MinGw provides its own libssp for stack smashing protection
+		# MinGw provides its own libssp for stack smashing protection.
+		# It might not be needed for recent versions of mingw, but the version
+		# shipped with debian bullseye needs it and we still support it at the
+		# time of writing.
 		link_libraries(ssp)
+	endif()
+
+	if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+		add_linker_flags(-Wl,-fixup_chains)
 	endif()
 endif()
 
@@ -301,18 +307,6 @@ add_subdirectory(config)
 if(NOT HAVE_LARGE_FILE_SUPPORT)
 	add_compile_definitions(_FILE_OFFSET_BITS=64)
 	add_linker_flags(-Wl,--large-address-aware)
-endif()
-
-if(ENABLE_GLIBC_BACK_COMPAT)
-	# Wrap some glibc functions with ours
-	add_linker_flags(-Wl,--wrap=exp)
-	add_linker_flags(-Wl,--wrap=log)
-	add_linker_flags(-Wl,--wrap=log2)
-	add_linker_flags(-Wl,--wrap=pow)
-
-	if(NOT HAVE_LARGE_FILE_SUPPORT)
-		add_linker_flags(-Wl,--wrap=fcntl -Wl,--wrap=fcntl64)
-	endif()
 endif()
 
 if(USE_JEMALLOC)
@@ -411,7 +405,6 @@ add_custom_command(
 add_library(util
 	chainparamsbase.cpp
 	clientversion.cpp
-	compat/glibcxx_sanity.cpp
 	compat/strnlen.cpp
 	currencyunit.cpp
 	interfaces/handler.cpp
@@ -429,6 +422,7 @@ add_library(util
 	util/batchpriority.cpp
 	util/bip32.cpp
 	util/bytevectorhash.cpp
+	util/chaintype.cpp
 	util/check.cpp
 	util/hasher.cpp
 	util/exception.cpp
@@ -464,10 +458,6 @@ target_include_directories(util
 		${CMAKE_CURRENT_BINARY_DIR}
 )
 
-if(ENABLE_GLIBC_BACK_COMPAT)
-	target_sources(util PRIVATE compat/glibc_compat.cpp)
-endif()
-
 # Work around jemalloc printing harmless warnings to stderr with qemu.
 # We match the emulator against qemu but not ^qemu so we are compatible with the
 # use of absolute paths.
@@ -497,16 +487,16 @@ endif()
 target_link_libraries(util univalue crypto)
 
 macro(link_event TARGET)
-	non_native_target_link_libraries(${TARGET} Event 2.0.22 ${ARGN})
+	non_native_target_link_libraries(${TARGET} Event 2.1.8 ${ARGN})
 endmacro()
 
 link_event(util event)
 
 macro(link_boost_headers_only TARGET)
-	non_native_target_link_headers_only(${TARGET} Boost 1.64 ${ARGN})
+	non_native_target_link_boost_headers_only(${TARGET} 1.64)
 endmacro()
 
-link_boost_headers_only(util headers)
+link_boost_headers_only(util)
 target_compile_definitions(util PUBLIC BOOST_NO_CXX98_FUNCTION_BASE)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -575,6 +565,7 @@ add_library(script
 	script/bitfield.cpp
 	script/descriptor.cpp
 	script/interpreter.cpp
+	script/intmath.cpp
 	script/script.cpp
 	script/script_error.cpp
 	script/sigencoding.cpp
@@ -653,7 +644,10 @@ add_library(server
 	init.cpp
 	init/common.cpp
 	invrequest.cpp
+	kernel/chain.cpp
+	kernel/checks.cpp
 	kernel/coinstats.cpp
+	kernel/context.cpp
 	kernel/cs_main.cpp
 	kernel/disconnected_transactions.cpp
 	kernel/mempool_persist.cpp
@@ -662,6 +656,7 @@ add_library(server
 	minerfund.cpp
 	net.cpp
 	net_processing.cpp
+	node/blockfitter.cpp
 	node/blockmanager_args.cpp
 	node/blockstorage.cpp
 	node/caches.cpp
@@ -863,8 +858,11 @@ if(BUILD_BITCOIN_CHAINSTATE)
 	#       like index/*.cpp will be removed.
 	add_library(bitcoinkernel
 		kernel/bitcoinkernel.cpp
+		kernel/chain.cpp
 		kernel/chainparams.cpp
+		kernel/checks.cpp
 		kernel/coinstats.cpp
+		kernel/context.cpp
 		kernel/cs_main.cpp
 		kernel/disconnected_transactions.cpp
 		kernel/mempool_persist.cpp
@@ -880,7 +878,6 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		checkpoints.cpp
 		clientversion.cpp
 		coins.cpp
-		compat/glibcxx_sanity.cpp
 		compressor.cpp
 		config.cpp
 		consensus/activation.cpp
@@ -900,6 +897,7 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		logging.cpp
 		networks/abc/chainparamsconstants.cpp
 		networks/abc/checkpoints.cpp
+		node/blockfitter.cpp
 		node/blockstorage.cpp
 		node/chainstate.cpp
 		node/ui_interface.cpp
@@ -938,6 +936,7 @@ if(BUILD_BITCOIN_CHAINSTATE)
 		uint256.cpp
 		util/batchpriority.cpp
 		util/bytevectorhash.cpp
+		util/chaintype.cpp
 		util/check.cpp
 		util/exception.cpp
 		util/fs.cpp

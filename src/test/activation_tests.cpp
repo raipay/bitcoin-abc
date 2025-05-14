@@ -9,6 +9,7 @@
 #include <consensus/activation.h>
 #include <script/script.h>
 #include <txmempool.h>
+#include <util/chaintype.h>
 #include <util/check.h>
 #include <validation.h>
 
@@ -41,7 +42,7 @@ static void testPastActivation(ActivationFun func,
 }
 
 BOOST_AUTO_TEST_CASE(test_previous_activations_by_height) {
-    const auto params = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
+    const auto params = CreateChainParams(*m_node.args, ChainType::MAIN);
     const auto consensus = params->GetConsensus();
 
     // Static cast to select the correct overload
@@ -56,32 +57,61 @@ BOOST_AUTO_TEST_CASE(test_previous_activations_by_height) {
                        consensus, consensus.cowperthwaiteHeight);
 }
 
-BOOST_AUTO_TEST_CASE(isaugustoenabled) {
+BOOST_AUTO_TEST_CASE(is_schumpeter_enabled) {
     const Consensus::Params &params = Params().GetConsensus();
-    const auto activation =
-        gArgs.GetIntArg("-augustoactivationtime", params.augustoActivationTime);
+    const auto activation = gArgs.GetIntArg("-schumpeteractivationtime",
+                                            params.schumpeterActivationTime);
     SetMockTime(activation - 1000000);
 
-    BOOST_CHECK(!IsAugustoEnabled(params, nullptr));
+    BOOST_CHECK(!IsSchumpeterEnabled(params, nullptr));
 
     std::array<CBlockIndex, 12> blocks;
     for (size_t i = 1; i < blocks.size(); ++i) {
         blocks[i].pprev = &blocks[i - 1];
     }
-    BOOST_CHECK(!IsAugustoEnabled(params, &blocks.back()));
-    BOOST_CHECK(!IsAugustoEnabled(params, blocks.back().GetMedianTimePast()));
+    BOOST_CHECK(!IsSchumpeterEnabled(params, &blocks.back()));
+    BOOST_CHECK(
+        !IsSchumpeterEnabled(params, blocks.back().GetMedianTimePast()));
 
     SetMTP(blocks, activation - 1);
-    BOOST_CHECK(!IsAugustoEnabled(params, &blocks.back()));
-    BOOST_CHECK(!IsAugustoEnabled(params, activation - 1));
+    BOOST_CHECK(!IsSchumpeterEnabled(params, &blocks.back()));
+    BOOST_CHECK(!IsSchumpeterEnabled(params, activation - 1));
 
     SetMTP(blocks, activation);
-    BOOST_CHECK(IsAugustoEnabled(params, &blocks.back()));
-    BOOST_CHECK(IsAugustoEnabled(params, activation));
+    BOOST_CHECK(IsSchumpeterEnabled(params, &blocks.back()));
+    BOOST_CHECK(IsSchumpeterEnabled(params, activation));
 
     SetMTP(blocks, activation + 1);
-    BOOST_CHECK(IsAugustoEnabled(params, &blocks.back()));
-    BOOST_CHECK(IsAugustoEnabled(params, activation + 1));
+    BOOST_CHECK(IsSchumpeterEnabled(params, &blocks.back()));
+    BOOST_CHECK(IsSchumpeterEnabled(params, activation + 1));
+}
+
+BOOST_AUTO_TEST_CASE(is_shibusawa_enabled) {
+    const Consensus::Params &params = Params().GetConsensus();
+    const auto activation = gArgs.GetIntArg("-shibusawaactivationtime",
+                                            params.shibusawaActivationTime);
+    SetMockTime(activation - 1000000);
+
+    BOOST_CHECK(!IsShibusawaEnabled(params, nullptr));
+
+    std::array<CBlockIndex, 12> blocks;
+    for (size_t i = 1; i < blocks.size(); ++i) {
+        blocks[i].pprev = &blocks[i - 1];
+    }
+    BOOST_CHECK(!IsShibusawaEnabled(params, &blocks.back()));
+    BOOST_CHECK(!IsShibusawaEnabled(params, blocks.back().GetMedianTimePast()));
+
+    SetMTP(blocks, activation - 1);
+    BOOST_CHECK(!IsShibusawaEnabled(params, &blocks.back()));
+    BOOST_CHECK(!IsShibusawaEnabled(params, activation - 1));
+
+    SetMTP(blocks, activation);
+    BOOST_CHECK(IsShibusawaEnabled(params, &blocks.back()));
+    BOOST_CHECK(IsShibusawaEnabled(params, activation));
+
+    SetMTP(blocks, activation + 1);
+    BOOST_CHECK(IsShibusawaEnabled(params, &blocks.back()));
+    BOOST_CHECK(IsShibusawaEnabled(params, activation + 1));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

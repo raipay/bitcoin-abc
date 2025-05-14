@@ -25,7 +25,7 @@ pub struct TokenModule {
 impl TokenModule {
     /// Import the `etoken.py` module
     pub fn import(py: Python<'_>) -> PyResult<Self> {
-        let token_module = PyModule::import_bound(py, "chronik_plugin.etoken")?;
+        let token_module = PyModule::import(py, "chronik_plugin.etoken")?;
         Ok(TokenModule {
             cls_genesis_info: token_module.getattr("GenesisInfo")?.into(),
             cls_token_tx_entry: token_module.getattr("TokenTxEntry")?.into(),
@@ -39,7 +39,7 @@ impl TokenModule {
         py: Python<'_>,
         info: &GenesisInfo,
     ) -> PyResult<PyObject> {
-        let kwargs = PyDict::new_bound(py);
+        let kwargs = PyDict::new(py);
         kwargs.set_item("token_ticker", to_bytes(py, &info.token_ticker))?;
         kwargs.set_item("token_name", to_bytes(py, &info.token_name))?;
         kwargs.set_item(
@@ -63,7 +63,7 @@ impl TokenModule {
         )?;
         kwargs.set_item("decimals", info.decimals)?;
 
-        self.cls_genesis_info.call_bound(py, (), Some(&kwargs))
+        self.cls_genesis_info.call(py, (), Some(&kwargs))
     }
 
     /// Bridge the [`TokenTxEntry`] to its Python equivalent.
@@ -72,7 +72,7 @@ impl TokenModule {
         py: Python<'_>,
         entry: &TokenTxEntry,
     ) -> PyResult<PyObject> {
-        let kwargs = PyDict::new_bound(py);
+        let kwargs = PyDict::new(py);
         kwargs.set_item("token_id", entry.meta.token_id.to_string())?;
         kwargs.set_item(
             "token_protocol",
@@ -100,11 +100,9 @@ impl TokenModule {
             entry.group_token_meta.map(|meta| meta.token_id.to_string()),
         )?;
         kwargs.set_item("is_invalid", entry.is_invalid)?;
-        kwargs.set_item("actual_burn_amount", entry.actual_burn_amount)?;
-        kwargs.set_item(
-            "intentional_burn_amount",
-            entry.intentional_burn_amount,
-        )?;
+        kwargs.set_item("actual_burn_atoms", entry.actual_burn_atoms)?;
+        kwargs
+            .set_item("intentional_burn_atoms", entry.intentional_burn_atoms)?;
         kwargs.set_item("burns_mint_batons", entry.burns_mint_batons)?;
         kwargs.set_item(
             "genesis_info",
@@ -115,7 +113,7 @@ impl TokenModule {
                 .transpose()?,
         )?;
 
-        self.cls_token_tx_entry.call_bound(py, (), Some(&kwargs))
+        self.cls_token_tx_entry.call(py, (), Some(&kwargs))
     }
 
     /// Bridge the token to a Python `Token` object, reusing some objects from
@@ -127,15 +125,15 @@ impl TokenModule {
         entry_idx: usize,
         token_variant: TokenVariant,
     ) -> PyResult<PyObject> {
-        let kwargs = PyDict::new_bound(py);
+        let kwargs = PyDict::new(py);
         kwargs.set_item("token_id", entry.getattr(py, "token_id")?)?;
         kwargs
             .set_item("token_protocol", entry.getattr(py, "token_protocol")?)?;
         kwargs.set_item("token_type", entry.getattr(py, "token_type")?)?;
         kwargs.set_item("entry_idx", entry_idx)?;
-        kwargs.set_item("amount", token_variant.amount())?;
+        kwargs.set_item("atoms", token_variant.atoms())?;
         kwargs.set_item("is_mint_baton", token_variant.is_mint_baton())?;
 
-        self.cls_token.call_bound(py, (), Some(&kwargs))
+        self.cls_token.call(py, (), Some(&kwargs))
     }
 }

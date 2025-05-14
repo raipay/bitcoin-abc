@@ -18,6 +18,7 @@
 #include <rpc/request.h>
 #include <support/events.h>
 #include <tinyformat.h>
+#include <util/chaintype.h>
 #include <util/exception.h>
 #include <util/strencodings.h>
 #include <util/string.h>
@@ -56,12 +57,9 @@ static const std::string DEFAULT_NBLOCKS = "1";
 static void SetupCliArgs(ArgsManager &argsman) {
     SetupHelpOptions(argsman);
 
-    const auto defaultBaseParams =
-        CreateBaseChainParams(CBaseChainParams::MAIN);
-    const auto testnetBaseParams =
-        CreateBaseChainParams(CBaseChainParams::TESTNET);
-    const auto regtestBaseParams =
-        CreateBaseChainParams(CBaseChainParams::REGTEST);
+    const auto defaultBaseParams = CreateBaseChainParams(ChainType::MAIN);
+    const auto testnetBaseParams = CreateBaseChainParams(ChainType::TESTNET);
+    const auto regtestBaseParams = CreateBaseChainParams(ChainType::REGTEST);
 
     SetupCurrencyUnitOptions(argsman);
     argsman.AddArg("-version", "Print version and exit", ArgsManager::ALLOW_ANY,
@@ -247,7 +245,7 @@ static int AppInitRPC(int argc, char *argv[]) {
     // Check for -chain, -testnet or -regtest parameter (BaseParams() calls are
     // only valid after this clause)
     try {
-        SelectBaseParams(gArgs.GetChainName());
+        SelectBaseParams(gArgs.GetChainType());
     } catch (const std::exception &e) {
         tfm::format(std::cerr, "Error: %s\n", e.what());
         return EXIT_FAILURE;
@@ -266,7 +264,6 @@ struct HTTPReply {
 
 static std::string http_errorstring(int code) {
     switch (code) {
-#if LIBEVENT_VERSION_NUMBER >= 0x02010300
         case EVREQ_HTTP_TIMEOUT:
             return "timeout reached";
         case EVREQ_HTTP_EOF:
@@ -279,7 +276,6 @@ static std::string http_errorstring(int code) {
             return "request was canceled";
         case EVREQ_HTTP_DATA_TOO_LONG:
             return "response body is larger than allowed";
-#endif
         default:
             return "unknown";
     }
@@ -310,12 +306,10 @@ static void http_request_done(struct evhttp_request *req, void *ctx) {
     }
 }
 
-#if LIBEVENT_VERSION_NUMBER >= 0x02010300
 static void http_error_cb(enum evhttp_request_error err, void *ctx) {
     HTTPReply *reply = static_cast<HTTPReply *>(ctx);
     reply->error = err;
 }
-#endif
 
 /**
  * Class that handles the conversion from a command-line to a JSON-RPC request,
@@ -467,13 +461,14 @@ private:
     };
     std::vector<Peer> m_peers;
     std::string ChainToString() const {
-        if (gArgs.GetChainName() == CBaseChainParams::TESTNET) {
-            return " testnet";
+        switch (gArgs.GetChainType()) {
+            case ChainType::TESTNET:
+                return " testnet";
+            case ChainType::REGTEST:
+                return " regtest";
+            default:
+                return "";
         }
-        if (gArgs.GetChainName() == CBaseChainParams::REGTEST) {
-            return " regtest";
-        }
-        return "";
     }
     std::string PingTimeToString(double seconds) const {
         if (seconds < 0) {
@@ -754,9 +749,8 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
     if (req == nullptr) {
         throw std::runtime_error("create http request failed");
     }
-#if LIBEVENT_VERSION_NUMBER >= 0x02010300
+
     evhttp_request_set_error_cb(req.get(), http_error_cb);
-#endif
 
     // Get credentials
     std::string strRPCUserColonPass;
@@ -851,7 +845,7 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
     if (!valReply.read(response.body)) {
         throw std::runtime_error("couldn't parse reply from server");
     }
-    const UniValue reply = rh->ProcessReply(valReply);
+    UniValue reply = rh->ProcessReply(valReply);
     if (reply.empty()) {
         throw std::runtime_error(
             "expected reply to have result, error and id properties");
@@ -956,7 +950,7 @@ static void GetWalletBalances(UniValue &result) {
 
     UniValue balances(UniValue::VOBJ);
     for (const UniValue &wallet : wallets.getValues()) {
-        const std::string wallet_name = wallet.get_str();
+        const std::string &wallet_name = wallet.get_str();
         const UniValue getbalances =
             ConnectAndCallRPC(&rh, "getbalances", /* args=*/{}, wallet_name);
         const UniValue &balance =

@@ -43,6 +43,20 @@ mod ffi_inner {
         pub enable_cors: bool,
         /// Tuning settings for the TxNumCache.
         pub tx_num_cache: TxNumCacheSettings,
+        /// Electrum host ip:port param, or empty if disabled
+        pub electrum_hosts: Vec<String>,
+        /// Electrum default port
+        pub electrum_default_port: u16,
+        /// Electrum default protocol
+        pub electrum_default_protocol: u8,
+        /// Electrum certificate chain file path
+        pub electrum_cert_path: String,
+        /// Electrum private key file path
+        pub electrum_privkey_path: String,
+        /// Maximum transaction history length for an Electrum request
+        pub electrum_max_history: u32,
+        /// Donation address for public Electrum servers.
+        pub electrum_donation_address: String,
     }
 
     /// Settings for tuning the TxNumCache.

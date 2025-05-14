@@ -6,11 +6,16 @@ interface TelegramSettings {
     botId: string;
     channelId: string;
     dailyChannelId: string;
+    /** ID of the main public chat, for daily summaries */
+    mainChannelId?: string;
 }
 
 interface Secrets {
     dev: { telegram: TelegramSettings };
-    prod: { telegram: TelegramSettings };
+    prod: {
+        telegram: TelegramSettings;
+        stakerApiKey: string;
+    };
 }
 
 const secrets: Secrets = {
@@ -27,6 +32,7 @@ const secrets: Secrets = {
             channelId: 'channelIdCanFindInTelegramWebThenPrefaceWith100',
             dailyChannelId: 'dailyChannelId',
         },
+        stakerApiKey: 'stakerApiKey',
     },
 };
 

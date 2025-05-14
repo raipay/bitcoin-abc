@@ -55,8 +55,8 @@ You can create a "one shot" offer (one that offers all or nothing) using `AgoraO
 
 ```ts
 const enforcedOutputs: TxOutput[] = [
-    { value: 0, script: slpSend(tokenId, SLP_NFT1_CHILD, [0, 1]) },
-    { value: 80000, script: sellerP2pkh },
+    { sats: 0n, script: slpSend(tokenId, SLP_NFT1_CHILD, [0n, 1n]) },
+    { sats: 80000n, script: sellerP2pkh },
 ];
 const agoraOneshot = new AgoraOneshot({
     enforcedOutputs,
@@ -79,7 +79,7 @@ const txBuilder = new TxBuilder({
                     outIdx: 1,
                 },
                 signData: {
-                    value: 546,
+                    sats: 546n,
                     redeemScript: agoraScript,
                 },
             },
@@ -96,7 +96,7 @@ const txBuilder = new TxBuilder({
                     outIdx: 0,
                 },
                 signData: {
-                    value: 90000,
+                    sats: 90000n,
                     outputScript: buyerP2pkh,
                 },
             },
@@ -105,14 +105,14 @@ const txBuilder = new TxBuilder({
     ],
     outputs: [
         {
-            value: 0,
-            script: slpSend(tokenId, SLP_NFT1_CHILD, [0, 1]),
+            sats: 0n,
+            script: slpSend(tokenId, SLP_NFT1_CHILD, [0n, 1n]),
         },
-        { value: 80000, script: sellerP2pkh },
-        { value: 546, script: buyerP2pkh },
+        { sats: 80000n, script: sellerP2pkh },
+        { sats: 546n, script: buyerP2pkh },
     ],
 });
-const acceptTx = txBuilder.sign(ecc);
+const acceptTx = txBuilder.sign();
 await chronik.broadcastTx(acceptTx.ser());
 ```
 
@@ -161,3 +161,37 @@ Running from `bitcoin-abc/modules/ecash-agora` if your build dir is `bitcoin-abc
 -   Improve approximation for USD-esque tokens [D16995](https://reviews.bitcoinabc.org/D16995)
 -   Update tsconfig to support use in nodejs [D17019](https://reviews.bitcoinabc.org/D17019)
 -   Monorepo linting [D17072](https://reviews.bitcoinabc.org/D17072)
+-   CI publishing [D17243](https://reviews.bitcoinabc.org/D17243)
+
+### 0.3.0
+
+-   Add `TakenInfo` in `historicOffers` method to support parsing historic Agora offers [D17422](https://reviews.bitcoinabc.org/D17422)
+
+### 0.3.1
+
+-   Do not allow creation of unacceptable agora partials [D17517](https://reviews.bitcoinabc.org/D17517)
+
+### 0.3.2
+
+-   Improve offer checks in `historicOffers` [D17630](https://reviews.bitcoinabc.org/D17630)
+
+### 0.4.0
+
+-   Add `getAgoraPartialAcceptFuelInputs` and `getAgoraCancelFuelInputs` [D17637](https://reviews.bitcoinabc.org/D17637)
+
+### 1.0.0
+
+-   Remove unneeded `ecc` param from various functions [D17640](https://reviews.bitcoinabc.org/D17640)
+
+### 1.0.1
+
+-   Do not validate for unspendable offer creation when we calculate fee in `acceptFeeSats()` [D17648](https://reviews.bitcoinabc.org/D17648)
+
+### 2.0.0
+
+-   Improve types and shapes in line with chronik proto updates [D17650](https://reviews.bitcoinabc.org/D17650)
+-   Introduce 'atoms' as term for base unit of tokens. Implement in lib. The term "token" is ambiguous as it is not clear that we are talking about base tokens.
+
+# 2.0.1
+
+-   Ensure special case of agora partial offers where `minAcceptedAtoms` should equal `offeredAtoms` will work out this way [D17776](https://reviews.bitcoinabc.org/D17776)

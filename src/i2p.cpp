@@ -68,13 +68,12 @@ static std::string SwapBase64(const std::string &from) {
  */
 static Binary DecodeI2PBase64(const std::string &i2p_b64) {
     const std::string &std_b64 = SwapBase64(i2p_b64);
-    bool invalid;
-    Binary decoded = DecodeBase64(std_b64.c_str(), &invalid);
-    if (invalid) {
+    auto decoded = DecodeBase64(std_b64);
+    if (!decoded) {
         throw std::runtime_error(
             strprintf("Cannot decode Base64: \"%s\"", i2p_b64));
     }
-    return decoded;
+    return std::move(*decoded);
 }
 
 /**
@@ -143,8 +142,9 @@ namespace sam {
                 Sock::Event occurred;
                 conn.sock->Wait(MAX_WAIT_FOR_IO, Sock::RECV, &occurred);
 
-                if ((occurred & Sock::RECV) == 0) {
-                    // Timeout, no incoming connections within MAX_WAIT_FOR_IO.
+                if (occurred == 0) {
+                    // Timeout, no incoming connections or errors within
+                    // MAX_WAIT_FOR_IO.
                     continue;
                 }
 
@@ -380,8 +380,9 @@ namespace sam {
         m_session_id = session_id;
         m_control_sock = std::move(sock);
 
-        LogPrintf("I2P: SAM session created: session id=%s, my address=%s\n",
-                  m_session_id, m_my_addr.ToString());
+        LogPrintfCategory(BCLog::I2P,
+                          "SAM session created: session id=%s, my address=%s\n",
+                          m_session_id, m_my_addr.ToString());
     }
 
     std::unique_ptr<Sock> Session::StreamAccept() {

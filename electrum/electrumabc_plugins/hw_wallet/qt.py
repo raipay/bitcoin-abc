@@ -49,6 +49,7 @@ from electrumabc_gui.qt.util import (
     OkButton,
     PasswordLineEdit,
     TaskThread,
+    WaitingDialog,
     WindowModalDialog,
     WWLabel,
     char_width_in_lineedit,
@@ -76,6 +77,7 @@ class QtHandlerBase(HardwareHandlerBase, QObject, PrintError):
     query_signal = pyqtSignal(object, object)
     yes_no_signal = pyqtSignal(object)
     status_signal = pyqtSignal(object)
+    wait_signal = pyqtSignal(object, object, object)
 
     def __init__(self, win: Union[ElectrumWindow, InstallWizard], device: str):
         super(QtHandlerBase, self).__init__()
@@ -88,6 +90,7 @@ class QtHandlerBase(HardwareHandlerBase, QObject, PrintError):
         self.query_signal.connect(self.win_query_choice)
         self.yes_no_signal.connect(self.win_yes_no_question)
         self.status_signal.connect(self._update_status)
+        self.wait_signal.connect(self.wait_dialog)
         self.win = win
         self.device = device
         self.dialog = None
@@ -129,7 +132,9 @@ class QtHandlerBase(HardwareHandlerBase, QObject, PrintError):
         self.done.wait()
 
     def finished(self):
+        self.done.clear()
         self.clear_signal.emit()
+        self.done.wait()
 
     def get_word(self, msg):
         self.done.clear()
@@ -142,6 +147,11 @@ class QtHandlerBase(HardwareHandlerBase, QObject, PrintError):
         self.passphrase_signal.emit(msg, confirm)
         self.done.wait()
         return self.passphrase
+
+    def show_wait_dialog(self, msg, task, max_progress=None):
+        self.done.clear()
+        self.wait_signal.emit(msg, task, max_progress)
+        self.done.wait()
 
     def passphrase_dialog(self, msg, confirm):
         # If confirm is true, require the user to enter the passphrase twice
@@ -207,6 +217,7 @@ class QtHandlerBase(HardwareHandlerBase, QObject, PrintError):
             except RuntimeError:
                 pass  # closes #1437. Yes, this is a band-aid but it's clean-up code anyway and so it doesn't matter. I also was unable to track down how it could ever happen.
             self.dialog = None
+        self.done.set()
 
     def win_query_choice(self, msg, labels):
         self.choice = self.win.query_choice(msg, labels)
@@ -215,6 +226,29 @@ class QtHandlerBase(HardwareHandlerBase, QObject, PrintError):
     def win_yes_no_question(self, msg):
         self.ok = self.win.question(msg)
         self.done.set()
+
+    def wait_dialog(self, msg, task, max_progress):
+        self.dialog = WaitingDialog(
+            self.top_level_window(),
+            msg,
+            task,
+            disable_escape_key=True,
+            auto_exec=False,
+            auto_show=False,
+            progress_bar=max_progress is not None,
+            progress_min=0,
+            progress_max=max_progress,
+        )
+        self.dialog.exec_()
+        self.done.set()
+
+    def update_progress(self, steps):
+        if (
+            self.dialog
+            and (progress_attr := getattr(self.dialog, "update_progress", None))
+            and callable(progress_attr)
+        ):
+            self.dialog.update_progress(steps)
 
 
 class ThreadJobTaskThreadFacade(TaskThread):

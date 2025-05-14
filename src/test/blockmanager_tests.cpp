@@ -5,6 +5,7 @@
 #include <chainparams.h>
 #include <node/blockstorage.h>
 #include <node/context.h>
+#include <util/chaintype.h>
 #include <validation.h>
 
 #include <boost/test/unit_test.hpp>
@@ -19,17 +20,15 @@ using node::MAX_BLOCKFILE_SIZE;
 BOOST_FIXTURE_TEST_SUITE(blockmanager_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(blockmanager_find_block_pos) {
-    const auto params{CreateChainParams(*m_node.args, CBaseChainParams::MAIN)};
+    const auto params{CreateChainParams(*m_node.args, ChainType::MAIN)};
     const BlockManager::Options blockman_opts{
         .chainparams = *params,
         .blocks_dir = m_args.GetBlocksDirPath(),
     };
     BlockManager blockman{blockman_opts};
-    CChain chain{};
     // simulate adding a genesis block normally
     BOOST_CHECK_EQUAL(
-        blockman.SaveBlockToDisk(params->GenesisBlock(), 0, chain, nullptr)
-            .nPos,
+        blockman.SaveBlockToDisk(params->GenesisBlock(), 0, nullptr).nPos,
         BLOCK_SERIALIZATION_HEADER_SIZE);
     // simulate what happens during reindex
     // simulate a well-formed genesis block being found at offset 8 in the
@@ -38,7 +37,7 @@ BOOST_AUTO_TEST_CASE(blockmanager_find_block_pos) {
     // before each block in a well-formed blk file.
     FlatFilePos pos{0, BLOCK_SERIALIZATION_HEADER_SIZE};
     BOOST_CHECK_EQUAL(
-        blockman.SaveBlockToDisk(params->GenesisBlock(), 0, chain, &pos).nPos,
+        blockman.SaveBlockToDisk(params->GenesisBlock(), 0, &pos).nPos,
         BLOCK_SERIALIZATION_HEADER_SIZE);
     // now simulate what happens after reindex for the first new block processed
     // the actual block contents don't matter, just that it's a block.
@@ -49,7 +48,7 @@ BOOST_AUTO_TEST_CASE(blockmanager_find_block_pos) {
     // another 8 bytes for the second block's serialization header and we get
     // 293 + 8 = 301
     FlatFilePos actual{
-        blockman.SaveBlockToDisk(params->GenesisBlock(), 1, chain, nullptr)};
+        blockman.SaveBlockToDisk(params->GenesisBlock(), 1, nullptr)};
     BOOST_CHECK_EQUAL(
         actual.nPos,
         BLOCK_SERIALIZATION_HEADER_SIZE +
@@ -101,6 +100,56 @@ BOOST_FIXTURE_TEST_CASE(blockmanager_scan_unlink_already_pruned_files,
         WITH_LOCK(chainman->GetMutex(), return new_tip->GetBlockPos().nFile)};
     const FlatFilePos new_pos(new_file_number, 0);
     BOOST_CHECK(!AutoFile(blockman.OpenBlockFile(new_pos, true)).IsNull());
+}
+
+BOOST_FIXTURE_TEST_CASE(blockmanager_block_data_availability,
+                        TestChain100Setup) {
+    // The goal of the function is to return the first not pruned block in the
+    // range [upper_block, lower_block].
+    LOCK(::cs_main);
+    auto &chainman = m_node.chainman;
+    auto &blockman = chainman->m_blockman;
+    const CBlockIndex &tip = *chainman->ActiveTip();
+
+    // Function to prune all blocks from 'last_pruned_block' down to the genesis
+    // block
+    const auto &func_prune_blocks = [&](CBlockIndex *last_pruned_block) {
+        LOCK(::cs_main);
+        CBlockIndex *it = last_pruned_block;
+        while (it != nullptr && it->nStatus.hasData()) {
+            it->nStatus = it->nStatus.withData(false);
+            it = it->pprev;
+        }
+    };
+
+    // 1) Return genesis block when all blocks are available
+    BOOST_CHECK_EQUAL(
+        blockman.GetFirstBlock(
+            tip, [](const BlockStatus &status) { return status.hasData(); }),
+        chainman->ActiveChain()[0]);
+    BOOST_CHECK(
+        blockman.CheckBlockDataAvailability(tip, *chainman->ActiveChain()[0]));
+
+    // 2) Check lower_block when all blocks are available
+    CBlockIndex *lower_block = chainman->ActiveChain()[tip.nHeight / 2];
+    BOOST_CHECK(blockman.CheckBlockDataAvailability(tip, *lower_block));
+
+    // Prune half of the blocks
+    int height_to_prune = tip.nHeight / 2;
+    CBlockIndex *first_available_block =
+        chainman->ActiveChain()[height_to_prune + 1];
+    CBlockIndex *last_pruned_block = first_available_block->pprev;
+    func_prune_blocks(last_pruned_block);
+
+    // 3) The last block not pruned is in-between upper-block and the genesis
+    // block
+    BOOST_CHECK_EQUAL(
+        blockman.GetFirstBlock(
+            tip, [](const BlockStatus &status) { return status.hasData(); }),
+        first_available_block);
+    BOOST_CHECK(
+        blockman.CheckBlockDataAvailability(tip, *first_available_block));
+    BOOST_CHECK(!blockman.CheckBlockDataAvailability(tip, *last_pruned_block));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -3,12 +3,10 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import { expect } from 'chai';
-
 import { ChronikClient } from 'chronik-client';
 
 import { Ecc, EccDummy } from '../src/ecc.js';
 import { sha256d, shaRmd160 } from '../src/hash.js';
-import { initWasm } from '../src/initNodeJs.js';
 import { fromHex, toHex } from '../src/io/hex.js';
 import { pushBytesOp } from '../src/op.js';
 import {
@@ -34,10 +32,11 @@ import {
     flagSignature,
 } from '../src/txBuilder.js';
 import { UnsignedTxInput } from '../src/unsignedTx.js';
-import * as cashaddr from 'ecashaddrjs';
+import { encodeCashAddress } from 'ecashaddrjs';
+import '../src/initNodeJs.js';
 
 const NUM_COINS = 500;
-const COIN_VALUE = 100000;
+const COIN_VALUE = 100000n;
 
 const SIG_HASH_TYPES = [
     ALL_BIP143,
@@ -51,13 +50,11 @@ const SIG_HASH_TYPES = [
 describe('TxBuilder', () => {
     let runner: TestRunner;
     let chronik: ChronikClient;
-    let ecc: Ecc;
+    const ecc = new Ecc();
 
     before(async () => {
-        await initWasm();
         runner = await TestRunner.setup();
         chronik = runner.chronik;
-        ecc = runner.ecc;
         await runner.setupCoins(NUM_COINS, COIN_VALUE);
     });
 
@@ -81,22 +78,22 @@ describe('TxBuilder', () => {
         const recipientScript = Script.p2pkh(recipientPkh);
 
         // Add another p2pkh recipient using an address
-        const otherRecipientAddressP2pkh = cashaddr.encode(
+        const otherRecipientAddressP2pkh = encodeCashAddress(
             'ecash',
             'p2pkh',
             '9876543210987654321098765432109876543210',
         );
 
         // Add a p2sh recipient using an address
-        const otherRecipientAddressP2sh = cashaddr.encode(
+        const otherRecipientAddressP2sh = encodeCashAddress(
             'ecash',
             'p2sh',
             '9876543210987654321098765432109876543210',
         );
 
         // Send some UTXOs to the wallet
-        await runner.sendToScript(90000, p2pkh);
-        await runner.sendToScript(90000, p2pkh);
+        await runner.sendToScript(90000n, p2pkh);
+        await runner.sendToScript(90000n, p2pkh);
 
         const utxos = await chronik.script('p2pkh', toHex(pkh)).utxos();
         expect(utxos.utxos.length).to.equal(2);
@@ -107,7 +104,7 @@ describe('TxBuilder', () => {
                 input: {
                     prevOut: utxo.outpoint,
                     signData: {
-                        value: utxo.value,
+                        sats: utxo.sats,
                         outputScript: p2pkh,
                     },
                 },
@@ -115,22 +112,25 @@ describe('TxBuilder', () => {
             })),
             outputs: [
                 // Recipient using a TxOutput
-                { value: 120000, script: recipientScript },
+                { sats: 120000n, script: recipientScript },
                 // Recipient using a TxOutputAddress (p2pkh)
                 {
-                    value: 10000,
+                    sats: 10000n,
                     script: Script.fromAddress(otherRecipientAddressP2pkh),
                 },
                 // Recipient using a TxOutputAddress (p2sh)
                 {
-                    value: 10000,
+                    sats: 10000n,
                     script: Script.fromAddress(otherRecipientAddressP2sh),
                 },
                 // Leftover change back to wallet
                 p2pkh,
             ],
         });
-        const spendTx = txBuild.sign(ecc, 1000, 546);
+        const spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
+        const estimatedSize = txBuild
+            .sign({ ecc: new EccDummy(), feePerKb: 1000n, dustSats: 546n })
+            .serSize();
         const txid = (await chronik.broadcastTx(spendTx.ser())).txid;
 
         // Now have 1 UTXO change in the wallet
@@ -143,7 +143,9 @@ describe('TxBuilder', () => {
                 },
                 blockHeight: -1,
                 isCoinbase: false,
-                value: 90000 * 2 - 120000 - 10000 - 10000 - spendTx.serSize(),
+                sats: BigInt(
+                    90000 * 2 - 120000 - 10000 - 10000 - estimatedSize,
+                ),
                 isFinal: false,
             },
         ]);
@@ -158,7 +160,7 @@ describe('TxBuilder', () => {
         const p2pkh = Script.p2pkh(pkh);
 
         for (const sigHashType of SIG_HASH_TYPES) {
-            const txid = await runner.sendToScript(90000, p2pkh);
+            const txid = await runner.sendToScript(90000n, p2pkh);
             const txBuild = new TxBuilder({
                 inputs: [
                     {
@@ -168,7 +170,7 @@ describe('TxBuilder', () => {
                                 outIdx: 0,
                             },
                             signData: {
-                                value: 90000,
+                                sats: 90000n,
                                 outputScript: p2pkh,
                             },
                         },
@@ -177,7 +179,7 @@ describe('TxBuilder', () => {
                 ],
                 outputs: [p2pkh],
             });
-            const spendTx = txBuild.sign(ecc, 1000, 546);
+            const spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
             await chronik.broadcastTx(spendTx.ser());
         }
     });
@@ -190,7 +192,7 @@ describe('TxBuilder', () => {
         const p2pk = Script.fromOps([pushBytesOp(pk), OP_CHECKSIG]);
 
         for (const sigHashType of SIG_HASH_TYPES) {
-            const txid = await runner.sendToScript(90000, p2pk);
+            const txid = await runner.sendToScript(90000n, p2pk);
             const txBuild = new TxBuilder({
                 inputs: [
                     {
@@ -200,7 +202,7 @@ describe('TxBuilder', () => {
                                 outIdx: 0,
                             },
                             signData: {
-                                value: 90000,
+                                sats: 90000n,
                                 outputScript: p2pk,
                             },
                         },
@@ -209,7 +211,7 @@ describe('TxBuilder', () => {
                 ],
                 outputs: [p2pk],
             });
-            const spendTx = txBuild.sign(ecc, 1000, 546);
+            const spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
             await chronik.broadcastTx(spendTx.ser());
         }
     });
@@ -222,7 +224,7 @@ describe('TxBuilder', () => {
         const p2pk = Script.fromOps([pushBytesOp(pk), OP_CHECKSIG]);
 
         for (const sigHashType of SIG_HASH_TYPES) {
-            const txid = await runner.sendToScript(90000, p2pk);
+            const txid = await runner.sendToScript(90000n, p2pk);
             const txBuild = new TxBuilder({
                 inputs: [
                     {
@@ -233,7 +235,7 @@ describe('TxBuilder', () => {
                             },
                             sequence: 0x92345678,
                             signData: {
-                                value: 90000,
+                                sats: 90000n,
                                 outputScript: p2pk,
                             },
                         },
@@ -253,7 +255,7 @@ describe('TxBuilder', () => {
                 ],
                 outputs: [p2pk],
             });
-            const spendTx = txBuild.sign(ecc, 1000, 546);
+            const spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
             await chronik.broadcastTx(spendTx.ser());
         }
     });
@@ -271,7 +273,7 @@ describe('TxBuilder', () => {
         const p2sh = Script.p2sh(shaRmd160(redeemScript.bytecode));
 
         for (const sigHashType of SIG_HASH_TYPES) {
-            const txid = await runner.sendToScript(90000, p2sh);
+            const txid = await runner.sendToScript(90000n, p2sh);
             const txBuild = new TxBuilder({
                 inputs: [
                     {
@@ -281,7 +283,7 @@ describe('TxBuilder', () => {
                                 outIdx: 0,
                             },
                             signData: {
-                                value: 90000,
+                                sats: 90000n,
                                 redeemScript,
                             },
                         },
@@ -305,7 +307,7 @@ describe('TxBuilder', () => {
                 ],
                 outputs: [p2sh],
             });
-            const spendTx = txBuild.sign(ecc, 1000, 546);
+            const spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
             await chronik.broadcastTx(spendTx.ser());
         }
     });
@@ -333,7 +335,7 @@ describe('TxBuilder', () => {
         const p2sh = Script.p2sh(shaRmd160(redeemScript.bytecode));
 
         for (const sigHashType of SIG_HASH_TYPES) {
-            const txid = await runner.sendToScript(90000, p2sh);
+            const txid = await runner.sendToScript(90000n, p2sh);
             const txBuild = new TxBuilder({
                 inputs: [
                     {
@@ -344,7 +346,7 @@ describe('TxBuilder', () => {
                             },
                             sequence: 0x98765432,
                             signData: {
-                                value: 90000,
+                                sats: 90000n,
                                 redeemScript,
                             },
                         },
@@ -378,7 +380,7 @@ describe('TxBuilder', () => {
                 ],
                 outputs: [p2sh],
             });
-            const spendTx = txBuild.sign(ecc, 1000, 546);
+            const spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
             await chronik.broadcastTx(spendTx.ser());
         }
     });
@@ -395,7 +397,7 @@ describe('TxBuilder', () => {
             OP_CHECKSIG,
         ]);
         const p2sh = Script.p2sh(shaRmd160(redeemScript.bytecode));
-        const txid = await runner.sendToScript(90000, p2sh);
+        const txid = await runner.sendToScript(90000n, p2sh);
         const txBuild = new TxBuilder({
             inputs: [
                 {
@@ -405,7 +407,7 @@ describe('TxBuilder', () => {
                             outIdx: 0,
                         },
                         signData: {
-                            value: 90000,
+                            sats: 90000n,
                             redeemScript,
                         },
                     },
@@ -413,11 +415,11 @@ describe('TxBuilder', () => {
                         const sks = [sk1, sk2];
                         const sigs = [...Array(2).keys()].map(i => {
                             const preimage = input.sigHashPreimage(ALL_BIP143);
+                            // We use ECDSA to test correct EccDummy usage.
+                            // Schnorr signatures would be fixed length and not give us
+                            // test coverage for size calculation using dummy sigs.
                             return flagSignature(
-                                ecc.schnorrSign(
-                                    sks[i],
-                                    sha256d(preimage.bytes),
-                                ),
+                                ecc.ecdsaSign(sks[i], sha256d(preimage.bytes)),
                                 ALL_BIP143,
                             );
                         });
@@ -431,76 +433,92 @@ describe('TxBuilder', () => {
             ],
             outputs: [
                 {
-                    value: 20000,
+                    sats: 20000n,
                     script: Script.p2pkh(shaRmd160(pk1)),
                 },
                 Script.p2pkh(shaRmd160(pk2)),
                 {
-                    value: 30000,
+                    sats: 30000n,
                     script: Script.p2pkh(shaRmd160(pk2)),
                 },
             ],
         });
 
         // 0sats/kB (not broadcast)
-        let spendTx = txBuild.sign(ecc, 0, 546);
-        expect(spendTx.outputs[1].value).to.equal(40000n);
+        let spendTx = txBuild.sign({
+            ecc: new EccDummy(),
+            feePerKb: 0n,
+            dustSats: 546n,
+        });
+        expect(spendTx.outputs[1].sats).to.equal(40000n);
 
         // 1ksats/kB
-        spendTx = txBuild.sign(ecc, 1000, 546);
+        spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
         await chronik.broadcastTx(spendTx.ser());
-        expect(spendTx.outputs[1].value).to.equal(
-            BigInt(40000 - spendTx.serSize()),
-        );
+        let estimatedSize = txBuild
+            .sign({ ecc: new EccDummy(), feePerKb: 1000n, dustSats: 546n })
+            .serSize();
+        expect(spendTx.outputs[1].sats).to.equal(BigInt(40000 - estimatedSize));
 
         // 10ksats/kB
         txBuild.inputs[0].input.prevOut.txid = await runner.sendToScript(
-            90000,
+            90000n,
             p2sh,
         );
-        spendTx = txBuild.sign(ecc, 10000, 546);
+        spendTx = txBuild.sign({ feePerKb: 10000n, dustSats: 546n });
         await chronik.broadcastTx(spendTx.ser());
-        expect(spendTx.outputs[1].value).to.equal(
-            BigInt(40000 - 10 * spendTx.serSize()),
+        estimatedSize = txBuild
+            .sign({ ecc: new EccDummy(), feePerKb: 10000n, dustSats: 546n })
+            .serSize();
+        expect(spendTx.outputs[1].sats).to.equal(
+            BigInt(40000 - 10 * estimatedSize),
         );
 
         // 100ksats/kB
         txBuild.inputs[0].input.prevOut.txid = await runner.sendToScript(
-            90000,
+            90000n,
             p2sh,
         );
-        spendTx = txBuild.sign(ecc, 100000, 546);
+        spendTx = txBuild.sign({ feePerKb: 100000n, dustSats: 546n });
         await chronik.broadcastTx(spendTx.ser());
-        expect(spendTx.outputs[1].value).to.equal(
-            BigInt(40000 - 100 * spendTx.serSize()),
+        estimatedSize = txBuild
+            .sign({ ecc: new EccDummy(), feePerKb: 100000n, dustSats: 546n })
+            .serSize();
+        expect(spendTx.outputs[1].sats).to.equal(
+            BigInt(40000 - 100 * estimatedSize),
         );
 
-        // 120ksats/kB, deletes leftover output
+        // 117.6ksats/kB, deletes leftover output
         txBuild.inputs[0].input.prevOut.txid = await runner.sendToScript(
-            90000,
+            90000n,
             p2sh,
         );
-        spendTx = txBuild.sign(ecc, 120000, 546);
+        spendTx = txBuild.sign({ feePerKb: 117600n, dustSats: 546n });
+        const estimatedSizeNoLeftover = txBuild
+            .sign({ ecc: new EccDummy(), feePerKb: 117600n, dustSats: 546n })
+            .serSize();
         await chronik.broadcastTx(spendTx.ser());
         expect(spendTx.outputs.length).to.equal(2);
 
         // 100ksats/kB with a 5000 dust limit deletes leftover too
         txBuild.inputs[0].input.prevOut.txid = await runner.sendToScript(
-            90000,
+            90000n,
             p2sh,
         );
-        spendTx = txBuild.sign(ecc, 100000, /*dustLimit=*/ 5000);
+        spendTx = txBuild.sign({ feePerKb: 100000n, dustSats: 5000n });
         await chronik.broadcastTx(spendTx.ser());
         expect(spendTx.outputs.length).to.equal(2);
 
         // 1000ksats/kB does't have sufficient sats even without leftover
         txBuild.inputs[0].input.prevOut.txid = await runner.sendToScript(
-            90000,
+            90000n,
             p2sh,
         );
-        expect(() => txBuild.sign(ecc, 1000000, 546)).to.throw(
-            `Insufficient input value (90000): Can only pay for 40000 fees, ` +
-                `but ${spendTx.serSize() * 1000} required`,
+        expect(() =>
+            txBuild.sign({ feePerKb: 1000000n, dustSats: 546n }),
+        ).to.throw(
+            `Insufficient input sats (90000): Can only pay for 40000 fees, ` +
+                `but ${estimatedSizeNoLeftover * 1000} required`,
         );
     });
 
@@ -509,7 +527,7 @@ describe('TxBuilder', () => {
         const pk1 = ecc.derivePubkey(sk1);
         const sk2 = fromHex('22'.repeat(32));
         const pk2 = ecc.derivePubkey(sk2);
-        const leftoverAddress = cashaddr.encode(
+        const leftoverAddress = encodeCashAddress(
             'ecash',
             'p2pkh',
             fromHex('33'.repeat(20)),
@@ -521,7 +539,7 @@ describe('TxBuilder', () => {
             OP_CHECKSIG,
         ]);
         const p2sh = Script.p2sh(shaRmd160(redeemScript.bytecode));
-        const txid = await runner.sendToScript(90000, p2sh);
+        const txid = await runner.sendToScript(90000n, p2sh);
         const txBuild = new TxBuilder({
             inputs: [
                 {
@@ -531,7 +549,7 @@ describe('TxBuilder', () => {
                             outIdx: 0,
                         },
                         signData: {
-                            value: 90000,
+                            sats: 90000n,
                             redeemScript,
                         },
                     },
@@ -540,10 +558,7 @@ describe('TxBuilder', () => {
                         const sigs = [...Array(2).keys()].map(i => {
                             const preimage = input.sigHashPreimage(ALL_BIP143);
                             return flagSignature(
-                                ecc.schnorrSign(
-                                    sks[i],
-                                    sha256d(preimage.bytes),
-                                ),
+                                ecc.ecdsaSign(sks[i], sha256d(preimage.bytes)),
                                 ALL_BIP143,
                             );
                         });
@@ -557,11 +572,11 @@ describe('TxBuilder', () => {
             ],
             outputs: [
                 {
-                    value: 20000,
+                    sats: 20000n,
                     script: Script.p2pkh(shaRmd160(pk1)),
                 },
                 {
-                    value: 30000,
+                    sats: 30000n,
                     script: Script.p2pkh(shaRmd160(pk2)),
                 },
                 // Leftover (change) output is specified as Script
@@ -570,15 +585,16 @@ describe('TxBuilder', () => {
         });
 
         // 0sats/kB (not broadcast)
-        let spendTx = txBuild.sign(ecc, 0, 546);
-        expect(spendTx.outputs[2].value).to.equal(40000n);
+        let spendTx = txBuild.sign({ feePerKb: 0n, dustSats: 546n });
+        expect(spendTx.outputs[2].sats).to.equal(40000n);
 
         // 1ksats/kB
-        spendTx = txBuild.sign(ecc, 1000, 546);
+        spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
         await chronik.broadcastTx(spendTx.ser());
-        expect(spendTx.outputs[2].value).to.equal(
-            BigInt(40000 - spendTx.serSize()),
-        );
+        const estimatedSize = txBuild
+            .sign({ ecc: new EccDummy(), feePerKb: 1000n, dustSats: 546n })
+            .serSize();
+        expect(spendTx.outputs[2].sats).to.equal(BigInt(40000 - estimatedSize));
     });
 
     it('TxBuilder leftover with 0xFD outputs', async () => {
@@ -593,11 +609,11 @@ describe('TxBuilder', () => {
             txBuild.inputs.push({
                 input: {
                     prevOut: {
-                        txid: await runner.sendToScript(90000, p2pkh),
+                        txid: await runner.sendToScript(90000n, p2pkh),
                         outIdx: 0,
                     },
                     signData: {
-                        value: 90000,
+                        sats: 90000n,
                         outputScript: p2pkh,
                     },
                 },
@@ -607,17 +623,17 @@ describe('TxBuilder', () => {
         txBuild.outputs.push(Script.p2pkh(shaRmd160(pk2)));
         const txSize = 8896;
         const extraOutput = {
-            value: 90000 * 2 - (txSize + 252 * 546),
+            sats: BigInt(90000 * 2 - (txSize + 252 * 546)),
             script: p2pkh,
         };
         txBuild.outputs.push(extraOutput);
         for (let i = 0; i < 251; ++i) {
-            txBuild.outputs.push({ value: 546, script: p2pkh });
+            txBuild.outputs.push({ sats: 546n, script: p2pkh });
         }
         expect(txBuild.outputs.length).to.equal(253);
-        let spendTx = txBuild.sign(ecc, 1000, 546);
+        let spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
         expect(spendTx.serSize()).to.equal(txSize);
-        expect(spendTx.outputs[0].value).to.equal(BigInt(546));
+        expect(spendTx.outputs[0].sats).to.equal(BigInt(546));
 
         // If we remove the leftover output from the tx, we also remove 2 extra
         // bytes from the VARSIZE of the output, because 253 requires 3 bytes to
@@ -625,15 +641,17 @@ describe('TxBuilder', () => {
         const p2pkhSize = 8 + 1 + 25;
         const smallerSize = txSize - p2pkhSize - 2;
         // We can add 2 extra sats for the VARSIZE savings and it's handled fine
-        extraOutput.value += 546 + p2pkhSize + 2;
-        spendTx = txBuild.sign(ecc, 1000, 546);
+        extraOutput.sats += 546n + BigInt(p2pkhSize) + 2n;
+        spendTx = txBuild.sign({ feePerKb: 1000n, dustSats: 546n });
         expect(spendTx.serSize()).to.equal(smallerSize);
         expect(spendTx.outputs.length).to.equal(252);
 
         // Adding 1 extra sat -> fails -> showing that the previous tx was exact
-        extraOutput.value += 1;
-        expect(() => txBuild.sign(ecc, 1000, 546)).to.throw(
-            `Insufficient input value (180000): Can only pay for ` +
+        extraOutput.sats += 1n;
+        expect(() =>
+            txBuild.sign({ feePerKb: 1000n, dustSats: 546n }),
+        ).to.throw(
+            `Insufficient input sats (180000): Can only pay for ` +
                 `${smallerSize - 1} fees, but ${smallerSize} required`,
         );
     });
@@ -657,7 +675,7 @@ describe('TxBuilder', () => {
                             outIdx: 0,
                         },
                         signData: {
-                            value: expectedSize,
+                            sats: BigInt(expectedSize),
                         },
                     },
                     signatory: (_, input) => {
@@ -673,7 +691,11 @@ describe('TxBuilder', () => {
             // Leftover script, but will be spliced out again
             outputs: [new Script()],
         });
-        const tx = txBuild.sign(new EccDummy(), 1000, 9999);
+        const tx = txBuild.sign({
+            ecc: new EccDummy(),
+            feePerKb: 1000n,
+            dustSats: 9999n,
+        });
         expect(tx.serSize()).to.equal(expectedSize);
     });
 
@@ -691,17 +713,19 @@ describe('TxBuilder', () => {
             ],
             outputs: [new Script()],
         });
-        expect(() => txBuild.sign(ecc, 1000, 545)).to.throw(
-            'Using a leftover output requires setting SignData.value for all inputs',
+        expect(() =>
+            txBuild.sign({ feePerKb: 1000n, dustSats: 546n }),
+        ).to.throw(
+            'Using a leftover output requires setting SignData.sats for all inputs',
         );
-        txBuild.inputs[0].input.signData = { value: 1234 };
-        expect(() => txBuild.sign(ecc, 1000)).to.throw(
-            'Using a leftover output requires setting dustLimit',
+        txBuild.inputs[0].input.signData = { sats: 1234n };
+        expect(() => txBuild.sign({ feePerKb: 1000n })).to.throw(
+            'Using a leftover output requires setting dustSats',
         );
-        expect(() => txBuild.sign(ecc, 0.1)).to.throw(
-            'feePerKb must be an integer',
-        );
-        expect(() => txBuild.sign(ecc)).to.throw(
+        expect(() =>
+            txBuild.sign({ feePerKb: 0.1 as unknown as bigint }),
+        ).to.throw('feePerKb must be a bigint');
+        expect(() => txBuild.sign()).to.throw(
             'Using a leftover output requires setting feePerKb',
         );
     });

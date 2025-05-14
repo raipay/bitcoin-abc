@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-interface CashtabSettings {
+interface CashtabSettingsInterface {
     fiatCurrency: string;
     sendModal: boolean;
     autoCameraOn: boolean;
@@ -11,11 +11,17 @@ interface CashtabSettings {
     minFeeSends: boolean;
 }
 // Default settings which can be modified within Cashtab
-class CashtabSettings {
+class CashtabSettings implements CashtabSettingsInterface {
+    fiatCurrency: string;
+    sendModal: boolean;
+    autoCameraOn: boolean;
+    hideMessagesFromUnknownSenders: boolean;
+    balanceVisible: boolean;
+    minFeeSends: boolean;
     constructor(
         fiatCurrency = 'usd',
         sendModal = false,
-        autoCameraOn = true,
+        autoCameraOn = false,
         hideMessagesFromUnknownSenders = false,
         balanceVisible = true,
         minFeeSends = false,
@@ -30,8 +36,14 @@ class CashtabSettings {
 }
 export default CashtabSettings;
 
+interface FiatCurrency {
+    name: string;
+    symbol: string;
+    slug: string;
+}
+
 // Cashtab supported fiat currencies
-export const supportedFiatCurrencies = {
+export const supportedFiatCurrencies: Record<string, FiatCurrency> = {
     usd: { name: 'US Dollar', symbol: '$', slug: 'usd' },
     aed: { name: 'UAE Dirham', symbol: 'Dh', slug: 'aed' },
     aud: { name: 'Australian Dollar', symbol: '$', slug: 'aud' },
@@ -62,8 +74,19 @@ export const supportedFiatCurrencies = {
     vnd: { name: 'Vietnamese đồng', symbol: 'đ', slug: 'vnd' },
 };
 
+type FiatCurrencyCode = keyof typeof supportedFiatCurrencies;
+
+export interface CashtabSettingsValidation {
+    fiatCurrency: FiatCurrencyCode[];
+    sendModal: boolean[];
+    autoCameraOn: boolean[];
+    hideMessagesFromUnknownSenders: boolean[];
+    balanceVisible: boolean[];
+    minFeeSends: boolean[];
+}
+
 // Validation for CashtabSettings
-export const cashtabSettingsValidation = {
+export const cashtabSettingsValidation: CashtabSettingsValidation = {
     fiatCurrency: Object.keys(supportedFiatCurrencies),
     sendModal: [true, false],
     autoCameraOn: [true, false],

@@ -9,6 +9,7 @@
 
 #include <init.h>
 
+#include <kernel/checks.h>
 #include <kernel/mempool_persist.h>
 #include <kernel/validation_cache_sizes.h>
 
@@ -22,8 +23,8 @@
 #include <blockfilter.h>
 #include <chain.h>
 #include <chainparams.h>
+#include <chainparamsbase.h>
 #include <common/args.h>
-#include <compat/sanity.h>
 #include <config.h>
 #include <consensus/amount.h>
 #include <currencyunit.h>
@@ -73,6 +74,7 @@
 #include <txdb.h>
 #include <txmempool.h>
 #include <util/asmap.h>
+#include <util/chaintype.h>
 #include <util/check.h>
 #include <util/fs.h>
 #include <util/fs_helpers.h>
@@ -128,12 +130,12 @@ using node::CacheSizes;
 using node::CalculateCacheSizes;
 using node::DEFAULT_PERSIST_MEMPOOL;
 using node::fReindex;
+using node::ImportBlocks;
 using node::KernelNotifications;
 using node::LoadChainstate;
 using node::MempoolPath;
 using node::NodeContext;
 using node::ShouldPersistMempool;
-using node::ThreadImport;
 using node::VerifyLoadedChainstate;
 
 static const bool DEFAULT_PROXYRANDOMIZE = true;
@@ -279,8 +281,8 @@ void Shutdown(NodeContext &node) {
     if (node.scheduler) {
         node.scheduler->stop();
     }
-    if (node.chainman && node.chainman->m_load_block.joinable()) {
-        node.chainman->m_load_block.join();
+    if (node.chainman && node.chainman->m_thread_load.joinable()) {
+        node.chainman->m_thread_load.join();
     }
     StopScriptCheckWorkerThreads();
 
@@ -364,7 +366,7 @@ void Shutdown(NodeContext &node) {
     node.chain_clients.clear();
     UnregisterAllValidationInterfaces();
     GetMainSignals().UnregisterBackgroundSignalScheduler();
-    init::UnsetGlobals();
+    node.kernel.reset();
     node.mempool.reset();
     node.chainman.reset();
     node.scheduler.reset();
@@ -440,18 +442,14 @@ void SetupServerArgs(NodeContext &node) {
 
     init::AddLoggingArgs(argsman);
 
-    const auto defaultBaseParams =
-        CreateBaseChainParams(CBaseChainParams::MAIN);
-    const auto testnetBaseParams =
-        CreateBaseChainParams(CBaseChainParams::TESTNET);
-    const auto regtestBaseParams =
-        CreateBaseChainParams(CBaseChainParams::REGTEST);
-    const auto defaultChainParams =
-        CreateChainParams(argsman, CBaseChainParams::MAIN);
+    const auto defaultBaseParams = CreateBaseChainParams(ChainType::MAIN);
+    const auto testnetBaseParams = CreateBaseChainParams(ChainType::TESTNET);
+    const auto regtestBaseParams = CreateBaseChainParams(ChainType::REGTEST);
+    const auto defaultChainParams = CreateChainParams(argsman, ChainType::MAIN);
     const auto testnetChainParams =
-        CreateChainParams(argsman, CBaseChainParams::TESTNET);
+        CreateChainParams(argsman, ChainType::TESTNET);
     const auto regtestChainParams =
-        CreateChainParams(argsman, CBaseChainParams::REGTEST);
+        CreateChainParams(argsman, ChainType::REGTEST);
 
     // Hidden Options
     std::vector<std::string> hidden_args = {
@@ -468,8 +466,10 @@ void SetupServerArgs(NodeContext &node) {
         "-allowselfsignedrootcertificates", "-choosedatadir", "-lang=<lang>",
         "-min", "-resetguisettings", "-rootcertificates=<file>", "-splash",
         "-uiplatform",
-        // TODO remove after the Nov. 2024 upgrade
-        "-augustoactivationtime",
+        // TODO remove after the May 2025 upgrade
+        "-schumpeteractivationtime",
+        // TODO remove after the Nov 2025 upgrade
+        "-shibusawaactivationtime",
     };
 
     // Set all of the args and their help
@@ -610,14 +610,14 @@ void SetupServerArgs(NodeContext &node) {
         "-prune=<n>",
         strprintf("Reduce storage requirements by enabling pruning (deleting) "
                   "of old blocks. This allows the pruneblockchain RPC to be "
-                  "called to delete specific blocks, and enables automatic "
+                  "called to delete specific blocks and enables automatic "
                   "pruning of old blocks if a target size in MiB is provided. "
-                  "This mode is incompatible with -txindex, -coinstatsindex "
-                  "and -rescan. Warning: Reverting this setting requires "
-                  "re-downloading the entire blockchain. (default: 0 = disable "
-                  "pruning blocks, 1 = allow manual pruning via RPC, >=%u = "
-                  "automatically prune block files to stay under the specified "
-                  "target size in MiB)",
+                  "This mode is incompatible with -txindex and -rescan. "
+                  "Warning: Reverting this setting requires re-downloading the "
+                  "entire blockchain. (default: 0 = disable pruning blocks, "
+                  "1 = allow manual pruning via RPC, >=%u = automatically "
+                  "prune block files to stay under the specified target size "
+                  "in MiB)",
                   MIN_DISK_SPACE_FOR_BLOCK_FILES / 1024 / 1024),
         ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg(
@@ -628,7 +628,8 @@ void SetupServerArgs(NodeContext &node) {
         ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg(
         "-reindex",
-        "Rebuild chain state and block index from the blk*.dat files on disk",
+        "Rebuild chain state and block index from the blk*.dat files on disk."
+        " This will also rebuild active optional indexes.",
         ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg(
         "-settings=<file>",
@@ -715,6 +716,50 @@ void SetupServerArgs(NodeContext &node) {
         "-chronikscripthashindex",
         "Enable the scripthash index for the Chronik indexer (default: 0) ",
         ArgsManager::ALLOW_BOOL, OptionsCategory::CHRONIK);
+    argsman.AddArg(
+        "-chronikelectrumbind=<addr>[:port][:t|s]",
+        strprintf(
+            "Bind the Chronik Electrum interface to the given "
+            "address:port:protocol. If not set, the Electrum interface will "
+            "not start. This option can be specified multiple times. The "
+            "protocol is selected by a single letter, where 't' means TCP and "
+            "'s' means TLS. If TLS is selected, the certificate chain and "
+            "private key must both be passed (see -chronikelectrumcert and "
+            "-chronikelectrumprivkey (default: disabled; default port: %u, "
+            "testnet: %u, regtest: %u; default protocol: TCP)",
+            defaultBaseParams->ChronikElectrumPort(),
+            testnetBaseParams->ChronikElectrumPort(),
+            regtestBaseParams->ChronikElectrumPort()),
+        ArgsManager::ALLOW_STRING | ArgsManager::NETWORK_ONLY,
+        OptionsCategory::HIDDEN);
+    argsman.AddArg(
+        "-chronikelectrumcert",
+        "Path to the certificate file to be used by the Chronik Electrum "
+        "server when the TLS protocol is selected. The file should contain "
+        "the whole certificate chain (typically a .pem file). If used the "
+        "-chronikelectrumprivkey must be set as well.",
+        ArgsManager::ALLOW_STRING | ArgsManager::NETWORK_ONLY,
+        OptionsCategory::HIDDEN);
+    argsman.AddArg(
+        "-chronikelectrumprivkey",
+        "Path to the private key file to be used by the Chronik Electrum "
+        "server when the TLS protocol is selected. If used the "
+        "-chronikelectrumcert must be set as well.",
+        ArgsManager::ALLOW_STRING | ArgsManager::NETWORK_ONLY,
+        OptionsCategory::HIDDEN);
+    argsman.AddArg(
+        "-chronikelectrummaxhistory",
+        strprintf("Largest tx history we are willing to serve. (default: %u)",
+                  chronik::DEFAULT_ELECTRUM_MAX_HISTORY),
+        ArgsManager::ALLOW_INT, OptionsCategory::HIDDEN);
+    argsman.AddArg(
+        "-chronikelectrumdonationaddress",
+        strprintf(
+            "The server donation address. No checks are done on the server "
+            "side to ensure this is a valid eCash address, it is just relayed "
+            "to clients verbatim as a text string (%u characters maximum).",
+            chronik::MAX_LENGTH_DONATION_ADDRESS),
+        ArgsManager::ALLOW_STRING, OptionsCategory::HIDDEN);
 #endif
     argsman.AddArg(
         "-blockfilterindex=<type>",
@@ -1223,6 +1268,9 @@ void SetupServerArgs(NodeContext &node) {
                   "be included in block creation. (default: %s)",
                   ticker, FormatMoney(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB)),
         ArgsManager::ALLOW_ANY, OptionsCategory::BLOCK_CREATION);
+    argsman.AddArg("-simplegbt",
+                   "Use a simplified getblocktemplate output (default: 0)",
+                   ArgsManager::ALLOW_BOOL, OptionsCategory::BLOCK_CREATION);
 
     argsman.AddArg("-blockversion=<n>",
                    "Override block version to test forking scenarios",
@@ -1395,7 +1443,9 @@ void SetupServerArgs(NodeContext &node) {
     argsman.AddArg(
         "-avaminquorumconnectedstakeratio",
         strprintf("Minimum proportion of known stake we"
-                  " need nodes for to have a usable quorum (default: %s)",
+                  " need nodes for to have a usable quorum (default: %s). "
+                  "This parameter is parsed with a maximum precision of "
+                  "0.000001.",
                   AVALANCHE_DEFAULT_MIN_QUORUM_CONNECTED_STAKE_RATIO),
         ArgsManager::ALLOW_STRING, OptionsCategory::AVALANCHE);
     argsman.AddArg(
@@ -1679,7 +1729,7 @@ namespace { // Variables internal to initialization process only
 int nMaxConnections;
 int nUserMaxConnections;
 int nFD;
-ServiceFlags nLocalServices = ServiceFlags(NODE_NETWORK | NODE_NETWORK_LIMITED);
+ServiceFlags nLocalServices = ServiceFlags(NODE_NETWORK_LIMITED);
 int64_t peer_connect_timeout;
 std::set<BlockFilterType> g_enabled_filter_types;
 
@@ -1751,14 +1801,15 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
 
     // Error if network-specific options (-addnode, -connect, etc) are
     // specified in default section of config file, but not overridden
-    // on the command line or in this network's section of the config file.
-    std::string network = args.GetChainName();
+    // on the command line or in this chain's section of the config file.
+    ChainType chain = args.GetChainType();
     bilingual_str errors;
     for (const auto &arg : args.GetUnsuitableSectionOnlyArgs()) {
-        errors += strprintf(_("Config setting for %s only applied on %s "
-                              "network when in [%s] section.") +
-                                Untranslated("\n"),
-                            arg, network, network);
+        errors +=
+            strprintf(_("Config setting for %s only applied on %s "
+                        "network when in [%s] section.") +
+                          Untranslated("\n"),
+                      arg, ChainTypeToString(chain), ChainTypeToString(chain));
     }
 
     if (!errors.empty()) {
@@ -1813,14 +1864,14 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
         nLocalServices = ServiceFlags(nLocalServices | NODE_COMPACT_FILTERS);
     }
 
-    // if using block pruning, then disallow txindex, coinstatsindex and chronik
     if (args.GetIntArg("-prune", 0)) {
         if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
             return InitError(_("Prune mode is incompatible with -txindex."));
         }
-        if (args.GetBoolArg("-coinstatsindex", DEFAULT_COINSTATSINDEX)) {
+        if (args.GetBoolArg("-reindex-chainstate", false)) {
             return InitError(
-                _("Prune mode is incompatible with -coinstatsindex."));
+                _("Prune mode is incompatible with -reindex-chainstate. Use "
+                  "full -reindex instead."));
         }
         if (args.GetBoolArg("-chronik", DEFAULT_CHRONIK)) {
             return InitError(_("Prune mode is incompatible with -chronik."));
@@ -2034,7 +2085,7 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
 
 static bool LockDataDirectory(bool probeOnly) {
     // Make sure only a single Bitcoin process is using the data directory.
-    fs::path datadir = gArgs.GetDataDirNet();
+    const fs::path &datadir = gArgs.GetDataDirNet();
     if (!DirIsWritable(datadir)) {
         return InitError(strprintf(
             _("Cannot write to data directory '%s'; check permissions."),
@@ -2048,13 +2099,11 @@ static bool LockDataDirectory(bool probeOnly) {
     return true;
 }
 
-bool AppInitSanityChecks() {
+bool AppInitSanityChecks(const kernel::Context &kernel) {
     // Step 4: sanity checks
-
-    init::SetGlobals();
-
-    // Sanity check
-    if (!init::SanityChecks()) {
+    auto result{kernel::SanityChecks(kernel)};
+    if (!result) {
+        InitError(util::ErrorString(result));
         return InitError(strprintf(
             _("Initialization sanity check failed. %s is shutting down."),
             PACKAGE_NAME));
@@ -2473,11 +2522,37 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
               mempool_opts.max_size_bytes * (1.0 / 1024 / 1024));
 
     for (bool fLoaded = false; !fLoaded && !ShutdownRequested();) {
-        node.mempool = std::make_unique<CTxMemPool>(mempool_opts);
+        node.mempool = std::make_unique<CTxMemPool>(config, mempool_opts);
 
         node.chainman =
             std::make_unique<ChainstateManager>(chainman_opts, blockman_opts);
         ChainstateManager &chainman = *node.chainman;
+
+        // This is defined and set here instead of inline in validation.h to
+        // avoid a hard dependency between validation and index/base, since the
+        // latter is not in libbitcoinkernel.
+        chainman.snapshot_download_completed = [&node]() {
+            if (!node.chainman->m_blockman.IsPruneMode()) {
+                LogPrintf("[snapshot] re-enabling NODE_NETWORK services\n");
+                node.connman->AddLocalServices(NODE_NETWORK);
+            }
+
+            LogPrintf("[snapshot] restarting indexes\n");
+
+            // Drain the validation interface queue to ensure that the old
+            // indexes don't have any pending work.
+            SyncWithValidationInterfaceQueue();
+
+            for (auto *index : node.indexes) {
+                index->Interrupt();
+                index->Stop();
+                if (!(index->Init() && index->StartBackgroundSync())) {
+                    LogPrintf("[snapshot] WARNING failed to restart index %s "
+                              "on snapshot chain\n",
+                              index->GetName());
+                }
+            }
+        };
 
         node::ChainstateLoadOptions options;
         options.mempool = Assert(node.mempool.get());
@@ -2514,9 +2589,10 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
             uiInterface.InitMessage(_("Verifying blocks...").translated);
             if (chainman.m_blockman.m_have_pruned &&
                 options.check_blocks > MIN_BLOCKS_TO_KEEP) {
-                LogPrintf("Prune: pruned datadir may not have more than %d "
-                          "blocks; only checking available blocks\n",
-                          MIN_BLOCKS_TO_KEEP);
+                LogPrintfCategory(BCLog::PRUNE,
+                                  "pruned datadir may not have more than %d "
+                                  "blocks; only checking available blocks\n",
+                                  MIN_BLOCKS_TO_KEEP);
             }
             std::tie(status, error) = catch_exceptions(
                 [&] { return VerifyLoadedChainstate(chainman, options); });
@@ -2602,6 +2678,7 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     config.SetCashAddrEncoding(args.GetBoolArg("-usecashaddr", true));
 
     // Step 8: load indexers
+
     if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
         auto result{
             WITH_LOCK(cs_main, return CheckLegacyTxindex(*Assert(
@@ -2611,31 +2688,42 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         }
 
         g_txindex =
-            std::make_unique<TxIndex>(cache_sizes.tx_index, false, fReindex);
-        if (!g_txindex->Start(chainman.ActiveChainstate())) {
-            return false;
-        }
+            std::make_unique<TxIndex>(interfaces::MakeChain(node, Params()),
+                                      cache_sizes.tx_index, false, fReindex);
+        node.indexes.emplace_back(g_txindex.get());
     }
 
     for (const auto &filter_type : g_enabled_filter_types) {
-        InitBlockFilterIndex(filter_type, cache_sizes.filter_index, false,
-                             fReindex);
-        if (!GetBlockFilterIndex(filter_type)
-                 ->Start(chainman.ActiveChainstate())) {
-            return false;
-        }
+        InitBlockFilterIndex(
+            [&] { return interfaces::MakeChain(node, Params()); }, filter_type,
+            cache_sizes.filter_index, false, fReindex);
+        node.indexes.emplace_back(GetBlockFilterIndex(filter_type));
     }
 
     if (args.GetBoolArg("-coinstatsindex", DEFAULT_COINSTATSINDEX)) {
         g_coin_stats_index = std::make_unique<CoinStatsIndex>(
-            /* cache size */ 0, false, fReindex);
-        if (!g_coin_stats_index->Start(chainman.ActiveChainstate())) {
+            interfaces::MakeChain(node, Params()), /* cache size */ 0, false,
+            fReindex);
+        node.indexes.emplace_back(g_coin_stats_index.get());
+    }
+
+    // Init indexes
+    for (auto index : node.indexes) {
+        if (!index->Init()) {
             return false;
         }
     }
 
+    const bool background_sync_in_progress{WITH_LOCK(
+        chainman.GetMutex(), return chainman.BackgroundSyncInProgress())};
 #if ENABLE_CHRONIK
     if (args.GetBoolArg("-chronik", DEFAULT_CHRONIK)) {
+        if (background_sync_in_progress) {
+            return InitError(
+                _("Assumeutxo is incompatible with -chronik. Wait for "
+                  "background sync to complete before enabling Chronik."));
+        }
+
         const bool fReindexChronik =
             fReindex || args.GetBoolArg("-chronikreindex", false);
         if (!chronik::Start(args, config, node, fReindexChronik)) {
@@ -2659,17 +2747,25 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
 
     // Step 10: data directory maintenance
 
-    // if pruning, unset the service bit and perform the initial blockstore
-    // prune after any wallet rescanning has taken place.
+    // if pruning, perform the initial blockstore prune
+    // after any wallet rescanning has taken place.
     if (chainman.m_blockman.IsPruneMode()) {
-        LogPrintf("Unsetting NODE_NETWORK on prune mode\n");
-        nLocalServices = ServiceFlags(nLocalServices & ~NODE_NETWORK);
         if (!fReindex) {
             LOCK(cs_main);
             for (Chainstate *chainstate : chainman.GetAll()) {
                 uiInterface.InitMessage(_("Pruning blockstore...").translated);
                 chainstate->PruneAndFlush();
             }
+        }
+    } else {
+        // Prior to setting NODE_NETWORK, check if we can provide historical
+        // blocks.
+        if (!background_sync_in_progress) {
+            LogPrintf("Setting NODE_NETWORK on non-prune mode\n");
+            nLocalServices = ServiceFlags(nLocalServices | NODE_NETWORK);
+        } else {
+            LogPrintf("Running node in NODE_NETWORK_LIMITED mode until "
+                      "snapshot background sync completes\n");
         }
     }
 
@@ -2724,18 +2820,31 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     }
 
     avalanche::Processor *const avalanche = node.avalanche.get();
-    chainman.m_load_block =
-        std::thread(&util::TraceThread, "loadblk", [=, &chainman, &args] {
-            ThreadImport(chainman, avalanche, vImportFiles,
-                         ShouldPersistMempool(args) ? MempoolPath(args)
-                                                    : fs::path{});
+    chainman.m_thread_load = std::thread(
+        &util::TraceThread, "initload", [=, &chainman, &args, &node] {
+            // Import blocks
+            ImportBlocks(chainman, avalanche, vImportFiles);
+            // Start indexes initial sync
+            if (!StartIndexBackgroundSync(node)) {
+                bilingual_str err_str =
+                    _("Failed to start indexes, shutting down..");
+                AbortNode(err_str.original, err_str);
+                // TODO: replace AbortNode call with following line after
+                //   backporting core#27861
+                // chainman.GetNotifications().fatalError(err_str.original,
+                //                                        err_str);
+                return;
+            }
+            // Load mempool from disk
+            chainman.ActiveChainstate().LoadMempool(
+                ShouldPersistMempool(args) ? MempoolPath(args) : fs::path{});
         });
 
     // Wait for genesis block to be processed
     {
         WAIT_LOCK(g_genesis_wait_mutex, lock);
         // We previously could hang here if StartShutdown() is called prior to
-        // ThreadImport getting started, so instead we just wait on a timer to
+        // ImportBlocks getting started, so instead we just wait on a timer to
         // check ShutdownRequested() regularly.
         while (!fHaveGenesis && !ShutdownRequested()) {
             g_genesis_wait_cv.wait_for(lock, std::chrono::milliseconds(500));
@@ -2883,6 +2992,8 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     CService onion_service_target;
     if (!connOptions.onion_binds.empty()) {
         onion_service_target = connOptions.onion_binds.front();
+    } else if (!connOptions.vBinds.empty()) {
+        onion_service_target = connOptions.vBinds.front();
     } else {
         onion_service_target = DefaultOnionServiceTarget();
         connOptions.onion_binds.push_back(onion_service_target);
@@ -2992,5 +3103,69 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     StartupNotify(args);
 #endif
 
+    return true;
+}
+
+bool StartIndexBackgroundSync(NodeContext &node) {
+    // Find the oldest block among all indexes.
+    // This block is used to verify that we have the required blocks' data
+    // stored on disk, starting from that point up to the current tip.
+    // indexes_start_block='nullptr' means "start from height 0".
+    std::optional<const CBlockIndex *> indexes_start_block;
+    std::string older_index_name;
+    ChainstateManager &chainman = *Assert(node.chainman);
+    const Chainstate &chainstate =
+        WITH_LOCK(::cs_main, return chainman.GetChainstateForIndexing());
+    const CChain &index_chain = chainstate.m_chain;
+
+    for (auto index : node.indexes) {
+        const IndexSummary &summary = index->GetSummary();
+        if (summary.synced) {
+            continue;
+        }
+
+        // Get the last common block between the index best block and the active
+        // chain
+        LOCK(::cs_main);
+        const CBlockIndex *pindex = chainman.m_blockman.LookupBlockIndex(
+            BlockHash{summary.best_block_hash});
+        if (!index_chain.Contains(pindex)) {
+            pindex = index_chain.FindFork(pindex);
+        }
+
+        if (!indexes_start_block || !pindex ||
+            pindex->nHeight < indexes_start_block.value()->nHeight) {
+            indexes_start_block = pindex;
+            older_index_name = summary.name;
+            if (!pindex) {
+                // Starting from genesis so no need to look for earlier block.
+                break;
+            }
+        }
+    };
+
+    // Verify all blocks needed to sync to current tip are present.
+    if (indexes_start_block) {
+        LOCK(::cs_main);
+        const CBlockIndex *start_block = *indexes_start_block;
+        if (!start_block) {
+            start_block = chainman.ActiveChain().Genesis();
+        }
+        if (!chainman.m_blockman.CheckBlockDataAvailability(
+                *index_chain.Tip(), *Assert(start_block))) {
+            return InitError(strprintf(
+                Untranslated("%s best block of the index goes beyond pruned "
+                             "data. Please disable the index or reindex (which "
+                             "will download the whole blockchain again)"),
+                older_index_name));
+        }
+    }
+
+    // Start threads
+    for (auto index : node.indexes) {
+        if (!index->StartBackgroundSync()) {
+            return false;
+        }
+    }
     return true;
 }

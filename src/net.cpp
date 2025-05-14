@@ -414,7 +414,8 @@ static CAddress GetBindAddress(SOCKET sock) {
                          &sockaddr_bind_len)) {
             addr_bind.SetSockAddr((const struct sockaddr *)&sockaddr_bind);
         } else {
-            LogPrint(BCLog::NET, "Warning: getsockname failed\n");
+            LogPrintLevel(BCLog::NET, BCLog::Level::Warning,
+                          "getsockname failed\n");
         }
     }
     return addr_bind;
@@ -437,10 +438,11 @@ CNode *CConnman::ConnectNode(CAddress addrConnect, const char *pszDest,
         }
     }
 
-    LogPrint(BCLog::NET, "trying connection %s lastseen=%.1fhrs\n",
-             pszDest ? pszDest : addrConnect.ToString(),
-             Ticks<HoursDouble>(
-                 pszDest ? 0h : Now<NodeSeconds>() - addrConnect.nTime));
+    LogPrintLevel(BCLog::NET, BCLog::Level::Debug,
+                  "trying connection %s lastseen=%.1fhrs\n",
+                  pszDest ? pszDest : addrConnect.ToString(),
+                  Ticks<HoursDouble>(
+                      pszDest ? 0h : Now<NodeSeconds>() - addrConnect.nTime));
 
     // Resolve
     const uint16_t default_port{pszDest != nullptr
@@ -551,7 +553,7 @@ CNode *CConnman::ConnectNode(CAddress addrConnect, const char *pszDest,
         addr_bind = GetBindAddress(sock->Get());
     }
     CNode *pnode = new CNode(
-        id, sock->Release(), addrConnect, CalculateKeyedNetGroup(addrConnect),
+        id, std::move(sock), addrConnect, CalculateKeyedNetGroup(addrConnect),
         nonce, extra_entropy, addr_bind, pszDest ? pszDest : "", conn_type,
         /* inbound_onion */ false,
         CNodeOptions{.permission_flags = permission_flags});
@@ -566,10 +568,10 @@ CNode *CConnman::ConnectNode(CAddress addrConnect, const char *pszDest,
 
 void CNode::CloseSocketDisconnect() {
     fDisconnect = true;
-    LOCK(cs_hSocket);
-    if (hSocket != INVALID_SOCKET) {
+    LOCK(m_sock_mutex);
+    if (m_sock) {
         LogPrint(BCLog::NET, "disconnecting peer=%d\n", id);
-        CloseSocket(hSocket);
+        m_sock.reset();
     }
 }
 
@@ -841,7 +843,7 @@ void V1TransportSerializer::prepareForTransport(const Config &config,
     CVectorWriter{SER_NETWORK, INIT_PROTO_VERSION, header, 0, hdr};
 }
 
-size_t CConnman::SocketSendData(CNode &node) const {
+std::pair<size_t, bool> CConnman::SocketSendData(CNode &node) const {
     size_t nSentSize = 0;
     size_t nMsgCount = 0;
 
@@ -850,13 +852,12 @@ size_t CConnman::SocketSendData(CNode &node) const {
         int nBytes = 0;
 
         {
-            LOCK(node.cs_hSocket);
-            if (node.hSocket == INVALID_SOCKET) {
+            LOCK(node.m_sock_mutex);
+            if (!node.m_sock) {
                 break;
             }
 
-            nBytes = send(
-                node.hSocket,
+            nBytes = node.m_sock->Send(
                 reinterpret_cast<const char *>(data.data()) + node.nSendOffset,
                 data.size() - node.nSendOffset, MSG_NOSIGNAL | MSG_DONTWAIT);
         }
@@ -903,7 +904,7 @@ size_t CConnman::SocketSendData(CNode &node) const {
         assert(node.nSendSize == 0);
     }
 
-    return nSentSize;
+    return {nSentSize, !node.vSendMsg.empty()};
 }
 
 static bool ReverseCompareNodeMinPingTime(const NodeEvictionCandidate &a,
@@ -1285,11 +1286,10 @@ bool CConnman::AttemptToEvictConnection() {
 void CConnman::AcceptConnection(const ListenSocket &hListenSocket) {
     struct sockaddr_storage sockaddr;
     socklen_t len = sizeof(sockaddr);
-    SOCKET hSocket =
-        accept(hListenSocket.socket, (struct sockaddr *)&sockaddr, &len);
+    auto sock = hListenSocket.sock->Accept((struct sockaddr *)&sockaddr, &len);
     CAddress addr;
 
-    if (hSocket == INVALID_SOCKET) {
+    if (!sock) {
         const int nErr = WSAGetLastError();
         if (nErr != WSAEWOULDBLOCK) {
             LogPrintf("socket error accept failed: %s\n",
@@ -1299,18 +1299,20 @@ void CConnman::AcceptConnection(const ListenSocket &hListenSocket) {
     }
 
     if (!addr.SetSockAddr((const struct sockaddr *)&sockaddr)) {
-        LogPrintf("Warning: Unknown socket family\n");
+        LogPrintLevel(BCLog::NET, BCLog::Level::Warning,
+                      "Unknown socket family\n");
     }
 
-    const CAddress addr_bind = GetBindAddress(hSocket);
+    const CAddress addr_bind = GetBindAddress(sock->Get());
 
     NetPermissionFlags permission_flags = NetPermissionFlags::None;
     hListenSocket.AddSocketPermissionFlags(permission_flags);
 
-    CreateNodeFromAcceptedSocket(hSocket, permission_flags, addr_bind, addr);
+    CreateNodeFromAcceptedSocket(std::move(sock), permission_flags, addr_bind,
+                                 addr);
 }
 
-void CConnman::CreateNodeFromAcceptedSocket(SOCKET hSocket,
+void CConnman::CreateNodeFromAcceptedSocket(std::unique_ptr<Sock> &&sock,
                                             NetPermissionFlags permission_flags,
                                             const CAddress &addr_bind,
                                             const CAddress &addr) {
@@ -1333,20 +1335,18 @@ void CConnman::CreateNodeFromAcceptedSocket(SOCKET hSocket,
         LogPrint(BCLog::NET,
                  "connection from %s dropped: not accepting new connections\n",
                  addr.ToString());
-        CloseSocket(hSocket);
         return;
     }
 
-    if (!IsSelectableSocket(hSocket)) {
+    if (!IsSelectableSocket(sock->Get())) {
         LogPrintf("connection from %s dropped: non-selectable socket\n",
                   addr.ToString());
-        CloseSocket(hSocket);
         return;
     }
 
     // According to the internet TCP_NODELAY is not carried into accepted
     // sockets on all platforms.  Set it again here just to be sure.
-    SetSocketNoDelay(hSocket);
+    SetSocketNoDelay(sock->Get());
 
     // Don't accept connections from banned peers.
     bool banned = m_banman && m_banman->IsBanned(addr);
@@ -1354,7 +1354,6 @@ void CConnman::CreateNodeFromAcceptedSocket(SOCKET hSocket,
         banned) {
         LogPrint(BCLog::NET, "connection from %s dropped (banned)\n",
                  addr.ToString());
-        CloseSocket(hSocket);
         return;
     }
 
@@ -1365,7 +1364,6 @@ void CConnman::CreateNodeFromAcceptedSocket(SOCKET hSocket,
         nInbound + 1 >= nMaxInbound && discouraged) {
         LogPrint(BCLog::NET, "connection from %s dropped (discouraged)\n",
                  addr.ToString());
-        CloseSocket(hSocket);
         return;
     }
 
@@ -1374,7 +1372,6 @@ void CConnman::CreateNodeFromAcceptedSocket(SOCKET hSocket,
             // No connection to evict, disconnect the new connection
             LogPrint(BCLog::NET, "failed to find an eviction candidate - "
                                  "connection dropped (full)\n");
-            CloseSocket(hSocket);
             return;
         }
     }
@@ -1391,16 +1388,16 @@ void CConnman::CreateNodeFromAcceptedSocket(SOCKET hSocket,
     const bool inbound_onion =
         std::find(m_onion_binds.begin(), m_onion_binds.end(), addr_bind) !=
         m_onion_binds.end();
-    CNode *pnode = new CNode(id, hSocket, addr, CalculateKeyedNetGroup(addr),
-                             nonce, extra_entropy, addr_bind, "",
-                             ConnectionType::INBOUND, inbound_onion,
-                             CNodeOptions{
-                                 .permission_flags = permission_flags,
-                                 .prefer_evict = discouraged,
-                             });
+    CNode *pnode = new CNode(
+        id, std::move(sock), addr, CalculateKeyedNetGroup(addr), nonce,
+        extra_entropy, addr_bind, "", ConnectionType::INBOUND, inbound_onion,
+        CNodeOptions{
+            .permission_flags = permission_flags,
+            .prefer_evict = discouraged,
+        });
     pnode->AddRef();
     for (auto interface : m_msgproc) {
-        interface->InitializeNode(*config, *pnode, nLocalServices);
+        interface->InitializeNode(*config, *pnode, GetLocalServices());
     }
 
     LogPrint(BCLog::NET, "connection from %s accepted\n", addr.ToString());
@@ -1573,220 +1570,63 @@ bool CConnman::InactivityCheck(const CNode &node) const {
     return false;
 }
 
-bool CConnman::GenerateSelectSet(const std::vector<CNode *> &nodes,
-                                 std::set<SOCKET> &recv_set,
-                                 std::set<SOCKET> &send_set,
-                                 std::set<SOCKET> &error_set) {
+Sock::EventsPerSock CConnman::GenerateWaitSockets(Span<CNode *const> nodes) {
+    Sock::EventsPerSock events_per_sock;
+
     for (const ListenSocket &hListenSocket : vhListenSocket) {
-        recv_set.insert(hListenSocket.socket);
+        events_per_sock.emplace(hListenSocket.sock, Sock::Events{Sock::RECV});
     }
 
     for (CNode *pnode : nodes) {
-        // Implement the following logic:
-        // * If there is data to send, select() for sending data. As this
-        //   only happens when optimistic write failed, we choose to first
-        //   drain the write buffer in this case before receiving more. This
-        //   avoids needlessly queueing received data, if the remote peer is
-        //   not themselves receiving data. This means properly utilizing
-        //   TCP flow control signalling.
-        // * Otherwise, if there is space left in the receive buffer,
-        //   select() for receiving data.
-        // * Hand off all complete messages to the processor, to be handled
-        //   without blocking here.
-
         bool select_recv = !pnode->fPauseRecv;
-        bool select_send;
-        {
-            LOCK(pnode->cs_vSend);
-            select_send = !pnode->vSendMsg.empty();
-        }
-
-        LOCK(pnode->cs_hSocket);
-        if (pnode->hSocket == INVALID_SOCKET) {
+        bool select_send =
+            WITH_LOCK(pnode->cs_vSend, return !pnode->vSendMsg.empty());
+        if (!select_recv && !select_send) {
             continue;
         }
 
-        error_set.insert(pnode->hSocket);
-        if (select_send) {
-            send_set.insert(pnode->hSocket);
-            continue;
-        }
-        if (select_recv) {
-            recv_set.insert(pnode->hSocket);
+        LOCK(pnode->m_sock_mutex);
+        if (pnode->m_sock) {
+            Sock::Event event =
+                (select_send ? Sock::SEND : 0) | (select_recv ? Sock::RECV : 0);
+            events_per_sock.emplace(pnode->m_sock, Sock::Events{event});
         }
     }
 
-    return !recv_set.empty() || !send_set.empty() || !error_set.empty();
+    return events_per_sock;
 }
-
-#ifdef USE_POLL
-void CConnman::SocketEvents(const std::vector<CNode *> &nodes,
-                            std::set<SOCKET> &recv_set,
-                            std::set<SOCKET> &send_set,
-                            std::set<SOCKET> &error_set) {
-    std::set<SOCKET> recv_select_set, send_select_set, error_select_set;
-    if (!GenerateSelectSet(nodes, recv_select_set, send_select_set,
-                           error_select_set)) {
-        interruptNet.sleep_for(
-            std::chrono::milliseconds(SELECT_TIMEOUT_MILLISECONDS));
-        return;
-    }
-
-    std::unordered_map<SOCKET, struct pollfd> pollfds;
-    for (SOCKET socket_id : recv_select_set) {
-        pollfds[socket_id].fd = socket_id;
-        pollfds[socket_id].events |= POLLIN;
-    }
-
-    for (SOCKET socket_id : send_select_set) {
-        pollfds[socket_id].fd = socket_id;
-        pollfds[socket_id].events |= POLLOUT;
-    }
-
-    for (SOCKET socket_id : error_select_set) {
-        pollfds[socket_id].fd = socket_id;
-        // These flags are ignored, but we set them for clarity
-        pollfds[socket_id].events |= POLLERR | POLLHUP;
-    }
-
-    std::vector<struct pollfd> vpollfds;
-    vpollfds.reserve(pollfds.size());
-    for (auto it : pollfds) {
-        vpollfds.push_back(std::move(it.second));
-    }
-
-    if (poll(vpollfds.data(), vpollfds.size(), SELECT_TIMEOUT_MILLISECONDS) <
-        0) {
-        return;
-    }
-
-    if (interruptNet) {
-        return;
-    }
-
-    for (struct pollfd pollfd_entry : vpollfds) {
-        if (pollfd_entry.revents & POLLIN) {
-            recv_set.insert(pollfd_entry.fd);
-        }
-        if (pollfd_entry.revents & POLLOUT) {
-            send_set.insert(pollfd_entry.fd);
-        }
-        if (pollfd_entry.revents & (POLLERR | POLLHUP)) {
-            error_set.insert(pollfd_entry.fd);
-        }
-    }
-}
-#else
-void CConnman::SocketEvents(const std::vector<CNode *> &nodes,
-                            std::set<SOCKET> &recv_set,
-                            std::set<SOCKET> &send_set,
-                            std::set<SOCKET> &error_set) {
-    std::set<SOCKET> recv_select_set, send_select_set, error_select_set;
-    if (!GenerateSelectSet(nodes, recv_select_set, send_select_set,
-                           error_select_set)) {
-        interruptNet.sleep_for(
-            std::chrono::milliseconds(SELECT_TIMEOUT_MILLISECONDS));
-        return;
-    }
-
-    //
-    // Find which sockets have data to receive
-    //
-    struct timeval timeout;
-    timeout.tv_sec = 0;
-    // frequency to poll pnode->vSend
-    timeout.tv_usec = SELECT_TIMEOUT_MILLISECONDS * 1000;
-
-    fd_set fdsetRecv;
-    fd_set fdsetSend;
-    fd_set fdsetError;
-    FD_ZERO(&fdsetRecv);
-    FD_ZERO(&fdsetSend);
-    FD_ZERO(&fdsetError);
-    SOCKET hSocketMax = 0;
-
-    for (SOCKET hSocket : recv_select_set) {
-        FD_SET(hSocket, &fdsetRecv);
-        hSocketMax = std::max(hSocketMax, hSocket);
-    }
-
-    for (SOCKET hSocket : send_select_set) {
-        FD_SET(hSocket, &fdsetSend);
-        hSocketMax = std::max(hSocketMax, hSocket);
-    }
-
-    for (SOCKET hSocket : error_select_set) {
-        FD_SET(hSocket, &fdsetError);
-        hSocketMax = std::max(hSocketMax, hSocket);
-    }
-
-    int nSelect =
-        select(hSocketMax + 1, &fdsetRecv, &fdsetSend, &fdsetError, &timeout);
-
-    if (interruptNet) {
-        return;
-    }
-
-    if (nSelect == SOCKET_ERROR) {
-        int nErr = WSAGetLastError();
-        LogPrintf("socket select error %s\n", NetworkErrorString(nErr));
-        for (unsigned int i = 0; i <= hSocketMax; i++) {
-            FD_SET(i, &fdsetRecv);
-        }
-        FD_ZERO(&fdsetSend);
-        FD_ZERO(&fdsetError);
-        if (!interruptNet.sleep_for(
-                std::chrono::milliseconds(SELECT_TIMEOUT_MILLISECONDS))) {
-            return;
-        }
-    }
-
-    for (SOCKET hSocket : recv_select_set) {
-        if (FD_ISSET(hSocket, &fdsetRecv)) {
-            recv_set.insert(hSocket);
-        }
-    }
-
-    for (SOCKET hSocket : send_select_set) {
-        if (FD_ISSET(hSocket, &fdsetSend)) {
-            send_set.insert(hSocket);
-        }
-    }
-
-    for (SOCKET hSocket : error_select_set) {
-        if (FD_ISSET(hSocket, &fdsetError)) {
-            error_set.insert(hSocket);
-        }
-    }
-}
-#endif
 
 void CConnman::SocketHandler() {
-    std::set<SOCKET> recv_set;
-    std::set<SOCKET> send_set;
-    std::set<SOCKET> error_set;
+    Sock::EventsPerSock events_per_sock;
 
     {
         const NodesSnapshot snap{*this, /*shuffle=*/false};
+
+        const auto timeout =
+            std::chrono::milliseconds(SELECT_TIMEOUT_MILLISECONDS);
 
         // Check for the readiness of the already connected sockets and the
         // listening sockets in one call ("readiness" as in poll(2) or
         // select(2)). If none are ready, wait for a short while and return
         // empty sets.
-        SocketEvents(snap.Nodes(), recv_set, send_set, error_set);
+        events_per_sock = GenerateWaitSockets(snap.Nodes());
+        if (events_per_sock.empty() ||
+            !events_per_sock.begin()->first->WaitMany(timeout,
+                                                      events_per_sock)) {
+            interruptNet.sleep_for(timeout);
+        }
 
         // Service (send/receive) each of the already connected nodes.
-        SocketHandlerConnected(snap.Nodes(), recv_set, send_set, error_set);
+        SocketHandlerConnected(snap.Nodes(), events_per_sock);
     }
 
     // Accept new connections from listening sockets.
-    SocketHandlerListening(recv_set);
+    SocketHandlerListening(events_per_sock);
 }
 
-void CConnman::SocketHandlerConnected(const std::vector<CNode *> &nodes,
-                                      const std::set<SOCKET> &recv_set,
-                                      const std::set<SOCKET> &send_set,
-                                      const std::set<SOCKET> &error_set) {
+void CConnman::SocketHandlerConnected(
+    const std::vector<CNode *> &nodes,
+    const Sock::EventsPerSock &events_per_sock) {
     for (CNode *pnode : nodes) {
         if (interruptNet) {
             return;
@@ -1799,25 +1639,50 @@ void CConnman::SocketHandlerConnected(const std::vector<CNode *> &nodes,
         bool sendSet = false;
         bool errorSet = false;
         {
-            LOCK(pnode->cs_hSocket);
-            if (pnode->hSocket == INVALID_SOCKET) {
+            LOCK(pnode->m_sock_mutex);
+            if (!pnode->m_sock) {
                 continue;
             }
-            recvSet = recv_set.count(pnode->hSocket) > 0;
-            sendSet = send_set.count(pnode->hSocket) > 0;
-            errorSet = error_set.count(pnode->hSocket) > 0;
+            const auto it = events_per_sock.find(pnode->m_sock);
+            if (it != events_per_sock.end()) {
+                recvSet = it->second.occurred & Sock::RECV;
+                sendSet = it->second.occurred & Sock::SEND;
+                errorSet = it->second.occurred & Sock::ERR;
+            }
         }
+
+        if (sendSet) {
+            // Send data
+            auto [bytes_sent, data_left] =
+                WITH_LOCK(pnode->cs_vSend, return SocketSendData(*pnode));
+            if (bytes_sent) {
+                RecordBytesSent(bytes_sent);
+
+                // If both receiving and (non-optimistic) sending were possible,
+                // we first attempt sending. If that succeeds, but does not
+                // fully drain the send queue, do not attempt to receive. This
+                // avoids needlessly queueing data if the remote peer is slow at
+                // receiving data, by means of TCP flow control. We only do this
+                // when sending actually succeeded to make sure progress is
+                // always made; otherwise a deadlock would be possible when both
+                // sides have data to send, but neither is receiving.
+                if (data_left) {
+                    recvSet = false;
+                }
+            }
+        }
+
         if (recvSet || errorSet) {
             // typical socket buffer is 8K-64K
             uint8_t pchBuf[0x10000];
             int32_t nBytes = 0;
             {
-                LOCK(pnode->cs_hSocket);
-                if (pnode->hSocket == INVALID_SOCKET) {
+                LOCK(pnode->m_sock_mutex);
+                if (!pnode->m_sock) {
                     continue;
                 }
-                nBytes = recv(pnode->hSocket, (char *)pchBuf, sizeof(pchBuf),
-                              MSG_DONTWAIT);
+                nBytes =
+                    pnode->m_sock->Recv(pchBuf, sizeof(pchBuf), MSG_DONTWAIT);
             }
             if (nBytes > 0) {
                 bool notify = false;
@@ -1868,28 +1733,20 @@ void CConnman::SocketHandlerConnected(const std::vector<CNode *> &nodes,
             }
         }
 
-        if (sendSet) {
-            // Send data
-            size_t bytes_sent =
-                WITH_LOCK(pnode->cs_vSend, return SocketSendData(*pnode));
-            if (bytes_sent) {
-                RecordBytesSent(bytes_sent);
-            }
-        }
-
         if (InactivityCheck(*pnode)) {
             pnode->fDisconnect = true;
         }
     }
 }
 
-void CConnman::SocketHandlerListening(const std::set<SOCKET> &recv_set) {
+void CConnman::SocketHandlerListening(
+    const Sock::EventsPerSock &events_per_sock) {
     for (const ListenSocket &listen_socket : vhListenSocket) {
         if (interruptNet) {
             return;
         }
-        if (listen_socket.socket != INVALID_SOCKET &&
-            recv_set.count(listen_socket.socket) > 0) {
+        const auto it = events_per_sock.find(listen_socket.sock);
+        if (it != events_per_sock.end() && it->second.occurred & Sock::RECV) {
             AcceptConnection(listen_socket);
         }
     }
@@ -2697,7 +2554,7 @@ void CConnman::ThreadI2PAcceptIncoming() {
         }
 
         CreateNodeFromAcceptedSocket(
-            conn.sock->Release(), NetPermissionFlags::None,
+            std::move(conn.sock), NetPermissionFlags::None,
             CAddress{conn.me, NODE_NONE}, CAddress{conn.peer, NODE_NONE});
     }
 }
@@ -2710,20 +2567,22 @@ bool CConnman::BindListenPort(const CService &addrBind, bilingual_str &strError,
     struct sockaddr_storage sockaddr;
     socklen_t len = sizeof(sockaddr);
     if (!addrBind.GetSockAddr((struct sockaddr *)&sockaddr, &len)) {
-        strError = strprintf(
-            Untranslated("Error: Bind address family for %s not supported"),
-            addrBind.ToString());
-        LogPrintf("%s\n", strError.original);
+        strError =
+            strprintf(Untranslated("Bind address family for %s not supported"),
+                      addrBind.ToString());
+        LogPrintLevel(BCLog::NET, BCLog::Level::Error, "%s\n",
+                      strError.original);
         return false;
     }
 
     std::unique_ptr<Sock> sock = CreateSock(addrBind);
     if (!sock) {
         strError =
-            strprintf(Untranslated("Error: Couldn't open socket for incoming "
+            strprintf(Untranslated("Couldn't open socket for incoming "
                                    "connections (socket returned error %s)"),
                       NetworkErrorString(WSAGetLastError()));
-        LogPrintf("%s\n", strError.original);
+        LogPrintLevel(BCLog::NET, BCLog::Level::Error, "%s\n",
+                      strError.original);
         return false;
     }
 
@@ -2759,21 +2618,24 @@ bool CConnman::BindListenPort(const CService &addrBind, bilingual_str &strError,
                                    "(bind returned error %s)"),
                                  addrBind.ToString(), NetworkErrorString(nErr));
         }
-        LogPrintf("%s\n", strError.original);
+
+        LogPrintLevel(BCLog::NET, BCLog::Level::Error, "%s\n",
+                      strError.original);
         return false;
     }
     LogPrintf("Bound to %s\n", addrBind.ToString());
 
     // Listen for incoming connections
     if (listen(sock->Get(), SOMAXCONN) == SOCKET_ERROR) {
-        strError = strprintf(_("Error: Listening for incoming connections "
+        strError = strprintf(_("Listening for incoming connections "
                                "failed (listen returned error %s)"),
                              NetworkErrorString(WSAGetLastError()));
-        LogPrintf("%s\n", strError.original);
+        LogPrintLevel(BCLog::NET, BCLog::Level::Error, "%s\n",
+                      strError.original);
         return false;
     }
 
-    vhListenSocket.push_back(ListenSocket(sock->Release(), permissions));
+    vhListenSocket.emplace_back(std::move(sock), permissions);
     return true;
 }
 
@@ -2882,30 +2744,40 @@ bool CConnman::Bind(const CService &addr, unsigned int flags,
 }
 
 bool CConnman::InitBinds(const Options &options) {
-    bool fBound = false;
     for (const auto &addrBind : options.vBinds) {
-        fBound |= Bind(addrBind, (BF_EXPLICIT | BF_REPORT_ERROR),
-                       NetPermissionFlags::None);
+        if (!Bind(addrBind, BF_EXPLICIT | BF_REPORT_ERROR,
+                  NetPermissionFlags::None)) {
+            return false;
+        }
     }
     for (const auto &addrBind : options.vWhiteBinds) {
-        fBound |= Bind(addrBind.m_service, (BF_EXPLICIT | BF_REPORT_ERROR),
-                       addrBind.m_flags);
+        if (!Bind(addrBind.m_service, BF_EXPLICIT | BF_REPORT_ERROR,
+                  addrBind.m_flags)) {
+            return false;
+        }
     }
     for (const auto &addr_bind : options.onion_binds) {
-        fBound |= Bind(addr_bind, BF_EXPLICIT | BF_DONT_ADVERTISE,
-                       NetPermissionFlags::None);
+        if (!Bind(addr_bind, BF_EXPLICIT | BF_REPORT_ERROR | BF_DONT_ADVERTISE,
+                  NetPermissionFlags::None)) {
+            return false;
+        }
     }
     if (options.bind_on_any) {
+        // Don't consider errors to bind on IPv6 "::" fatal because the host OS
+        // may not have IPv6 support and the user did not explicitly ask us to
+        // bind on that.
+        const CService ipv6_any{in6_addr(IN6ADDR_ANY_INIT),
+                                GetListenPort()}; // ::
+        Bind(ipv6_any, BF_NONE, NetPermissionFlags::None);
+
         struct in_addr inaddr_any;
         inaddr_any.s_addr = htonl(INADDR_ANY);
-        struct in6_addr inaddr6_any = IN6ADDR_ANY_INIT;
-        fBound |= Bind(CService(inaddr6_any, GetListenPort()), BF_NONE,
-                       NetPermissionFlags::None);
-        fBound |=
-            Bind(CService(inaddr_any, GetListenPort()),
-                 !fBound ? BF_REPORT_ERROR : BF_NONE, NetPermissionFlags::None);
+        const CService ipv4_any{inaddr_any, GetListenPort()}; // 0.0.0.0
+        if (!Bind(ipv4_any, BF_REPORT_ERROR, NetPermissionFlags::None)) {
+            return false;
+        }
     }
-    return fBound;
+    return true;
 }
 
 bool CConnman::Start(CScheduler &scheduler, const Options &connOptions) {
@@ -3114,16 +2986,6 @@ void CConnman::StopNodes() {
         DeleteNode(pnode);
     }
 
-    // Close listening sockets.
-    for (ListenSocket &hListenSocket : vhListenSocket) {
-        if (hListenSocket.socket != INVALID_SOCKET) {
-            if (!CloseSocket(hListenSocket.socket)) {
-                LogPrintf("CloseSocket(hListenSocket) failed with error %s\n",
-                          NetworkErrorString(WSAGetLastError()));
-            }
-        }
-    }
-
     for (CNode *pnode : m_nodes_disconnected) {
         DeleteNode(pnode);
     }
@@ -3264,6 +3126,20 @@ void CConnman::GetNodeStats(std::vector<CNodeStats> &vstats) const {
         pnode->copyStats(vstats.back());
         vstats.back().m_mapped_as = pnode->addr.GetMappedAS(addrman.GetAsmap());
     }
+}
+
+bool CConnman::GetNodeStats(NodeId id, CNodeStats &stats) const {
+    LOCK(m_nodes_mutex);
+
+    for (auto &&pnode : m_nodes) {
+        if (pnode->GetId() == id) {
+            pnode->copyStats(stats);
+            stats.m_mapped_as = pnode->addr.GetMappedAS(addrman.GetAsmap());
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool CConnman::DisconnectNode(const std::string &strNode) {
@@ -3435,12 +3311,12 @@ double CNode::getAvailabilityScore() const {
     return availabilityScore;
 }
 
-CNode::CNode(NodeId idIn, SOCKET hSocketIn, const CAddress &addrIn,
+CNode::CNode(NodeId idIn, std::shared_ptr<Sock> sock, const CAddress &addrIn,
              uint64_t nKeyedNetGroupIn, uint64_t nLocalHostNonceIn,
              uint64_t nLocalExtraEntropyIn, const CAddress &addrBindIn,
              const std::string &addrNameIn, ConnectionType conn_type_in,
              bool inbound_onion, CNodeOptions &&node_opts)
-    : m_permission_flags{node_opts.permission_flags},
+    : m_permission_flags{node_opts.permission_flags}, m_sock{sock},
       m_connected(GetTime<std::chrono::seconds>()), addr(addrIn),
       addrBind(addrBindIn),
       m_addr_name{addrNameIn.empty() ? addr.ToStringIPPort() : addrNameIn},
@@ -3454,7 +3330,6 @@ CNode::CNode(NodeId idIn, SOCKET hSocketIn, const CAddress &addrIn,
     if (inbound_onion) {
         assert(conn_type_in == ConnectionType::INBOUND);
     }
-    hSocket = hSocketIn;
 
     for (const std::string &msg : getAllNetMessageTypes()) {
         mapRecvBytesPerMsgCmd[msg] = 0;
@@ -3473,10 +3348,6 @@ CNode::CNode(NodeId idIn, SOCKET hSocketIn, const CAddress &addrIn,
                                 SER_NETWORK, INIT_PROTO_VERSION));
     m_serializer =
         std::make_unique<V1TransportSerializer>(V1TransportSerializer());
-}
-
-CNode::~CNode() {
-    CloseSocket(hSocket);
 }
 
 bool CConnman::NodeFullyConnected(const CNode *pnode) {
@@ -3519,8 +3390,9 @@ void CConnman::PushMessage(CNode *pnode, CSerializedNetMsg &&msg) {
         }
 
         // If write queue empty, attempt "optimistic write"
-        if (optimisticSend == true) {
-            nBytesSent = SocketSendData(*pnode);
+        bool data_left;
+        if (optimisticSend) {
+            std::tie(nBytesSent, data_left) = SocketSendData(*pnode);
         }
     }
     if (nBytesSent) {

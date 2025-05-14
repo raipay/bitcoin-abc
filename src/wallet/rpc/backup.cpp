@@ -106,6 +106,28 @@ static void RescanWallet(CWallet &wallet, const WalletRescanReserver &reserver,
     }
 }
 
+static void EnsureBlockDataFromTime(const CWallet &wallet, int64_t timestamp) {
+    auto &chain{wallet.chain()};
+    if (!chain.havePruned()) {
+        return;
+    }
+
+    int height{0};
+    const bool found{chain.findFirstBlockWithTimeAndHeight(
+        timestamp - TIMESTAMP_WINDOW, 0, FoundBlock().height(height))};
+
+    BlockHash tip_hash{
+        WITH_LOCK(wallet.cs_wallet, return wallet.GetLastBlockHash())};
+    if (found && !chain.hasBlocks(tip_hash, height)) {
+        throw JSONRPCError(
+            RPC_WALLET_ERROR,
+            strprintf(
+                "Pruned blocks from height %d required to import keys. Use RPC "
+                "call getblockchaininfo to determine your pruned height.",
+                height));
+    }
+}
+
 RPCHelpMan importprivkey() {
     return RPCHelpMan{
         "importprivkey",
@@ -673,15 +695,6 @@ RPCHelpMan importwallet() {
 
             EnsureLegacyScriptPubKeyMan(*wallet, true);
 
-            if (pwallet->chain().havePruned()) {
-                // Exit early and print an error.
-                // If a block is pruned after this check, we will import the
-                // key(s), but fail the rescan with a generic error.
-                throw JSONRPCError(
-                    RPC_WALLET_ERROR,
-                    "Importing wallets is disabled when blocks are pruned");
-            }
-
             WalletRescanReserver reserver(*pwallet);
             if (!reserver.reserve()) {
                 throw JSONRPCError(RPC_WALLET_ERROR,
@@ -761,17 +774,22 @@ RPCHelpMan importwallet() {
                                 fLabel = true;
                             }
                         }
+                        nTimeBegin = std::min(nTimeBegin, nTime);
                         keys.push_back(
                             std::make_tuple(key, nTime, fLabel, strLabel));
                     } else if (IsHex(vstr[0])) {
                         std::vector<uint8_t> vData(ParseHex(vstr[0]));
                         CScript script = CScript(vData.begin(), vData.end());
                         int64_t birth_time = ParseISO8601DateTime(vstr[1]);
+                        if (birth_time > 0) {
+                            nTimeBegin = std::min(nTimeBegin, birth_time);
+                        }
                         scripts.push_back(
                             std::pair<CScript, int64_t>(script, birth_time));
                     }
                 }
                 file.close();
+                EnsureBlockDataFromTime(*pwallet, nTimeBegin);
                 // We now know whether we are importing private keys, so we can
                 // error if private keys are disabled
                 if (keys.size() > 0 && pwallet->IsWalletFlagSet(
@@ -815,8 +833,6 @@ RPCHelpMan importwallet() {
                         pwallet->SetAddressBook(PKHash(keyid), label,
                                                 "receive");
                     }
-
-                    nTimeBegin = std::min(nTimeBegin, time);
                     progress++;
                 }
                 for (const auto &script_pair : scripts) {
@@ -833,9 +849,6 @@ RPCHelpMan importwallet() {
                                                  HexStr(script));
                         fGood = false;
                         continue;
-                    }
-                    if (time > 0) {
-                        nTimeBegin = std::min(nTimeBegin, time);
                     }
 
                     progress++;
@@ -1001,6 +1014,7 @@ RPCHelpMan dumpwallet() {
 
             // sort time/key pairs
             std::vector<std::pair<int64_t, CKeyID>> vKeyBirth;
+            vKeyBirth.reserve(mapKeyBirth.size());
             for (const auto &entry : mapKeyBirth) {
                 vKeyBirth.push_back(std::make_pair(entry.second, entry.first));
             }
@@ -1025,7 +1039,7 @@ RPCHelpMan dumpwallet() {
                 CKey seed;
                 if (spk_man.GetKey(seed_id, seed)) {
                     CExtKey masterKey;
-                    masterKey.SetSeed(seed.begin(), seed.size());
+                    masterKey.SetSeed(seed);
 
                     file << "# extended private masterkey: "
                          << EncodeExtKey(masterKey) << "\n\n";
@@ -1665,18 +1679,36 @@ static int64_t GetImportTimestamp(const UniValue &data, int64_t now) {
 
 static std::string GetRescanErrorMessage(const std::string &object,
                                          const int64_t objectTimestamp,
-                                         const int64_t blockTimestamp) {
-    return strprintf(
-        "Rescan failed for %s with creation timestamp %d. There was an error "
-        "reading a block from time %d, which is after or within %d seconds of "
-        "key creation, and could contain transactions pertaining to the %s. As "
-        "a result, transactions and coins using this %s may not appear in "
-        "the wallet. This error could be caused by pruning or data corruption "
-        "(see bitcoind log for details) and could be dealt with by downloading "
-        "and rescanning the relevant blocks (see -reindex and -rescan "
-        "options).",
-        object, objectTimestamp, blockTimestamp, TIMESTAMP_WINDOW, object,
-        object);
+                                         const int64_t blockTimestamp,
+                                         const bool have_pruned,
+                                         const bool has_assumed_valid_chain) {
+    std::string error_msg{
+        strprintf("Rescan failed for %s with creation timestamp %d. There "
+                  "was an error reading a block from time %d, which is after "
+                  "or within %d seconds of key creation, and could contain "
+                  "transactions pertaining to the %s. As a result, "
+                  "transactions and coins using this %s may not appear "
+                  "in the wallet. ",
+                  object, objectTimestamp, blockTimestamp, TIMESTAMP_WINDOW,
+                  object, object)};
+    if (have_pruned) {
+        error_msg += strprintf(
+            "This error could be caused by pruning or data corruption "
+            "(see bitcoind log for details) and could be dealt with by "
+            "downloading and rescanning the relevant blocks (see -reindex "
+            "option and rescanblockchain RPC).");
+    } else if (has_assumed_valid_chain) {
+        error_msg += strprintf(
+            "This error is likely caused by an in-progress assumeutxo "
+            "background sync. Check logs or getchainstates RPC for assumeutxo "
+            "background sync progress and try again later.");
+    } else {
+        error_msg += strprintf(
+            "This error could potentially be caused by data corruption. If "
+            "the issue persists you may want to reindex (see -reindex "
+            "option).");
+    }
+    return error_msg;
 }
 
 RPCHelpMan importmulti() {
@@ -1793,7 +1825,7 @@ RPCHelpMan importmulti() {
              RPCArgOptions{.oneline_description = "\"requests\""}},
             {"options",
              RPCArg::Type::OBJ_NAMED_PARAMS,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+             RPCArg::Optional::OMITTED,
              "",
              {
                  {"rescan", RPCArg::Type::BOOL, RPCArg::Default{true},
@@ -1946,7 +1978,10 @@ RPCHelpMan importmulti() {
                                     RPC_MISC_ERROR,
                                     GetRescanErrorMessage(
                                         "key", GetImportTimestamp(request, now),
-                                        scannedTime - TIMESTAMP_WINDOW - 1)));
+                                        scannedTime - TIMESTAMP_WINDOW - 1,
+                                        pwallet->chain().havePruned(),
+                                        pwallet->chain()
+                                            .hasAssumedValidChain())));
                             response.push_back(std::move(result));
                         }
                         ++i;
@@ -2341,7 +2376,10 @@ RPCHelpMan importdescriptors() {
                                     GetRescanErrorMessage(
                                         "descriptor",
                                         GetImportTimestamp(request, now),
-                                        scanned_time - TIMESTAMP_WINDOW - 1)));
+                                        scanned_time - TIMESTAMP_WINDOW - 1,
+                                        pwallet->chain().havePruned(),
+                                        pwallet->chain()
+                                            .hasAssumedValidChain())));
                             response.push_back(std::move(result));
                         }
                     }
@@ -2401,8 +2439,7 @@ RPCHelpMan restorewallet() {
              "The name that will be applied to the restored wallet"},
             {"backup_file", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The backup file that will be used to restore the wallet."},
-            {"load_on_startup", RPCArg::Type::BOOL,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED,
              "Save wallet name to persistent settings and load on startup. "
              "True to add wallet to startup list, false to remove, null to "
              "leave unchanged."},
@@ -2439,34 +2476,22 @@ RPCHelpMan restorewallet() {
             fs::path backup_file =
                 fs::PathFromString(request.params[1].get_str());
 
-            if (!fs::exists(backup_file)) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER,
-                                   "Backup file does not exist");
-            }
-
             std::string wallet_name = request.params[0].get_str();
 
-            const fs::path wallet_path = fsbridge::AbsPathJoin(
-                GetWalletDir(), fs::PathFromString(wallet_name));
+            std::optional<bool> load_on_start =
+                request.params[2].isNull()
+                    ? std::nullopt
+                    : std::optional<bool>(request.params[2].get_bool());
 
-            if (fs::exists(wallet_path)) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER,
-                                   "Wallet name already exists.");
-            }
+            DatabaseStatus status;
+            bilingual_str error;
+            std::vector<bilingual_str> warnings;
 
-            if (!TryCreateDirectories(wallet_path)) {
-                throw JSONRPCError(RPC_WALLET_ERROR,
-                                   strprintf("Failed to create database path "
-                                             "'%s'. Database already exists.",
-                                             fs::PathToString(wallet_path)));
-            }
+            const std::shared_ptr<CWallet> wallet =
+                RestoreWallet(context, backup_file, wallet_name, load_on_start,
+                              status, error, warnings);
 
-            auto wallet_file = wallet_path / "wallet.dat";
-
-            fs::copy_file(backup_file, wallet_file, fs::copy_options::none);
-
-            auto [wallet, warnings] =
-                LoadWalletHelper(context, request.params[2], wallet_name);
+            HandleWalletError(wallet, status, error);
 
             UniValue obj(UniValue::VOBJ);
             obj.pushKV("name", wallet->GetName());

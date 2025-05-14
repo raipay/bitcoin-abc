@@ -14,10 +14,20 @@ import {
 import {
     validWalletJson,
     validWalletJsonMultiPath,
+    invalidWalletBadSkType,
 } from 'validation/fixtures/mocks';
-import { walletWithXecAndTokens_pre_2_9_0 } from 'components/App/fixtures/mocks';
+import {
+    walletWithXecAndTokens_pre_2_9_0,
+    walletWithXecAndTokens_pre_2_55_0,
+} from 'components/App/fixtures/mocks';
 import { toXec } from 'wallet';
 import { cashtabWalletFromJSON } from 'helpers';
+import { tokenTestWallet } from 'components/Etokens/fixtures/mocks';
+import {
+    agoraPartialAlphaWallet,
+    agoraPartialBetaWallet,
+} from 'components/Agora/fixtures/mocks';
+import { walletWithZeroBalanceZeroHistory } from 'components/Home/fixtures/mocks';
 
 const cloneObjectWithDeletedKey = (object, key) => {
     const clonedObject = { ...object };
@@ -387,121 +397,6 @@ export default {
             },
         ],
     },
-    meetsAliasSpecInputCases: {
-        expectedReturns: [
-            {
-                description:
-                    'returns true for a valid lowercase alphanumeric input',
-                inputStr: 'jasdf3873',
-                response: true,
-            },
-            {
-                description:
-                    'returns expected error if input contains uppercase char',
-                inputStr: 'jasDf3873',
-                response:
-                    'Alias may only contain lowercase characters a-z and 0-9',
-            },
-            {
-                description:
-                    'returns expected error if input contains special char',
-                inputStr: 'Glück',
-                response:
-                    'Alias may only contain lowercase characters a-z and 0-9',
-            },
-            {
-                description: 'returns expected error if input contains emoji',
-                inputStr: '😉',
-                response:
-                    'Alias may only contain lowercase characters a-z and 0-9',
-            },
-            {
-                description:
-                    'returns expected error if input contains other special characters',
-                inputStr: '( ͡° ͜ʖ ͡°)',
-                response:
-                    'Alias may only contain lowercase characters a-z and 0-9',
-            },
-            {
-                description:
-                    'returns expected error if input is an empty string',
-                inputStr: '​',
-                response:
-                    'Alias may only contain lowercase characters a-z and 0-9',
-            },
-            {
-                description:
-                    'returns expected error if input contains an empty space',
-                inputStr: '​jasdf3873',
-                response:
-                    'Alias may only contain lowercase characters a-z and 0-9',
-            },
-            {
-                description: 'returns expected error if input contains symbols',
-                inputStr: '​jasdf3873@#',
-                response:
-                    'Alias may only contain lowercase characters a-z and 0-9',
-            },
-            {
-                description: 'returns expected error if input is not a string',
-                inputStr: { testAlias: 'string at key' },
-                response: 'Alias input must be a string',
-            },
-            {
-                description:
-                    'returns expected error if input contains underscores',
-                inputStr: 'test_WITH_badchars',
-                response:
-                    'Alias may only contain lowercase characters a-z and 0-9',
-            },
-            {
-                description:
-                    'returns expected error if exceeds byte restriction',
-                inputStr: '0123456789012345678901',
-                response: `Invalid bytecount 22. Alias be 1-21 bytes.`,
-            },
-            {
-                description: 'returns true for an alias of max bytecount',
-                inputStr: '012345678901234567890',
-                response: true,
-            },
-        ],
-    },
-    validAliasSendInputCases: {
-        expectedReturns: [
-            {
-                description: 'Valid alias send input',
-                sendToAliasInput: 'chicken.xec',
-                response: true,
-            },
-            {
-                description: 'Valid alias missing prefix',
-                sendToAliasInput: 'chicken',
-                response: `Must include '.xec' suffix when sending to an eCash alias`,
-            },
-            {
-                description: 'Valid alias with double suffix',
-                sendToAliasInput: 'chicken.xec.xec',
-                response: `Must include '.xec' suffix when sending to an eCash alias`,
-            },
-            {
-                description: 'Valid alias with bad suffix',
-                sendToAliasInput: 'chicken.xe',
-                response: `Must include '.xec' suffix when sending to an eCash alias`,
-            },
-            {
-                description: 'Invalid alias (too long)',
-                sendToAliasInput: '0123456789012345678901.xec',
-                response: `Invalid bytecount 22. Alias be 1-21 bytes.`,
-            },
-            {
-                description: 'Invalid alias (nonalphanumeric)',
-                sendToAliasInput: 'Capitalized@.xec',
-                response:
-                    'Alias may only contain lowercase characters a-z and 0-9',
-            },
-        ],
-    },
     parseAddressInput: {
         expectedReturns: [
             // address only
@@ -514,7 +409,6 @@ export default {
                     address: {
                         value: '',
                         error: 'Invalid address',
-                        isAlias: false,
                     },
                 },
             },
@@ -528,7 +422,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                 },
             },
@@ -541,7 +434,6 @@ export default {
                     address: {
                         value: 'qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                 },
             },
@@ -554,8 +446,7 @@ export default {
                 parsedAddressInput: {
                     address: {
                         value: 'chicken.xec',
-                        error: false,
-                        isAlias: true,
+                        error: 'Invalid address',
                     },
                 },
             },
@@ -567,8 +458,7 @@ export default {
                 parsedAddressInput: {
                     address: {
                         value: 'chicken',
-                        error: `Aliases must end with '.xec'`,
-                        isAlias: true,
+                        error: `Invalid address`,
                     },
                 },
             },
@@ -584,7 +474,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     amount: { value: '500000', error: false },
                     queryString: { value: 'amount=500000', error: false },
@@ -601,7 +490,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     amount: {
                         value: '500001',
@@ -621,7 +509,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     amount: { value: '123.45', error: false },
                     queryString: { value: 'amount=123.45', error: false },
@@ -637,7 +524,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfg',
                         error: 'Invalid address',
-                        isAlias: false,
                     },
                     amount: { value: '500000', error: false },
                     queryString: { value: 'amount=500000', error: false },
@@ -653,7 +539,6 @@ export default {
                     address: {
                         value: 'etoken:qq9h6d0a5q65fgywv4ry64x04ep906mdkufhx2swv3',
                         error: `eToken addresses are not supported for ${appConfig.ticker} sends`,
-                        isAlias: false,
                     },
                     amount: { value: '500000', error: false },
                     queryString: { value: 'amount=500000', error: false },
@@ -670,7 +555,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     amount: {
                         value: '123.456',
@@ -687,8 +571,7 @@ export default {
                 parsedAddressInput: {
                     address: {
                         value: 'chicken.xec',
-                        error: false,
-                        isAlias: true,
+                        error: 'Invalid address',
                     },
                     amount: { value: '125', error: false },
                     queryString: { value: 'amount=125', error: false },
@@ -702,8 +585,7 @@ export default {
                 parsedAddressInput: {
                     address: {
                         value: 'chicken',
-                        error: `Aliases must end with '.xec'`,
-                        isAlias: true,
+                        error: `Invalid address`,
                     },
                     amount: { value: '125', error: false },
                     queryString: { value: 'amount=125', error: false },
@@ -721,7 +603,6 @@ export default {
                     address: {
                         value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
                         error: false,
-                        isAlias: false,
                     },
                     amount: { value: '110', error: false },
                     parsedAdditionalXecOutputs: {
@@ -750,7 +631,6 @@ export default {
                     address: {
                         value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
                         error: false,
-                        isAlias: false,
                     },
                     amount: { value: '110', error: false },
                     parsedAdditionalXecOutputs: {
@@ -774,7 +654,6 @@ export default {
                     address: {
                         value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
                         error: false,
-                        isAlias: false,
                     },
                     amount: { value: '110', error: false },
                     parsedAdditionalXecOutputs: {
@@ -798,7 +677,6 @@ export default {
                     address: {
                         value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
                         error: false,
-                        isAlias: false,
                     },
                     amount: { value: '110', error: false },
                     parsedAdditionalXecOutputs: {
@@ -822,7 +700,6 @@ export default {
                     address: {
                         value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
                         error: false,
-                        isAlias: false,
                     },
                     amount: { value: '110', error: false },
                     parsedAdditionalXecOutputs: {
@@ -847,7 +724,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     op_return_raw: {
                         value: '042e786563000474657374150095e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d',
@@ -868,8 +744,7 @@ export default {
                 parsedAddressInput: {
                     address: {
                         value: 'chicken.xec',
-                        error: false,
-                        isAlias: true,
+                        error: 'Invalid address',
                     },
                     op_return_raw: {
                         value: '042e786563000474657374150095e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d',
@@ -891,7 +766,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     op_return_raw: {
                         value: 'notvalid042e786563000474657374150095e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d',
@@ -914,7 +788,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     amount: { value: '500', error: false },
                     op_return_raw: {
@@ -939,7 +812,6 @@ export default {
                     address: {
                         value: 'ecash:qr6lws9uwmjkkaau4w956lugs9nlg9hudqs26lyxkv',
                         error: false,
-                        isAlias: false,
                     },
                     amount: { value: '110', error: false },
                     op_return_raw: {
@@ -971,11 +843,166 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     queryString: {
                         value: '*&@^&%@amount=-500000',
                         error: `Unsupported param "%@amount"`,
+                    },
+                },
+            },
+            // token txs
+            {
+                description:
+                    'bip21 token: token_id specified but token_decimalized_qty unspecified',
+                addressInput:
+                    'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_id=1111111111111111111111111111111111111111111111111111111111111111',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+                        error: false,
+                    },
+                    queryString: {
+                        value: 'token_id=1111111111111111111111111111111111111111111111111111111111111111',
+                        error: `Invalid bip21 token tx: token_decimalized_qty must be specified if token_id is specified`,
+                    },
+                },
+            },
+            {
+                description:
+                    'bip21 token: token_decimalized_qty specified but token_id unspecified',
+                addressInput:
+                    'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_decimalized_qty=100.123',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+                        error: false,
+                    },
+                    queryString: {
+                        value: 'token_decimalized_qty=100.123',
+                        error: `Invalid bip21 token tx: token_id must be specified if token_decimalized_qty is specified`,
+                    },
+                },
+            },
+            {
+                description:
+                    'bip21 token: token_decimalized_qty specified but token_id unspecified',
+                addressInput:
+                    'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123&amount=100',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+                        error: false,
+                    },
+                    queryString: {
+                        value: 'token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123&amount=100',
+                        error: `Invalid bip21 token tx: bip21 token txs may only include the params token_id and token_decimalized_qty`,
+                    },
+                },
+            },
+            {
+                description:
+                    'bip21 token: valid bip21 token but invalid token_id',
+                addressInput:
+                    'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_id=gg11111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+                        error: false,
+                    },
+                    token_id: {
+                        value: 'gg11111111111111111111111111111111111111111111111111111111111111',
+                        error: 'token_id is not a valid tokenId',
+                    },
+                    token_decimalized_qty: { value: '100.123', error: false },
+                    queryString: {
+                        value: 'token_id=gg11111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123',
+                        error: false,
+                    },
+                },
+            },
+            {
+                description:
+                    'bip21 token: valid bip21 token but invalid token_decimalized_qty',
+                addressInput:
+                    'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=notanumber',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+                        error: false,
+                    },
+                    token_id: {
+                        value: '1111111111111111111111111111111111111111111111111111111111111111',
+                        error: false,
+                    },
+                    token_decimalized_qty: {
+                        value: 'notanumber',
+                        error: 'Invalid token_decimalized_qty',
+                    },
+                    queryString: {
+                        value: 'token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=notanumber',
+                        error: false,
+                    },
+                },
+            },
+            {
+                description:
+                    'bip21 token: valid bip21 token tx with valid params',
+                addressInput:
+                    'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+                        error: false,
+                    },
+                    token_id: {
+                        value: '1111111111111111111111111111111111111111111111111111111111111111',
+                        error: false,
+                    },
+                    token_decimalized_qty: {
+                        value: '100.123',
+                        error: false,
+                    },
+                    queryString: {
+                        value: 'token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123',
+                        error: false,
+                    },
+                },
+            },
+            {
+                description:
+                    'bip21 token: valid bip21 token tx with valid params in reverse order still valid',
+                addressInput:
+                    'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_decimalized_qty=100.123&token_id=1111111111111111111111111111111111111111111111111111111111111111',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+                        error: false,
+                    },
+                    token_id: {
+                        value: '1111111111111111111111111111111111111111111111111111111111111111',
+                        error: false,
+                    },
+                    token_decimalized_qty: {
+                        value: '100.123',
+                        error: false,
+                    },
+                    queryString: {
+                        value: 'token_decimalized_qty=100.123&token_id=1111111111111111111111111111111111111111111111111111111111111111',
+                        error: false,
                     },
                 },
             },
@@ -991,7 +1018,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     amount: {
                         value: null,
@@ -1013,7 +1039,6 @@ export default {
                     address: {
                         value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
                         error: false,
-                        isAlias: false,
                     },
                     op_return_raw: {
                         error: 'Duplicated op_return_raw param',
@@ -1099,14 +1124,14 @@ export default {
                 isValid: false,
             },
             {
-                description: 'Valid alias formats are accepted',
+                description: 'Valid alias formats are not accepted',
                 contactList: [
                     {
                         address: 'beta.xec',
                         name: 'Test',
                     },
                 ],
-                isValid: true,
+                isValid: false,
             },
         ],
     },
@@ -1138,7 +1163,7 @@ export default {
                 migratedSettings: {
                     fiatCurrency: 'gbp',
                     sendModal: false,
-                    autoCameraOn: true,
+                    autoCameraOn: false,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
                     minFeeSends: false,
@@ -1288,6 +1313,20 @@ export default {
                 description:
                     'Returns false for a JSON-loaded pre-2.9.0 Cashtab wallet',
                 wallet: cashtabWalletFromJSON(walletWithXecAndTokens_pre_2_9_0),
+                returned: false,
+            },
+            {
+                description:
+                    'Returns false for a JSON-loaded pre-2.55.0 Cashtab wallet',
+                wallet: cashtabWalletFromJSON(
+                    walletWithXecAndTokens_pre_2_55_0,
+                ),
+                returned: false,
+            },
+            {
+                description:
+                    'Returns false for a Cashtab wallet with sk as string instead of uint8array',
+                wallet: invalidWalletBadSkType,
                 returned: false,
             },
             {
@@ -1527,6 +1566,27 @@ export default {
                     },
                 },
                 returned: false,
+            },
+            // Wallets used for various tests in Cashtab are valid
+            {
+                description: 'Returns true for token test wallet',
+                wallet: tokenTestWallet,
+                returned: true,
+            },
+            {
+                description: 'Returns true for agora alpha test wallet',
+                wallet: agoraPartialAlphaWallet,
+                returned: true,
+            },
+            {
+                description: 'Returns true for agora beta test wallet',
+                wallet: agoraPartialBetaWallet,
+                returned: true,
+            },
+            {
+                description: 'Returns true for Home screen test wallet',
+                wallet: walletWithZeroBalanceZeroHistory,
+                returned: true,
             },
         ],
     },
@@ -1823,6 +1883,7 @@ export default {
                 amount: '100',
                 tokenBalance: '100',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
@@ -1830,6 +1891,7 @@ export default {
                 amount: '0',
                 tokenBalance: '100',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: 'Amount must be greater than 0',
             },
             {
@@ -1837,6 +1899,7 @@ export default {
                 amount: '',
                 tokenBalance: '100',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: 'Amount is required',
             },
             {
@@ -1844,6 +1907,7 @@ export default {
                 amount: 50,
                 tokenBalance: '100',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: 'Amount must be a string',
             },
             {
@@ -1852,6 +1916,7 @@ export default {
                 amount: '95,1',
                 tokenBalance: '100',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned:
                     'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
             },
@@ -1860,6 +1925,7 @@ export default {
                 amount: '95.1.23',
                 tokenBalance: '100',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned:
                     'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
             },
@@ -1869,6 +1935,7 @@ export default {
                 amount: '95..23',
                 tokenBalance: '100',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned:
                     'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
             },
@@ -1877,6 +1944,7 @@ export default {
                 amount: '100.a',
                 tokenBalance: '100',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned:
                     'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
             },
@@ -1886,6 +1954,7 @@ export default {
                 amount: '100.1',
                 tokenBalance: '100',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned: 'Amount 100.1 exceeds balance of 100',
             },
             {
@@ -1894,6 +1963,7 @@ export default {
                 amount: '99.12',
                 tokenBalance: '100',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned: 'This token supports no more than 1 decimal place',
             },
             {
@@ -1902,6 +1972,7 @@ export default {
                 amount: '99.123',
                 tokenBalance: '100',
                 decimals: 2,
+                tokenProtocol: 'SLP',
                 returned: 'This token supports no more than 2 decimal places',
             },
             {
@@ -1910,6 +1981,7 @@ export default {
                 amount: '99.1',
                 tokenBalance: '100',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: 'This token does not support decimal places',
             },
             {
@@ -1918,6 +1990,7 @@ export default {
                 amount: '99.123',
                 tokenBalance: '100',
                 decimals: 9,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
@@ -1926,6 +1999,7 @@ export default {
                 amount: '99.123456789',
                 tokenBalance: '100',
                 decimals: 9,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
@@ -1934,6 +2008,7 @@ export default {
                 amount: '99.',
                 tokenBalance: '100',
                 decimals: 9,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
@@ -1942,41 +2017,84 @@ export default {
                 amount: '99.',
                 tokenBalance: '100',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
                 description:
-                    'We accept the max supported list, send, or burn amount for a 0-decimal token',
+                    'We accept the max supported list, send, or burn amount for a 0-decimal SLP token',
                 amount: '18446744073709551615',
                 tokenBalance: '19000000000000000000',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
                 description:
-                    'We accept the max supported list, send, or burn amount for a 9-decimal token',
+                    'We accept the max supported list, send, or burn amount for a 9-decimal SLP token',
                 amount: '18446744073.709551615',
                 tokenBalance: '19000000000',
                 decimals: 9,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
                 description:
-                    'We reject one token satoshi more less than the max supported list, send, or burn amount for a 0-decimal token',
-                amount: '18446744073709551616',
+                    'We accept the max supported list, send, or burn amount for a 0-decimal ALP token',
+                amount: '281474976710655',
                 tokenBalance: '19000000000000000000',
                 decimals: 0,
-                returned:
-                    'Amount 18446744073709551616 exceeds max supported SLP qty for this token in one tx (18446744073709551615)',
+                tokenProtocol: 'SLP',
+                returned: true,
             },
             {
                 description:
-                    'We reject one token satoshi more less than the max supported list, send, or burn amount for a 9-decimal token',
+                    'We accept the max supported list, send, or burn amount for a 9-decimal ALP token',
+                amount: '281474.976710655',
+                tokenBalance: '19000000000',
+                decimals: 9,
+                tokenProtocol: 'ALP',
+                returned: true,
+            },
+            {
+                description:
+                    'We reject one token satoshi more less than the max supported list, send, or burn amount for a 0-decimal SLP token',
+                amount: '18446744073709551616',
+                tokenBalance: '19000000000000000000',
+                decimals: 0,
+                tokenProtocol: 'SLP',
+                returned:
+                    'Amount 18446744073709551616 exceeds max supported qty for this token in one tx (18446744073709551615)',
+            },
+            {
+                description:
+                    'We reject one token satoshi more less than the max supported list, send, or burn amount for a 9-decimal SLP token',
                 amount: '18446744073.709551616',
                 tokenBalance: '19000000000',
                 decimals: 9,
+                tokenProtocol: 'SLP',
                 returned:
-                    'Amount 18446744073.709551616 exceeds max supported SLP qty for this token in one tx (18446744073.709551615)',
+                    'Amount 18446744073.709551616 exceeds max supported qty for this token in one tx (18446744073.709551615)',
+            },
+            {
+                description:
+                    'We reject one token satoshi more less than the max supported list, send, or burn amount for a 0-decimal ALP token',
+                amount: '281474976710656',
+                tokenBalance: '19000000000000000000',
+                decimals: 0,
+                tokenProtocol: 'ALP',
+                returned:
+                    'Amount 281474976710656 exceeds max supported qty for this token in one tx (281474976710655)',
+            },
+            {
+                description:
+                    'We reject one token satoshi more less than the max supported list, send, or burn amount for a 9-decimal ALP token',
+                amount: '281474.976710656',
+                tokenBalance: '19000000000',
+                decimals: 9,
+                tokenProtocol: 'ALP',
+                returned:
+                    'Amount 281474.976710656 exceeds max supported qty for this token in one tx (281474.976710655)',
             },
         ],
     },
@@ -1987,24 +2105,28 @@ export default {
                     'A decimalized string with no decimals is valid for a token with no decimals',
                 amount: '100',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
                 description: '0 is rejected',
                 amount: '0',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: 'Amount must be greater than 0',
             },
             {
                 description: 'Blank input is rejected',
                 amount: '',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: 'Amount is required',
             },
             {
                 description: 'Rejects non-string input',
                 amount: 50,
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: 'Amount must be a string',
             },
             {
@@ -2012,6 +2134,7 @@ export default {
                     'Rejects input including a decimal marker other than "."',
                 amount: '95,1',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned:
                     'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
             },
@@ -2019,6 +2142,7 @@ export default {
                 description: 'Rejects input with multiple decimal points',
                 amount: '95.1.23',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned:
                     'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
             },
@@ -2027,6 +2151,7 @@ export default {
                     'Rejects input multiple consecutive decimal points',
                 amount: '95..23',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned:
                     'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
             },
@@ -2034,6 +2159,7 @@ export default {
                 description: 'Rejects input containing non-decimal characters',
                 amount: '100.a',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned:
                     'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
             },
@@ -2042,6 +2168,7 @@ export default {
                     'We get non-plural error msg if token supports only 1 decimal place',
                 amount: '99.12',
                 decimals: 1,
+                tokenProtocol: 'SLP',
                 returned: 'This token supports no more than 1 decimal place',
             },
             {
@@ -2049,6 +2176,7 @@ export default {
                     'We cannot specify more decimal places than supported by the token',
                 amount: '99.123',
                 decimals: 2,
+                tokenProtocol: 'SLP',
                 returned: 'This token supports no more than 2 decimal places',
             },
             {
@@ -2056,6 +2184,7 @@ export default {
                     'We cannot have decimals for a token supporting 0 decimals',
                 amount: '99.1',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: 'This token does not support decimal places',
             },
             {
@@ -2063,6 +2192,7 @@ export default {
                     'We can specify fewer decimal places than supported by the token',
                 amount: '99.123',
                 decimals: 9,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
@@ -2070,6 +2200,7 @@ export default {
                     'We can specify the exact decimal places supported by the token',
                 amount: '99.123456789',
                 decimals: 9,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
@@ -2077,6 +2208,7 @@ export default {
                     'We can include a decimal point at the end of the string and no decimal places',
                 amount: '99.',
                 decimals: 9,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
@@ -2084,21 +2216,43 @@ export default {
                     'We can include a decimal point at the end of the string and no decimal places, even if the token supports 0 decimals',
                 amount: '99.',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
-                description: 'We accept the max mint amount',
+                description: 'We accept the max mint amount for SLP',
                 amount: '18446744073709551615',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned: true,
             },
             {
                 description:
-                    'We reject one token satoshi more than the max mint amount',
+                    'We reject one token satoshi more than the max mint amount for SLP',
                 amount: '18446744073709551616',
                 decimals: 0,
+                tokenProtocol: 'SLP',
                 returned:
                     'Amount 18446744073709551616 exceeds max mint amount for this token (18446744073709551615)',
+            },
+            // Note this is really the max mint amount for 1 output
+            // ALP could do higher qtys
+            // But Cashtab is currently limited to one output
+            {
+                description: 'We accept the max mint amount for ALP',
+                amount: '281474976710655',
+                decimals: 0,
+                tokenProtocol: 'ALP',
+                returned: true,
+            },
+            {
+                description:
+                    'We reject one token satoshi more than the max mint amount for ALP',
+                amount: '281474976710656',
+                decimals: 0,
+                tokenProtocol: 'ALP',
+                returned:
+                    'Amount 281474976710656 exceeds max mint amount for this token (281474976710655)',
             },
         ],
     },
@@ -2458,20 +2612,17 @@ export default {
                 xecListPrice: '5.46',
                 selectedCurrency: 'XEC',
                 fiatPrice: null,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: false,
             },
             {
                 description:
-                    'Rejects price if minimum token accept costs 1 nanosatoshi less than dust, xec price',
+                    'Accepts price if minimum token accept costs 1 nanosatoshi less than dust, xec price, because price validation does not depend on min buy qty, instead this is handled by qty validation',
                 xecListPrice: '5.45999999999',
                 selectedCurrency: 'XEC',
                 fiatPrice: null,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
-                returned:
-                    'Minimum buy costs 5.45999999999 XEC, must be at least 5.46 XEC',
+                returned: false,
             },
             {
                 description:
@@ -2479,7 +2630,6 @@ export default {
                 xecListPrice: '5.46',
                 selectedCurrency: 'CAD',
                 fiatPrice: 1,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: false,
             },
@@ -2489,16 +2639,13 @@ export default {
                 xecListPrice: '5.45999999999',
                 selectedCurrency: 'CAD',
                 fiatPrice: 1,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
-                returned:
-                    'Minimum buy costs 5.45999999999 XEC, must be at least 5.46 XEC',
+                returned: false,
             },
             {
                 description: 'Accepts the lowest possible price for XEC input',
                 xecListPrice: '0.00000000001', // 1 nanosatoshi
                 selectedCurrency: 'XEC',
-                minBuyTokenQty: 5.46 * 1e11,
                 fiatPrice: null,
                 tokenDecimals: 0,
                 returned: false,
@@ -2509,7 +2656,6 @@ export default {
                 xecListPrice: '0.00000000001', // 1 nanosatoshi
                 selectedCurrency: 'XEC',
                 fiatPrice: null,
-                minBuyTokenQty: 5.46 * 1e11,
                 tokenDecimals: 1,
                 returned:
                     'Price cannot be lower than 1 nanosatoshi per 1 token satoshi',
@@ -2519,7 +2665,6 @@ export default {
                 xecListPrice: '0.00000000001', // 1 nanosatoshi
                 selectedCurrency: 'CAD',
                 fiatPrice: 1,
-                minBuyTokenQty: 5.46 * 1e11,
                 tokenDecimals: 0,
                 returned: false,
             },
@@ -2529,7 +2674,6 @@ export default {
                 xecListPrice: '0.00000000001', // 1 nanosatoshi
                 selectedCurrency: 'CAD',
                 fiatPrice: 1,
-                minBuyTokenQty: 5.46 * 1e11,
                 tokenDecimals: 1,
                 returned:
                     'Price cannot be lower than 1 nanosatoshi per 1 token satoshi',
@@ -2540,7 +2684,6 @@ export default {
                 xecListPrice: '111.',
                 selectedCurrency: 'XEC',
                 fiatPrice: null,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: false,
             },
@@ -2550,7 +2693,6 @@ export default {
                 xecListPrice: '111.',
                 selectedCurrency: 'CAD',
                 fiatPrice: 1,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: false,
             },
@@ -2559,7 +2701,6 @@ export default {
                 xecListPrice: '111.123456789012',
                 selectedCurrency: 'XEC',
                 fiatPrice: null,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: `List price supports up to 11 decimal places.`,
             },
@@ -2568,7 +2709,6 @@ export default {
                 xecListPrice: '111.123456789012',
                 selectedCurrency: 'USD',
                 fiatPrice: 1,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: `List price supports up to 11 decimal places.`,
             },
@@ -2577,7 +2717,6 @@ export default {
                 xecListPrice: '-33',
                 selectedCurrency: 'XEC',
                 fiatPrice: null,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: 'List price must be a number',
             },
@@ -2586,7 +2725,6 @@ export default {
                 xecListPrice: '-33',
                 selectedCurrency: 'CAD',
                 fiatPrice: 1,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: 'List price must be a number',
             },
@@ -2595,7 +2733,6 @@ export default {
                 xecListPrice: 'abc',
                 selectedCurrency: 'XEC',
                 fiatPrice: null,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: 'List price must be a number',
             },
@@ -2604,7 +2741,6 @@ export default {
                 xecListPrice: 'abc',
                 selectedCurrency: 'CAD',
                 fiatPrice: 1,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: 'List price must be a number',
             },
@@ -2613,7 +2749,6 @@ export default {
                 xecListPrice: '',
                 selectedCurrency: 'XEC',
                 fiatPrice: null,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: 'List price is required.',
             },
@@ -2622,7 +2757,6 @@ export default {
                 xecListPrice: '',
                 selectedCurrency: 'GBP',
                 fiatPrice: 1,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned: 'List price is required.',
             },
@@ -2631,7 +2765,6 @@ export default {
                 xecListPrice: '100',
                 selectedCurrency: 'GBP',
                 fiatPrice: null,
-                minBuyTokenQty: 1,
                 tokenDecimals: 0,
                 returned:
                     'Cannot input price in GBP while fiat price is unavailable.',
@@ -2642,45 +2775,365 @@ export default {
         expectedReturns: [
             {
                 description:
-                    'User is trying to purchase a qty of tokens such that remaining qty is less than min',
-                acceptTokenQty: 100n,
-                offerMinAcceptTokenQty: 10n,
-                offerMaxAcceptTokenQty: 105n,
+                    'We reject an amount less than the min accept of the offer',
+                takeTokenDecimalizedQty: '9',
+                decimalizedTokenQtyMin: '10',
+                decimalizedTokenQtyMax: '100',
                 decimals: 0,
+                userLocale: 'en-US',
+                returned: 'Must purchase at least 10 to accept this offer',
+            },
+            {
+                description: 'Blank input is rejected',
+                takeTokenDecimalizedQty: '',
+                decimalizedTokenQtyMin: '10',
+                decimalizedTokenQtyMax: '100',
+                decimals: 0,
+                userLocale: 'en-US',
+                returned: 'Select a buy amount',
+            },
+            {
+                description: 'Rejects non-string input',
+                takeTokenDecimalizedQty: 15,
+                decimalizedTokenQtyMin: '10',
+                decimalizedTokenQtyMax: '100',
+                decimals: 0,
+                userLocale: 'en-US',
+                returned: 'Amount must be a string',
+            },
+            {
+                description:
+                    'Rejects input including a decimal marker other than "."',
+                takeTokenDecimalizedQty: '15,1',
+                decimalizedTokenQtyMin: '10',
+                decimalizedTokenQtyMax: '100',
+                decimals: 0,
+                userLocale: 'en-US',
+                returned:
+                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+            },
+            {
+                description: 'Rejects multiple non-consecutive decimal points',
+                takeTokenDecimalizedQty: '15.1.23',
+                decimalizedTokenQtyMin: '10',
+                decimalizedTokenQtyMax: '100',
+                decimals: 0,
+                userLocale: 'en-US',
+                returned:
+                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+            },
+            {
+                description: 'Rejects multiple consecutive decimal points',
+                takeTokenDecimalizedQty: '95..23',
+                decimalizedTokenQtyMin: '10',
+                decimalizedTokenQtyMax: '100',
+                decimals: 0,
+                userLocale: 'en-US',
+                returned:
+                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+            },
+            {
+                description: 'Rejects input containing a non-decimal character',
+                takeTokenDecimalizedQty: '95.a',
+                decimalizedTokenQtyMin: '10',
+                decimalizedTokenQtyMax: '100',
+                decimals: 0,
+                userLocale: 'en-US',
+                returned:
+                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+            },
+            {
+                description:
+                    'User is trying to purchase a qty of tokens such that remaining qty is less than min',
+                takeTokenDecimalizedQty: '100',
+                decimalizedTokenQtyMin: '10',
+                decimalizedTokenQtyMax: '105',
+                decimals: 0,
+                userLocale: 'en-US',
                 returned: 'Must accept <= 95 or the full offer',
             },
             {
                 description: 'Error msg is formatted to decimals of the token',
-                acceptTokenQty: 100000000000n,
-                offerMinAcceptTokenQty: 10123456789n,
-                offerMaxAcceptTokenQty: 105000000000n,
+                takeTokenDecimalizedQty: '100.000000000',
+                decimalizedTokenQtyMin: '10.123456789',
+                decimalizedTokenQtyMax: '105.000000000',
                 decimals: 9,
+                userLocale: 'en-US',
                 returned: 'Must accept <= 94.876543211 or the full offer',
             },
             {
                 description: 'The exact threshold is ok',
-                acceptTokenQty: 94876543211n,
-                offerMinAcceptTokenQty: 10123456789n,
-                offerMaxAcceptTokenQty: 10500000000n,
+                takeTokenDecimalizedQty: '94.876543211',
+                decimalizedTokenQtyMin: '10.123456789',
+                decimalizedTokenQtyMax: '10.500000000',
                 decimals: 9,
+                userLocale: 'en-US',
                 returned: false,
             },
             {
                 description: 'The full offer is ok',
-                acceptTokenQty: 105000000000n,
-                offerMinAcceptTokenQty: 10123456789n,
-                offerMaxAcceptTokenQty: 105000000000n,
+                takeTokenDecimalizedQty: '105.000000000',
+                decimalizedTokenQtyMin: '10.123456789',
+                decimalizedTokenQtyMax: '105.000000000',
                 decimals: 9,
+                userLocale: 'en-US',
                 returned: false,
             },
             {
                 description:
                     'One token satoshi less than the full offer is not ok',
-                acceptTokenQty: 104999999999n,
-                offerMinAcceptTokenQty: 10123456789n,
-                offerMaxAcceptTokenQty: 105000000000n,
+                takeTokenDecimalizedQty: '104.999999999',
+                decimalizedTokenQtyMin: '10.123456789',
+                decimalizedTokenQtyMax: '105.000000000',
                 decimals: 9,
+                userLocale: 'en-US',
                 returned: 'Must accept <= 94.876543211 or the full offer',
+            },
+        ],
+    },
+    getAgoraMinBuyError: {
+        expectedReturns: [
+            {
+                description:
+                    'We reject a min qty that is higher than the offered qty',
+                xecListPrice: '1',
+                selectedCurrency: 'XEC',
+                fiatPrice: 1,
+                minBuyTokenQty: '2',
+                offeredTokenQty: '1',
+                tokenDecimals: 0,
+                tokenProtocol: 'ALP',
+                tokenBalance: '100',
+                userLocale: 'en-US',
+                returned:
+                    'The min buy must be less than or equal to the offered quantity',
+            },
+            {
+                description:
+                    'We can pass on an error from isValidTokenSendOrBurnAmount',
+                xecListPrice: '1',
+                selectedCurrency: 'XEC',
+                fiatPrice: 1,
+                minBuyTokenQty: '0', // 0 is invalid
+                offeredTokenQty: '1',
+                tokenDecimals: 0,
+                tokenProtocol: 'ALP',
+                tokenBalance: '100',
+                userLocale: 'en-US',
+                returned: 'Amount must be greater than 0',
+            },
+            {
+                description: 'We give the required min qty if input is too low',
+                xecListPrice: '1',
+                selectedCurrency: 'XEC',
+                fiatPrice: 1,
+                minBuyTokenQty: '1', // 0 is invalid
+                offeredTokenQty: '100',
+                tokenDecimals: 0,
+                tokenProtocol: 'ALP',
+                tokenBalance: '100',
+                userLocale: 'en-US',
+                returned: `Total cost of minimum buy below dust. Min offered qty must be at least 6.`,
+            },
+            {
+                description:
+                    'We give the required min qty if input is too low with decimals',
+                xecListPrice: '1',
+                selectedCurrency: 'XEC',
+                fiatPrice: 1,
+                minBuyTokenQty: '1', // 0 is invalid
+                offeredTokenQty: '100',
+                tokenDecimals: 9,
+                tokenProtocol: 'ALP',
+                tokenBalance: '100',
+                userLocale: 'en-US',
+                returned: `Total cost of minimum buy below dust. Min offered qty must be at least 5.46.`,
+            },
+            {
+                description:
+                    'We give the required min qty if input is too low for a locale that does not use a period for decimal places',
+                xecListPrice: '1',
+                selectedCurrency: 'XEC',
+                fiatPrice: 1,
+                minBuyTokenQty: '1', // 0 is invalid
+                offeredTokenQty: '100',
+                tokenDecimals: 9,
+                tokenProtocol: 'ALP',
+                tokenBalance: '100',
+                userLocale: 'fr-FR',
+                returned: `Total cost of minimum buy below dust. Min offered qty must be at least 5,46.`,
+            },
+        ],
+    },
+    getReceiveAmountError: {
+        expectedReturns: [
+            {
+                description: 'XEC: we accept an empty string',
+                amount: '',
+                decimals: 2,
+                isXec: true,
+                returned: false,
+            },
+            {
+                description: 'XEC: 0 is rejected',
+                amount: '0',
+                decimals: 2,
+                isXec: true,
+                returned: 'Amount must be greater than 0',
+            },
+            {
+                description: 'Token: 0 is rejected',
+                amount: '0',
+                decimals: 4,
+                isXec: false,
+                returned: 'Amount must be greater than 0',
+            },
+            {
+                description: 'Token: blank input is rejected',
+                amount: '',
+                decimals: 0,
+                isXec: false,
+                returned: 'Amount is required for bip21 token sends',
+            },
+            {
+                description: 'XEC: Rejects non-string input',
+                amount: 50,
+                isXec: true,
+                returned: 'Amount must be a string',
+            },
+            {
+                description: 'Token: Rejects non-string input',
+                amount: 50,
+                isXec: false,
+                returned: 'Amount must be a string',
+            },
+            {
+                description:
+                    'XEC: Rejects input including a decimal marker other than "."',
+                amount: '95,1',
+                decimals: 1,
+                isXec: true,
+                returned:
+                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+            },
+            {
+                description:
+                    'Token: Rejects input including a decimal marker other than "."',
+                amount: '95,1',
+                decimals: 1,
+                isXec: false,
+                returned:
+                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+            },
+            {
+                description: 'Rejects input multiple decimal points',
+                amount: '95.1.23',
+                decimals: 1,
+                isXec: false,
+                returned:
+                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+            },
+            {
+                description:
+                    'Rejects input multiple consecutive decimal points',
+                amount: '95..23',
+                decimals: 1,
+                isXec: false,
+                returned:
+                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+            },
+            {
+                description: 'Rejects input containing non-decimal characters',
+                amount: '100.a',
+                decimals: 1,
+                isXec: false,
+                returned:
+                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+            },
+            {
+                description: 'We get an error for too many XEC decimals',
+                amount: '99.123',
+                decimals: 2,
+                isXec: true,
+                returned: 'XEC supports up to 2 decimal places',
+            },
+            {
+                description: 'We get an error for XEC amounts below dust',
+                amount: '5.45',
+                decimals: 2,
+                isXec: true,
+                returned:
+                    'XEC send amounts cannot be less than dust (5.46 XEC)',
+            },
+            {
+                description: 'We accept 5.46 XEC',
+                amount: '5.46',
+                decimals: 2,
+                isXec: true,
+                returned: false,
+            },
+            {
+                description: 'We accept 5.45 of a 2-decimal token',
+                amount: '5.45',
+                decimals: 2,
+                isXec: false,
+                returned: false,
+            },
+            {
+                description:
+                    'We get non-plural error msg if token supports only 1 decimal place',
+                amount: '99.12',
+                decimals: 1,
+                isXec: false,
+                returned: 'This token supports no more than 1 decimal place',
+            },
+            {
+                description:
+                    'We cannot specify more decimal places than supported by the token',
+                amount: '99.123',
+                decimals: 2,
+                isXec: false,
+                returned: 'This token supports no more than 2 decimal places',
+            },
+            {
+                description:
+                    'We cannot have decimals for a token supporting 0 decimals',
+                amount: '99.1',
+                decimals: 0,
+                isXec: false,
+                returned: 'This token does not support decimal places',
+            },
+            {
+                description:
+                    'We can specify fewer decimal places than supported by the token',
+                amount: '99.123',
+                decimals: 9,
+                isXec: false,
+                returned: false,
+            },
+            {
+                description:
+                    'We can specify the exact decimal places supported by the token',
+                amount: '99.123456789',
+                decimals: 9,
+                isXec: false,
+                returned: false,
+            },
+            {
+                description:
+                    'We can include a decimal point at the end of the string and no decimal places',
+                amount: '99.',
+                decimals: 9,
+                isXec: false,
+                returned: false,
+            },
+            {
+                description:
+                    'We can include a decimal point at the end of the string and no decimal places, even if the token supports 0 decimals',
+                amount: '99.',
+                decimals: 0,
+                isXec: false,
+                returned: false,
             },
         ],
     },

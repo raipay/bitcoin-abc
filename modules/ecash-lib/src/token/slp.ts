@@ -7,10 +7,12 @@ import { strToBytes } from '../io/str.js';
 import { Op, pushBytesOp } from '../op.js';
 import { OP_PUSHDATA1, OP_RETURN } from '../opcode.js';
 import { Script } from '../script.js';
-import { Amount, BURN, GENESIS, GenesisInfo, MINT, SEND } from './common.js';
+import { BURN, GENESIS, GenesisInfo, MINT, SEND } from './common.js';
 
 /** LOKAD ID for SLP */
-export const SLP_LOKAD_ID = strToBytes('SLP\0');
+export const SLP_LOKAD_ID_STR = 'SLP\0';
+/** LOKAD ID for SLP */
+export const SLP_LOKAD_ID = strToBytes(SLP_LOKAD_ID_STR);
 
 /** SLP fungible token type number */
 export const SLP_FUNGIBLE = 1;
@@ -21,11 +23,30 @@ export const SLP_NFT1_CHILD = 0x41;
 /** SLP NFT1 Group token type number */
 export const SLP_NFT1_GROUP = 0x81;
 
+/** How many bytes the GENESIS `hash` field must have (or 0) */
+export const SLP_GENESIS_HASH_NUM_BYTES = 32;
+
+/** How many bytes the GENESIS `mintVaultScripthash` field must have */
+export const SLP_MINT_VAULT_SCRIPTHASH_NUM_BYTES = 20;
+
+/** How many outputs a SEND can specify at most */
+export const SLP_MAX_SEND_OUTPUTS = 19;
+
+/** How many bytes every atoms amount has */
+export const SLP_ATOMS_NUM_BYTES = 8;
+
+/** Supported SLP token types */
+export type SlpTokenType =
+    | typeof SLP_FUNGIBLE
+    | typeof SLP_MINT_VAULT
+    | typeof SLP_NFT1_CHILD
+    | typeof SLP_NFT1_GROUP;
+
 /** Build an SLP GENESIS OP_RETURN, creating a new SLP token */
 export function slpGenesis(
     tokenType: number,
     genesisInfo: GenesisInfo,
-    initialQuantity: Amount,
+    initialQuantity: bigint,
     mintBatonOutIdx?: number,
 ): Script {
     verifyTokenType(tokenType);
@@ -53,7 +74,7 @@ export function slpGenesis(
             data.push(new Uint8Array());
         }
     }
-    data.push(slpAmount(initialQuantity));
+    data.push(slpAtoms(initialQuantity));
     return Script.fromOps([OP_RETURN as Op].concat(data.map(pushdataOpSlp)));
 }
 
@@ -64,7 +85,7 @@ export function slpGenesis(
 export function slpMint(
     tokenId: string,
     tokenType: number,
-    additionalQuantity: Amount,
+    additionalAtoms: bigint,
     mintBatonOutIdx?: number,
 ): Script {
     verifyTokenType(tokenType);
@@ -80,7 +101,7 @@ export function slpMint(
                 mintBatonOutIdx !== undefined ? [mintBatonOutIdx] : [],
             ),
         ),
-        pushdataOpSlp(slpAmount(additionalQuantity)),
+        pushdataOpSlp(slpAtoms(additionalAtoms)),
     ]);
 }
 
@@ -90,10 +111,10 @@ export function slpMint(
  **/
 export function slpMintVault(
     tokenId: string,
-    additionalQuantities: Amount[],
+    additionalAtomsArray: bigint[],
 ): Script {
     verifyTokenId(tokenId);
-    verifySendAmounts(additionalQuantities);
+    verifySendAtomsArray(additionalAtomsArray);
     return Script.fromOps(
         [
             OP_RETURN,
@@ -102,7 +123,7 @@ export function slpMintVault(
             pushdataOpSlp(MINT),
             pushdataOpSlp(fromHex(tokenId)),
         ].concat(
-            additionalQuantities.map(qty => pushdataOpSlp(slpAmount(qty))),
+            additionalAtomsArray.map(atoms => pushdataOpSlp(slpAtoms(atoms))),
         ),
     );
 }
@@ -113,11 +134,11 @@ export function slpMintVault(
 export function slpSend(
     tokenId: string,
     tokenType: number,
-    sendAmounts: Amount[],
+    sendAtomsArray: bigint[],
 ): Script {
     verifyTokenType(tokenType);
     verifyTokenId(tokenId);
-    verifySendAmounts(sendAmounts);
+    verifySendAtomsArray(sendAtomsArray);
     return Script.fromOps(
         [
             OP_RETURN,
@@ -125,7 +146,7 @@ export function slpSend(
             pushdataOpSlp(new Uint8Array([tokenType])),
             pushdataOpSlp(SEND),
             pushdataOpSlp(fromHex(tokenId)),
-        ].concat(sendAmounts.map(qty => pushdataOpSlp(slpAmount(qty)))),
+        ].concat(sendAtomsArray.map(atoms => pushdataOpSlp(slpAtoms(atoms)))),
     );
 }
 
@@ -136,7 +157,7 @@ export function slpSend(
 export function slpBurn(
     tokenId: string,
     tokenType: number,
-    burnAmount: Amount,
+    burnAtoms: bigint,
 ): Script {
     verifyTokenType(tokenType);
     verifyTokenId(tokenId);
@@ -146,7 +167,7 @@ export function slpBurn(
         pushdataOpSlp(new Uint8Array([tokenType])),
         pushdataOpSlp(BURN),
         pushdataOpSlp(fromHex(tokenId)),
-        pushdataOpSlp(slpAmount(burnAmount)),
+        pushdataOpSlp(slpAtoms(burnAtoms)),
     ]);
 }
 
@@ -170,13 +191,13 @@ function verifyTokenId(tokenId: string) {
     }
 }
 
-function verifySendAmounts(sendAmounts: Amount[]) {
-    if (sendAmounts.length == 0) {
-        throw new Error('Send amount cannot be empty');
+function verifySendAtomsArray(sendAtomsArray: bigint[]) {
+    if (sendAtomsArray.length == 0) {
+        throw new Error('sendAtomsArray cannot be empty');
     }
-    if (sendAmounts.length > 19) {
+    if (sendAtomsArray.length > 19) {
         throw new Error(
-            `Cannot use more than 19 amounts, but got ${sendAmounts.length}`,
+            `Cannot use more than 19 amounts, but got ${sendAtomsArray.length}`,
         );
     }
 }
@@ -197,16 +218,16 @@ function pushdataOpSlp(pushdata: Uint8Array): Op {
     return pushBytesOp(pushdata);
 }
 
-export function slpAmount(amount: Amount): Uint8Array {
-    if (amount < 0 || BigInt(amount) > 0xffffffffffffffffn) {
-        throw new Error(`Amount out of range: ${amount}`);
+export function slpAtoms(atoms: bigint): Uint8Array {
+    if (atoms < 0n || atoms > 0xffffffffffffffffn) {
+        throw new Error(`Atoms out of range: ${atoms}`);
     }
-    const amountBytes = new Uint8Array(8);
+    const atomsBytes = new Uint8Array(8);
     const view = new DataView(
-        amountBytes.buffer,
-        amountBytes.byteOffset,
-        amountBytes.byteLength,
+        atomsBytes.buffer,
+        atomsBytes.byteOffset,
+        atomsBytes.byteLength,
     );
-    view.setBigUint64(0, BigInt(amount), /*little endian=*/ false);
-    return amountBytes;
+    view.setBigUint64(0, atoms, /*little endian=*/ false);
+    return atomsBytes;
 }

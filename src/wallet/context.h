@@ -5,10 +5,22 @@
 #ifndef BITCOIN_WALLET_CONTEXT_H
 #define BITCOIN_WALLET_CONTEXT_H
 
+#include <sync.h>
+
+#include <functional>
+#include <list>
+#include <memory>
+#include <vector>
+
 class ArgsManager;
+class CWallet;
 namespace interfaces {
 class Chain;
+class Wallet;
 } // namespace interfaces
+
+using LoadWalletFn =
+    std::function<void(std::unique_ptr<interfaces::Wallet> wallet)>;
 
 //! WalletContext struct containing references to state shared between CWallet
 //! instances, like the reference to the chain interface, and the list of opened
@@ -22,7 +34,14 @@ class Chain;
 //! behavior.
 struct WalletContext {
     interfaces::Chain *chain{nullptr};
+    // Currently a raw pointer because the memory is not managed by this struct
     ArgsManager *args{nullptr};
+    // It is unsafe to lock this after locking a CWallet::cs_wallet mutex
+    // because this could introduce inconsistent lock ordering and cause
+    // deadlocks.
+    Mutex wallets_mutex;
+    std::vector<std::shared_ptr<CWallet>> wallets GUARDED_BY(wallets_mutex);
+    std::list<LoadWalletFn> wallet_load_fns GUARDED_BY(wallets_mutex);
 
     //! Declare default constructor and destructor that are not inline, so code
     //! instantiating the WalletContext struct doesn't need to #include class

@@ -18,7 +18,9 @@ final class PrettierLinter extends ArcanistExternalLinter {
   }
 
   public function getInstallInstructions() {
-    return pht('Install `prettier` using `npm` with `npm install prettier`');
+    return pht(
+      'Install `prettier` using `npm ci` from the root of the repository'
+    );
   }
 
   public function getLinterName() {
@@ -30,7 +32,11 @@ final class PrettierLinter extends ArcanistExternalLinter {
   }
 
   public function getDefaultBinary() {
-    return 'prettier';
+    $root = $this->getProjectRoot();
+    return Filesystem::resolvePath(
+        'node_modules/prettier/bin-prettier.js',
+        $root
+    );
   }
 
   public function getVersion() {

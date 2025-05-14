@@ -19,11 +19,13 @@ import makeBlockie from 'ethereum-blockies-base64';
 import TelegramBot from 'node-telegram-bot-api';
 import { alertNewTokenIcon } from './telegram';
 import { getBlacklistedTokenIds, getOneBlacklistEntry } from './db';
-import cashaddr from 'ecashaddrjs';
+import { isValidCashAddress, getOutputScriptFromAddress } from 'ecashaddrjs';
 import { Ecc } from 'ecash-lib';
 import { RateLimitRequestHandler } from 'express-rate-limit';
 import axios from 'axios';
 import { Db } from 'mongodb';
+import { writeFileSync, existsSync } from 'fs';
+import { IFs } from 'memfs';
 
 /**
  * routes.ts
@@ -32,19 +34,20 @@ import { Db } from 'mongodb';
 
 // Get outputscript of the server wallet
 // Used to check eligibility of reward recipients
-const SERVER_WALLET_OUTPUTSCRIPT = cashaddr.getOutputScriptFromAddress(
+const SERVER_WALLET_OUTPUTSCRIPT = getOutputScriptFromAddress(
     secrets.prod.wallet.address,
 );
 
 // Define upload size limit
-var upload = multer({
+const upload = multer({
     limits: { fileSize: config.maxUploadSize },
 });
 
+type CorsCallback = (error: Error | null, allow?: boolean) => void;
 // Only allow images uploads to come from approved domains
-var whitelist = config.whitelist;
-var corsOptions: CorsOptions = {
-    origin: function (origin: string | undefined, callback: Function) {
+const whitelist = config.whitelist;
+const corsOptions: CorsOptions = {
+    origin: function (origin: string | undefined, callback: CorsCallback) {
         if (typeof origin === 'undefined' || whitelist.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
@@ -62,12 +65,21 @@ function logIpInfo(req: Request) {
     console.log(`${req.url} from ${ip}`);
 }
 
+/**
+ * We need a type for Fs because it is a param
+ * It needs to be a param because we use memfs in testing
+ */
+interface FsLikeRoutes {
+    existsSync: typeof existsSync;
+    writeFileSync: typeof writeFileSync;
+}
+
 export const startExpressServer = (
-    port: Number,
+    port: number,
     db: Db,
     chronik: ChronikClient,
     telegramBot: TelegramBot,
-    fs: any,
+    fs: FsLikeRoutes | IFs,
     ecc: Ecc,
     limiter: RateLimitRequestHandler,
     tokenLimiter: RateLimitRequestHandler,
@@ -164,7 +176,7 @@ export const startExpressServer = (
 
             logIpInfo(req);
 
-            if (!cashaddr.isValidCashAddress(address, 'ecash')) {
+            if (!isValidCashAddress(address, 'ecash')) {
                 return res.status(500).json({
                     address,
                     error: `Invalid eCash address`,
@@ -279,14 +291,14 @@ export const startExpressServer = (
                     });
                 }
             } catch (err) {
-                console.error('Error verifying recaptcha-response');
+                console.error('Error verifying recaptcha-response', err);
                 return res.status(500).json({
                     address,
                     error: `Error validating recaptcha response, please try again later`,
                 });
             }
 
-            if (!cashaddr.isValidCashAddress(address, 'ecash')) {
+            if (!isValidCashAddress(address, 'ecash')) {
                 return res.status(500).json({
                     address,
                     error: `Invalid eCash address`,
@@ -429,14 +441,14 @@ export const startExpressServer = (
                     });
                 }
             } catch (err) {
-                console.error('Error verifying recaptcha-response');
+                console.error('Error verifying recaptcha-response', err);
                 return res.status(500).json({
                     address,
                     error: `Error validating recaptcha response, please try again later`,
                 });
             }
 
-            if (!cashaddr.isValidCashAddress(address, 'ecash')) {
+            if (!isValidCashAddress(address, 'ecash')) {
                 return res.status(500).json({
                     address,
                     error: `Invalid eCash address`,
@@ -607,8 +619,8 @@ export const startExpressServer = (
             // Build the image
             const data = makeBlockie(tokenId);
             // Prepare to serve the image as a png
-            var base64Data = data.replace(/^data:image\/png;base64,/, '');
-            var img = Buffer.from(base64Data, 'base64');
+            const base64Data = data.replace(/^data:image\/png;base64,/, '');
+            const img = Buffer.from(base64Data, 'base64');
 
             res.writeHead(200, {
                 'Content-Type': 'image/png',

@@ -1,11 +1,11 @@
-// Copyright (c) 2023 The Bitcoin developers
+// Copyright (c) 2023-2025 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import config from '../config';
 import fs from 'fs';
 import path from 'path';
-import { ChronikClient, Tx } from 'chronik-client';
+import { ChronikClient, ScriptUtxo, TokenInfo, Tx } from 'chronik-client';
 import { MockChronikClient } from '../../../modules/mock-chronik-client';
 import { jsonReplacer, getCoingeckoApiUrl } from '../src/utils';
 import unrevivedBlockMocks from '../test/mocks/block';
@@ -13,13 +13,14 @@ import { jsonReviver } from '../src/utils';
 import { handleBlockFinalized, StoredMock } from '../src/events';
 import { parseBlockTxs } from '../src/parse';
 import { sendBlockSummary } from '../src/telegram';
-import cashaddr from 'ecashaddrjs';
+import { getTypeAndHashFromOutputScript } from 'ecashaddrjs';
 import axios from 'axios';
 import MockAdapter from 'axios-mock-adapter';
 import { caching } from 'cache-manager';
 import { MockTelegramBot } from '../test/mocks/telegramBotMock';
 import secrets from '../secrets';
 import TelegramBot from 'node-telegram-bot-api';
+import mockStakers from '../test/mocks/stakers';
 
 const mockedChronik = new MockChronikClient();
 const chronik = new ChronikClient(config.chronik);
@@ -30,7 +31,7 @@ const { botId, channelId } = dev.telegram;
 const blockMocks = JSON.parse(JSON.stringify(unrevivedBlockMocks), jsonReviver);
 
 // Initialize telegram bot to send msgs to dev channel
-const telegramBotDev = new TelegramBot(botId, { polling: true });
+const telegramBotDev = new TelegramBot(botId);
 
 /**
  * generateMock
@@ -98,7 +99,7 @@ const txids = [
 
 async function generateMock(
     chronik: ChronikClient,
-    mockedChronik: typeof MockChronikClient,
+    mockedChronik: MockChronikClient,
     telegramBot: TelegramBot,
     mockedTelegramBot: MockTelegramBot,
     channelId: string,
@@ -162,36 +163,34 @@ async function generateMock(
     // Instead of saving all the chronik responses as mocks, which would be very large
     // Just set them as mocks based on tokenInfoMap, which contains the info we need
     tokenIds.forEach(tokenId => {
-        mockedChronik.setMock('token', {
-            input: tokenId,
-            output: {
-                genesisInfo: tokenInfoMap.has(tokenId)
-                    ? tokenInfoMap.get(tokenId)
-                    : {
-                          tokenTicker: 'STUB',
-                          tokenName: 'Placeholder Token Name',
-                          decimals: 0,
-                      },
-            },
-        });
+        mockedChronik.setToken(tokenId, {
+            genesisInfo: tokenInfoMap.has(tokenId)
+                ? tokenInfoMap.get(tokenId)
+                : {
+                      tokenTicker: 'STUB',
+                      tokenName: 'Placeholder Token Name',
+                      decimals: 0,
+                  },
+        } as TokenInfo);
     });
 
     outputScripts.forEach(outputScript => {
-        const { type, hash } =
-            cashaddr.getTypeAndHashFromOutputScript(outputScript);
-        mockedChronik.setScript(type, hash);
+        const { type, hash } = getTypeAndHashFromOutputScript(outputScript);
 
         const outputScriptInfo = outputScriptInfoMap.get(outputScript);
         if (typeof outputScriptInfo !== 'undefined') {
             const { utxos } = outputScriptInfo;
-            mockedChronik.setUtxos(type, hash, { outputScript, utxos });
+            mockedChronik.setUtxosByScript(
+                type as 'p2pkh' | 'p2sh',
+                hash,
+                utxos,
+            );
         } else {
             // If you don't have a mock for this particular outputScript in block.js,
             // mock it as an address with a single utxo for 100 XEC
-            mockedChronik.setUtxos(type, hash, {
-                outputScript,
-                utxos: [{ value: 10000 }],
-            });
+            mockedChronik.setUtxosByScript(type as 'p2pkh' | 'p2sh', hash, [
+                { sats: 10000n } as ScriptUtxo,
+            ]);
         }
     });
 
@@ -204,6 +203,11 @@ async function generateMock(
     // Mock a successful API request
     mock.onGet(getCoingeckoApiUrl(config)).reply(200, coingeckoResponse);
 
+    // Mock successful staker info request
+    mock.onGet(
+        `https://coin.dance/api/stakers/${secrets.prod.stakerApiKey}`,
+    ).reply(200, mockStakers);
+
     // Generate app mocks using this block
     // TODO need to mock all the calls here
     // so need to manually build outputscriptinfomap, tokeninfomap
@@ -213,7 +217,7 @@ async function generateMock(
         ttl: CACHE_TTL,
     });
     const returnedMocks = (await handleBlockFinalized(
-        mockedChronik,
+        mockedChronik as unknown as ChronikClient,
         mockedTelegramBot,
         channelId,
         MOCK_HASH,
@@ -237,7 +241,7 @@ async function generateMock(
     // We want this string to appear in the generated blocks.js file,
     // but not in this file, as we want this file to show up in phab diffs
 
-    const mocksWrite = `// Copyright (c) 2023 The Bitcoin developers\n// Distributed under the MIT software license, see the accompanying\n// file COPYING or http://www.opensource.org/licenses/mit-license.php.\n\n// eslint-disable-next-line @typescript-eslint/no-explicit-any\nconst mockedBlock: any =${JSON.stringify(
+    const mocksWrite = `// Copyright (c) 2023-2025 The Bitcoin developers\n// Distributed under the MIT software license, see the accompanying\n// file COPYING or http://www.opensource.org/licenses/mit-license.php.\n\n// eslint-disable-next-line @typescript-eslint/no-explicit-any\nconst mockedBlock: any =${JSON.stringify(
         returnedMocks,
         jsonReplacer,
         2,

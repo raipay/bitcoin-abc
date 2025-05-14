@@ -3,7 +3,13 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import React, { useState, useEffect } from 'react';
-import { Agora, AgoraOffer, AgoraOneshot } from 'ecash-agora';
+import {
+    Agora,
+    AgoraOffer,
+    AgoraOneshot,
+    getAgoraOneshotAcceptFuelInputs,
+    getAgoraCancelFuelInputs,
+} from 'ecash-agora';
 import wif from 'wif';
 import CashtabCache, { CashtabCachedTokenInfo } from 'config/CashtabCache';
 import CashtabSettings from 'config/CashtabSettings';
@@ -30,29 +36,20 @@ import {
     TitleAndIconAndCollapseArrow,
     ButtonRow,
 } from './styled';
-import { TokenSentLink } from 'components/Etokens/Token/styled';
 import Modal from 'components/Common/Modal';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Pagination, Navigation } from 'swiper/modules';
-import { getFormattedFiatPrice } from 'utils/formatting';
+import { getFormattedFiatPrice } from 'formatting';
 import TokenIcon from 'components/Etokens/TokenIcon';
 import PrimaryButton, { SecondaryButton } from 'components/Common/Buttons';
 import { toast } from 'react-toastify';
-import {
-    toHex,
-    Script,
-    fromHex,
-    P2PKHSignatory,
-    ALL_BIP143,
-    Ecc,
-} from 'ecash-lib';
+import { toHex, Script, fromHex, P2PKHSignatory, ALL_BIP143 } from 'ecash-lib';
 import {
     CashtabWallet,
     toXec,
     hasEnoughToken,
-    getAgoraOneshotAcceptFuelInputs,
-    getAgoraCancelFuelInputs,
     DUMMY_KEYPAIR,
+    CashtabUtxo,
 } from 'wallet';
 import { ignoreUnspendableUtxos } from 'transactions';
 import appConfig from 'config/app';
@@ -96,7 +93,6 @@ interface CollectionProps {
     // TODO Cashtab should calc pk on wallet creation
     activePk: Uint8Array;
     chaintipBlockheight: number;
-    ecc: Ecc;
     /**
      * Do not render token icon or name for the Collection.
      * Useful for rendering on page that already shows this info,
@@ -108,7 +104,7 @@ interface CollectionProps {
      * User must click the tile to load the individual listings
      * Better for rendering multiple collections on the same screen
      */
-    loadOnClick: boolean;
+    loadOnClick?: boolean;
 }
 
 export interface OneshotOffer extends AgoraOffer {
@@ -130,7 +126,6 @@ interface OneshotSwiperProps {
     userLocale: string;
     fiatPrice: null | number;
     chronik: ChronikClient;
-    ecc: Ecc;
     wallet: CashtabWallet;
     chaintipBlockheight: number;
     /**
@@ -151,7 +146,6 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
     fiatPrice,
     wallet,
     chronik,
-    ecc,
     chaintipBlockheight,
     setOffers,
 }) => {
@@ -203,7 +197,7 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
                 agoraOneshot,
                 eligibleUtxos,
                 satsPerKb,
-            );
+            ) as CashtabUtxo[];
         } catch (err) {
             console.error(
                 'Error determining fuel inputs for offer accept',
@@ -229,7 +223,7 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
                         outIdx: fuelUtxo.outpoint.outIdx,
                     },
                     signData: {
-                        value: fuelUtxo.value,
+                        sats: fuelUtxo.sats,
                         outputScript: recipientScript,
                     },
                 },
@@ -245,7 +239,6 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
         // Use an arbitrary sk, pk for the convenant
         const acceptTxSer = agoraOneshot
             .acceptTx({
-                ecc,
                 covenantSk: DUMMY_KEYPAIR.sk,
                 covenantPk: DUMMY_KEYPAIR.pk,
                 fuelInputs: signedFuelInputs,
@@ -262,19 +255,19 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
         try {
             resp = await chronik.broadcastTx(hex);
             toast(
-                <TokenSentLink
+                <a
                     href={`${explorer.blockExplorerUrl}/tx/${resp.txid}`}
                     target="_blank"
                     rel="noopener noreferrer"
                 >
                     {`Bought ${getNftName(agoraOneshot.token.tokenId)} for
                     ${getFormattedFiatPrice(
-                        settings,
+                        settings.fiatCurrency,
                         userLocale,
                         toXec(agoraOneshot.askedSats()),
                         fiatPrice,
                     )}`}
-                </TokenSentLink>,
+                </a>,
                 {
                     icon: (
                         <TokenIcon
@@ -322,7 +315,7 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
                 agoraOneshot,
                 eligibleUtxos,
                 satsPerKb,
-            );
+            ) as CashtabUtxo[];
         } catch (err) {
             console.error(
                 'Error determining fuel inputs for offer cancel',
@@ -353,7 +346,7 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
                         outIdx: fuelUtxo.outpoint.outIdx,
                     },
                     signData: {
-                        value: fuelUtxo.value,
+                        sats: fuelUtxo.sats,
                         outputScript: recipientScript,
                     },
                 },
@@ -370,7 +363,6 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
         // Build the cancel tx
         const cancelTxSer = agoraOneshot
             .cancelTx({
-                ecc,
                 // Cashtab default path
                 // This works here because we lookup cancelable offers by the same path
                 // Would need a different approach if Cashtab starts supporting HD wallets
@@ -392,13 +384,13 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
         try {
             resp = await chronik.broadcastTx(hex);
             toast(
-                <TokenSentLink
+                <a
                     href={`${explorer.blockExplorerUrl}/tx/${resp.txid}`}
                     target="_blank"
                     rel="noopener noreferrer"
                 >
                     Canceled listing
-                </TokenSentLink>,
+                </a>,
                 {
                     icon: (
                         <TokenIcon
@@ -445,10 +437,10 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
         }
         // We know this is a ONESHOT offer but type safety
         const isMaker = toHex(activePk) === toHex(params.cancelPk);
-        const priceSatoshis = params.enforcedOutputs[1].value;
+        const priceSatoshis = params.enforcedOutputs[1].sats;
         const priceXec = toXec(priceSatoshis);
         const formattedPrice = getFormattedFiatPrice(
-            settings,
+            settings.fiatCurrency,
             userLocale,
             priceXec,
             fiatPrice,
@@ -507,10 +499,10 @@ export const OneshotSwiper: React.FC<OneshotSwiperProps> = ({
                         toHex(activePk) ===
                         toHex(offer.variant.params.cancelPk);
                     const priceSatoshis =
-                        offer.variant.params.enforcedOutputs[1].value;
+                        offer.variant.params.enforcedOutputs[1].sats;
                     const priceXec = toXec(priceSatoshis);
                     const formattedPrice = getFormattedFiatPrice(
-                        settings,
+                        settings.fiatCurrency,
                         userLocale,
                         priceXec,
                         fiatPrice,
@@ -572,7 +564,6 @@ const Collection: React.FC<CollectionProps> = ({
     wallet,
     activePk,
     chaintipBlockheight,
-    ecc,
     noCollectionInfo = false,
     loadOnClick = false,
 }) => {
@@ -682,15 +673,12 @@ const Collection: React.FC<CollectionProps> = ({
     };
     return (
         <>
-            <CollectionWrapper>
+            <CollectionWrapper isCollapsed={!renderOffers}>
                 {!noCollectionInfo && (
                     <CollectionSummary isCollapsed={!renderOffers}>
                         <TitleAndIconAndCollapseArrow onClick={toggleOffers}>
-                            <CollectionIcon>
-                                <TokenIcon
-                                    tokenId={groupTokenId}
-                                    size={renderOffers ? 32 : 64}
-                                />
+                            <CollectionIcon isCollapsed={!renderOffers}>
+                                <TokenIcon tokenId={groupTokenId} size={256} />
                             </CollectionIcon>
                             <CollectionTitle>{collectionName}</CollectionTitle>
                             <ArrowWrapper isCollapsed={!renderOffers}>
@@ -725,7 +713,6 @@ const Collection: React.FC<CollectionProps> = ({
                                     activePk={activePk}
                                     chronik={chronik}
                                     chaintipBlockheight={chaintipBlockheight}
-                                    ecc={ecc}
                                     wallet={wallet}
                                     cashtabCache={cashtabCache}
                                     userLocale={userLocale}

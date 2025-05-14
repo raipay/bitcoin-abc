@@ -31,6 +31,9 @@ async-trait = "0.1"
 # HTTP webapps
 axum = { version = "0.7", features = ["ws"] }
 
+# Efficient byte strings
+bytes = "1.4"
+
 # Async toolkit
 futures = "0.3"
 
@@ -46,17 +49,36 @@ http-body-util = "0.1"
 # HTTP implementation
 hyper = "1.1"
 
+# Iterator utilities
+itertools = "0.13.0"
+
+# JSON RPC network library
+karyon_jsonrpc = { version = "0.2.2", default-features = false, features = [
+    "tokio",
+    "tcp",
+    "tls",
+] }
+
 # Protobuf en-/decoding
 prost = "0.11"
 
+# TLS library
+rustls = "0.23.19"
+
+# JSON en-/decoding
+serde_json = "1.0.133"
+
 # Derive error enums
-thiserror = "1.0"
+thiserror = "2.0.3"
 
 # Tower middleware and utilities for HTTP clients and servers 
 tower-http = { version = "0.5", features = ["cors"] }
 
 # Trait representing an asynchronous server. 
 tower-service = "0.3"
+
+# Semantic version string parser
+versions = "6.2"
 
 # Async runtime
 [dependencies.tokio]

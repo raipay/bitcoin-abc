@@ -5,10 +5,12 @@
 #ifndef BITCOIN_CHAINPARAMSBASE_H
 #define BITCOIN_CHAINPARAMSBASE_H
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
 class ArgsManager;
+enum class ChainType;
 
 /**
  * CBaseChainParams defines the base parameters
@@ -17,29 +19,29 @@ class ArgsManager;
  */
 class CBaseChainParams {
 public:
-    /** BIP70 chain name strings (main, test or regtest) */
-    static const std::string MAIN;
-    static const std::string TESTNET;
-    static const std::string REGTEST;
-
     const std::string &DataDir() const { return strDataDir; }
     uint16_t RPCPort() const { return m_rpc_port; }
     uint16_t OnionServiceTargetPort() const {
         return m_onion_service_target_port;
     }
     uint16_t ChronikPort() const { return m_chronik_port; }
+    uint16_t ChronikElectrumPort() const { return m_chronik_electrum_port; }
 
     CBaseChainParams() = delete;
     CBaseChainParams(const std::string &data_dir, uint16_t rpc_port,
-                     uint16_t onion_service_target_port, uint16_t chronik_port)
+                     uint16_t onion_service_target_port, uint16_t chronik_port,
+                     uint16_t chronik_electrum_port)
         : m_rpc_port(rpc_port),
           m_onion_service_target_port(onion_service_target_port),
-          m_chronik_port(chronik_port), strDataDir(data_dir) {}
+          m_chronik_port(chronik_port),
+          m_chronik_electrum_port(chronik_electrum_port), strDataDir(data_dir) {
+    }
 
 private:
     const uint16_t m_rpc_port;
     const uint16_t m_onion_service_target_port;
     const uint16_t m_chronik_port;
+    const uint16_t m_chronik_electrum_port;
     std::string strDataDir;
 };
 
@@ -48,8 +50,7 @@ private:
  * @returns a CBaseChainParams* of the chosen chain.
  * @throws a std::runtime_error if the chain is not supported.
  */
-std::unique_ptr<CBaseChainParams>
-CreateBaseChainParams(const std::string &chain);
+std::unique_ptr<CBaseChainParams> CreateBaseChainParams(const ChainType chain);
 
 /**
  * Set the arguments for chainparams.
@@ -62,7 +63,7 @@ void SetupChainParamsBaseOptions(ArgsManager &argsman);
  */
 const CBaseChainParams &BaseParams();
 
-/** Sets the params returned by Params() to those for the given network. */
-void SelectBaseParams(const std::string &chain);
+/** Sets the params returned by Params() to those for the given chain. */
+void SelectBaseParams(const ChainType chain);
 
 #endif // BITCOIN_CHAINPARAMSBASE_H

@@ -9,7 +9,7 @@ import ExternalLink from '/components/external-link';
 import { Container, GradientSpacer, WarningBox } from '/components/atoms';
 import staking from '/public/animations/staking.json';
 
-function Staking(props) {
+function Staking() {
     return (
         <Layout>
             <SubPageHero
@@ -124,6 +124,17 @@ function Staking(props) {
                         <ExternalLink href="https://proofofwriting.com/184/">
                             Everything you want to know about eCash staking
                             rewards
+                        </ExternalLink>
+                    </li>
+                    <li>
+                        <ExternalLink href="https://ecashstaking.com/">
+                            eCashStaking - Earn eCash staking rewards without
+                            running your own node
+                        </ExternalLink>
+                    </li>
+                    <li>
+                        <ExternalLink href="https://stakedxec.com/">
+                            stakedXec.com - tokenized staking with XECX
                         </ExternalLink>
                     </li>
                 </ul>

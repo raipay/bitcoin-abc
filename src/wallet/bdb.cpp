@@ -341,12 +341,6 @@ BerkeleyBatch::BerkeleyBatch(BerkeleyDatabase &database, const bool read_only,
     env = database.env.get();
     pdb = database.m_db.get();
     strFile = database.strFile;
-    if (!Exists(std::string("version"))) {
-        bool fTmp = fReadOnly;
-        fReadOnly = false;
-        Write(std::string("version"), CLIENT_VERSION);
-        fReadOnly = fTmp;
-    }
 }
 
 void BerkeleyDatabase::Open() {
@@ -475,7 +469,8 @@ void BerkeleyEnvironment::ReloadDbEnv() {
     });
 
     std::vector<std::string> filenames;
-    for (auto it : m_databases) {
+    filenames.reserve(m_databases.size());
+    for (const auto &it : m_databases) {
         filenames.push_back(it.first);
     }
     // Close the individual Db's

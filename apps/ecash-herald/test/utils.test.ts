@@ -19,6 +19,7 @@ import {
     getEmojiFromBalanceSats,
     bigNumberAmountToLocaleString,
     containsOnlyPrintableAscii,
+    toXec,
 } from '../src/utils';
 import templates from './mocks/templates';
 const { addressPreviews, mockCoingeckoPrices } = templates;
@@ -198,16 +199,13 @@ describe('ecash-telegram-bot utils.js functions', function () {
     it('formatXecAmount returns a string with no decimal places if XEC amount is 1 trillion', function () {
         assert.strictEqual(formatXecAmount(1000000000000), `1T XEC`);
     });
-    it('formatXecAmount returns a rounded thousands string with no decimal places if 1000 < XEC amount < 1 million', function () {
-        assert.strictEqual(formatXecAmount(555555.55), `556k XEC`);
-    });
     it('formatXecAmount returns a rounded millions string with no decimal places if 1M < XEC amount < 1B', function () {
         assert.strictEqual(formatXecAmount(555555555.55), `556M XEC`);
     });
     it('formatXecAmount returns a rounded billions string with no decimal places if 1B < XEC amount < 1T', function () {
         assert.strictEqual(formatXecAmount(555555555555.55), `556B XEC`);
     });
-    it('formatXecAmount returns a rounded trillions string with no decimal places if XEC amount > 1T', function () {
+    it('formatXecAmount returns a rounded trillions string with no decimal places if XEC amount > 50T', function () {
         assert.strictEqual(formatXecAmount(55555555555555.55), `56T XEC`);
     });
     it('formatXecAmount returns a rounded trillions string with no decimal places if XEC amount > 1T', function () {
@@ -218,92 +216,79 @@ describe('ecash-telegram-bot utils.js functions', function () {
     });
     it('satsToFormattedValue returns a 6-decimal formatted fiat amount if total fiat value is less than $0.00001', function () {
         assert.strictEqual(
-            satsToFormattedValue(10, mockCoingeckoPrices),
+            satsToFormattedValue(10, mockCoingeckoPrices[0].price),
             `$0.000003`,
         );
     });
     it('satsToFormattedValue returns a 5-decimal formatted fiat amount if total fiat value is less than $0.0001', function () {
         assert.strictEqual(
-            satsToFormattedValue(100, mockCoingeckoPrices),
+            satsToFormattedValue(100, mockCoingeckoPrices[0].price),
             `$0.00003`,
         );
     });
     it('satsToFormattedValue returns a 4-decimal formatted fiat amount if total fiat value is less than $0.001', function () {
         assert.strictEqual(
-            satsToFormattedValue(1000, mockCoingeckoPrices),
+            satsToFormattedValue(1000, mockCoingeckoPrices[0].price),
             `$0.0003`,
         );
     });
     it('satsToFormattedValue returns a 3-decimal formatted fiat amount if total fiat value is less than $0.01', function () {
         assert.strictEqual(
-            satsToFormattedValue(10000, mockCoingeckoPrices),
+            satsToFormattedValue(10000, mockCoingeckoPrices[0].price),
             `$0.003`,
         );
     });
     it('satsToFormattedValue returns a 2-decimal formatted fiat amount if total fiat value is less than $1', function () {
         assert.strictEqual(
-            satsToFormattedValue(1000000, mockCoingeckoPrices),
+            satsToFormattedValue(1000000, mockCoingeckoPrices[0].price),
             `$0.30`,
         );
     });
     it('satsToFormattedValue returns a formatted fiat amount if total fiat value is less than $10', function () {
         assert.strictEqual(
-            satsToFormattedValue(10000000, mockCoingeckoPrices),
+            satsToFormattedValue(10000000, mockCoingeckoPrices[0].price),
             '$3',
         );
     });
     it('satsToFormattedValue returns a formatted fiat amount if $100 < total fiat value < $1k', function () {
         assert.strictEqual(
-            satsToFormattedValue(1234567890, mockCoingeckoPrices),
+            satsToFormattedValue(1234567890, mockCoingeckoPrices[0].price),
             '$370',
         );
     });
     it('satsToFormattedValue returns a formatted fiat amount if $1k < total fiat value < $1M', function () {
         assert.strictEqual(
-            satsToFormattedValue(55555555555, mockCoingeckoPrices),
-            '$17k',
+            satsToFormattedValue(55555555555, mockCoingeckoPrices[0].price),
+            '$16.67k',
         );
     });
     it('satsToFormattedValue returns a formatted fiat amount of $1M if $1M < total fiat value < $1B', function () {
         assert.strictEqual(
-            satsToFormattedValue(3367973856209, mockCoingeckoPrices),
-            '$1M',
+            satsToFormattedValue(3367973856209, mockCoingeckoPrices[0].price),
+            '$1.01M',
         );
     });
     it('satsToFormattedValue returns a formatted fiat amount if $1M < total fiat value < $1B', function () {
         assert.strictEqual(
-            satsToFormattedValue(55555555555555, mockCoingeckoPrices),
-            '$17M',
+            satsToFormattedValue(55555555555555, mockCoingeckoPrices[0].price),
+            '$16.67M',
         );
     });
     it('satsToFormattedValue returns a formatted fiat amount if  total fiat value > $1B', function () {
         assert.strictEqual(
-            satsToFormattedValue(21000000000000000, mockCoingeckoPrices),
-            '$6B',
+            satsToFormattedValue(
+                21000000000000000,
+                mockCoingeckoPrices[0].price,
+            ),
+            '$6.3B',
         );
     });
-    it('satsToFormattedValue returns a formatted fiat amount if £1M < total fiat value < £1B', function () {
-        const gbpPrices = [
-            {
-                fiat: 'gbp' as FiatCode,
-                price: 0.00003,
-                ticker: 'XEC',
-            },
-        ];
-        assert.strictEqual(
-            satsToFormattedValue(55555555555555, gbpPrices),
-            '£17M',
-        );
-    });
-    it('satsToFormattedValue returns a formatted XEC amount if coingeckoPrices is false', function () {
-        assert.strictEqual(
-            satsToFormattedValue(55555555555555, false),
-            '556B XEC',
-        );
+    it('satsToFormattedValue returns a formatted XEC amount if we have no fiat price for xec', function () {
+        assert.strictEqual(satsToFormattedValue(55555555555555), '556B XEC');
     });
     it('satsToFormattedValue returns a USD amount with 7 decimal places if fiat qty is less than 0.000001', function () {
         assert.strictEqual(
-            satsToFormattedValue(1, mockCoingeckoPrices),
+            satsToFormattedValue(1, mockCoingeckoPrices[0].price),
             '$0.0000003',
         );
     });
@@ -336,6 +321,17 @@ describe('ecash-telegram-bot utils.js functions', function () {
 
         assert.deepEqual(bigNumberMap, roundTrip);
     });
+    it('jsonReplacer and jsonReviver can encode and decode Map containing a bigint', function () {
+        const bigintMap = new Map([
+            ['76a9144c1efd024f560e4e1aaf4b62416cd1e82fbed24f88ac', 36n],
+            ['76a9144c1efd024f560e4e1aaf4b62416cd1e82fbed24f88ac', 72n],
+        ]);
+
+        const jsonText = JSON.stringify(bigintMap, jsonReplacer);
+        const roundTrip = JSON.parse(jsonText, jsonReviver);
+
+        assert.deepEqual(bigintMap, roundTrip);
+    });
     it('jsonReplacer and jsonReviver can encode and decode a Set to and from JSON', function () {
         const set = new Set(['one', 'two', 'three']);
 
@@ -343,6 +339,14 @@ describe('ecash-telegram-bot utils.js functions', function () {
         const roundTrip = JSON.parse(jsonText, jsonReviver);
 
         assert.deepEqual(set, roundTrip);
+    });
+    it('jsonReplacer and jsonReviver can encode and decode a bigint to and from JSON', function () {
+        const test = 17n;
+
+        const jsonText = JSON.stringify(test, jsonReplacer);
+        const roundTrip = JSON.parse(jsonText, jsonReviver);
+
+        assert.deepEqual(test, roundTrip);
     });
     it('jsonReplacer and jsonReviver can encode and decode an object including a Set and a Map to and from JSON', async function () {
         const map = new Map([
@@ -438,5 +442,10 @@ describe('ecash-telegram-bot utils.js functions', function () {
         const hexString = '7f663ddd99990bcd969994ec2288a2a86dc532e1a8';
 
         assert.strictEqual(containsOnlyPrintableAscii(hexString), false);
+    });
+    it('We can convert bigint sats to exact qty XEC', function () {
+        assert.equal(toXec(0n), 0);
+        assert.equal(toXec(2100000000000000n), 21000000000000);
+        assert.equal(toXec(1n), 0.01);
     });
 });

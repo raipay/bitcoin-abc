@@ -6,14 +6,17 @@
 #define BITCOIN_NODE_BLOCKSTORAGE_H
 
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
+#include <attributes.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <kernel/blockmanager_opts.h>
+#include <kernel/chain.h>
 #include <kernel/cs_main.h>
-#include <protocol.h> // For CMessageHeader::MessageStartChars
+#include <protocol.h>
 #include <sync.h>
 #include <txdb.h>
 #include <util/fs.h>
@@ -23,7 +26,6 @@ class CBlock;
 class CBlockFileInfo;
 class CBlockHeader;
 class CBlockUndo;
-class CChain;
 class CChainParams;
 class CTxUndo;
 class Chainstate;
@@ -64,6 +66,34 @@ struct PruneLockInfo {
     int height_first{std::numeric_limits<int>::max()};
 };
 
+enum BlockfileType {
+    // Values used as array indexes - do not change carelessly.
+    NORMAL = 0,
+    ASSUMED = 1,
+    NUM_TYPES = 2,
+};
+
+std::ostream &operator<<(std::ostream &os, const BlockfileType &type);
+
+struct BlockfileCursor {
+    // The latest blockfile number.
+    int file_num{0};
+
+    // Track the height of the highest block in file_num whose undo
+    // data has been written. Block data is written to block files in download
+    // order, but is written to undo files in validation order, which is
+    // usually in order by height. To avoid wasting disk space, undo files will
+    // be trimmed whenever the corresponding block file is finalized and
+    // the height of the highest block written to the block file equals the
+    // height of the highest block written to the undo file. This is a
+    // heuristic and can sometimes preemptively trim undo files that will write
+    // more data later, and sometimes fail to trim undo files that can't have
+    // more data written later.
+    int undo_height{0};
+};
+
+std::ostream &operator<<(std::ostream &os, const BlockfileCursor &cursor);
+
 /**
  * Maintains a tree of blocks (stored in `m_block_index`) which is consulted
  * to determine where the most-work tip is.
@@ -85,12 +115,20 @@ private:
      * per index entry (nStatus, nChainWork, nTimeMax, etc.) as well as
      * peripheral collections like m_dirty_blockindex.
      */
-    bool LoadBlockIndex() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
-    void FlushBlockFile(bool fFinalize = false, bool finalize_undo = false);
-    void FlushUndoFile(int block_file, bool finalize = false);
-    bool FindBlockPos(FlatFilePos &pos, unsigned int nAddSize,
-                      unsigned int nHeight, CChain &active_chain,
-                      uint64_t nTime, bool fKnown);
+    bool LoadBlockIndex(const std::optional<BlockHash> &snapshot_blockhash)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+    /** Return false if block file or undo file flushing fails. */
+    [[nodiscard]] bool FlushBlockFile(int blockfile_num, bool fFinalize,
+                                      bool finalize_undo);
+
+    /** Return false if undo file flushing fails. */
+    [[nodiscard]] bool FlushUndoFile(int block_file, bool finalize = false);
+
+    [[nodiscard]] bool FindBlockPos(FlatFilePos &pos, unsigned int nAddSize,
+                                    unsigned int nHeight, uint64_t nTime,
+                                    bool fKnown);
+    [[nodiscard]] bool FlushChainstateBlockFile(int tip_height);
     bool FindUndoPos(BlockValidationState &state, int nFile, FlatFilePos &pos,
                      unsigned int nAddSize);
 
@@ -114,7 +152,8 @@ private:
      * by user with RPC command pruneblockchain
      */
     void FindFilesToPruneManual(std::set<int> &setFilesToPrune,
-                                int nManualPruneHeight, int chain_tip_height);
+                                int nManualPruneHeight, const Chainstate &chain,
+                                ChainstateManager &chainman);
 
     /**
      * Prune block and undo files (blk???.dat and undo???.dat) so that the disk
@@ -136,14 +175,40 @@ private:
      *
      * @param[out]   setFilesToPrune   The set of file indices that can be
      *                                 unlinked will be returned
+     * @param        last_prune        The last height we're able to prune,
+     *                                 according to the prune locks
      */
-    void FindFilesToPrune(std::set<int> &setFilesToPrune,
-                          uint64_t nPruneAfterHeight, int chain_tip_height,
-                          int prune_height, bool is_ibd);
+    void FindFilesToPrune(std::set<int> &setFilesToPrune, int last_prune,
+                          const Chainstate &chain, ChainstateManager &chainman);
 
     RecursiveMutex cs_LastBlockFile;
     std::vector<CBlockFileInfo> m_blockfile_info;
-    int m_last_blockfile = 0;
+
+    //! Since assumedvalid chainstates may be syncing a range of the chain that
+    //! is very far away from the normal/background validation process, we
+    //! should segment blockfiles for assumed chainstates. Otherwise, we might
+    //! have wildly different height ranges mixed into the same block files,
+    //! which would impair our ability to prune effectively.
+    //!
+    //! This data structure maintains separate blockfile number cursors for each
+    //! BlockfileType. The ASSUMED state is initialized, when necessary, in
+    //! FindBlockPos().
+    //!
+    //! The first element is the NORMAL cursor, second is ASSUMED.
+    std::array<std::optional<BlockfileCursor>, BlockfileType::NUM_TYPES>
+        m_blockfile_cursors GUARDED_BY(cs_LastBlockFile) = {{
+            BlockfileCursor{},
+            std::nullopt,
+        }};
+    int MaxBlockfileNum() const EXCLUSIVE_LOCKS_REQUIRED(cs_LastBlockFile) {
+        static const BlockfileCursor empty_cursor;
+        const auto &normal =
+            m_blockfile_cursors[BlockfileType::NORMAL].value_or(empty_cursor);
+        const auto &assumed =
+            m_blockfile_cursors[BlockfileType::ASSUMED].value_or(empty_cursor);
+        return std::max(normal.file_num, assumed.file_num);
+    }
+
     /**
      * Global flag to indicate we should check to see if there are
      * block/undo files that should be deleted.  Set on startup
@@ -169,6 +234,8 @@ private:
     std::unordered_map<std::string, PruneLockInfo>
         m_prune_locks GUARDED_BY(::cs_main);
 
+    BlockfileType BlockfileTypeForHeight(int height);
+
     const kernel::BlockManagerOpts m_opts;
 
 public:
@@ -180,6 +247,20 @@ public:
     std::atomic<bool> m_importing{false};
 
     BlockMap m_block_index GUARDED_BY(cs_main);
+
+    /**
+     * The height of the base block of an assumeutxo snapshot, if one is in use.
+     *
+     * This controls how blockfiles are segmented by chainstate type to avoid
+     * comingling different height regions of the chain when an assumedvalid
+     * chainstate is in use. If heights are drastically different in the same
+     * blockfile, pruning suffers.
+     *
+     * This is set during ActivateSnapshot() or upon LoadBlockIndex() if a
+     * snapshot had been previously loaded. After the snapshot is validated,
+     * this is unset to restore normal LoadBlockIndex behavior.
+     */
+    std::optional<int> m_snapshot_height;
 
     std::vector<CBlockIndex *> GetAllBlockIndices()
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
@@ -194,7 +275,8 @@ public:
     std::unique_ptr<CBlockTreeDB> m_block_tree_db GUARDED_BY(::cs_main);
 
     bool WriteBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
-    bool LoadBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+    bool LoadBlockIndexDB(const std::optional<BlockHash> &snapshot_blockhash)
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
     /**
      * Remove any pruned block & undo files that are still on disk.
@@ -231,7 +313,7 @@ public:
      * position of the block within a block file on disk.
      */
     FlatFilePos SaveBlockToDisk(const CBlock &block, int nHeight,
-                                CChain &active_chain, const FlatFilePos *dbp);
+                                const FlatFilePos *dbp);
 
     /** Whether running in -prune mode. */
     [[nodiscard]] bool IsPruneMode() const { return m_prune_mode; }
@@ -258,8 +340,41 @@ public:
     const CBlockIndex *GetLastCheckpoint(const CCheckpointData &data)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
-    //! Find the first block that is not pruned
-    const CBlockIndex *GetFirstStoredBlock(const CBlockIndex &start_block)
+    //! Check if all blocks in the [upper_block, lower_block] range have data
+    //! available. The caller is responsible for ensuring that lower_block is an
+    //! ancestor of upper_block (part of the same chain).
+    bool
+    CheckBlockDataAvailability(const CBlockIndex &upper_block LIFETIMEBOUND,
+                               const CBlockIndex &lower_block LIFETIMEBOUND)
+        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
+    /**
+     * @brief Returns the earliest block satisfying `status_test`
+     * (`status_test(block.nStatus) == true`) after the latest block _not_
+     * satisfying it.
+     *
+     * This function starts from `upper_block`, which must satisfy the test,
+     * and iterates backwards through its ancestors. It
+     * continues as long as each block satisfies the test, until
+     * reaching the oldest ancestor or `lower_block`.
+     *
+     * @pre `upper_block` must have all `status_mask` flags set.
+     * @pre `lower_block` must be null or an ancestor of `upper_block`
+     *
+     * @param upper_block The starting block for the search, which must have all
+     *                    `status_mask` flags set.
+     * @param status_test Function that takes a BlockStatus and returns a bool.
+     * @param lower_block The earliest possible block to return. If null, the
+     *                    search can extend to the genesis block.
+     *
+     * @return A non-null pointer to the earliest block between `upper_block`
+     *         and `lower_block`, inclusive, such that every block between the
+     *         returned block and `upper_block` satisfies the test.
+     */
+    const CBlockIndex *
+    GetFirstBlock(const CBlockIndex &upper_block LIFETIMEBOUND,
+                  std::function<bool(BlockStatus)> status_test,
+                  const CBlockIndex *lower_block = nullptr) const
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
     /** True if any block files have ever been pruned. */
@@ -299,10 +414,9 @@ public:
     void CleanupBlockRevFiles() const;
 };
 
-void ThreadImport(ChainstateManager &chainman,
+void ImportBlocks(ChainstateManager &chainman,
                   avalanche::Processor *const avalanche,
-                  std::vector<fs::path> vImportFiles,
-                  const fs::path &mempool_path);
+                  std::vector<fs::path> vImportFiles);
 } // namespace node
 
 #endif // BITCOIN_NODE_BLOCKSTORAGE_H

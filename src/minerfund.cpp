@@ -31,7 +31,7 @@ Amount GetMinerFundAmount(const Consensus::Params &params,
 static CTxDestination BuildDestination(const std::string &dest) {
     const ArgsManager unused_argsman{};
     const auto mainNetParams =
-        CreateChainParams(unused_argsman, CBaseChainParams::MAIN);
+        CreateChainParams(unused_argsman, ChainType::MAIN);
     return DecodeDestination(dest, *mainNetParams);
 }
 
@@ -77,8 +77,7 @@ bool CheckMinerFund(const Consensus::Params &params,
             continue;
         }
 
-        if (std::find(whitelist.begin(), whitelist.end(), address) !=
-            whitelist.end()) {
+        if (whitelist.find(address) != whitelist.end()) {
             return true;
         }
     }

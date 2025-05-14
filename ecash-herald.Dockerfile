@@ -12,7 +12,7 @@ FROM rust:1.76.0 AS wasmbuilder
 RUN apt-get update \
   && apt-get install clang binaryen -y \
   && rustup target add wasm32-unknown-unknown \
-  && cargo install -f wasm-bindgen-cli@0.2.92
+  && cargo install -f --locked wasm-bindgen-cli@0.2.92
 
 # Copy Cargo.toml
 WORKDIR /app/
@@ -22,6 +22,14 @@ COPY Cargo.toml .
 # This needs to be in place to run ./build-wasm
 WORKDIR /app/chronik/
 COPY chronik/ .
+
+# explorer must be in place to to run ./build-wasm as it is a workspace member
+WORKDIR /app/web/explorer
+COPY web/explorer/ .
+
+# bitcoinsuite-chronik-client must be in place to to run ./build-wasm as it is a workspace member
+WORKDIR /app/modules/bitcoinsuite-chronik-client
+COPY modules/bitcoinsuite-chronik-client/ .
 
 # Copy secp256k1 to same directory structure as monorepo
 WORKDIR /app/src/secp256k1
@@ -44,9 +52,9 @@ RUN CC=clang ./build-wasm.sh
 
 FROM node:20-bookworm-slim
 
-# Copy static assets from WasmBuilder stage (ecash-lib-wasm and ecash-lib, with wasm built in place)
+# Copy static assets from wasmbuilder stage (ecash-lib-wasm and ecash-lib, with wasm built in place)
 WORKDIR /app/modules
-COPY --from=WasmBuilder /app/modules .
+COPY --from=wasmbuilder /app/modules .
 
 # Build all local ecash-herald dependencies
 
@@ -67,6 +75,11 @@ WORKDIR /app/modules/ecash-script
 COPY modules/ecash-script/ .
 RUN npm ci
 
+# b58-ts (required for ecash-lib)
+WORKDIR /app/modules/b58-ts
+COPY modules/b58-ts .
+RUN npm ci
+
 # ecash-lib
 WORKDIR /app/modules/ecash-lib
 RUN npm ci
@@ -82,6 +95,7 @@ RUN npm run build
 WORKDIR /app/modules/mock-chronik-client
 COPY modules/mock-chronik-client/ .
 RUN npm ci
+RUN npm run build
 
 # Now that local dependencies are ready, build ecash-herald
 WORKDIR /app/apps/ecash-herald

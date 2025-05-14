@@ -3,10 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import { walletWithXecAndTokens } from 'components/App/fixtures/mocks';
-import {
-    agoraOfferCachetAlphaOne,
-    heismanNftOneOffer,
-} from 'components/Agora/fixtures/mocks';
+import { fromHex } from 'ecash-lib';
 
 export const UNSAFE_INTEGER_STRING = '10000000000000000';
 export default {
@@ -15,18 +12,18 @@ export default {
             {
                 description: 'Kind of a normal balance calculation',
                 nonSlpUtxos: [
-                    { value: 546 },
-                    { value: 150000000 },
-                    { value: 62500000 },
+                    { sats: 546n },
+                    { sats: 150000000n },
+                    { sats: 62500000n },
                 ],
                 balanceSats: 212500546,
             },
             {
                 description: 'Wallet balance of total XEC supply',
                 nonSlpUtxos: [
-                    { value: 700000000000000 },
-                    { value: 700000000000000 },
-                    { value: 700000000000000 },
+                    { sats: 700000000000000n },
+                    { sats: 700000000000000n },
+                    { sats: 700000000000000n },
                 ],
                 balanceSats: 2100000000000000,
             },
@@ -211,6 +208,12 @@ export default {
                                     'ecash:qqa9lv3kjd8vq7952p7rq0f6lkpqvlu0cydvxtd70g',
                                 hash: '3a5fb236934ec078b4507c303d3afd82067f8fc1',
                                 wif: 'KywWPgaLDwvW1tWUtUvs13jgqaaWMoNANLVYoKcK9Ddbpnch7Cmw',
+                                sk: fromHex(
+                                    '512d34d3b8f4d269219fd087c80e22b0212769227226dd6b23966cf0aa2f167f',
+                                ),
+                                pk: fromHex(
+                                    '031d4603bdc23aca9432f903e3cf5975a3f655cc3fa5057c61d00dfc1ca5dfd02d',
+                                ),
                             },
                         ],
                     ]),
@@ -617,164 +620,6 @@ export default {
             },
         ],
     },
-    getAgoraPartialAcceptFuelInputs: {
-        expectedReturns: [
-            {
-                description:
-                    'We can get a single fuel input to accept the offer, if the wallet has one exactly covering the price + fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                // acceptFeeSats 1182n
-                // askedSats 5460736n
-                // requiredSats 5461918n
-                utxos: [{ value: 5461918 }],
-                acceptedTokens: 546n,
-                feePerKb: 1000,
-                returned: [{ value: 5461918 }],
-            },
-            {
-                description:
-                    'We can get a single fuel input to accept the offer, if the wallet has one exactly covering the price + fee, at a higher than min fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                // acceptFeeSats 2376n
-                // askedSats 5460736n
-                // requiredSats 5463112
-                utxos: [{ value: 5463112 }],
-                acceptedTokens: 546n,
-                feePerKb: 2010,
-                returned: [{ value: 5463112 }],
-            },
-            {
-                description: 'Two inputs exactly covering the price + fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                // acceptFeeSats 1323n
-                // askedSats 5460736n
-                // requiredSats 5462059n
-                utxos: [{ value: 5461917 }, { value: 142 }],
-                acceptedTokens: 546n,
-                feePerKb: 1000,
-                returned: [{ value: 5461917 }, { value: 142 }],
-            },
-            {
-                description: 'Three inputs exactly covering the price + fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                // acceptFeeSats 1464n
-                // askedSats 5460736n
-                // requiredSats 5462059n
-                utxos: [{ value: 5461917 }, { value: 141 }, { value: 142 }],
-                acceptedTokens: 546n,
-                feePerKb: 1000,
-                returned: [{ value: 5461917 }, { value: 141 }, { value: 142 }],
-            },
-        ],
-        expectedErrors: [
-            {
-                description:
-                    'We throw an error if available utxos can only cover 1 satoshi less than price + fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                utxos: [{ value: 5461917 }],
-                acceptedTokens: 546n,
-                feePerKb: 1000,
-                error: 'Insufficient utxos to accept this offer',
-            },
-        ],
-    },
-    getAgoraCancelFuelInputs: {
-        expectedReturns: [
-            {
-                description:
-                    'We can get a single fuel input to cancel the offer, if the wallet has one exactly covering the fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                // cancelFeeSats 719n
-                utxos: [{ value: 719 }],
-                feePerKb: 1000,
-                returned: [{ value: 719 }],
-            },
-            {
-                description:
-                    'We can get a single fuel input to cancel the offer, if the wallet has one exactly covering the fee, at a higher than min fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                // cancelFeeSats 1446
-                utxos: [{ value: 1446 }],
-                feePerKb: 2010,
-                returned: [{ value: 1446 }],
-            },
-            {
-                description: 'Two inputs exactly covering the fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                // cancelFeeSats 860n
-                utxos: [{ value: 718 }, { value: 142 }],
-                feePerKb: 1000,
-                returned: [{ value: 718 }, { value: 142 }],
-            },
-            {
-                description: 'Three inputs exactly covering the fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                // cancelFeeSats 1001n
-                utxos: [{ value: 718 }, { value: 141 }, { value: 142 }],
-                feePerKb: 1000,
-                returned: [{ value: 718 }, { value: 141 }, { value: 142 }],
-            },
-            // ONESHOT cases
-            {
-                description:
-                    'ONESHOT: We can get a single fuel input to cancel the offer, if the wallet has one exactly covering the price + fee',
-                agoraOffer: heismanNftOneOffer,
-                // cancelFeeSats 535
-                utxos: [{ value: 535 }],
-                feePerKb: 1000,
-                returned: [{ value: 535 }],
-            },
-            {
-                description:
-                    'ONESHOT: We can get a single fuel input to cancel the offer, if the wallet has one exactly covering the price + fee, at a higher than min fee',
-                agoraOffer: heismanNftOneOffer,
-                // cancelFeeSats 1076
-                utxos: [{ value: 1076 }],
-                feePerKb: 2010,
-                returned: [{ value: 1076 }],
-            },
-            {
-                description:
-                    'ONESHOT: Two inputs exactly covering the price + fee',
-                agoraOffer: heismanNftOneOffer,
-                // cancelFeeSats 676
-                utxos: [{ value: 534 }, { value: 142 }],
-                feePerKb: 1000,
-                returned: [{ value: 534 }, { value: 142 }],
-            },
-            {
-                description:
-                    'ONESHOT: Three inputs exactly covering the price + fee',
-                agoraOffer: heismanNftOneOffer,
-                // cancelFeeSats 817
-                utxos: [{ value: 534 }, { value: 141 }, { value: 142 }],
-                feePerKb: 1000,
-                returned: [{ value: 534 }, { value: 141 }, { value: 142 }],
-            },
-        ],
-        expectedErrors: [
-            {
-                description:
-                    'We throw an error if available utxos can only cover 1 satoshi less than fee',
-                agoraOffer: agoraOfferCachetAlphaOne,
-                utxos: [{ value: 718 }],
-                feePerKb: 1000,
-                error: 'Insufficient utxos to cancel this offer',
-            },
-            {
-                description:
-                    'ONESHOT: We throw an error if available utxos can only cover 1 satoshi less than fee',
-                agoraOffer: heismanNftOneOffer,
-                utxos: [
-                    {
-                        value: 534,
-                    },
-                ],
-                feePerKb: 1000,
-                error: 'Insufficient utxos to cancel this offer',
-            },
-        ],
-    },
     toBigInt: {
         expectedReturns: [
             {
@@ -799,126 +644,6 @@ export default {
                 description: 'JS natively rejects stringified non-integers',
                 str: '1.40',
                 error: 'Cannot convert 1.40 to a BigInt',
-            },
-        ],
-    },
-    getAgoraOneshotAcceptFuelInputs: {
-        expectedReturns: [
-            {
-                description:
-                    'We can get a single fuel input to accept the offer, if the wallet has one exactly covering the price + fee',
-                oneshotOffer: heismanNftOneOffer,
-                // acceptFeeSats 740n
-                // askedSats 5000000000n
-                // requiredSats 5000000740n
-                utxos: [{ value: 5000000740 }],
-                feePerKb: 1000,
-                returned: [{ value: 5000000740 }],
-            },
-            {
-                description:
-                    'We can get a single fuel input to accept the offer, if the wallet has one exactly covering the price + fee, at a higher than min fee',
-                oneshotOffer: heismanNftOneOffer,
-                // acceptFeeSats 1488n
-                // askedSats 5000000000n
-                // requiredSats 5000001488n
-                utxos: [{ value: 5000001488 }],
-                feePerKb: 2010,
-                returned: [{ value: 5000001488 }],
-            },
-            {
-                description: 'Two inputs exactly covering the price + fee',
-                oneshotOffer: heismanNftOneOffer,
-                // acceptFeeSats 740n
-                // askedSats 5000000000n
-                // requiredSats 5000000740n
-                utxos: [{ value: 5000000739 }, { value: 142 }],
-                feePerKb: 1000,
-                returned: [{ value: 5000000739 }, { value: 142 }],
-            },
-            {
-                description: 'Three inputs exactly covering the price + fee',
-                oneshotOffer: heismanNftOneOffer,
-                // acceptFeeSats 881n
-                // askedSats 5000000000n
-                // requiredSats 5000000881n
-                utxos: [{ value: 5000000739 }, { value: 141 }, { value: 142 }],
-                feePerKb: 1000,
-                returned: [
-                    { value: 5000000739 },
-                    { value: 141 },
-                    { value: 142 },
-                ],
-            },
-        ],
-        expectedErrors: [
-            {
-                description:
-                    'We throw an error if available utxos can only cover 1 satoshi less than price + fee',
-                oneshotOffer: heismanNftOneOffer,
-                utxos: [{ value: 5000000739 }],
-                feePerKb: 1000,
-                error: 'Insufficient utxos to accept this offer',
-            },
-        ],
-    },
-    getAgoraOneshotCancelFuelInputs: {
-        expectedReturns: [
-            {
-                description:
-                    'We can get a single fuel input to accept the offer, if the wallet has one exactly covering the price + fee',
-                oneshotOffer: heismanNftOneOffer,
-                // acceptFeeSats 740n
-                // askedSats 5000000000n
-                // requiredSats 5000000740n
-                utxos: [{ value: 5000000740 }],
-                feePerKb: 1000,
-                returned: [{ value: 5000000740 }],
-            },
-            {
-                description:
-                    'We can get a single fuel input to accept the offer, if the wallet has one exactly covering the price + fee, at a higher than min fee',
-                oneshotOffer: heismanNftOneOffer,
-                // acceptFeeSats 1488n
-                // askedSats 5000000000n
-                // requiredSats 5000001488n
-                utxos: [{ value: 5000001488 }],
-                feePerKb: 2010,
-                returned: [{ value: 5000001488 }],
-            },
-            {
-                description: 'Two inputs exactly covering the price + fee',
-                oneshotOffer: heismanNftOneOffer,
-                // acceptFeeSats 740n
-                // askedSats 5000000000n
-                // requiredSats 5000000740n
-                utxos: [{ value: 5000000739 }, { value: 142 }],
-                feePerKb: 1000,
-                returned: [{ value: 5000000739 }, { value: 142 }],
-            },
-            {
-                description: 'Three inputs exactly covering the price + fee',
-                oneshotOffer: heismanNftOneOffer,
-                // acceptFeeSats 881n
-                // askedSats 5000000000n
-                // requiredSats 5000000881n
-                utxos: [{ value: 5000000739 }, { value: 141 }, { value: 142 }],
-                feePerKb: 1000,
-                returned: [
-                    { value: 5000000739 },
-                    { value: 141 },
-                    { value: 142 },
-                ],
-            },
-        ],
-        expectedErrors: [
-            {
-                description:
-                    'We throw an error if available utxos can only cover 1 satoshi less than price + fee',
-                oneshotOffer: heismanNftOneOffer,
-                utxos: [{ value: 5000000739 }],
-                feePerKb: 1000,
-                error: 'Insufficient utxos to accept this offer',
             },
         ],
     },

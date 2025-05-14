@@ -10,13 +10,16 @@ import {
     walletWithXecAndTokens,
     walletWithXecAndTokens_pre_2_1_0,
     walletWithXecAndTokens_pre_2_9_0,
+    walletWithXecAndTokens_pre_2_55_0,
     freshWalletWithOneIncomingCashtabMsg,
     requiredUtxoThisToken,
     easterEggTokenChronikTokenDetails,
     validSavedWallets_pre_2_1_0,
     validSavedWallets_pre_2_9_0,
+    validSavedWallets_pre_2_55_0,
     validSavedWallets,
     mockCacheWalletWithXecAndTokens,
+    legacyJsonWalletWithXecAndTokens,
 } from 'components/App/fixtures/mocks';
 import 'fake-indexeddb/auto';
 import localforage from 'localforage';
@@ -40,16 +43,11 @@ import { createCashtabWallet } from 'wallet';
 import { isValidCashtabWallet } from 'validation';
 import CashtabCache from 'config/CashtabCache';
 import CashtabSettings from 'config/CashtabSettings';
-import { Ecc, initWasm, toHex } from 'ecash-lib';
-import * as wif from 'wif';
+import { Ecc, toHex } from 'ecash-lib';
 import { MockAgora } from '../../../../../modules/mock-chronik-client';
 
 describe('<App />', () => {
-    let ecc;
-    beforeAll(async () => {
-        await initWasm();
-        ecc = new Ecc();
-    });
+    const ecc = new Ecc();
     let user;
     beforeEach(() => {
         // Set up userEvent
@@ -106,7 +104,12 @@ describe('<App />', () => {
             false,
             localforage,
         );
-        render(<CashtabTestWrapper chronik={mockedChronik} route="/" />);
+        render(
+            <CashtabTestWrapper ecc={ecc} chronik={mockedChronik} route="/" />,
+        );
+
+        // We show a spinner while Cashtab is loading
+        expect(screen.getByTitle('Loading...')).toBeInTheDocument();
 
         // Wait for the app to load
         await waitFor(() =>
@@ -126,7 +129,13 @@ describe('<App />', () => {
             false,
             localforage,
         );
-        render(<CashtabTestWrapper chronik={mockedChronik} route="/receive" />);
+        render(
+            <CashtabTestWrapper
+                ecc={ecc}
+                chronik={mockedChronik}
+                route="/receive"
+            />,
+        );
 
         // Wait for the app to load
         await waitFor(() =>
@@ -198,10 +207,9 @@ describe('<App />', () => {
 
         // activeOffersByPubKey
         // The test wallet is selling the Saturn V NFT
-        const thisPrivateKey = wif.decode(
-            walletWithXecAndTokens.paths.get(appConfig.derivationPath).wif,
-        ).privateKey;
-        const thisPublicKey = ecc.derivePubkey(thisPrivateKey);
+        const thisPublicKey = walletWithXecAndTokens.paths.get(
+            appConfig.derivationPath,
+        ).pk;
         mockedAgora.setActiveOffersByPubKey(toHex(thisPublicKey), []);
 
         // activeOffersByGroupTokenId does not need to be mocked since there are no offers here
@@ -247,20 +255,6 @@ describe('<App />', () => {
         // Now we see the Receive screen
         expect(screen.getByTitle('Receive')).toBeInTheDocument();
 
-        // We do not expect to see hamburger menu items before the menu is clicked
-        // This is handled by dynamic css changes, so test that
-        expect(screen.queryByTitle('Other Screens')).toHaveStyle(
-            `max-width: 0`,
-        );
-
-        // Click the hamburger menu
-        await user.click(screen.queryByTitle('Show Other Screens'));
-
-        // Now we see these items
-        expect(screen.queryByTitle('Other Screens')).toHaveStyle(
-            `max-width: 100%`,
-        );
-
         // Navigate to Airdrop screen
         await user.click(
             screen.getByRole('button', {
@@ -271,24 +265,6 @@ describe('<App />', () => {
         // Now we see the Airdrop screen
         expect(
             screen.getByText('Airdrop scaled to token balance'),
-        ).toBeInTheDocument();
-
-        // The hamburger menu closes on nav
-        expect(screen.queryByTitle('Other Screens')).toHaveStyle(
-            `max-width: 0`,
-        );
-
-        // ... but, we can still click these items with the testing library, so we do
-        // Navigate to Swap screen
-        await user.click(
-            screen.getByRole('button', {
-                name: /Swap/i,
-            }),
-        );
-
-        // Now we see the Swap screen
-        expect(
-            screen.getByRole('button', { name: /Open SideShift/ }),
         ).toBeInTheDocument();
 
         // Navigate to SignVerifyMsg screen
@@ -374,10 +350,14 @@ describe('<App />', () => {
             }),
         );
 
-        // Now we see the Agora screen
-        // We know because the Meme Agora icon now appears twice, in the menu and the header
-        // We haven't mocked active offers so we otherwise expect the Chronik Query error on this screen
-        expect(screen.getAllByTitle('Meme Agora')[1]).toBeInTheDocument();
+        // Now we see the "Token Offers" header
+        // We expect an h2 element that contains the text "Token Offers"
+        expect(
+            await screen.findByRole('heading', {
+                level: 2,
+                name: 'Token Offers',
+            }),
+        ).toBeInTheDocument();
     });
     it('Adding a contact to to a new contactList by clicking on tx history adds it to localforage and wallet context', async () => {
         const mockedChronik = await initializeCashtabStateForTests(
@@ -385,7 +365,7 @@ describe('<App />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the page to load
         await waitFor(() =>
@@ -395,7 +375,7 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
+        expect(await screen.findByTitle('Balance XEC')).toHaveTextContent(
             '10,000.00 XEC',
         );
 
@@ -448,7 +428,7 @@ describe('<App />', () => {
         ];
         await localforage.setItem('contactList', initialContactList);
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the page to load
         await waitFor(() =>
@@ -458,7 +438,7 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
+        expect(await screen.findByTitle('Balance XEC')).toHaveTextContent(
             '10,000.00 XEC',
         );
 
@@ -507,7 +487,7 @@ describe('<App />', () => {
         const LEGACY_EMPTY_CONTACT_LIST = [{}];
         await localforage.setItem('contactList', LEGACY_EMPTY_CONTACT_LIST);
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for cashtabbootup, so that loadContactList has been called
         // Wallet-info is rendered
@@ -526,13 +506,13 @@ describe('<App />', () => {
         );
 
         // Render app on home screen
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wallet-info is rendered
         expect(await screen.findByTitle('Wallet Info')).toBeInTheDocument();
 
         // Balance is correct
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
+        expect(await screen.findByTitle('Balance XEC')).toHaveTextContent(
             '10,000.00 XEC',
         );
 
@@ -577,7 +557,7 @@ describe('<App />', () => {
         // Update localforage with these legacy settings
         await localforage.setItem('settings', legacySettings);
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Confirm localforage has been updated and non-default values are preserved
         await waitFor(async () =>
@@ -618,16 +598,17 @@ describe('<App />', () => {
         );
 
         // Make sure the app can get this token's genesis info by calling a mock
-        mockedChronik.setMock('token', {
-            input: EASTER_EGG_TOKENID,
-            output: easterEggTokenChronikTokenDetails,
-        });
+        mockedChronik.setToken(
+            EASTER_EGG_TOKENID,
+            easterEggTokenChronikTokenDetails,
+        );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // We see the easter egg
         expect(await screen.findByAltText('tabcash')).toBeInTheDocument();
     });
+
     it('If Cashtab starts with 1.5.* cashtabCache, it is wiped and migrated to 2.9.0 cashtabCache', async () => {
         // Note: this is what will happen for all Cashtab users when this diff lands
         const mockedChronik =
@@ -639,7 +620,7 @@ describe('<App />', () => {
         // Mock cashtabCache at 1.5.*
         await localforage.setItem('cashtabCache', legacyMockTokenInfoById);
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         const expectedCashtabCacheTokens = new CashtabCache([
             [
@@ -670,7 +651,7 @@ describe('<App />', () => {
             walletWithXecAndTokens,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // We click the Import Wallet button
         await user.click(
@@ -712,9 +693,9 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
-            '9,513.12 XEC',
-        );
+        expect(
+            await screen.findByText('9,513.12 XEC', {}, { timeout: 10000 }),
+        ).toBeInTheDocument();
 
         // We are forwarded to the home screen after the wallet loads
         expect(await screen.findByTestId('tx-history')).toBeInTheDocument();
@@ -752,7 +733,7 @@ describe('<App />', () => {
                 localforage,
             );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>
@@ -762,9 +743,9 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
-            '9,513.12 XEC',
-        );
+        expect(
+            await screen.findByText('9,513.12 XEC', {}, { timeout: 10000 }),
+        ).toBeInTheDocument();
 
         // Check wallet in localforage
         const wallets = await localforage.getItem('wallets');
@@ -790,7 +771,7 @@ describe('<App />', () => {
             walletWithXecAndTokens_pre_2_1_0,
         ]);
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>
@@ -800,9 +781,9 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
-            '9,513.12 XEC',
-        );
+        expect(
+            await screen.findByText('9,513.12 XEC', {}, { timeout: 10000 }),
+        ).toBeInTheDocument();
 
         // Check wallets
         const walletsAfterLoad = cashtabWalletsFromJSON(
@@ -830,7 +811,7 @@ describe('<App />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>
@@ -840,7 +821,7 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
+        expect(await screen.findByTitle('Balance XEC')).toHaveTextContent(
             '9,513.12 XEC',
         );
 
@@ -874,7 +855,7 @@ describe('<App />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>
@@ -884,7 +865,7 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
+        expect(await screen.findByTitle('Balance XEC')).toHaveTextContent(
             '9,513.12 XEC',
         );
 
@@ -906,7 +887,7 @@ describe('<App />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>
@@ -916,16 +897,19 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
-            '9,513.12 XEC',
-        );
+        expect(
+            await screen.findByText('9,513.12 XEC', {}, { timeout: 10000 }),
+        ).toBeInTheDocument();
 
         // Check wallet in localforage
         const wallets = await localforage.getItem('wallets');
         const migratedWallet = cashtabWalletFromJSON(wallets[0]);
 
         // The wallet has been migrated
-        expect(migratedWallet).toEqual(walletWithXecAndTokens);
+        expect(migratedWallet.mnemonic).toEqual(
+            walletWithXecAndTokens.mnemonic,
+        );
+        expect(isValidCashtabWallet(migratedWallet)).toEqual(true);
     });
     it('A user with all valid wallets stored at wallets key does not have any wallets migrated', async () => {
         const mockedChronik = await initializeCashtabStateForTests(
@@ -933,7 +917,7 @@ describe('<App />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>
@@ -943,7 +927,7 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
+        expect(await screen.findByTitle('Balance XEC')).toHaveTextContent(
             '9,513.12 XEC',
         );
 
@@ -975,7 +959,7 @@ describe('<App />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the page to load
         await waitFor(() =>
@@ -985,7 +969,7 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
+        expect(await screen.findByTitle('Balance XEC')).toHaveTextContent(
             '9,513.12 XEC',
         );
 
@@ -1007,7 +991,7 @@ describe('<App />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the page to load
         await waitFor(() =>
@@ -1017,7 +1001,115 @@ describe('<App />', () => {
         );
 
         // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
-        expect(await screen.findByTitle('Balance in XEC')).toHaveTextContent(
+        expect(
+            await screen.findByText('9,513.12 XEC', {}, { timeout: 10000 }),
+        ).toBeInTheDocument();
+
+        // Check wallet in localforage
+        const wallets = await localforage.getItem('wallets');
+        const migratedWallet = cashtabWalletFromJSON(wallets[0]);
+
+        // The wallet has been migrated
+        expect(migratedWallet.mnemonic).toEqual(
+            walletWithXecAndTokens.mnemonic,
+        );
+        expect(isValidCashtabWallet(migratedWallet)).toEqual(true);
+    });
+    it('Migrating (2.9.0 <= version < 2.55.0): A user with multiple invalid wallets stored at wallets key has them migrated', async () => {
+        // Create a savedWallets array with 4 valid wallets and 1 invalid wallet
+        const mixedValidWallets = [
+            walletWithXecAndTokens,
+            ...validSavedWallets_pre_2_55_0.slice(0, 3),
+            ...validSavedWallets.slice(3),
+        ];
+
+        // The wallets at indices 1, 2, and 3 are invalid
+        expect(isValidCashtabWallet(mixedValidWallets[1])).toBe(false);
+        expect(isValidCashtabWallet(mixedValidWallets[2])).toBe(false);
+        expect(isValidCashtabWallet(mixedValidWallets[3])).toBe(false);
+
+        const mockedChronik = await initializeCashtabStateForTests(
+            mixedValidWallets,
+            localforage,
+        );
+
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
+
+        // Wait for the page to load
+        await waitFor(() =>
+            expect(
+                screen.queryByTitle('Cashtab Loading'),
+            ).not.toBeInTheDocument(),
+        );
+
+        // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
+        expect(await screen.findByTitle('Balance XEC')).toHaveTextContent(
+            '9,513.12 XEC',
+        );
+
+        // Check wallets
+        const walletsAfterLoad = cashtabWalletsFromJSON(
+            await localforage.getItem('wallets'),
+        );
+
+        const savedWallets = walletsAfterLoad.slice(1);
+        console.log(`savedWallets`, savedWallets);
+        console.log(`validSavedWallets`, validSavedWallets);
+
+        // We expect savedWallets in localforage to have been migrated
+        await waitFor(async () => {
+            expect(savedWallets).toEqual(validSavedWallets);
+        });
+    });
+    it('Migrating (2.9.0 <= version < 2.55.0): A user with an invalid Cashtab wallet as the active wallet is migrated on startup', async () => {
+        const mockedChronik = await initializeCashtabStateForTests(
+            walletWithXecAndTokens_pre_2_55_0,
+            localforage,
+        );
+
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
+
+        // Wait for the page to load
+        await waitFor(() =>
+            expect(
+                screen.queryByTitle('Cashtab Loading'),
+            ).not.toBeInTheDocument(),
+        );
+
+        // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
+        expect(
+            await screen.findByText('9,513.12 XEC', {}, { timeout: 10000 }),
+        ).toBeInTheDocument();
+
+        // Check wallet in localforage
+        const wallets = await localforage.getItem('wallets');
+        const migratedWallet = cashtabWalletFromJSON(wallets[0]);
+
+        // The wallet has been migrated
+        expect(migratedWallet).toEqual(walletWithXecAndTokens);
+    });
+    it('Migrating to 3.14.0: A user with a Cashtab wallet with legacy value/amount keys is migrated', async () => {
+        const mockedChronik = await initializeCashtabStateForTests(
+            walletWithXecAndTokens,
+            localforage,
+        );
+
+        // Overwrite localforage wallets to be legacy
+        await localforage.setItem('wallets', [
+            legacyJsonWalletWithXecAndTokens,
+        ]);
+
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
+
+        // Wait for the page to load
+        await waitFor(() =>
+            expect(
+                screen.queryByTitle('Cashtab Loading'),
+            ).not.toBeInTheDocument(),
+        );
+
+        // Wait balance to be rendered correctly so we know Cashtab has loaded the wallet
+        expect(await screen.findByTitle('Balance XEC')).toHaveTextContent(
             '9,513.12 XEC',
         );
 
@@ -1058,7 +1150,7 @@ describe('<App />', () => {
         });
         await localforage.setItem('cashtabCache', expectedStoredCashtabCache);
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Confirm cashtabCache has been migrated to post-2.9.0 format
         await waitFor(async () =>
@@ -1108,7 +1200,7 @@ describe('<App />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>
@@ -1157,7 +1249,7 @@ describe('<App />', () => {
 
         await localforage.setItem('settings', new CashtabSettings('jpy'));
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>

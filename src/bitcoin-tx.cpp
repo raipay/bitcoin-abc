@@ -7,6 +7,7 @@
 #endif
 
 #include <chainparams.h>
+#include <chainparamsbase.h>
 #include <clientversion.h>
 #include <coins.h>
 #include <common/args.h>
@@ -29,8 +30,6 @@
 #include <util/translation.h>
 
 #include <univalue.h>
-
-#include <boost/algorithm/string.hpp> // trim_right
 
 #include <cstdio>
 #include <functional>
@@ -125,7 +124,7 @@ static int AppInitRawTx(int argc, char *argv[]) {
     // Check for -chain, -testnet or -regtest parameter (Params() calls are only
     // valid after this clause)
     try {
-        SelectParams(gArgs.GetChainName());
+        SelectParams(gArgs.GetChainType());
     } catch (const std::exception &e) {
         tfm::format(std::cerr, "Error: %s\n", e.what());
         return EXIT_FAILURE;
@@ -317,7 +316,7 @@ static void MutateTxAddOutAddr(CMutableTransaction &tx,
     Amount value = ExtractAndValidateValue(vStrInputParts[0]);
 
     // extract and validate ADDRESS
-    std::string strAddr = vStrInputParts[1];
+    const std::string &strAddr = vStrInputParts[1];
     CTxDestination destination = DecodeDestination(strAddr, chainParams);
     if (!IsValidDestination(destination)) {
         throw std::runtime_error("invalid TX output address");
@@ -352,7 +351,7 @@ static void MutateTxAddOutPubKey(CMutableTransaction &tx,
     // Extract and validate FLAGS
     bool bScriptHash = false;
     if (vStrInputParts.size() == 3) {
-        std::string flags = vStrInputParts[2];
+        const std::string &flags = vStrInputParts[2];
         bScriptHash = (flags.find('S') != std::string::npos);
     }
 
@@ -412,7 +411,7 @@ static void MutateTxAddOutMultiSig(CMutableTransaction &tx,
     // Extract FLAGS
     bool bScriptHash = false;
     if (vStrInputParts.size() == numkeys + 4) {
-        std::string flags = vStrInputParts.back();
+        const std::string &flags = vStrInputParts.back();
         bScriptHash = (flags.find('S') != std::string::npos);
     } else if (vStrInputParts.size() > numkeys + 4) {
         // Validate that there were no more parameters passed
@@ -481,13 +480,13 @@ static void MutateTxAddOutScript(CMutableTransaction &tx,
     Amount value = ExtractAndValidateValue(vStrInputParts[0]);
 
     // extract and validate script
-    std::string strScript = vStrInputParts[1];
+    const std::string &strScript = vStrInputParts[1];
     CScript scriptPubKey = ParseScript(strScript);
 
     // Extract FLAGS
     bool bScriptHash = false;
     if (vStrInputParts.size() == 3) {
-        std::string flags = vStrInputParts.back();
+        const std::string &flags = vStrInputParts.back();
         bScriptHash = (flags.find('S') != std::string::npos);
     }
 
@@ -615,7 +614,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
     UniValue prevtxsObj = registers["prevtxs"];
 
     for (unsigned int previdx = 0; previdx < prevtxsObj.size(); previdx++) {
-        UniValue prevOut = prevtxsObj[previdx];
+        const UniValue &prevOut = prevtxsObj[previdx];
         if (!prevOut.isObject()) {
             throw std::runtime_error("expected prevtxs internal object");
         }
@@ -801,9 +800,7 @@ static std::string readStdin() {
         throw std::runtime_error("error reading stdin");
     }
 
-    boost::algorithm::trim_right(ret);
-
-    return ret;
+    return TrimString(ret);
 }
 
 static int CommandLineRawTx(int argc, char *argv[],

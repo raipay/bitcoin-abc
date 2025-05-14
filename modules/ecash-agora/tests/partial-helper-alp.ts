@@ -7,7 +7,6 @@ import {
     ALL_BIP143,
     alpGenesis,
     alpSend,
-    Amount,
     Ecc,
     emppScript,
     P2PKHSignatory,
@@ -23,18 +22,17 @@ import { AgoraPartial } from '../src/partial.js';
 import { Agora, AgoraOffer } from '../src/agora.js';
 
 export function makeAlpGenesis(params: {
-    ecc: Ecc;
     tokenType: number;
     fuelInput: TxBuilderInput;
-    tokenAmounts: Amount[];
+    tokenAtomsArray: bigint[];
     extraOutputs: TxBuilderOutput[];
 }) {
-    const { ecc, tokenType, fuelInput } = params;
+    const { tokenType, fuelInput } = params;
     const txBuildGenesisGroup = new TxBuilder({
         inputs: [fuelInput],
         outputs: [
             {
-                value: 0,
+                sats: 0n,
                 script: emppScript([
                     alpGenesis(
                         tokenType,
@@ -44,7 +42,7 @@ export function makeAlpGenesis(params: {
                         },
                         {
                             numBatons: 0,
-                            amounts: params.tokenAmounts,
+                            atomsArray: params.tokenAtomsArray,
                         },
                     ),
                 ]),
@@ -52,33 +50,30 @@ export function makeAlpGenesis(params: {
             ...params.extraOutputs,
         ],
     });
-    return txBuildGenesisGroup.sign(ecc);
+    return txBuildGenesisGroup.sign();
 }
 
 export async function makeAlpOffer(params: {
     chronik: ChronikClient;
-    ecc: Ecc;
     agoraPartial: AgoraPartial;
     makerSk: Uint8Array;
     fuelInput: TxBuilderInput;
 }): Promise<AgoraOffer> {
-    const { chronik, ecc, agoraPartial, makerSk, fuelInput } = params;
-    const makerPk = ecc.derivePubkey(makerSk);
+    const { chronik, agoraPartial, makerSk, fuelInput } = params;
+    const makerPk = new Ecc().derivePubkey(makerSk);
     const makerPkh = shaRmd160(makerPk);
     const makerP2pkh = Script.p2pkh(makerPkh);
 
-    const genesisOutputSats = 2000;
+    const genesisOutputSats = 2000n;
     const genesisTx = makeAlpGenesis({
-        ecc,
         tokenType: agoraPartial.tokenType,
         fuelInput,
-        tokenAmounts: [agoraPartial.offeredTokens()],
-        extraOutputs: [{ value: genesisOutputSats, script: makerP2pkh }],
+        tokenAtomsArray: [agoraPartial.offeredAtoms()],
+        extraOutputs: [{ sats: genesisOutputSats, script: makerP2pkh }],
     });
     const genesisTxid = (await chronik.broadcastTx(genesisTx.ser())).txid;
     const tokenId = genesisTxid;
     agoraPartial.tokenId = tokenId;
-
     expect((await chronik.token(tokenId)).tokenType.number).to.equal(
         agoraPartial.tokenType,
     );
@@ -94,7 +89,7 @@ export async function makeAlpOffer(params: {
                         outIdx: 1,
                     },
                     signData: {
-                        value: genesisOutputSats,
+                        sats: genesisOutputSats,
                         outputScript: makerP2pkh,
                     },
                 },
@@ -103,18 +98,18 @@ export async function makeAlpOffer(params: {
         ],
         outputs: [
             {
-                value: 0,
+                sats: 0n,
                 script: emppScript([
                     agoraPartial.adPushdata(),
                     alpSend(tokenId, agoraPartial.tokenType, [
-                        agoraPartial.offeredTokens(),
+                        agoraPartial.offeredAtoms(),
                     ]),
                 ]),
             },
-            { value: 546, script: agoraP2sh },
+            { sats: 546n, script: agoraP2sh },
         ],
     });
-    const offerTx = txBuildOffer.sign(ecc);
+    const offerTx = txBuildOffer.sign();
     await chronik.broadcastTx(offerTx.ser());
 
     const agora = new Agora(chronik);
@@ -127,24 +122,22 @@ export async function makeAlpOffer(params: {
 
 export async function takeAlpOffer(params: {
     chronik: ChronikClient;
-    ecc: Ecc;
     offer: AgoraOffer;
     takerSk: Uint8Array;
     takerInput: TxBuilderInput;
-    acceptedTokens: bigint;
+    acceptedAtoms: bigint;
     allowUnspendable?: boolean;
 }) {
     const takerSk = params.takerSk;
-    const takerPk = params.ecc.derivePubkey(takerSk);
+    const takerPk = new Ecc().derivePubkey(takerSk);
     const takerPkh = shaRmd160(takerPk);
     const takerP2pkh = Script.p2pkh(takerPkh);
     const acceptTx = params.offer.acceptTx({
-        ecc: params.ecc,
         covenantSk: params.takerSk,
         covenantPk: takerPk,
         fuelInputs: [params.takerInput],
         recipientScript: takerP2pkh,
-        acceptedTokens: params.acceptedTokens,
+        acceptedAtoms: params.acceptedAtoms,
         allowUnspendable: params.allowUnspendable,
     });
     const acceptTxid = (await params.chronik.broadcastTx(acceptTx.ser())).txid;

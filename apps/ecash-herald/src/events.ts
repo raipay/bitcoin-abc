@@ -3,8 +3,9 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import config from '../config';
+import secrets from '../secrets';
 import axios from 'axios';
-import cashaddr from 'ecashaddrjs';
+import { encodeOutputScript } from 'ecashaddrjs';
 import {
     parseBlockTxs,
     getBlockTgMessage,
@@ -61,11 +62,19 @@ export interface StoredMock {
     blockTxs: Tx[];
     parsedBlock: HeraldParsedBlock;
     coingeckoResponse: CoinGeckoResponse;
+    activeStakers?: CoinDanceStaker[];
     coingeckoPrices: CoinGeckoPrice[];
     tokenInfoMap: Map<string, GenesisInfo>;
     outputScriptInfoMap: Map<string, OutputscriptInfo>;
     blockSummaryTgMsgs: string[];
     blockSummaryTgMsgsApiFailure: string[];
+}
+
+export interface CoinDanceStaker {
+    proof: string;
+    stake: string;
+    creationTimeStamp: string;
+    payoutAddress: string;
 }
 
 /**
@@ -142,11 +151,29 @@ export const handleBlockFinalized = async (
     const resp = await getCoingeckoPrices(config.priceApi);
     const coingeckoPrices = resp !== false ? resp.coingeckoPrices : false;
     const coingeckoResponse = resp !== false ? resp.coingeckoResponse : false;
+
+    const { staker } = parsedBlock;
+    let activeStakers: CoinDanceStaker[] | undefined;
+    if (staker !== false) {
+        // If we have a staker, get more info from API
+        try {
+            activeStakers = (
+                await axios.get(
+                    `https://coin.dance/api/stakers/${secrets.prod.stakerApiKey}`,
+                )
+            ).data;
+        } catch (err) {
+            console.error(`Error getting activeStakers`, err);
+            // Do not include this info in the tg msg
+        }
+    }
+
     const blockSummaryTgMsgs = getBlockTgMessage(
         parsedBlock,
         coingeckoPrices,
         tokenInfoMap,
         outputScriptInfoMap,
+        activeStakers,
     );
 
     if (returnMocks) {
@@ -158,6 +185,7 @@ export const handleBlockFinalized = async (
             blockTxs,
             parsedBlock,
             coingeckoResponse,
+            activeStakers,
             coingeckoPrices,
             tokenInfoMap,
             outputScriptInfoMap,
@@ -167,6 +195,7 @@ export const handleBlockFinalized = async (
                 false, // failed coingecko price lookup
                 false, // failed chronik token ID lookup
                 false, // failed balances lookup for output scripts
+                undefined, // no activeStakers
             ),
         } as StoredMock;
     }
@@ -208,6 +237,7 @@ export const handleBlockInvalidated = async (
         coinbaseData.scriptsig,
         coinbaseData.outputs,
         miners,
+        blockHeight,
     );
 
     const stakingRewardWinner = getStakerFromCoinbaseTx(
@@ -217,7 +247,7 @@ export const handleBlockInvalidated = async (
     let stakingRewardWinnerAddress = 'unknown';
     if (stakingRewardWinner !== false) {
         try {
-            stakingRewardWinnerAddress = cashaddr.encodeOutputScript(
+            stakingRewardWinnerAddress = encodeOutputScript(
                 stakingRewardWinner.staker,
             );
         } catch {
@@ -263,6 +293,7 @@ export const handleUtcMidnight = async (
     chronik: ChronikClient,
     telegramBot: TelegramBot,
     channelId: string,
+    secondChannelId?: string,
 ) => {
     // It is a new day
     // Send the daily summary
@@ -330,13 +361,41 @@ export const handleUtcMidnight = async (
         console.error(`Error getting daily summary price info`, err);
     }
 
+    let activeStakers: CoinDanceStaker[] | undefined;
+    // If we have a staker, get more info from API
+    try {
+        activeStakers = (
+            await axios.get(
+                `https://coin.dance/api/stakers/${secrets.prod.stakerApiKey}`,
+            )
+        ).data;
+    } catch (err) {
+        console.error(`Error getting activeStakers`, err);
+        // Do not include this info in the tg msg
+    }
+
+    const AGORA_TOKENS_MAX_RENDER = 3;
+    const NON_AGORA_TOKENS_MAX_RENDER = 0;
     const dailySummaryTgMsgs = summarizeTxHistory(
         newDayTimestamp,
         timeFirstSeenTxs,
         tokenInfoMap,
+        AGORA_TOKENS_MAX_RENDER,
+        NON_AGORA_TOKENS_MAX_RENDER,
         priceInfo,
+        activeStakers,
     );
 
     // Send msg with successful price API call
     await sendBlockSummary(dailySummaryTgMsgs, telegramBot, channelId, 'daily');
+
+    if (typeof secondChannelId !== 'undefined') {
+        // Send to another channel if we got it
+        await sendBlockSummary(
+            dailySummaryTgMsgs,
+            telegramBot,
+            secondChannelId,
+            'daily',
+        );
+    }
 };

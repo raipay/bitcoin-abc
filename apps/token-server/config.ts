@@ -23,13 +23,13 @@ interface DatabaseConfig {
 }
 
 interface TokenServerConfig {
-    port: Number;
+    port: number;
     db: DatabaseConfig;
     chronikUrls: string[];
     eligibilityResetSeconds: number;
     rewardsTokenId: string;
     rewardAmountTokenSats: bigint;
-    xecAirdropAmountSats: number;
+    xecAirdropAmountSats: bigint;
     imageDir: string;
     rejectedDir: string;
     maxUploadSize: number;
@@ -48,21 +48,22 @@ const config: TokenServerConfig = {
         collections: { blacklist: { name: 'blacklist' } },
     },
     chronikUrls: [
-        'https://chronik-native1.fabien.cash',
         'https://chronik-native2.fabien.cash',
+        'https://chronik-native3.fabien.cash',
         'https://chronik.pay2stay.com/xec',
+        'https://chronik-native1.fabien.cash',
     ],
     eligibilityResetSeconds: 86400, // 24 hours
     // Cachet
     rewardsTokenId:
         'aed861a31b96934b88c0252ede135cb9700d7649f69191235087a3030e553cb1',
     rewardAmountTokenSats: 10000n, // Cachet is a 2-decimal token, so this is 100.00 Cachet
-    xecAirdropAmountSats: 4200, // satoshis to send in new wallet XEC airdrops, 1000 = 10 XEC
+    xecAirdropAmountSats: 4200n, // satoshis to send in new wallet XEC airdrops, 1000 = 10 XEC
     // Note: this must be the target= parameter for the --mount instruction of docker run
     // See Production Step 3 in README.md
     imageDir: '/token-server/token-icons',
     rejectedDir: '/token-server/rejected',
-    maxUploadSize: 1000000, // max upload size in bytes
+    maxUploadSize: 2000000, // max upload size in bytes
     // We support uploading image files from these origins
     whitelist: [
         'http://localhost:3000',
@@ -109,7 +110,7 @@ const config: TokenServerConfig = {
     },
     iconSizes: [32, 64, 128, 256, 512],
     recaptchaUrl: 'https://www.google.com/recaptcha/api/siteverify',
-    recaptchaThreshold: 0.7,
+    recaptchaThreshold: 0.8,
 };
 
 export default config;

@@ -3,7 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import {
@@ -21,25 +21,17 @@ import {
     saturnFiveAgoraOffer,
     transvaal,
     transvaalAgoraOffer,
-    transvaalCacheMocks,
     argentina,
     argentinaAgoraOffer,
-    mockPartial,
-    mockPartialAgoraOffer,
 } from 'components/Nfts/fixtures/mocks';
 import { walletWithXecAndTokens } from 'components/App/fixtures/mocks';
-import { Ecc, initWasm, toHex } from 'ecash-lib';
+import { Ecc, toHex } from 'ecash-lib';
 import CashtabCache from 'config/CashtabCache';
 import { cashtabCacheToJSON } from 'helpers';
 import { MockAgora } from '../../../../../modules/mock-chronik-client';
-import * as wif from 'wif';
 
 describe('<Nfts />', () => {
-    let ecc;
-    beforeAll(async () => {
-        await initWasm();
-        ecc = new Ecc();
-    });
+    const ecc = new Ecc();
     beforeEach(() => {
         // Mock the fetch call for Cashtab's price API
         global.fetch = jest.fn();
@@ -97,11 +89,10 @@ describe('<Nfts />', () => {
 
         mockedAgora.setOfferedGroupTokenIds([]);
 
-        const thisPrivateKey = wif.decode(
-            nftMarketWallet.paths.get(appConfig.derivationPath).wif,
-        ).privateKey;
-        const thisPublicKey = ecc.derivePubkey(thisPrivateKey);
-        mockedAgora.setActiveOffersByPubKey(toHex(thisPublicKey), []);
+        mockedAgora.setActiveOffersByPubKey(
+            toHex(nftMarketWallet.paths.get(appConfig.derivationPath).pk),
+            [],
+        );
 
         const mockedChronik = await initializeCashtabStateForTests(
             nftMarketWallet,
@@ -148,20 +139,18 @@ describe('<Nfts />', () => {
 
         // activeOffersByPubKey
         // The test wallet is selling the Saturn V NFT
-        const thisPrivateKey = wif.decode(
-            nftMarketWallet.paths.get(appConfig.derivationPath).wif,
-        ).privateKey;
-        const thisPublicKey = ecc.derivePubkey(thisPrivateKey);
-        mockedAgora.setActiveOffersByPubKey(toHex(thisPublicKey), [
-            saturnFiveAgoraOffer,
-        ]);
+        mockedAgora.setActiveOffersByPubKey(
+            toHex(nftMarketWallet.paths.get(appConfig.derivationPath).pk),
+            [saturnFiveAgoraOffer],
+        );
 
         // Also set activeOffersByPubKey for the wallet you are switching to
-        const nextPrivateKey = wif.decode(
-            walletWithXecAndTokens.paths.get(appConfig.derivationPath).wif,
-        ).privateKey;
-        const nextPublicKey = ecc.derivePubkey(nextPrivateKey);
-        mockedAgora.setActiveOffersByPubKey(toHex(nextPublicKey), []);
+        mockedAgora.setActiveOffersByPubKey(
+            toHex(
+                walletWithXecAndTokens.paths.get(appConfig.derivationPath).pk,
+            ),
+            [],
+        );
 
         // activeOffersByGroupTokenId
         mockedAgora.setActiveOffersByGroupTokenId(saturnFive.groupTokenId, [
@@ -248,7 +237,9 @@ describe('<Nfts />', () => {
         );
 
         // Wait for the wallet to load
-        expect(await screen.findByText('9,513.12 XEC')).toBeInTheDocument();
+        expect(
+            await screen.findByTitle('Balance XEC', {}, { timeout: 10000 }),
+        ).toHaveTextContent('9,513.12 XEC');
 
         // The switch is still set to Manage Listings, so we do not see buy listings
         expect(toggleNftsSwitch).toHaveProperty('checked', true);

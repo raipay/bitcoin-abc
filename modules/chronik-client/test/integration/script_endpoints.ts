@@ -4,7 +4,7 @@
 
 import * as chai from 'chai';
 import chaiAsPromised from 'chai-as-promised';
-import cashaddr from 'ecashaddrjs';
+import { decodeCashAddress, getOutputScriptFromAddress } from 'ecashaddrjs';
 import { ChildProcess } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import path from 'path';
@@ -179,11 +179,11 @@ describe('Get script().history and script().utxos()', () => {
         otherScript = await get_other_script;
 
         // Get hashes for addresses (used in all tests)
-        const decodedP2pkh = cashaddr.decode(p2pkhAddress, true);
+        const decodedP2pkh = decodeCashAddress(p2pkhAddress);
         if (typeof decodedP2pkh.hash === 'string') {
             p2pkhAddressHash = decodedP2pkh.hash;
         }
-        const decodedP2sh = cashaddr.decode(p2shAddress, true);
+        const decodedP2sh = decodeCashAddress(p2shAddress);
         if (typeof decodedP2sh.hash === 'string') {
             p2shAddressHash = decodedP2sh.hash;
         }
@@ -243,7 +243,7 @@ describe('Get script().history and script().utxos()', () => {
             chronik,
             'p2pkh',
             p2pkhAddressHash,
-            cashaddr.getOutputScriptFromAddress(p2pkhAddress),
+            getOutputScriptFromAddress(p2pkhAddress),
         );
 
         // p2sh
@@ -251,7 +251,7 @@ describe('Get script().history and script().utxos()', () => {
             chronik,
             'p2sh',
             p2shAddressHash,
-            cashaddr.getOutputScriptFromAddress(p2shAddress),
+            getOutputScriptFromAddress(p2shAddress),
         );
 
         // p2pk
@@ -404,7 +404,7 @@ describe('Get script().history and script().utxos()', () => {
             // within history txs, confirmed txs are sorted in block order, unconfirmed txs are sorted by timeFirstSeen
             // i.e., history.txs[0] will have the highest timeFirstSeen
             // For txs with the same timeFirstSeen, the alphabetically-last txs appears first
-            const historyClone: Tx[] = JSON.parse(JSON.stringify(history.txs));
+            const historyClone: Tx[] = [...history.txs];
 
             // Sort historyClone by timeFirstSeen and then by txid
             historyClone.sort(
@@ -435,6 +435,11 @@ describe('Get script().history and script().utxos()', () => {
                     a.txid.localeCompare(b.txid),
             );
             expect(unconfirmedTxs.txs).to.deep.equal(historyClone);
+
+            // Unconfirmed txs are not finalized
+            for (const unconfirmedTx of unconfirmedTxs.txs) {
+                expect(unconfirmedTx.isFinal).to.eql(false);
+            }
 
             const utxos = await chronikScript.utxos();
 
@@ -487,7 +492,7 @@ describe('Get script().history and script().utxos()', () => {
             chronik,
             'p2pkh',
             p2pkhAddressHash,
-            cashaddr.getOutputScriptFromAddress(p2pkhAddress),
+            getOutputScriptFromAddress(p2pkhAddress),
             p2pkhTxids,
         );
 
@@ -497,7 +502,7 @@ describe('Get script().history and script().utxos()', () => {
             chronik,
             'p2sh',
             p2shAddressHash,
-            cashaddr.getOutputScriptFromAddress(p2shAddress),
+            getOutputScriptFromAddress(p2shAddress),
             p2shTxids,
         );
 
@@ -613,7 +618,7 @@ describe('Get script().history and script().utxos()', () => {
                 broadcastTxids.length,
             );
             // Clone history.txs to test sorting
-            const historyClone: Tx[] = JSON.parse(JSON.stringify(history.txs));
+            const historyClone: Tx[] = [...history.txs];
 
             // history txs within blocks sorting
             // The history endpoint returns confirmed txs sorted by timeFirstSeen (high to low) and then by txid (alphabetical last to first)
@@ -692,7 +697,7 @@ describe('Get script().history and script().utxos()', () => {
             chronik,
             'p2pkh',
             p2pkhAddressHash,
-            cashaddr.getOutputScriptFromAddress(p2pkhAddress),
+            getOutputScriptFromAddress(p2pkhAddress),
             p2pkhTxids,
         );
 
@@ -701,7 +706,7 @@ describe('Get script().history and script().utxos()', () => {
             chronik,
             'p2sh',
             p2shAddressHash,
-            cashaddr.getOutputScriptFromAddress(p2shAddress),
+            getOutputScriptFromAddress(p2shAddress),
             p2shTxids,
         );
 
@@ -758,6 +763,17 @@ describe('Get script().history and script().utxos()', () => {
             // utxos fetched from history match what the node broadcast
             expect(utxoTxids).to.have.members(broadcastTxids);
 
+            const txsPromises = broadcastTxids.map(async txid => {
+                const tx = await chronik.tx(txid);
+                return tx;
+            });
+
+            const txs = await Promise.all(txsPromises);
+            for (const tx of txs) {
+                // Txs are now finalized
+                expect(tx.isFinal).to.eql(true);
+            }
+
             console.log('\x1b[32m%s\x1b[0m', `✔ ${type}`);
         };
 
@@ -766,7 +782,7 @@ describe('Get script().history and script().utxos()', () => {
             chronik,
             'p2pkh',
             p2pkhAddressHash,
-            cashaddr.getOutputScriptFromAddress(p2pkhAddress),
+            getOutputScriptFromAddress(p2pkhAddress),
             p2pkhTxids,
         );
 
@@ -775,7 +791,7 @@ describe('Get script().history and script().utxos()', () => {
             chronik,
             'p2sh',
             p2shAddressHash,
-            cashaddr.getOutputScriptFromAddress(p2shAddress),
+            getOutputScriptFromAddress(p2shAddress),
             p2shTxids,
         );
 

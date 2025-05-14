@@ -5,7 +5,6 @@
 
 #include <kernel/chainparams.h>
 
-#include <chainparamsbase.h>
 #include <chainparamsconstants.h>
 #include <chainparamsseeds.h>
 #include <consensus/amount.h>
@@ -14,6 +13,7 @@
 #include <primitives/transaction.h>
 #include <script/script.h>
 #include <uint256.h>
+#include <util/chaintype.h>
 #include <util/strencodings.h>
 
 #include <algorithm>
@@ -82,7 +82,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce,
 class CMainParams : public CChainParams {
 public:
     explicit CMainParams(const ChainOptions &opts) {
-        strNetworkID = CBaseChainParams::MAIN;
+        m_chain_type = ChainType::MAIN;
         consensus.nSubsidyHalvingInterval = 210000;
         // 00000000000000ce80a7e057163a4db1d5ad7b20fb6f598c9597b9665c8fb0d4 -
         // April 1, 2012
@@ -146,11 +146,11 @@ public:
         // Nov 15, 2023 12:00:00 UTC protocol upgrade
         consensus.cowperthwaiteHeight = 818669;
 
-        // Nov 15, 2024 12:00:00 UTC protocol upgrade
-        consensus.augustoActivationTime = 1731672000;
-
         // May 15, 2025 12:00:00 UTC protocol upgrade
         consensus.schumpeterActivationTime = 1747310400;
+
+        // Nov. 15, 2025 12:00:00 UTC protocol upgrade
+        consensus.shibusawaActivationTime = 1763208000;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -210,9 +210,9 @@ public:
         m_is_test_chain = false;
         m_is_mockable_chain = false;
 
-        checkpointData = CheckpointData(CBaseChainParams::MAIN);
+        checkpointData = CheckpointData(ChainType::MAIN);
 
-        m_assumeutxo_data = MapAssumeutxo{
+        m_assumeutxo_data = {
             // TODO to be specified in a future patch.
         };
 
@@ -237,7 +237,7 @@ public:
 class CTestNetParams : public CChainParams {
 public:
     explicit CTestNetParams(const ChainOptions &opts) {
-        strNetworkID = CBaseChainParams::TESTNET;
+        m_chain_type = ChainType::TESTNET;
         consensus.nSubsidyHalvingInterval = 210000;
         // 00000000040b4e986385315e14bee30ad876d8b47f748025b26683116d21aa65
         consensus.BIP16Height = 514;
@@ -300,11 +300,11 @@ public:
         // Nov 15, 2023 12:00:00 UTC protocol upgrade
         consensus.cowperthwaiteHeight = 1584485;
 
-        // Nov 15, 2024 12:00:00 UTC protocol upgrade
-        consensus.augustoActivationTime = 1731672000;
-
         // May 15, 2025 12:00:00 UTC protocol upgrade
         consensus.schumpeterActivationTime = 1747310400;
+
+        // Nov. 15, 2025 12:00:00 UTC protocol upgrade
+        consensus.shibusawaActivationTime = 1763208000;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -356,9 +356,9 @@ public:
         m_is_test_chain = true;
         m_is_mockable_chain = false;
 
-        checkpointData = CheckpointData(CBaseChainParams::TESTNET);
+        checkpointData = CheckpointData(ChainType::TESTNET);
 
-        m_assumeutxo_data = MapAssumeutxo{
+        m_assumeutxo_data = {
             // TODO to be specified in a future patch.
         };
 
@@ -375,7 +375,7 @@ public:
 class CRegTestParams : public CChainParams {
 public:
     explicit CRegTestParams(const ChainOptions &opts) {
-        strNetworkID = CBaseChainParams::REGTEST;
+        m_chain_type = ChainType::REGTEST;
         consensus.nSubsidyHalvingInterval = 150;
         // always enforce P2SH BIP16 on regtest
         consensus.BIP16Height = 0;
@@ -436,11 +436,11 @@ public:
         // Nov 15, 2023 12:00:00 UTC protocol upgrade
         consensus.cowperthwaiteHeight = 0;
 
-        // Nov 15, 2024 12:00:00 UTC protocol upgrade
-        consensus.augustoActivationTime = 1731672000;
-
         // May 15, 2025 12:00:00 UTC protocol upgrade
         consensus.schumpeterActivationTime = 1747310400;
+
+        // Nov. 15, 2025 12:00:00 UTC protocol upgrade
+        consensus.shibusawaActivationTime = 1763208000;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;
@@ -474,21 +474,26 @@ public:
         m_is_test_chain = true;
         m_is_mockable_chain = true;
 
-        checkpointData = CheckpointData(CBaseChainParams::REGTEST);
+        checkpointData = CheckpointData(ChainType::REGTEST);
 
-        m_assumeutxo_data = MapAssumeutxo{
-            {
-                110,
-                {AssumeutxoHash{uint256S("0xd754ca97ef24c5132f8d2147c19310b7a6b"
+        m_assumeutxo_data = {
+            {.height = 110,
+             .hash_serialized =
+                 AssumeutxoHash{uint256S("0xd754ca97ef24c5132f8d2147c19310b7a6b"
                                          "d136766430304735a73372fe36213")},
-                 110},
-            },
-            {
-                210,
-                {AssumeutxoHash{uint256S("0x73b4bc8dd69649c6e9ede39b156713109bf"
-                                         "044d2466661a3fe8a8b91ba601849")},
-                 210},
-            },
+             .nChainTx = 111,
+             .blockhash =
+                 BlockHash{uint256S("0x47cfb2b77860d250060e78d3248bb05092876545"
+                                    "3cbcbdbc121e3c48b99a376c")}},
+            {// For use by test/functional/feature_assumeutxo.py
+             .height = 299,
+             .hash_serialized =
+                 AssumeutxoHash{uint256S("0xa966794ed5a2f9debaefc7ca48dbc5d5e12"
+                                         "a89ff9fe45bd00ec5732d074580a9")},
+             .nChainTx = 334,
+             .blockhash =
+                 BlockHash{uint256S("0x118a7d5473bccce9b314789e14ce426fc65fb09d"
+                                    "feda0131032bb6d86ed2fd0b")}},
         };
 
         chainTxData = ChainTxData{0, 0, 0};
@@ -515,4 +520,31 @@ CChainParams::Main(const ChainOptions &options) {
 std::unique_ptr<const CChainParams>
 CChainParams::TestNet(const ChainOptions &options) {
     return std::make_unique<const CTestNetParams>(options);
+}
+
+std::vector<int> CChainParams::GetAvailableSnapshotHeights() const {
+    std::vector<int> heights;
+    heights.reserve(m_assumeutxo_data.size());
+
+    for (const auto &data : m_assumeutxo_data) {
+        heights.emplace_back(data.height);
+    }
+    return heights;
+}
+
+std::optional<ChainType>
+GetNetworkForMagic(CMessageHeader::MessageMagic &message) {
+    CChainParams::ChainOptions opts{};
+    const auto mainnet_msg = CChainParams::Main(opts)->DiskMagic();
+    const auto testnet_msg = CChainParams::TestNet(opts)->DiskMagic();
+    const auto regtest_msg = CChainParams::RegTest(opts)->DiskMagic();
+
+    if (std::equal(message.begin(), message.end(), mainnet_msg.data())) {
+        return ChainType::MAIN;
+    } else if (std::equal(message.begin(), message.end(), testnet_msg.data())) {
+        return ChainType::TESTNET;
+    } else if (std::equal(message.begin(), message.end(), regtest_msg.data())) {
+        return ChainType::REGTEST;
+    }
+    return std::nullopt;
 }

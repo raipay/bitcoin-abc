@@ -43,6 +43,12 @@ const devLinks = [
                     'Ready-to-run Binaries for the Bitcoin ABC Full Node',
                 link: 'https://www.bitcoinabc.org/releases/',
             },
+            {
+                title: 'Chronik indexer',
+                description:
+                    'Chronik is a fast and reliable indexer built into the Bitcoin ABC node software',
+                link: 'https://chronik.e.cash/',
+            },
         ],
     },
     {
@@ -119,33 +125,31 @@ function Build() {
                 h2text="Build on eCash"
             >
                 <p>
-                    The eCash blockchain is instantly accessible to app
-                    developers with simple, powerful, open-source libraries.
-                    Developers can build feature-dense apps that send and
-                    receive money instantly. Rapid prototyping is a key strength
-                    of the eCash network and its dev tools --- MVP apps can be
-                    built and deployed in minutes.
+                    Become a pioneer in the eCash frontier economy. The eCash
+                    network&apos;s unique capabilities enable business models
+                    impossible anywhere else. Micropayments, novel tokenomics
+                    and on-chain trading — we&apos;re in uncharted territory.
+                </p>
+                <p>
+                    The UTXO model of eCash gives it compelling advantages over
+                    other blockchains with account-based systems. Anyone can
+                    create scalable and performant products with high
+                    transaction throughput and low fees. The Avalanche consensus
+                    system ensures fast transaction finality, simplifying the
+                    user experience and enabling apps built on eCash to be
+                    snappy and responsive.
                 </p>
             </SubPageHero>
             <GradientSpacer />
             <Container narrow>
-                <H3 text="Our Philosophy" />
+                <H3 text="The eCash Advantage" />
                 <p>
-                    &ldquo;Building&rdquo; is one of the great filters in
-                    cryptocurrency. In eCash, it&apos;s also uniquely
-                    accessible. You can start right away, and make meaningful
-                    contributions in days.
-                </p>
-                <p>
-                    There are many good reasons to start creating software.
-                    Leverage is one of the best. A single app written by a
-                    single dev can reach millions of customers overnight.
-                </p>
-                <p>
-                    A good strategy to make an app successful is to go through a
-                    process of trial, error, feedback, and iteration. Reducing
-                    the cycle time of this process is critical. This is called
-                    rapid prototyping.
+                    The eCash blockchain is instantly accessible to app
+                    developers with simple, powerful, open-source libraries.
+                    Developers can build feature-dense apps that send and
+                    receive money instantly. Rapid prototyping is a key strength
+                    of the eCash network and its dev tools — MVP apps can be
+                    built and deployed in minutes.
                 </p>
                 {devLinks.map((item, index) => (
                     <LinkSection key={index}>

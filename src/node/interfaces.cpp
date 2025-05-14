@@ -27,6 +27,7 @@
 #include <policy/settings.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
+#include <rpc/blockchain.h>
 #include <rpc/protocol.h>
 #include <rpc/server.h>
 #include <shutdown.h>
@@ -75,10 +76,26 @@ namespace {
         }
         bilingual_str getWarnings() override { return GetWarnings(true); }
         bool baseInitialize(Config &config) override {
-            return AppInitBasicSetup(gArgs) &&
-                   AppInitParameterInteraction(config, gArgs) &&
-                   AppInitSanityChecks() && AppInitLockDataDirectory() &&
-                   AppInitInterfaces(*m_context);
+            if (!AppInitBasicSetup(gArgs)) {
+                return false;
+            }
+            if (!AppInitParameterInteraction(config, gArgs)) {
+                return false;
+            }
+
+            m_context->kernel = std::make_unique<kernel::Context>();
+            if (!AppInitSanityChecks(*m_context->kernel)) {
+                return false;
+            }
+
+            if (!AppInitLockDataDirectory()) {
+                return false;
+            }
+            if (!AppInitInterfaces(*m_context)) {
+                return false;
+            }
+
+            return true;
         }
         bool appInitMain(Config &config, RPCServer &rpcServer,
                          HTTPRPCRequestProcessor &httpRPCRequestProcessor,
@@ -267,7 +284,7 @@ namespace {
                                              tip);
         }
         bool isInitialBlockDownload() override {
-            return chainman().ActiveChainstate().IsInitialBlockDownload();
+            return chainman().IsInitialBlockDownload();
         }
         bool isLoadingBlocks() override {
             return chainman().m_blockman.LoadingBlocks();
@@ -394,7 +411,9 @@ namespace {
         if (block.m_in_active_chain) {
             *block.m_in_active_chain = active[index->nHeight] == index;
         }
-        // TODO backport core#25494 with change from core#25717
+        if (block.m_locator) {
+            *block.m_locator = GetLocator(index);
+        }
         if (block.m_next_block) {
             FillBlock(active[index->nHeight] == index
                           ? active[index->nHeight + 1]
@@ -427,9 +446,10 @@ namespace {
             m_notifications->transactionRemovedFromMempool(tx, reason,
                                                            mempool_sequence);
         }
-        void BlockConnected(const std::shared_ptr<const CBlock> &block,
+        void BlockConnected(ChainstateRole role,
+                            const std::shared_ptr<const CBlock> &block,
                             const CBlockIndex *index) override {
-            m_notifications->blockConnected(*block, index->nHeight);
+            m_notifications->blockConnected(role, *block, index->nHeight);
         }
         void BlockDisconnected(const std::shared_ptr<const CBlock> &block,
                                const CBlockIndex *index) override {
@@ -440,8 +460,9 @@ namespace {
                              bool is_ibd) override {
             m_notifications->updatedBlockTip();
         }
-        void ChainStateFlushed(const CBlockLocator &locator) override {
-            m_notifications->chainStateFlushed(locator);
+        void ChainStateFlushed(ChainstateRole role,
+                               const CBlockLocator &locator) override {
+            m_notifications->chainStateFlushed(role, locator);
         }
         std::shared_ptr<Chain::Notifications> m_notifications;
     };
@@ -696,8 +717,13 @@ namespace {
             return !chainman().m_blockman.LoadingBlocks() &&
                    !isInitialBlockDownload();
         }
+        std::optional<int> getPruneHeight() override {
+            LOCK(chainman().GetMutex());
+            return GetPruneHeight(chainman().m_blockman,
+                                  chainman().ActiveChain());
+        }
         bool isInitialBlockDownload() override {
-            return chainman().ActiveChainstate().IsInitialBlockDownload();
+            return chainman().IsInitialBlockDownload();
         }
         bool shutdownRequested() override { return ShutdownRequested(); }
         void initMessage(const std::string &message) override {
@@ -781,7 +807,11 @@ namespace {
                                                         /*mempool_sequence=*/0);
             }
         }
+        bool hasAssumedValidChain() override {
+            return Assert(m_node.chainman)->IsSnapshotActive();
+        }
         const CChainParams &params() const override { return m_params; }
+        NodeContext *context() override { return &m_node; }
         NodeContext &m_node;
         const CChainParams &m_params;
     };

@@ -4,12 +4,34 @@
 
 import { strToBytes } from '../io/str.js';
 
-export type Amount = bigint | number;
+/** GENESIS tx type: Creates a new token ID */
+export const GENESIS_STR = 'GENESIS';
+export const GENESIS = strToBytes(GENESIS_STR);
 
-export const GENESIS = strToBytes('GENESIS');
-export const MINT = strToBytes('MINT');
-export const SEND = strToBytes('SEND');
-export const BURN = strToBytes('BURN');
+/** MINT tx type: Mints more of a token ID */
+export const MINT_STR = 'MINT';
+export const MINT = strToBytes(MINT_STR);
+
+/** SEND tx type: Moves existing tokens to different outputs */
+export const SEND_STR = 'SEND';
+export const SEND = strToBytes(SEND_STR);
+
+/** BURN tx type: Destroys existing tokens */
+export const BURN_STR = 'BURN';
+export const BURN = strToBytes(BURN_STR);
+
+/**
+ * UNKNOWN: Placeholder for unknown token types.
+ * Note: These may hold valuable tokens, but which aren't recognized.
+ * They should be excluded from UTXO selection.
+ **/
+export const UNKNOWN_STR = 'UNKNOWN';
+
+/** Number of bytes in a token ID */
+export const TOKEN_ID_NUM_BYTES = 32;
+
+/** How many decimals a token can have at most (SLP/ALP) */
+export const MAX_DECIMALS = 9;
 
 /** Genesis info found in GENESIS txs of tokens */
 export interface GenesisInfo {
@@ -24,7 +46,7 @@ export interface GenesisInfo {
     /** mint_vault_scripthash (only on SLP V2 Mint Vault) */
     mintVaultScripthash?: string;
     /** Arbitray payload data of the token (only on ALP) */
-    data?: Uint8Array;
+    data?: string;
     /** auth_pubkey of the token (only on ALP) */
     authPubkey?: string;
     /** decimals of the token, i.e. how many decimal places the token should be displayed with. */

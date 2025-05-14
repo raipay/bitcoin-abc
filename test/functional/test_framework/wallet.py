@@ -8,6 +8,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Optional
 
+from test_framework import cashaddr
 from test_framework.address import (
     ADDRESS_ECREG_P2SH_OP_TRUE,
     SCRIPTSIG_OP_TRUE,
@@ -176,7 +177,6 @@ class MiniWallet:
                 tx.vin[i].scriptSig = SCRIPTSIG_OP_TRUE
         else:
             assert False
-        pad_tx(tx, 100)
 
     def generate(self, num_blocks, **kwargs):
         """Generate blocks with coinbase outputs to the internal address, and call rescan_utxos"""
@@ -351,8 +351,7 @@ class MiniWallet:
             ),
         )
 
-        if target_size:
-            pad_tx(tx, target_size)
+        pad_tx(tx, target_size or 100, deterministic=True)
 
         txid = tx.rehash()
         return {
@@ -422,7 +421,7 @@ class MiniWallet:
         self.scan_tx(from_node.decoderawtransaction(tx_hex))
         return txid
 
-    def create_self_transfer_chain(self, *, chain_length, utxo_to_spend=None):
+    def create_self_transfer_chain(self, *, chain_length, utxo_to_spend=None, **kwargs):
         """
         Create a "chain" of chain_length transactions. The nth transaction in
         the chain is a child of the n-1th transaction and parent of the n+1th transaction.
@@ -431,7 +430,7 @@ class MiniWallet:
         chain = []
 
         for _ in range(chain_length):
-            tx = self.create_self_transfer(utxo_to_spend=chaintip_utxo)
+            tx = self.create_self_transfer(utxo_to_spend=chaintip_utxo, **kwargs)
             chaintip_utxo = tx["new_utxo"]
             chain.append(tx)
 
@@ -475,3 +474,13 @@ def address_to_scriptpubkey(address):
     # TODO: also support other address formats
     else:
         assert False
+
+
+def cashaddr_to_scriptpubkey(address: str) -> CScript:
+    """Converts a given CashAddress to the corresponding output script (scriptPubKey)."""
+    prefix, kind, addr_hash = cashaddr.decode(address)
+    if kind == cashaddr.PUBKEY_TYPE:
+        return CScript([OP_DUP, OP_HASH160, addr_hash, OP_EQUALVERIFY, OP_CHECKSIG])
+    if kind == cashaddr.SCRIPT_TYPE:
+        return CScript([OP_HASH160, addr_hash, OP_EQUAL])
+    assert False

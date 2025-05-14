@@ -347,22 +347,25 @@ QString AddressTableModel::addRow(const QString &type, const QString &label,
             strLabel, "send");
     } else if (type == Receive) {
         // Generate a new address to associate with given label
-        CTxDestination dest;
-        if (!walletModel->wallet().getNewDestination(address_type, strLabel,
-                                                     dest)) {
+        if (auto dest{walletModel->wallet().getNewDestination(address_type,
+                                                              strLabel)}) {
+            strAddress = EncodeCashAddr(*dest, walletModel->getChainParams());
+        } else {
             WalletModel::UnlockContext ctx(walletModel->requestUnlock());
             if (!ctx.isValid()) {
                 // Unlock wallet failed or was cancelled
                 editStatus = WALLET_UNLOCK_FAILURE;
                 return QString();
             }
-            if (!walletModel->wallet().getNewDestination(address_type, strLabel,
-                                                         dest)) {
+            if (auto dest_retry{walletModel->wallet().getNewDestination(
+                    address_type, strLabel)}) {
+                strAddress =
+                    EncodeCashAddr(*dest_retry, walletModel->getChainParams());
+            } else {
                 editStatus = KEY_GENERATION_FAILURE;
                 return QString();
             }
         }
-        strAddress = EncodeCashAddr(dest, walletModel->getChainParams());
     } else {
         return QString();
     }

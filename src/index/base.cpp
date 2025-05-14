@@ -7,8 +7,10 @@
 #include <common/args.h>
 #include <config.h>
 #include <index/base.h>
+#include <interfaces/chain.h>
 #include <logging.h>
 #include <node/blockstorage.h>
+#include <node/context.h>
 #include <node/database_args.h>
 #include <node/ui_interface.h>
 #include <shutdown.h>
@@ -19,6 +21,8 @@
 #include <warnings.h>
 
 #include <functional>
+#include <string>
+#include <utility>
 
 constexpr uint8_t DB_BEST_BLOCK{'B'};
 
@@ -32,6 +36,16 @@ static void FatalError(const char *fmt, const Args &...args) {
     LogPrintf("*** %s\n", strMessage);
     AbortError(_("A fatal internal error occurred, see debug.log for details"));
     StartShutdown();
+}
+
+CBlockLocator GetLocator(interfaces::Chain &chain,
+                         const BlockHash &block_hash) {
+    CBlockLocator locator;
+    bool found =
+        chain.findBlock(block_hash, interfaces::FoundBlock().locator(locator));
+    assert(found);
+    assert(!locator.IsNull());
+    return locator;
 }
 
 BaseIndex::DB::DB(const fs::path &path, size_t n_cache_size, bool f_memory,
@@ -60,67 +74,66 @@ void BaseIndex::DB::WriteBestBlock(CDBBatch &batch,
     batch.Write(DB_BEST_BLOCK, locator);
 }
 
+BaseIndex::BaseIndex(std::unique_ptr<interfaces::Chain> chain, std::string name)
+    : m_chain{std::move(chain)}, m_name{std::move(name)} {}
+
 BaseIndex::~BaseIndex() {
     Interrupt();
     Stop();
 }
 
 bool BaseIndex::Init() {
+    AssertLockNotHeld(cs_main);
+
+    // May need reset if index is being restarted.
+    m_interrupt.reset();
+
+    // Register to validation interface before setting the 'm_synced' flag, so
+    // that callbacks are not missed once m_synced is true.
+    RegisterValidationInterface(this);
+
     CBlockLocator locator;
     if (!GetDB().ReadBestBlock(locator)) {
         locator.SetNull();
     }
 
     LOCK(cs_main);
-    CChain &active_chain = m_chainstate->m_chain;
+    // m_chainstate member gives indexing code access to node internals. It is
+    // removed in followup https://github.com/bitcoin/bitcoin/pull/24230
+    m_chainstate = &m_chain->context()->chainman->GetChainstateForIndexing();
+    CChain &index_chain = m_chainstate->m_chain;
+
     if (locator.IsNull()) {
         SetBestBlockIndex(nullptr);
     } else {
-        SetBestBlockIndex(m_chainstate->FindForkInGlobalIndex(locator));
+        // Setting the best block to the locator's top block. If it is not part
+        // of the best chain, we will rewind to the fork point during index sync
+        const CBlockIndex *locator_index{
+            m_chainstate->m_blockman.LookupBlockIndex(locator.vHave.at(0))};
+        if (!locator_index) {
+            return InitError(
+                strprintf(Untranslated("%s: best block of the index not found. "
+                                       "Please rebuild the index."),
+                          GetName()));
+        }
+        SetBestBlockIndex(locator_index);
     }
-    m_synced = m_best_block_index.load() == active_chain.Tip();
-    if (!m_synced) {
-        bool prune_violation = false;
-        if (!m_best_block_index) {
-            // index is not built yet
-            // make sure we have all block data back to the genesis
-            prune_violation =
-                m_chainstate->m_blockman.GetFirstStoredBlock(
-                    *active_chain.Tip()) != active_chain.Genesis();
-        }
-        // in case the index has a best block set and is not fully synced
-        // check if we have the required blocks to continue building the index
-        else {
-            const CBlockIndex *block_to_test = m_best_block_index.load();
-            if (!active_chain.Contains(block_to_test)) {
-                // if the bestblock is not part of the mainchain, find the fork
-                // and make sure we have all data down to the fork
-                block_to_test = active_chain.FindFork(block_to_test);
-            }
-            const CBlockIndex *block = active_chain.Tip();
-            prune_violation = true;
-            // check backwards from the tip if we have all block data until we
-            // reach the indexes bestblock
-            while (block_to_test && block && block->nStatus.hasData()) {
-                if (block_to_test == block) {
-                    prune_violation = false;
-                    break;
-                }
-                // block->pprev must exist at this point, since block_to_test is
-                // part of the chain and thus must be encountered when going
-                // backwards from the tip
-                assert(block->pprev);
-                block = block->pprev;
-            }
-        }
-        if (prune_violation) {
-            return InitError(strprintf(
-                Untranslated("%s best block of the index goes beyond pruned "
-                             "data. Please disable the index or reindex (which "
-                             "will download the whole blockchain again)"),
-                GetName()));
-        }
+
+    // Child init
+    const CBlockIndex *start_block = m_best_block_index.load();
+    if (!CustomInit(start_block ? std::make_optional(interfaces::BlockKey{
+                                      start_block->GetBlockHash(),
+                                      start_block->nHeight})
+                                : std::nullopt)) {
+        return false;
     }
+
+    // Note: this will latch to true immediately if the user starts up with an
+    // empty datadir and an index enabled. If this is the case, indexation will
+    // happen solely via `BlockConnected` signals until, possibly, the next
+    // restart.
+    m_synced = start_block == index_chain.Tip();
+    m_init = true;
     return true;
 }
 
@@ -148,6 +161,9 @@ void BaseIndex::ThreadSync() {
         int64_t last_locator_write_time = 0;
         while (true) {
             if (m_interrupt) {
+                LogPrintf("%s: m_interrupt set; exiting ThreadSync\n",
+                          GetName());
+
                 SetBestBlockIndex(pindex);
                 // No need to handle errors in Commit. If it fails, the error
                 // will be already be logged. The best way to recover is to
@@ -178,21 +194,6 @@ void BaseIndex::ThreadSync() {
                 pindex = pindex_next;
             }
 
-            int64_t current_time = GetTime();
-            if (last_log_time + SYNC_LOG_INTERVAL < current_time) {
-                LogPrintf("Syncing %s with block chain from height %d\n",
-                          GetName(), pindex->nHeight);
-                last_log_time = current_time;
-            }
-
-            if (last_locator_write_time + SYNC_LOCATOR_WRITE_INTERVAL <
-                current_time) {
-                SetBestBlockIndex(pindex);
-                last_locator_write_time = current_time;
-                // No need to handle errors in Commit. See rationale above.
-                Commit();
-            }
-
             CBlock block;
             if (!m_chainstate->m_blockman.ReadBlockFromDisk(block, *pindex)) {
                 FatalError("%s: Failed to read block %s from disk", __func__,
@@ -203,6 +204,21 @@ void BaseIndex::ThreadSync() {
                 FatalError("%s: Failed to write block %s to index database",
                            __func__, pindex->GetBlockHash().ToString());
                 return;
+            }
+
+            int64_t current_time = GetTime();
+            if (last_log_time + SYNC_LOG_INTERVAL < current_time) {
+                LogPrintf("Syncing %s with block chain from height %d\n",
+                          GetName(), pindex->nHeight);
+                last_log_time = current_time;
+            }
+
+            if (last_locator_write_time + SYNC_LOCATOR_WRITE_INTERVAL <
+                current_time) {
+                SetBestBlockIndex(pindex->pprev);
+                last_locator_write_time = current_time;
+                // No need to handle errors in Commit. See rationale above.
+                Commit();
             }
         }
     }
@@ -215,22 +231,23 @@ void BaseIndex::ThreadSync() {
 }
 
 bool BaseIndex::Commit() {
-    CDBBatch batch(GetDB());
-    if (!CommitInternal(batch) || !GetDB().WriteBatch(batch)) {
+    // Don't commit anything if we haven't indexed any block yet
+    // (this could happen if init is interrupted).
+    bool ok = m_best_block_index != nullptr;
+    if (ok) {
+        CDBBatch batch(GetDB());
+        ok = CustomCommit(batch);
+        if (ok) {
+            GetDB().WriteBestBlock(
+                batch, GetLocator(*m_chain,
+                                  m_best_block_index.load()->GetBlockHash()));
+            ok = GetDB().WriteBatch(batch);
+        }
+    }
+    if (!ok) {
         return error("%s: Failed to commit latest %s state", __func__,
                      GetName());
     }
-    return true;
-}
-
-bool BaseIndex::CommitInternal(CDBBatch &batch) {
-    LOCK(cs_main);
-    // Don't commit anything if we haven't indexed any block yet
-    // (this could happen if init is interrupted).
-    if (m_best_block_index == nullptr) {
-        return false;
-    }
-    GetDB().WriteBestBlock(batch, GetLocator(m_best_block_index));
     return true;
 }
 
@@ -254,8 +271,20 @@ bool BaseIndex::Rewind(const CBlockIndex *current_tip,
     return true;
 }
 
-void BaseIndex::BlockConnected(const std::shared_ptr<const CBlock> &block,
+void BaseIndex::BlockConnected(ChainstateRole role,
+                               const std::shared_ptr<const CBlock> &block,
                                const CBlockIndex *pindex) {
+    // Ignore events from the assumed-valid chain; we will process its blocks
+    // (sequentially) after it is fully verified by the background chainstate.
+    // This is to avoid any out-of-order indexing.
+    //
+    // TODO at some point we could parameterize whether a particular index can
+    // be built out of order, but for now just do the conservative simple thing.
+    if (role == ChainstateRole::ASSUMEDVALID) {
+        return;
+    }
+
+    // Ignore BlockConnected signals until we have fully indexed the chain.
     if (!m_synced) {
         return;
     }
@@ -305,7 +334,14 @@ void BaseIndex::BlockConnected(const std::shared_ptr<const CBlock> &block,
     }
 }
 
-void BaseIndex::ChainStateFlushed(const CBlockLocator &locator) {
+void BaseIndex::ChainStateFlushed(ChainstateRole role,
+                                  const CBlockLocator &locator) {
+    // Ignore events from the assumed-valid chain; we will process its blocks
+    // (sequentially) after it is fully verified by the background chainstate.
+    if (role == ChainstateRole::ASSUMEDVALID) {
+        return;
+    }
+
     if (!m_synced) {
         return;
     }
@@ -375,13 +411,9 @@ void BaseIndex::Interrupt() {
     m_interrupt();
 }
 
-bool BaseIndex::Start(Chainstate &active_chainstate) {
-    m_chainstate = &active_chainstate;
-    // Need to register this ValidationInterface before running Init(), so that
-    // callbacks are not missed if Init sets m_synced to true.
-    RegisterValidationInterface(this);
-    if (!Init()) {
-        return false;
+bool BaseIndex::StartBackgroundSync() {
+    if (!m_init) {
+        throw std::logic_error("Error: Cannot start a non-initialized index");
     }
 
     m_thread_sync =
@@ -401,8 +433,13 @@ IndexSummary BaseIndex::GetSummary() const {
     IndexSummary summary{};
     summary.name = GetName();
     summary.synced = m_synced;
-    summary.best_block_height =
-        m_best_block_index ? m_best_block_index.load()->nHeight : 0;
+    if (const auto &pindex = m_best_block_index.load()) {
+        summary.best_block_height = pindex->nHeight;
+        summary.best_block_hash = pindex->GetBlockHash();
+    } else {
+        summary.best_block_height = 0;
+        summary.best_block_hash = m_chain->getBlockHash(0);
+    }
     return summary;
 }
 

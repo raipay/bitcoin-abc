@@ -2,15 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 import Layout from '/components/layout';
-import Script from 'next/script';
 import Image from 'next/image';
 import SubPageHero from '/components/sub-page-hero';
 import H3 from '/components/h3';
 import { Container, GradientSpacer } from '/components/atoms';
 import coinupdown from '/public/animations/coin-up-down.json';
-import coinflip from '/public/animations/exchanges-coin-flip.json';
 import services from '/public/animations/services.json';
-import mining from '/public/animations/mining.json';
 import {
     LeftTopArrow,
     LeftDownArrow,
@@ -18,6 +15,7 @@ import {
     RightDownArrow,
     Blob,
     ContentCtn,
+    FlexButtons,
 } from '/styles/common.js';
 
 import {
@@ -42,7 +40,9 @@ import Button from '/components/button';
 
 import elps from '/public/images/eLPS.png';
 import paybutton from '/public/images/paybutton.png';
-import ecashpoker from '/public/images/ecash-poker-logo.png';
+import pay2stay from '/public/images/Pay2Stay.png';
+import xecxLogo from '/public/images/xecx-logo-white.png';
+import localecashLogo from '/public/images/localecash.png';
 
 function TileSection({ title, items, children }) {
     return (
@@ -128,21 +128,30 @@ function UseEcash(props) {
                 <Blob left="0" top="90%" />
                 <Container>
                     <TextImageBlock
-                        id="ecashpoker"
-                        title="eCash Poker"
-                        image={ecashpoker}
-                        alt="eCashPoker logo"
+                        id="pay2stay"
+                        title="Pay2Stay"
+                        image={pay2stay}
+                        alt="Pay2Stay logo"
                     >
                         <p>
-                            The slickest blockchain poker platform is back.
-                            Hourly free rolls, no signup, no KYC. Play online
-                            poker powered by eCash.
+                            Experience the fastest, safest, and fairest private
+                            event ticketing app. Gain control of your time and
+                            money as you host, join, or promote exclusive
+                            events.
                         </p>
+                        <p>
+                            Guest list management. QR code check-ins. Time-based
+                            and upfront pricing models. Instant refunds.
+                            Tailored for small and medium in-person private
+                            events. Sign up is free forever!
+                        </p>
+                        <p>Built using eCash&apos;s eToken technology.</p>
                         <Button
-                            text="Play Now"
-                            link="https://ecash.poker/"
+                            text="Get Started"
+                            link="https://pay2stay.com/"
                             corner="bottomRight"
                             color="accent"
+                            openInNewTab
                         />
                     </TextImageBlock>
                     <TextImageBlock
@@ -167,6 +176,7 @@ function UseEcash(props) {
                             link="https://paybutton.org/"
                             corner="bottomRight"
                             color="accent"
+                            openInNewTab
                         />
                     </TextImageBlock>
                     <TextImageBlock
@@ -187,7 +197,81 @@ function UseEcash(props) {
                             link="https://elpstoken.com/"
                             corner="bottomRight"
                             color="accent"
+                            openInNewTab
                         />
+                    </TextImageBlock>
+                    <TextImageBlock
+                        id="xecx"
+                        title="XECX"
+                        image={xecxLogo}
+                        alt="XECX logo"
+                    >
+                        <p>
+                            Earn crypto while you sleep with as little as $1 of
+                            XECX. Holders of XECX receive daily eCash staking
+                            reward payouts in XEC. Trade XECX for XEC 1:1 on the
+                            Agora marketplace.
+                        </p>
+                        <p>Built using eCash&apos;s ALP technology.</p>
+                        <p>
+                            <i>
+                                XECX is not XEC. It is a token project built on
+                                XEC by a third-party. The 1:1 peg of XECX to XEC
+                                is based on trust in XECX operators and their
+                                incentives. It is not risk-free.
+                            </i>
+                        </p>
+
+                        <FlexButtons>
+                            <Button
+                                text="Learn more"
+                                link="https://stakedxec.com/"
+                                corner="bottomRight"
+                                color="accent"
+                                openInNewTab
+                            />
+                            <Button
+                                text="Get XECX"
+                                link="https://cashtab.com/#/token/c67bf5c2b6d91cfb46a5c1772582eff80d88686887be10aa63b0945479cf4ed4"
+                                corner="bottomRight"
+                                color="white"
+                                openInNewTab
+                            />
+                        </FlexButtons>
+                    </TextImageBlock>
+                    <TextImageBlock
+                        id="localecash"
+                        title="LocaleCash"
+                        image={localecashLogo}
+                        alt="LocaleCash logo"
+                    >
+                        <p>
+                            Trade your XEC against fiat, crypto, or goods using
+                            a non-custodial escrow. Make public or private
+                            offers and engage with your counterparty in direct
+                            trades.
+                        </p>
+                        <p>Built with eCash-native smart contracts.</p>
+                        <p>
+                            <i>
+                                LocaleCash is a P2P DEX where trades are
+                                initiated by locking XEC in escrow. In case of a
+                                dispute, arbitrators can be called in. The
+                                contract is designed so that arbitrators can
+                                only forward funds to either the buyer or the
+                                seller without ever taking custody of the funds.
+                            </i>
+                        </p>
+
+                        <FlexButtons>
+                            <Button
+                                text="Get Started"
+                                link="https://localecash.com/"
+                                corner="bottomRight"
+                                color="accent"
+                                openInNewTab
+                            />
+                        </FlexButtons>
                     </TextImageBlock>
                 </Container>
 

@@ -7,16 +7,17 @@
 
 #include <validation.h>
 
+enum class ChainstateRole;
 class CValidationInterface;
 
 class ValidationInterfaceTest {
 public:
-    static void BlockConnected(CValidationInterface &obj,
+    static void BlockConnected(ChainstateRole role, CValidationInterface &obj,
                                const std::shared_ptr<const CBlock> &block,
                                const CBlockIndex *pindex);
 };
 
-struct TestChainState : public Chainstate {
+struct TestChainstateManager : public ChainstateManager {
     /** Reset the ibd cache to its initial state */
     void ResetIbd();
     /** Toggle IsInitialBlockDownload from true to false */

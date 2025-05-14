@@ -1,20 +1,13 @@
-/**
- * @license
- * https://reviews.bitcoinabc.org
- * Copyright (c) 2017-2020 Emilio Almansi
- * Copyright (c) 2023-2024 Bitcoin ABC
- * Distributed under the MIT software license, see the accompanying
- * file LICENSE or http://www.opensource.org/licenses/mit-license.php.
- */
+// Copyright (c) 2023-2025 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-'use strict';
+// Copyright (c) 2017-2020 Emilio Almansi
 
 import base32 from './base32';
 import convertBits from './convertBits';
-import validation from './validation';
 import { AddressType, DecodedAddress, TypeAndHash } from './types';
-var bigInt = require('big-integer');
-var bs58check = require('bs58check');
+import validation from './validation';
 const { validate, ValidationError } = validation;
 
 /**
@@ -32,7 +25,7 @@ const { validate, ValidationError } = validation;
  * @param hash Hash to encode represented as an array of 8-bit integers.
  * @throws {ValidationError}
  */
-function encode(
+export function encodeCashAddress(
     prefix: string,
     type: AddressType,
     hash: Uint8Array | string,
@@ -41,7 +34,10 @@ function encode(
         typeof prefix === 'string' && isValidPrefix(prefix),
         'Invalid prefix: ' + prefix + '.',
     );
-    validate(typeof type === 'string', 'Invalid type: ' + type + '.');
+    validate(
+        type === 'p2pkh' || type === 'p2sh',
+        'Invalid type: ' + type + '.',
+    );
     validate(
         hash instanceof Uint8Array || typeof hash === 'string',
         'Invalid hash: ' + hash + '. Must be string or Uint8Array.',
@@ -49,14 +45,16 @@ function encode(
     if (typeof hash === 'string') {
         hash = stringToUint8Array(hash);
     }
-    var prefixData = concat(prefixToUint5Array(prefix), new Uint8Array(1));
-    var versionByte = getTypeBits(type) + getHashSizeBits(hash);
-    var payloadData = toUint5Array(concat(new Uint8Array([versionByte]), hash));
-    var checksumData = concat(
+    const prefixData = concat(prefixToUint5Array(prefix), new Uint8Array(1));
+    const versionByte = getTypeBits(type) + getHashSizeBits(hash);
+    const payloadData = toUint5Array(
+        concat(new Uint8Array([versionByte]), hash),
+    );
+    const checksumData = concat(
         concat(prefixData, payloadData),
         new Uint8Array(8),
     );
-    var payload = concat(
+    const payload = concat(
         payloadData,
         checksumToUint5Array(polymod(checksumData)),
     );
@@ -67,15 +65,14 @@ function encode(
  * Decodes the given address into its constituting prefix, type and hash. See [#encode()]{@link encode}.
  *
  * @param address Address to decode. E.g.: 'ecash:qpm2qsznhks23z7629mms6s4cwef74vcwva87rkuu2'.
- * @param chronikReady Return hash160 as a string, and return type as lowercase. Inputs expected by chronik.
  * @throws {ValidationError}
  */
-function decode(address: string, chronikReady = false): DecodedAddress {
+export function decodeCashAddress(address: string): DecodedAddress {
     validate(
         typeof address === 'string' && hasSingleCase(address),
         'Invalid address: ' + address + '.',
     );
-    var pieces = address.toLowerCase().split(':');
+    const pieces = address.toLowerCase().split(':');
     // if there is no prefix, it might still be valid
     let prefix, payload;
     if (pieces.length === 1) {
@@ -110,27 +107,29 @@ function decode(address: string, chronikReady = false): DecodedAddress {
     }
 
     // We assert that payload will be defined here, as we validate above
-    var payloadData = fromUint5Array((payload as Uint8Array).subarray(0, -8));
-    var versionByte = payloadData[0];
-    var hash = payloadData.subarray(1);
+    const payloadData = fromUint5Array((payload as Uint8Array).subarray(0, -8));
+    const versionByte = payloadData[0];
+    const hash = payloadData.subarray(1);
     validate(
         getHashSize(versionByte) === hash.length * 8,
         'Invalid hash size: ' + address + '.',
     );
-    var type = getType(versionByte);
+    const type = getType(versionByte);
     return {
         prefix: prefix as string,
-        type: chronikReady ? (type.toLowerCase() as AddressType) : type,
-        hash: chronikReady ? uint8arraytoString(hash) : hash,
+        type,
+        hash: uint8arrayToHexString(hash),
     };
 }
 
 /**
- * All valid address prefixes.
+ * All valid address prefixes
+ * Note that as of 2.0.0 we do not validate against these prefixes
+ * However we do use them to guess prefix for prefixless addrs
  *
  * @private
  */
-var VALID_PREFIXES = [
+export const VALID_PREFIXES = [
     'ecash',
     'bitcoincash',
     'simpleledger',
@@ -142,24 +141,15 @@ var VALID_PREFIXES = [
 ];
 
 /**
- * Valid mainnet prefixes
- *
- * @private
- */
-var VALID_PREFIXES_MAINNET = ['ecash', 'bitcoincash', 'simpleledger', 'etoken'];
-
-/**
- * Checks whether a string is a valid prefix; ie., it has a single letter case
- * and is one of 'ecash', 'ectest', 'etoken', etc
+ * Checks whether a string is a valid prefix
+ * ie., it has a single letter case and no spaces
+ * Could be extended to validate for accepted prefixes
  *
  * @private
  * @param prefix
  */
 function isValidPrefix(prefix: string): boolean {
-    return (
-        hasSingleCase(prefix) &&
-        VALID_PREFIXES.indexOf(prefix.toLowerCase()) !== -1
-    );
+    return hasSingleCase(prefix) && !prefix.includes(' ');
 }
 
 /**
@@ -170,8 +160,8 @@ function isValidPrefix(prefix: string): boolean {
  * @param prefix Cash address prefix. E.g.: 'ecash'.
  */
 function prefixToUint5Array(prefix: string): Uint8Array {
-    var result = new Uint8Array(prefix.length);
-    for (var i = 0; i < prefix.length; ++i) {
+    const result = new Uint8Array(prefix.length);
+    for (let i = 0; i < prefix.length; ++i) {
         result[i] = prefix[i].charCodeAt(0) & 31;
     }
     return result;
@@ -185,11 +175,13 @@ function prefixToUint5Array(prefix: string): Uint8Array {
  * @param checksum Computed checksum.
  * TODO update big-integer so we can use correct types
  */
-function checksumToUint5Array(checksum: typeof bigInt): Uint8Array {
-    var result = new Uint8Array(8);
-    for (var i = 0; i < 8; ++i) {
-        result[7 - i] = checksum.and(31).toJSNumber();
-        checksum = checksum.shiftRight(5);
+function checksumToUint5Array(checksum: bigint): Uint8Array {
+    const result = new Uint8Array(8);
+    for (let i = 0; i < 8; ++i) {
+        // Extract the least significant 5 bits (31 is 11111 in binary)
+        result[7 - i] = Number(checksum & 31n);
+        // Shift right by 5 bits
+        checksum >>= 5n;
     }
     return result;
 }
@@ -205,10 +197,8 @@ function checksumToUint5Array(checksum: typeof bigInt): Uint8Array {
 function getTypeBits(type: AddressType): number {
     switch (type) {
         case 'p2pkh':
-        case 'P2PKH':
             return 0;
         case 'p2sh':
-        case 'P2SH':
             return 8;
         default:
             throw new ValidationError('Invalid type: ' + type + '.');
@@ -225,9 +215,9 @@ function getTypeBits(type: AddressType): number {
 function getType(versionByte: number): AddressType {
     switch (versionByte & 120) {
         case 0:
-            return 'P2PKH';
+            return 'p2pkh';
         case 8:
-            return 'P2SH';
+            return 'p2sh';
         default:
             throw new ValidationError(
                 'Invalid address type in version byte: ' + versionByte + '.',
@@ -331,7 +321,7 @@ function fromUint5Array(data: Uint8Array): Uint8Array {
  * @throws {ValidationError}
  */
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
-    var ab = new Uint8Array(a.length + b.length);
+    const ab = new Uint8Array(a.length + b.length);
     ab.set(a);
     ab.set(b, a.length);
     return ab;
@@ -342,24 +332,30 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
  * format: https://github.com/Bitcoin-UAHF/spec/blob/master/cashaddr.md.
  *
  * @private
- * @param {Uint8Array} data Array of 5-bit integers over which the checksum is to be computed.
+ * @param data Array of 5-bit integers over which the checksum is to be computed.
  */
-function polymod(data: Uint8Array): typeof bigInt {
-    var GENERATOR = [
-        0x98f2bc8e61, 0x79b76d99e2, 0xf33e5fb3c4, 0xae2eabe2a8, 0x1e4f43e470,
+function polymod(data: Uint8Array): bigint {
+    const GENERATOR = [
+        BigInt('0x98f2bc8e61'),
+        BigInt('0x79b76d99e2'),
+        BigInt('0xf33e5fb3c4'),
+        BigInt('0xae2eabe2a8'),
+        BigInt('0x1e4f43e470'),
     ];
-    var checksum = bigInt(1);
-    for (var i = 0; i < data.length; ++i) {
-        var value = data[i];
-        var topBits = checksum.shiftRight(35);
-        checksum = checksum.and(0x07ffffffff).shiftLeft(5).xor(value);
-        for (var j = 0; j < GENERATOR.length; ++j) {
-            if (topBits.shiftRight(j).and(1).equals(1)) {
-                checksum = checksum.xor(GENERATOR[j]);
+    let checksum = 1n; // BigInt for 1
+
+    for (let i = 0; i < data.length; i += 1) {
+        const value = BigInt(data[i]);
+        const topBits = checksum >> 35n;
+        checksum = ((checksum & 0x07ffffffffn) << 5n) ^ value;
+
+        for (let j = 0; j < GENERATOR.length; ++j) {
+            if ((topBits >> BigInt(j)) & 1n) {
+                checksum ^= GENERATOR[j];
             }
         }
     }
-    return checksum.xor(1);
+    return checksum ^ 1n;
 }
 
 /**
@@ -371,9 +367,9 @@ function polymod(data: Uint8Array): typeof bigInt {
  * @param payload Array of 5-bit integers containing the address' payload.
  */
 function validChecksum(prefix: string, payload: Uint8Array): boolean {
-    var prefixData = concat(prefixToUint5Array(prefix), new Uint8Array(1));
-    var checksumData = concat(prefixData, payload);
-    return polymod(checksumData).equals(0);
+    const prefixData = concat(prefixToUint5Array(prefix), new Uint8Array(1));
+    const checksumData = concat(prefixData, payload);
+    return polymod(checksumData) === 0n;
 }
 
 /**
@@ -394,13 +390,12 @@ function hasSingleCase(string: string): boolean {
  * @param string Input string.
  */
 function stringToUint8Array(string: string): Uint8Array {
-    const buffer = Buffer.from(string, 'hex');
-    const arrayBuffer = new ArrayBuffer(buffer.length);
-    const uint8Array = new Uint8Array(arrayBuffer);
-    for (let i = 0; i < uint8Array.length; i += 1) {
-        uint8Array[i] = buffer[i];
+    const array = new Uint8Array(string.length / 2);
+    for (let i = 0; i < string.length; i += 2) {
+        // Convert each pair of characters to an integer
+        array[i / 2] = parseInt(string.slice(i, i + 2), 16);
     }
-    return uint8Array;
+    return array;
 }
 
 /**
@@ -409,10 +404,15 @@ function stringToUint8Array(string: string): Uint8Array {
  * @private
  * @param uint8Array Input string.
  */
-function uint8arraytoString(uint8Array: Uint8Array): string {
-    const hexBuffer = Buffer.from(uint8Array);
-    const string = hexBuffer.toString('hex');
-    return string;
+export function uint8arrayToHexString(uint8Array: Uint8Array): string {
+    let hexString = '';
+    for (let i = 0; i < uint8Array.length; i++) {
+        let hex = uint8Array[i].toString(16);
+        // Ensure we have 2 digits for each byte
+        hex = hex.length === 1 ? '0' + hex : hex;
+        hexString += hex;
+    }
+    return hexString;
 }
 
 /**
@@ -428,7 +428,9 @@ function uint8arraytoString(uint8Array: Uint8Array): string {
  * @param outputScript an ecash tx outputScript
  * @throws {ValidationError}
  */
-function getTypeAndHashFromOutputScript(outputScript: string): TypeAndHash {
+export function getTypeAndHashFromOutputScript(
+    outputScript: string,
+): TypeAndHash {
     const p2pkhPrefix = '76a914';
     const p2pkhSuffix = '88ac';
 
@@ -479,6 +481,23 @@ function getTypeAndHashFromOutputScript(outputScript: string): TypeAndHash {
     return { type, hash };
 }
 
+export const getOutputScriptFromTypeAndHash = (
+    type: AddressType,
+    hash: string,
+): string => {
+    validate(
+        type === 'p2pkh' || type === 'p2sh',
+        'Invalid type: ' + type + '.',
+    );
+    let outputScript;
+    if (type === 'p2pkh') {
+        outputScript = `76a914${hash}88ac`;
+    } else {
+        outputScript = `a914${hash}87`;
+    }
+    return outputScript;
+};
+
 /**
  * Encodes a given outputScript into an eCash address using the optionally specified prefix.
  *
@@ -487,40 +506,15 @@ function getTypeAndHashFromOutputScript(outputScript: string): TypeAndHash {
  * @param prefix Cash address prefix. E.g.: 'ecash'.
  * @throws {ValidationError}
  */
-function encodeOutputScript(outputScript: string, prefix = 'ecash'): string {
+export function encodeOutputScript(
+    outputScript: string,
+    prefix = 'ecash',
+): string {
     // Get type and hash from outputScript
     const { type, hash } = getTypeAndHashFromOutputScript(outputScript);
 
     // The encode function validates hash for correct length
-    return encode(prefix, type, hash);
-}
-
-/**
- * Converts an ecash address to legacy format
- *
- * @static
- * @param  cashaddress a valid p2pkh or p2sh ecash address
- * @throws {ValidationError}
- */
-function toLegacy(cashaddress: string): string {
-    const { prefix, type, hash } = decode(cashaddress);
-    const isMainnet = VALID_PREFIXES_MAINNET.includes(prefix);
-    // Get correct version byte for legacy format
-    let versionByte;
-    switch (type) {
-        case 'P2PKH':
-            versionByte = isMainnet ? 0 : 111;
-            break;
-        case 'P2SH':
-            versionByte = isMainnet ? 5 : 196;
-            break;
-        default:
-            throw new ValidationError('Unsupported address type: ' + type);
-    }
-    var buffer = Buffer.alloc(1 + hash.length);
-    buffer[0] = versionByte;
-    buffer.set(hash as Uint8Array, 1);
-    return bs58check.encode(buffer);
+    return encodeCashAddress(prefix, type, hash);
 }
 
 /**
@@ -532,17 +526,17 @@ function toLegacy(cashaddress: string): string {
  * @param optionalPrefix cashaddr prefix
  * @throws {ValidationError}
  */
-function isValidCashAddress(
+export function isValidCashAddress(
     cashaddress: string,
     optionalPrefix: boolean | string = false,
 ): boolean {
     try {
-        const { prefix } = decode(cashaddress);
+        const { prefix } = decodeCashAddress(cashaddress);
         if (optionalPrefix) {
             return prefix === optionalPrefix;
         }
         return true;
-    } catch (err) {
+    } catch {
         return false;
     }
 }
@@ -556,8 +550,8 @@ function isValidCashAddress(
  * @returns the outputScript associated with this address and type
  * @throws {ValidationError} if decode fails
  */
-function getOutputScriptFromAddress(address: string): string {
-    const { type, hash } = decode(address, true);
+export function getOutputScriptFromAddress(address: string): string {
+    const { type, hash } = decodeCashAddress(address);
     let registrationOutputScript;
     if (type === 'p2pkh') {
         registrationOutputScript = `76a914${hash}88ac`;
@@ -566,20 +560,3 @@ function getOutputScriptFromAddress(address: string): string {
     }
     return registrationOutputScript;
 }
-
-const cashaddr = {
-    encode: encode,
-    decode: decode,
-    uint8arraytoString: uint8arraytoString,
-    encodeOutputScript: encodeOutputScript,
-    getTypeAndHashFromOutputScript: getTypeAndHashFromOutputScript,
-    toLegacy: toLegacy,
-    isValidCashAddress: isValidCashAddress,
-    getOutputScriptFromAddress: getOutputScriptFromAddress,
-};
-
-// Note: we use this kind of strange export = cashaddr syntax to preserve existing import syntax
-// i.e. we want to continue supporting apps that use
-// const cashaddr = require('ecashaddrjs');
-
-export = cashaddr;

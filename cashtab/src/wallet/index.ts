@@ -2,93 +2,154 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-import { BN } from 'slp-mdm';
+import BigNumber from 'bignumber.js';
 import * as bip39 from 'bip39';
 import randomBytes from 'randombytes';
-import * as utxolib from '@bitgo/utxo-lib';
-import cashaddr from 'ecashaddrjs';
+import { encodeCashAddress, decodeCashAddress } from 'ecashaddrjs';
 import appConfig from 'config/app';
-import { fromHex, Script, P2PKHSignatory, ALL_BIP143 } from 'ecash-lib';
-import { OutPoint, Token, Tx } from 'chronik-client';
-import { AgoraOffer } from 'ecash-agora';
+import { fromHex, HdNode, shaRmd160 } from 'ecash-lib';
+import { Token, Tx, ScriptUtxo } from 'chronik-client';
+import { ParsedTx } from 'chronik';
+import {
+    LegacyCashtabWallet_Pre_2_1_0,
+    LegacyCashtabWallet_Pre_2_9_0,
+    LegacyCashtabWallet_Pre_2_55_0,
+} from 'components/App/fixtures/mocks';
+import * as wif from 'wif';
+import {
+    TokenJson,
+    TxJson,
+    LegacyTxInputJson,
+    LegacyTxOutputJson,
+    LegacyTokenEntryJson,
+} from 'helpers';
 
 export type SlpDecimals = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-interface CashtabPathInfo {
+export interface LegacyPathInfo_Pre_2_55_0 {
     address: string;
     hash: string;
     wif: string;
 }
-interface NonSlpUtxo {
-    blockHeight: number;
-    isCoinbase: boolean;
-    isFinal: boolean;
-    path: number;
-    value: number;
-    outpoint: OutPoint;
+export interface CashtabPathInfo {
+    address: string;
+    hash: string;
+    wif: string;
+    /**
+     * Public key as a hex string
+     * Introduced in 2.55.0
+     * Cashtab migrates legacy wallets to this
+     */
+    pk: Uint8Array;
+    /**
+     * Private key as a hex string
+     * Introduced in 2.55.0
+     * Cashtab migrates legacy wallets to this
+     */
+    sk: Uint8Array;
 }
-export interface SlpUtxo extends NonSlpUtxo {
+export interface StoredCashtabPathInfo {
+    address: string;
+    hash: string;
+    wif: string;
+    /**
+     * Public key as a hex string
+     * Introduced in 2.55.0
+     * Cashtab migrates legacy wallets to this
+     */
+    pk: number[];
+    /**
+     * Private key as a hex string
+     * Introduced in 2.55.0
+     * Cashtab migrates legacy wallets to this
+     */
+    sk: number[];
+}
+export interface ScriptUtxoWithToken extends ScriptUtxo {
     token: Token;
 }
-export interface CashtabUtxo extends NonSlpUtxo {
+export interface NonTokenUtxo extends Omit<ScriptUtxo, 'token'> {
+    path: number;
+}
+
+export interface NonTokenUtxoJson extends Omit<NonTokenUtxo, 'sats'> {
+    sats: string;
+}
+
+export interface LegacyNonTokenUtxoJson extends Omit<NonTokenUtxoJson, 'sats'> {
+    value: number;
+}
+
+export interface TokenUtxo extends NonTokenUtxo {
+    token: Token;
+}
+
+export interface TokenUtxoJson extends Omit<NonTokenUtxoJson, 'token'> {
+    token: TokenJson;
+}
+
+export interface LegacyTokenJson extends Omit<TokenJson, 'atoms'> {
+    amount: string;
+}
+export interface LegacyTokenUtxoJson
+    extends Omit<TokenUtxoJson, 'sats' | 'token'> {
+    value: number;
+    token: LegacyTokenJson;
+}
+
+export interface CashtabUtxo extends NonTokenUtxo {
     token?: Token;
 }
-interface CashtabWalletState {
+
+export interface CashtabUtxoJson extends NonTokenUtxoJson {
+    token?: TokenJson;
+}
+
+export interface CashtabWalletState {
     balanceSats: number;
-    nonSlpUtxos: NonSlpUtxo[];
-    slpUtxos: SlpUtxo[];
-    parsedTxHistory: CashtabParsedTx[];
+    nonSlpUtxos: NonTokenUtxo[];
+    slpUtxos: TokenUtxo[];
+    parsedTxHistory: CashtabTx[];
     tokens: Map<string, string>;
 }
-interface ParsedTx {
-    recipients: string[];
-    satoshisSent: number;
-    stackArray: string[];
-    xecTxType: string;
-    size: number;
-}
-interface CashtabParsedTx extends Tx {
+export interface CashtabTx extends Tx {
     parsed: ParsedTx;
+}
+export interface CashtabTxJson extends TxJson {
+    parsed: ParsedTx;
+}
+export interface LegacyCashtabTxJson
+    extends Omit<CashtabTxJson, 'inputs' | 'outputs' | 'tokenEntries'> {
+    inputs: LegacyTxInputJson[];
+    outputs: LegacyTxOutputJson[];
+    tokenEntries: LegacyTokenEntryJson[];
+}
+export interface CashtabWalletPaths extends Map<number, CashtabPathInfo> {
+    // Assert that path 1899, the default path, is always defined
+    get(key: 1899): CashtabPathInfo;
+    // For all other keys, it might return undefined
+    get(key: number): CashtabPathInfo | undefined;
 }
 export interface CashtabWallet {
     name: string;
     mnemonic: string;
-    paths: Map<number, CashtabPathInfo>;
+    // Path 1899 is always defined
+    paths: CashtabWalletPaths;
     state: CashtabWalletState;
 }
 
 const SATOSHIS_PER_XEC = 100;
-const NANOSATS_PER_XEC = new BN(1e11);
+const NANOSATS_PER_XEC = new BigNumber(1e11);
 const STRINGIFIED_INTEGER_REGEX = /^[0-9]+$/;
 
 const SCI_REGEX_POSTIIVE = /^(\d*\.?\d+)e([+-]?\d+)$/i;
 export const STRINGIFIED_DECIMALIZED_REGEX = /^\d*\.?\d*$/;
 
-const DUMMY_TXID =
-    '1111111111111111111111111111111111111111111111111111111111111111';
-const DUMMY_WALLET_HASH = fromHex('12'.repeat(20));
-const DUMMY_SUFFICIENT_CANCEL_VALUE = 10000;
-const DUMMY_SCRIPT = Script.p2pkh(DUMMY_WALLET_HASH);
 export const DUMMY_KEYPAIR = {
     sk: fromHex('33'.repeat(32)),
     pk: fromHex(
         '023c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1',
     ),
 };
-// Used for accept and cancel fee estimation of agora partial offers
-const DUMMY_INPUT = {
-    input: {
-        prevOut: {
-            txid: DUMMY_TXID,
-            outIdx: 1,
-        },
-        signData: {
-            value: DUMMY_SUFFICIENT_CANCEL_VALUE,
-            outputScript: DUMMY_SCRIPT,
-        },
-    },
-    signatory: P2PKHSignatory(DUMMY_KEYPAIR.sk, DUMMY_KEYPAIR.pk, ALL_BIP143),
-};
-
 /**
  * Get total value of satoshis associated with an array of chronik utxos
  * @param nonSlpUtxos array of chronik utxos
@@ -99,9 +160,9 @@ const DUMMY_INPUT = {
  * @returns integer, total balance of input utxos in satoshis
  * or NaN if any utxo is invalid
  */
-export const getBalanceSats = (nonSlpUtxos: NonSlpUtxo[]): number => {
+export const getBalanceSats = (nonSlpUtxos: NonTokenUtxo[]): number => {
     return nonSlpUtxos.reduce(
-        (previousBalance, utxo) => previousBalance + utxo.value,
+        (previousBalance, utxo) => previousBalance + Number(utxo.sats),
         0,
     );
 };
@@ -111,7 +172,9 @@ export const getBalanceSats = (nonSlpUtxos: NonSlpUtxo[]): number => {
  * @param xecAmount a number with no more than 2 decimal places
  */
 export const toSatoshis = (xecAmount: number): number => {
-    const satoshis = new BN(xecAmount).times(SATOSHIS_PER_XEC).toNumber();
+    const satoshis = new BigNumber(xecAmount)
+        .times(SATOSHIS_PER_XEC)
+        .toNumber();
     if (!Number.isInteger(satoshis)) {
         throw new Error(
             'Result not an integer. Check input for valid XEC amount.',
@@ -131,7 +194,7 @@ export const toXec = (satoshis: bigint | number): number => {
     if (!Number.isInteger(satoshis)) {
         throw new Error('Input param satoshis must be an integer');
     }
-    return new BN(satoshis).div(SATOSHIS_PER_XEC).toNumber();
+    return new BigNumber(satoshis).div(SATOSHIS_PER_XEC).toNumber();
 };
 
 /**
@@ -142,7 +205,7 @@ export const nanoSatoshisToXec = (nanosats: number): number => {
     if (!Number.isInteger(nanosats)) {
         throw new Error('Input param nanosats must be an integer');
     }
-    return new BN(nanosats).div(NANOSATS_PER_XEC).toNumber();
+    return new BigNumber(nanosats).div(NANOSATS_PER_XEC).toNumber();
 };
 
 /**
@@ -152,9 +215,9 @@ export const nanoSatoshisToXec = (nanosats: number): number => {
  * Given over-precise XEC values, this function will round to the nearest nanosat
  * @param xecAmount
  */
-export const xecToNanoSatoshis = (xecAmount: number | BN): number => {
+export const xecToNanoSatoshis = (xecAmount: number | BigNumber): number => {
     const nanosats = Math.round(
-        new BN(xecAmount).times(NANOSATS_PER_XEC).toNumber(),
+        new BigNumber(xecAmount).times(NANOSATS_PER_XEC).toNumber(),
     );
     return nanosats;
 };
@@ -176,13 +239,14 @@ export const hasEnoughToken = (
     if (typeof thisTokenBalance === 'undefined') {
         return false;
     }
-    return new BN(thisTokenBalance).gte(tokenQty);
+    return new BigNumber(thisTokenBalance).gte(tokenQty);
 };
 
 /**
  * Create a Cashtab wallet object from a valid bip39 mnemonic
  * @param mnemonic a valid bip39 mnemonic
  * @param additionalPaths array of paths in addition to 1899 to add to this wallet
+ * @param ecc
  * Default to 1899-only for all new wallets
  * Accept an array, in case we are migrating a wallet with legacy paths 145, 245, or both 145 and 245
  */
@@ -191,10 +255,9 @@ export const createCashtabWallet = async (
     additionalPaths: number[] = [],
 ): Promise<CashtabWallet> => {
     // Initialize wallet with empty state
-    const wallet: CashtabWallet = {
+    const wallet: Omit<CashtabWallet, 'paths'> = {
         name: '',
         mnemonic: '',
-        paths: new Map(),
         state: {
             balanceSats: 0,
             slpUtxos: [],
@@ -209,10 +272,7 @@ export const createCashtabWallet = async (
 
     const rootSeedBuffer = await bip39.mnemonicToSeed(mnemonic, '');
 
-    const masterHDNode = utxolib.bip32.fromSeed(
-        rootSeedBuffer,
-        utxolib.networks.ecash,
-    );
+    const masterHDNode = HdNode.fromSeed(rootSeedBuffer);
 
     // wallet.paths is an array
     // For all newly-created wallets, we only support Path 1899
@@ -222,7 +282,7 @@ export const createCashtabWallet = async (
     // We always derive path 1899
     const pathsToDerive = [appConfig.derivationPath, ...additionalPaths];
 
-    wallet.paths = new Map();
+    const walletPaths: Map<number, CashtabPathInfo> = new Map();
     for (const path of pathsToDerive) {
         const pathInfo = getPathInfo(masterHDNode, path);
         if (path === appConfig.derivationPath) {
@@ -233,10 +293,10 @@ export const createCashtabWallet = async (
                 prefixLength + 5,
             );
         }
-        wallet.paths.set(path, pathInfo);
+        walletPaths.set(path, pathInfo);
     }
 
-    return wallet;
+    return { ...wallet, paths: walletPaths } as CashtabWallet;
 };
 
 /**
@@ -244,21 +304,27 @@ export const createCashtabWallet = async (
  *
  * @param masterHDNode calculated from utxolib
  * @param abbreviatedDerivationPath in practice: 145, 245, or 1899
+ * @param ecc
  */
 const getPathInfo = (
-    masterHDNode: utxolib.BIP32Interface,
+    masterHDNode: HdNode,
     abbreviatedDerivationPath: number,
 ): CashtabPathInfo => {
     const fullDerivationPath = `m/44'/${abbreviatedDerivationPath}'/0'/0/0`;
     const node = masterHDNode.derivePath(fullDerivationPath);
-    const address = cashaddr.encode(appConfig.prefix, 'P2PKH', node.identifier);
-    // Note the 'true' modifier here means we will always return a string
-    const { hash } = cashaddr.decode(address, true);
+    const pk = node.pubkey();
+    const address = encodeCashAddress(appConfig.prefix, 'p2pkh', shaRmd160(pk));
+    const { hash } = decodeCashAddress(address);
+    const sk = node.seckey();
+
+    const thisWif = wif.encode(128, sk as Buffer, true);
 
     return {
         hash: hash.toString(),
         address,
-        wif: node.toWIF(),
+        wif: thisWif,
+        sk: sk as Uint8Array,
+        pk,
     };
 };
 
@@ -291,11 +357,41 @@ export const fiatToSatoshis = (
 };
 
 /**
+ * A user who has not opened Cashtab in some time may have a legacy wallet
+ * The wallet shape has changed a few times
+ * Cashtab is designed so that a user starting up the app with legacy wallet(s)
+ * in storage will have them all migrated on startup
+ * So, if cashtabWalletFromJSON is called with a legacy wallet, it returns the
+ * wallet as-is so it can be invalidated and recreated
+ */
+export interface LegacyPathInfo extends LegacyPathInfo_Pre_2_55_0 {
+    path: number;
+}
+
+export interface StoredCashtabState
+    extends Omit<
+        CashtabWalletState,
+        'tokens' | 'slpUtxos' | 'nonSlpUtxos' | 'parsedTxHistory'
+    > {
+    tokens: [string, string][];
+    slpUtxos: TokenUtxoJson[] | LegacyTokenUtxoJson[];
+    nonSlpUtxos: NonTokenUtxoJson[] | LegacyNonTokenUtxoJson[];
+    parsedTxHistory: CashtabTxJson[] | LegacyCashtabTxJson[];
+}
+
+export type LegacyCashtabWallet =
+    | LegacyCashtabWallet_Pre_2_1_0
+    | LegacyCashtabWallet_Pre_2_9_0
+    | LegacyCashtabWallet_Pre_2_55_0;
+
+/**
  * Determine if a legacy wallet includes legacy paths that must be migrated
  * @param wallet a cashtab wallet
  * @returns array of legacy paths
  */
-export const getLegacyPaths = (wallet: CashtabWallet): number[] => {
+export const getLegacyPaths = (
+    wallet: LegacyCashtabWallet | CashtabWallet,
+): number[] => {
     const legacyPaths = [];
     if ('paths' in wallet) {
         if (Array.isArray(wallet.paths)) {
@@ -308,7 +404,7 @@ export const getLegacyPaths = (wallet: CashtabWallet): number[] => {
             }
         } else {
             // Cashtab wallet post 2.9.0
-            wallet.paths.forEach((pathInfo, path) => {
+            wallet.paths?.forEach((_pathInfo, path) => {
                 if (path !== 1899) {
                     legacyPaths.push(path);
                 }
@@ -596,135 +692,4 @@ export const hasUnfinalizedTxsInHistory = (wallet: CashtabWallet): boolean => {
         tx => typeof tx.block === 'undefined',
     );
     return unfinalizedTxs.length > 0;
-};
-
-/**
- * Determine input utxos to cover an Agora Partial accept offer
- * @param agoraOffer
- * @param utxos array of utxos as stored in Cashtab wallet object
- * @param acceptedTokens
- * @param feePerKb in satoshis
- * @returns fuelInputs
- * @throws if we cannot afford this tx
- */
-export const getAgoraPartialAcceptFuelInputs = (
-    agoraOffer: AgoraOffer,
-    utxos: NonSlpUtxo[],
-    acceptedTokens: bigint,
-    feePerKb: number,
-): NonSlpUtxo[] => {
-    const fuelInputs = [];
-    const dummyInputs = [];
-    let inputSatoshis = 0n;
-    for (const utxo of utxos) {
-        // Accumulative utxo selection
-        fuelInputs.push(utxo);
-        // Match our fuelInput count with dummyInputs
-        dummyInputs.push(DUMMY_INPUT);
-        inputSatoshis += BigInt(utxo.value);
-
-        const askedSats = agoraOffer.askedSats(BigInt(acceptedTokens));
-
-        // Get the tx fee for this tx
-        const acceptFeeSats = agoraOffer.acceptFeeSats({
-            recipientScript: DUMMY_SCRIPT,
-            extraInputs: dummyInputs,
-            acceptedTokens,
-            feePerKb,
-        });
-
-        // We need to cover the tx fee and the asking price
-        const requiredSats = acceptFeeSats + askedSats;
-
-        if (inputSatoshis >= requiredSats) {
-            return fuelInputs;
-        }
-    }
-    throw new Error('Insufficient utxos to accept this offer');
-};
-
-/**
- * Determine input utxos to cancel an Agora offer (Partial or ONESHOT)
- * @param agoraOffer
- * @param utxos array of utxos as stored in Cashtab wallet object
- * @param feePerKb in satoshis
- * @returns fuelInputs
- * @throws if we cannot afford this tx
- */
-export const getAgoraCancelFuelInputs = (
-    agoraOffer: AgoraOffer,
-    utxos: NonSlpUtxo[],
-    feePerKb: number,
-): NonSlpUtxo[] => {
-    const fuelInputs = [];
-    const dummyInputs = [];
-    let inputSatoshis = 0n;
-    for (const utxo of utxos) {
-        // Accumulative utxo selection
-        fuelInputs.push(utxo);
-        // Match our fuelInput count with dummyInputs
-        dummyInputs.push(DUMMY_INPUT);
-        inputSatoshis += BigInt(utxo.value);
-
-        // Get the tx fee for this tx
-        // In practice, this is always bigger than dust
-        // So we do not check to make sure the output we cover is at least dust
-        const cancelFeeSats = agoraOffer.cancelFeeSats({
-            recipientScript: DUMMY_SCRIPT,
-            extraInputs: dummyInputs,
-            feePerKb,
-        });
-
-        // There is no asking price for cancellation
-        // cancelFeeSats is the size of the output we need
-        if (inputSatoshis >= cancelFeeSats) {
-            return fuelInputs;
-        }
-    }
-    throw new Error('Insufficient utxos to cancel this offer');
-};
-
-/**
- * Determine input utxos to cover an Agora ONESHOT accept offer
- * Note: we could refactor getAgoraPartialAcceptFuelInputs to work with ONESHOT offers
- * However there is some ambiguity involved with the acceptedTokens param
- * I think it's cleaner to just have a separate function for Accept
- * @param agoraOffer
- * @param utxos array of utxos as stored in Cashtab wallet object
- * @param feePerKb in satoshis
- * @returns fuelInputs
- * @throws {error} if we cannot afford this tx
- */
-export const getAgoraOneshotAcceptFuelInputs = (
-    agoraOffer: AgoraOffer,
-    utxos: NonSlpUtxo[],
-    feePerKb: number,
-): NonSlpUtxo[] => {
-    const fuelInputs = [];
-    const dummyInputs = [];
-    let inputSatoshis = 0n;
-    for (const utxo of utxos) {
-        // Accumulative utxo selection
-        fuelInputs.push(utxo);
-        // Match our fuelInput count with dummyInputs
-        dummyInputs.push(DUMMY_INPUT);
-        inputSatoshis += BigInt(utxo.value);
-
-        const askedSats = agoraOffer.askedSats();
-
-        // Get the tx fee for this tx
-        const acceptFeeSats = agoraOffer.acceptFeeSats({
-            recipientScript: DUMMY_SCRIPT,
-            extraInputs: dummyInputs,
-            feePerKb,
-        });
-
-        // We need to cover the tx fee and the asking price
-        const requiredSats = acceptFeeSats + askedSats;
-
-        if (inputSatoshis >= requiredSats) {
-            return fuelInputs;
-        }
-    }
-    throw new Error('Insufficient utxos to accept this offer');
 };

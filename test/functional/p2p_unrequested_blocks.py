@@ -193,13 +193,15 @@ class AcceptBlockTest(BitcoinTestFramework):
 
         # Now send the block at height 5 and check that it wasn't accepted
         # (missing header)
-        test_node.send_and_ping(msg_block(all_blocks[1]))
+        test_node.send_message(msg_block(all_blocks[1]))
+        test_node.wait_for_disconnect()
         assert_raises_rpc_error(
             -5, "Block not found", self.nodes[0].getblock, all_blocks[1].hash
         )
         assert_raises_rpc_error(
             -5, "Block not found", self.nodes[0].getblockheader, all_blocks[1].hash
         )
+        test_node = self.nodes[0].add_p2p_connection(P2PInterface())
 
         # The block at height 5 should be accepted if we provide the missing
         # header, though
@@ -275,14 +277,16 @@ class AcceptBlockTest(BitcoinTestFramework):
             block_289f.sha256, create_coinbase(290), block_289f.nTime + 1
         )
         block_290f.solve()
-        block_291 = create_block(
-            block_290f.sha256, create_coinbase(291), block_290f.nTime + 1
-        )
         # block_291 spends a coinbase below maturity!
-        block_291.vtx.append(
-            create_tx_with_script(block_290f.vtx[0], 0, script_sig=b"42", amount=1)
+        tx_to_add = create_tx_with_script(
+            block_290f.vtx[0], 0, script_sig=b"42", amount=1
         )
-        block_291.hashMerkleRoot = block_291.calc_merkle_root()
+        block_291 = create_block(
+            block_290f.sha256,
+            create_coinbase(291),
+            block_290f.nTime + 1,
+            txlist=[tx_to_add],
+        )
         block_291.solve()
         block_292 = create_block(
             block_291.sha256, create_coinbase(292), block_291.nTime + 1

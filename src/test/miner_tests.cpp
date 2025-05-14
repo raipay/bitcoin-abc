@@ -14,11 +14,13 @@
 #include <consensus/merkle.h>
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
+#include <node/blockfitter.h>
 #include <policy/policy.h>
 #include <script/standard.h>
 #include <timedata.h>
 #include <txmempool.h>
 #include <uint256.h>
+#include <util/chaintype.h>
 #include <util/strencodings.h>
 #include <util/string.h>
 #include <util/time.h>
@@ -33,13 +35,14 @@
 #include <memory>
 
 using node::BlockAssembler;
+using node::BlockFitter;
 using node::CBlockTemplate;
 using node::CBlockTemplateEntry;
 
 namespace miner_tests {
 struct MinerTestingSetup : public TestingSetup {
     MinerTestingSetup(const std::vector<const char *> &extra_args = {})
-        : TestingSetup(CBaseChainParams::MAIN, extra_args) {}
+        : TestingSetup(ChainType::MAIN, extra_args) {}
 
     void TestPackageSelection(const CChainParams &chainparams,
                               const CScript &scriptPubKey,
@@ -78,10 +81,11 @@ BOOST_FIXTURE_TEST_SUITE(miner_tests, MinerTestingSetup)
 static CFeeRate blockMinFeeRate = CFeeRate(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB);
 
 BlockAssembler MinerTestingSetup::AssemblerForTest(const CChainParams &params) {
-    BlockAssembler::Options options;
+    BlockFitter::Options options;
     options.blockMinFeeRate = blockMinFeeRate;
-    return BlockAssembler{m_node.chainman->ActiveChainstate(),
-                          m_node.mempool.get(), options};
+    return BlockAssembler{BlockFitter(options),
+                          m_node.chainman->ActiveChainstate(),
+                          m_node.mempool.get()};
 }
 
 constexpr static struct {

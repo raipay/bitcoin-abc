@@ -69,6 +69,7 @@ class P2PIBDStallingTest(BitcoinTestFramework):
         self.log.info(
             "Check that a staller does not get disconnected if the 1024 block lookahead buffer is filled"
         )
+        self.mocktime = int(time.time()) + 1
         for id_ in range(NUM_PEERS):
             peers.append(
                 node.add_outbound_p2p_connection(
@@ -83,11 +84,13 @@ class P2PIBDStallingTest(BitcoinTestFramework):
         # Need to wait until 1023 blocks are received - the magic total bytes number is
         # a workaround in lack of an rpc returning the number of downloaded (but not
         # connected) blocks. 205 bytes x 1023 blocks
-        self.wait_until(lambda: self.total_bytes_recv_for_blocks() == 209715)
+        self.wait_until(
+            lambda: self.total_bytes_recv_for_blocks() == 209715, timeout=240
+        )
 
         self.all_sync_send_with_ping(peers)
         # If there was a peer marked for stalling, it would get disconnected
-        self.mocktime = int(time.time()) + 3
+        self.mocktime += 3
         node.setmocktime(self.mocktime)
         self.all_sync_send_with_ping(peers)
         assert_equal(node.num_test_p2p_connections(), NUM_PEERS)
@@ -145,14 +148,14 @@ class P2PIBDStallingTest(BitcoinTestFramework):
             "Provide the withheld block and check that stalling timeout gets reduced back to 2 seconds"
         )
         with node.assert_debug_log(
-            expected_msgs=["Decreased stalling timeout to 2 seconds"]
+            expected_msgs=["Decreased stalling timeout to 2 seconds"], timeout=10
         ):
             for p in peers:
                 if p.is_connected and (stall_block in p.getdata_requests):
                     p.send_message(msg_block(block_dict[stall_block]))
 
         self.log.info("Check that all outstanding blocks get connected")
-        self.wait_until(lambda: node.getblockcount() == NUM_BLOCKS)
+        self.wait_until(lambda: node.getblockcount() == NUM_BLOCKS, timeout=240)
 
     def total_bytes_recv_for_blocks(self):
         total = 0

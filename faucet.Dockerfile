@@ -12,11 +12,19 @@ FROM rust:1.76.0 AS wasmbuilder
 RUN apt-get update \
   && apt-get install clang binaryen -y \
   && rustup target add wasm32-unknown-unknown \
-  && cargo install -f wasm-bindgen-cli@0.2.92
+  && cargo install -f --locked wasm-bindgen-cli@0.2.92
 
 # Copy Cargo.toml
 WORKDIR /app/
 COPY Cargo.toml .
+
+# explorer must be in place to to run ./build-wasm as it is a workspace member
+WORKDIR /app/web/explorer
+COPY web/explorer/ .
+
+# bitcoinsuite-chronik-client must be in place to to run ./build-wasm as it is a workspace member
+WORKDIR /app/modules/bitcoinsuite-chronik-client
+COPY modules/bitcoinsuite-chronik-client/ .
 
 # Copy chronik to same directory structure as monorepo
 # This needs to be in place to run ./build-wasm
@@ -58,6 +66,11 @@ WORKDIR /app/modules/chronik-client
 COPY modules/chronik-client/ .
 RUN npm ci
 RUN npm run build
+
+# b58-ts (required for ecash-lib)
+WORKDIR /app/modules/b58-ts
+COPY modules/b58-ts .
+RUN npm ci
 
 # ecash-lib
 WORKDIR /app/modules/ecash-lib

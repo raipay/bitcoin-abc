@@ -13,6 +13,7 @@ import {
     outgoingXec,
     stakingRwd,
     aliasRegistration,
+    invalidAliasRegistration,
     mockParseTxWallet,
     mockAliasWallet,
     incomingEtoken,
@@ -21,6 +22,7 @@ import {
     incomingEtokenNineDecimals,
     legacyAirdropTx,
     onSpecAirdropTxNoMsg,
+    offSpecAirdropTx,
     outgoingEncryptedMsg,
     incomingEncryptedMsg,
     tokenBurn,
@@ -33,11 +35,13 @@ import {
     PayButtonOffSpec,
     PayButtonBadVersion,
     MsgFromEcashChat,
+    offSpecEcashChat,
     SlpV1Mint,
     MsgFromElectrum,
     unknownAppTx,
     AlpTx,
     CashtabMsg,
+    offSpecCashtabMsg,
     mockParseTxWalletAirdrop,
     mockParseTxWalletEncryptedMsg,
     mockParseTxTokenCache,
@@ -48,16 +52,27 @@ import {
     SlpParentGenesisTxMock,
     oneOutputReceivedTx,
     paywallPaymentTx,
+    offSpecPaywallPaymentTx,
     eCashChatArticleTx,
+    offSpecEcashChatArticleTx,
     eCashChatArticleReplyTx,
+    offSpecEcashChatArticleReplyTx,
     eCashChatAuthenticationTx,
     agoraAdSetupTxSlpNft,
+    agoraOneshotBuyTx,
     agoraOneshotSaleTx,
     AgoraOneshotCancelTx,
     agoraPartialCancelTwo,
     agoraPartialCancelTx,
     agoraPartialBuxBuyTx,
+    agoraPartialBuxSellTx,
     SlpNftParentMintTx,
+    partialSellBull,
+    alpBurnTx,
+    alpAgoraListingTx,
+    xecxTx,
+    invalidXecxTx,
+    firmaYieldTx,
 } from 'chronik/fixtures/mocks';
 import CashtabState from 'config/CashtabState';
 import { MemoryRouter } from 'react-router-dom';
@@ -72,14 +87,12 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={incomingXec.tx}
-                        hashes={getHashes(mockParseTxWallet)}
+                        tx={{ ...incomingXec.tx, parsed: incomingXec.parsed }}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
                         chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
-                    ,
                 </ThemeProvider>
             </MemoryRouter>,
         );
@@ -94,20 +107,19 @@ describe('<Tx />', () => {
         expect(screen.getByText('May 17, 2022, 18:35:28')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('42 XEC')).toBeInTheDocument();
+        expect(screen.getByText('42.00 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
 
-        // We see the avalanche finalized check (twice, one is in the expand panel)
-        expect(
-            screen.getAllByTitle('Finalized by Avalanche')[1],
-        ).toBeInTheDocument();
+        // We see the avalanche finalized check
+        expect(screen.getByTitle('Finalized by Avalanche')).toBeInTheDocument();
 
         // If we expand the panel, we see the exact XEC amount
         // Expand the panel
         await userEvent.click(screen.getByTitle('tx-received'));
-        // Now we see the exact XEC received amount
+        // Now we see the exact XEC received amount, which is the same when the
+        // amount is below 1k XEC
         expect(screen.getByText('42.00 XEC')).toBeInTheDocument();
     });
     it('Incoming XEC-only, not yet finalized by Avalanche', async () => {
@@ -117,7 +129,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={incomingXec.tx}
+                        tx={{ ...incomingXec.tx, parsed: incomingXec.parsed }}
                         hashes={getHashes(mockParseTxWallet)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -139,7 +151,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('May 17, 2022, 18:35:28')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('42 XEC')).toBeInTheDocument();
+        expect(screen.getByText('42.00 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
@@ -150,17 +162,17 @@ describe('<Tx />', () => {
         ).not.toBeInTheDocument();
 
         // We see two inline-loader elements
-        expect(screen.getAllByTitle('Loading')[1]).toBeInTheDocument();
-
-        // We see the 'Confirming' text
-        expect(screen.getByText('Confirming')).toBeInTheDocument();
+        expect(screen.getByTitle('Loading')).toBeInTheDocument();
     });
     it('Incoming XEC no change', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={oneOutputReceivedTx.tx}
+                        tx={{
+                            ...oneOutputReceivedTx.tx,
+                            parsed: oneOutputReceivedTx.parsed,
+                        }}
                         hashes={['601efc2aa406fe9eaedd41d2b5d95d1f4db9041d']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -192,18 +204,21 @@ describe('<Tx />', () => {
             screen.queryByTitle('Finalized by Avalanche'),
         ).not.toBeInTheDocument();
 
-        // We see two inline-loader elements
-        expect(screen.getAllByTitle('Loading')[1]).toBeInTheDocument();
+        // We see the inline-loader elements
+        expect(screen.getByTitle('Loading')).toBeInTheDocument();
 
-        // We see the 'Confirming' text
-        expect(screen.getByText('Confirming')).toBeInTheDocument();
+        // If we expand the panel, we see the exact XEC amount
+        // Expand the panel
+        await userEvent.click(screen.getByTitle('tx-received'));
+        // Now we see the exact XEC received amount
+        expect(screen.getByText('456,538,993.20 XEC')).toBeInTheDocument();
     });
     it('Outgoing XEC-only', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={outgoingXec.tx}
+                        tx={{ ...outgoingXec.tx, parsed: outgoingXec.parsed }}
                         hashes={getHashes(mockParseTxWallet)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -225,7 +240,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('May 17, 2022, 21:46:58')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('-222 XEC')).toBeInTheDocument();
+        expect(screen.getByText('-222.00 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('-$0.01')).toBeInTheDocument();
@@ -235,7 +250,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={stakingRwd.tx}
+                        tx={{ ...stakingRwd.tx, parsed: stakingRwd.parsed }}
                         hashes={getHashes(mockParseTxWallet)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -268,7 +283,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={aliasRegistration.tx}
+                        tx={{
+                            ...aliasRegistration.tx,
+                            parsed: aliasRegistration.parsed,
+                        }}
                         hashes={getHashes(mockAliasWallet)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -307,66 +325,8 @@ describe('<Tx />', () => {
                 <ThemeProvider theme={theme}>
                     <Tx
                         tx={{
-                            ...aliasRegistration.tx,
-                            outputs: [
-                                {
-                                    ...aliasRegistration.tx.outputs[0],
-                                    outputScript:
-                                        '6a042e786563010104627567321500dc1147663948f0dcfb00cc407eda41b121713ad3',
-                                },
-                                ...aliasRegistration.tx.outputs.slice(1),
-                            ],
-                        }}
-                        hashes={getHashes(mockAliasWallet)}
-                        fiatPrice={0.00003}
-                        fiatCurrency="usd"
-                        cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
-                    />
-                    ,
-                </ThemeProvider>
-            </MemoryRouter>,
-        );
-
-        // We see the tx sent icon
-        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
-
-        // We see the tx sent label
-        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
-
-        // Coinbase txs have timeFirstSeen of 0
-        // For a tx with timeFirstSeen of 0, we render the block timestamp
-        expect(screen.getByText('Oct 3, 2023, 12:14:36')).toBeInTheDocument();
-
-        // We see the formatted XEC amount
-        expect(screen.getByText('-5.55 XEC')).toBeInTheDocument();
-
-        // We see the formatted fiat amount
-        expect(screen.getByText('-$0.00')).toBeInTheDocument();
-
-        // Alias registration app action
-        // We see the alias registration icon
-        expect(screen.getByTitle('tx-alias-registration')).toBeInTheDocument();
-        // We see the alias registration description
-        expect(
-            screen.getByText('Invalid alias registration'),
-        ).toBeInTheDocument();
-    });
-    it('Another invalid alias registration (v0)', async () => {
-        render(
-            <MemoryRouter>
-                <ThemeProvider theme={theme}>
-                    <Tx
-                        tx={{
-                            ...aliasRegistration.tx,
-                            outputs: [
-                                {
-                                    ...aliasRegistration.tx.outputs[0],
-                                    outputScript:
-                                        '6a042e7865630d616e64616e6f746865726f6e65',
-                                },
-                                ...aliasRegistration.tx.outputs.slice(1),
-                            ],
+                            ...invalidAliasRegistration.tx,
+                            parsed: invalidAliasRegistration.parsed,
                         }}
                         hashes={getHashes(mockAliasWallet)}
                         fiatPrice={0.00003}
@@ -408,7 +368,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={incomingEtoken.tx}
+                        tx={{
+                            ...incomingEtoken.tx,
+                            parsed: incomingEtoken.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWallet)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -444,9 +407,6 @@ describe('<Tx />', () => {
                 'icon for 4bd147fc5d5ff26249a9299c46b80920c0b81f59a60e05428262160ebee0b0c3',
             ),
         ).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
 
         // We see the token name
         expect(
@@ -464,7 +424,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={incomingEtoken.tx}
+                        tx={{
+                            ...incomingEtoken.tx,
+                            parsed: incomingEtoken.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWallet)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -500,9 +463,6 @@ describe('<Tx />', () => {
             ),
         ).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
-
         // We do not see the token name
         expect(
             screen.queryByText('Covid19 Lifetime Immunity'),
@@ -519,7 +479,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={outgoingEtoken.tx}
+                        tx={{
+                            ...outgoingEtoken.tx,
+                            parsed: outgoingEtoken.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWallet)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -555,9 +518,6 @@ describe('<Tx />', () => {
                 'icon for 4bd147fc5d5ff26249a9299c46b80920c0b81f59a60e05428262160ebee0b0c3',
             ),
         ).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
 
         // We see the token name
         expect(
@@ -575,7 +535,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={outgoingEtoken.tx}
+                        tx={{
+                            ...outgoingEtoken.tx,
+                            parsed: outgoingEtoken.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWallet)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -611,9 +574,6 @@ describe('<Tx />', () => {
             ),
         ).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
-
         // We do not see the token name
         expect(
             screen.queryByText('Covid19 Lifetime Immunity'),
@@ -630,7 +590,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={genesisTx.tx}
+                        tx={{ ...genesisTx.tx, parsed: genesisTx.parsed }}
                         hashes={getHashes(mockParseTxWalletAirdrop)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -669,9 +629,6 @@ describe('<Tx />', () => {
 
         // We see the genesis icon
         expect(screen.getByTitle('tx-genesis')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
 
         // We see the token name
         expect(screen.getByText('UpdateTest')).toBeInTheDocument();
@@ -687,7 +644,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={genesisTx.tx}
+                        tx={{ ...genesisTx.tx, parsed: genesisTx.parsed }}
                         hashes={getHashes(mockParseTxWalletAirdrop)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -726,9 +683,6 @@ describe('<Tx />', () => {
         // We see the genesis icon
         expect(screen.getByTitle('tx-genesis')).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
-
         // We do not see the token name
         expect(screen.queryByText('UpdateTest')).not.toBeInTheDocument();
 
@@ -743,7 +697,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={incomingEtokenNineDecimals.tx}
+                        tx={{
+                            ...incomingEtokenNineDecimals.tx,
+                            parsed: incomingEtokenNineDecimals.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWalletAirdrop)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -780,9 +737,6 @@ describe('<Tx />', () => {
             ),
         ).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
-
         // We see the token name
         expect(screen.getByText('CashTabBits')).toBeInTheDocument();
 
@@ -797,7 +751,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={incomingEtokenNineDecimals.tx}
+                        tx={{
+                            ...incomingEtokenNineDecimals.tx,
+                            parsed: incomingEtokenNineDecimals.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWalletAirdrop)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -833,9 +790,6 @@ describe('<Tx />', () => {
             ),
         ).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
-
         // We do not see the token name
         expect(screen.queryByText('CashTabBits')).not.toBeInTheDocument();
 
@@ -850,7 +804,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={legacyAirdropTx.tx}
+                        tx={{
+                            ...legacyAirdropTx.tx,
+                            parsed: legacyAirdropTx.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWalletAirdrop)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -907,7 +864,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={onSpecAirdropTxNoMsg.tx}
+                        tx={{
+                            ...onSpecAirdropTxNoMsg.tx,
+                            parsed: onSpecAirdropTxNoMsg.parsed,
+                        }}
                         hashes={['2a96944d06700882bbd984761d9c9e4215f2d78e']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -949,7 +909,6 @@ describe('<Tx />', () => {
         ).toBeInTheDocument();
 
         // We see token info in column
-        expect(screen.getByText('SLP 1')).toBeInTheDocument();
         expect(screen.getByText('GRUMPY')).toBeInTheDocument();
         expect(screen.getByText('(GRP)')).toBeInTheDocument();
 
@@ -968,17 +927,10 @@ describe('<Tx />', () => {
                 <ThemeProvider theme={theme}>
                     <Tx
                         tx={{
-                            ...onSpecAirdropTxNoMsg.tx,
-                            outputs: [
-                                {
-                                    ...onSpecAirdropTxNoMsg.tx.outputs[0],
-                                    outputScript:
-                                        '6a0464726f701ffb4233e8a568993976ed38a81c2671587c5ad09552dedefa78760deed6ff87',
-                                },
-                                ...onSpecAirdropTxNoMsg.tx.outputs.slice(1),
-                            ],
+                            ...offSpecAirdropTx.tx,
+                            parsed: offSpecAirdropTx.parsed,
                         }}
-                        hashes={['2a96944d06700882bbd984761d9c9e4215f2d78e']}
+                        hashes={[offSpecAirdropTx.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={{
@@ -1021,7 +973,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={outgoingEncryptedMsg.tx}
+                        tx={{
+                            ...outgoingEncryptedMsg.tx,
+                            parsed: outgoingEncryptedMsg.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWalletEncryptedMsg)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1045,7 +1000,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Oct 4, 2022, 19:08:19')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('-12 XEC')).toBeInTheDocument();
+        expect(screen.getByText('-12.00 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('-$0.00')).toBeInTheDocument();
@@ -1055,14 +1010,19 @@ describe('<Tx />', () => {
         expect(screen.getByTitle('tx-encrypted-msg')).toBeInTheDocument();
 
         // We see expected text msg
-        expect(screen.getByText('Encrypted Cashtab Msg')).toBeInTheDocument();
+        expect(
+            screen.getByText('Cashtab Encrypted (deprecated)'),
+        ).toBeInTheDocument();
     });
     it('Received encrypted msg', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={incomingEncryptedMsg.tx}
+                        tx={{
+                            ...incomingEncryptedMsg.tx,
+                            parsed: incomingEncryptedMsg.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWalletEncryptedMsg)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1086,7 +1046,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Oct 4, 2022, 19:08:19')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('11 XEC')).toBeInTheDocument();
+        expect(screen.getByText('11.00 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
@@ -1096,14 +1056,16 @@ describe('<Tx />', () => {
         expect(screen.getByTitle('tx-encrypted-msg')).toBeInTheDocument();
 
         // We see expected text msg
-        expect(screen.getByText('Encrypted Cashtab Msg')).toBeInTheDocument();
+        expect(
+            screen.getByText('Cashtab Encrypted (deprecated)'),
+        ).toBeInTheDocument();
     });
     it('Burn slpv1 fungible token', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={tokenBurn.tx}
+                        tx={{ ...tokenBurn.tx, parsed: tokenBurn.parsed }}
                         hashes={getHashes(mockParseTxWalletAirdrop)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1143,9 +1105,6 @@ describe('<Tx />', () => {
         // We see the token burn icon
         expect(screen.getByTitle('tx-token-burn')).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
-
         // We see the token name
         expect(screen.getByText('Lambda Variant Variants')).toBeInTheDocument();
 
@@ -1160,7 +1119,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={tokenBurn.tx}
+                        tx={{ ...tokenBurn.tx, parsed: tokenBurn.parsed }}
                         hashes={getHashes(mockParseTxWalletAirdrop)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1199,9 +1158,6 @@ describe('<Tx />', () => {
         // We see the token burn icon
         expect(screen.getByTitle('tx-token-burn')).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
-
         // We do not see the token name
         expect(
             screen.queryByText('Lambda Variant Variants'),
@@ -1218,7 +1174,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={tokenBurnDecimals.tx}
+                        tx={{
+                            ...tokenBurnDecimals.tx,
+                            parsed: tokenBurnDecimals.parsed,
+                        }}
                         hashes={getHashes(mockParseTxWalletAirdrop)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1258,9 +1217,6 @@ describe('<Tx />', () => {
         // We see the token burn icon
         expect(screen.getByTitle('tx-token-burn')).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
-
         // We see the token name
         expect(
             screen.getByText(
@@ -1279,7 +1235,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={swapTx.tx}
+                        tx={{ ...swapTx.tx, parsed: swapTx.parsed }}
                         hashes={['93472d56ba91581ed473225a765dd14a2db5d9d8']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1320,7 +1276,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={PayButtonNoDataYesNonce.tx}
+                        tx={{
+                            ...PayButtonNoDataYesNonce.tx,
+                            parsed: PayButtonNoDataYesNonce.parsed,
+                        }}
                         hashes={['f66d2760b20dc7a47d9cf1a2b2f49749bf7093f6']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1344,7 +1303,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Jan 27, 2024, 02:42:14')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('18 XEC')).toBeInTheDocument();
+        expect(screen.getByText('18.00 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
@@ -1361,7 +1320,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={PayButtonYesDataYesNonce.tx}
+                        tx={{
+                            ...PayButtonYesDataYesNonce.tx,
+                            parsed: PayButtonYesDataYesNonce.parsed,
+                        }}
                         hashes={['e628f12f1e911c9f20ec2eeb1847e3a2ffad5fcc']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1405,7 +1367,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={PayButtonEmpty.tx}
+                        tx={{
+                            ...PayButtonEmpty.tx,
+                            parsed: PayButtonEmpty.parsed,
+                        }}
                         hashes={['e628f12f1e911c9f20ec2eeb1847e3a2ffad5fcc']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1449,7 +1414,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={PayButtonYesDataNoNonce.tx}
+                        tx={{
+                            ...PayButtonYesDataNoNonce.tx,
+                            parsed: PayButtonYesDataNoNonce.parsed,
+                        }}
                         hashes={['e628f12f1e911c9f20ec2eeb1847e3a2ffad5fcc']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1493,7 +1461,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={PayButtonOffSpec.tx}
+                        tx={{
+                            ...PayButtonOffSpec.tx,
+                            parsed: PayButtonOffSpec.parsed,
+                        }}
                         hashes={['e628f12f1e911c9f20ec2eeb1847e3a2ffad5fcc']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1527,14 +1498,17 @@ describe('<Tx />', () => {
         expect(screen.getByAltText('tx-paybutton')).toBeInTheDocument();
 
         // We see expected protocol label
-        expect(screen.getByText('(Invalid)')).toBeInTheDocument();
+        expect(screen.getByText('Invalid PayButton')).toBeInTheDocument();
     });
     it('Unsupported version PayButton tx', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={PayButtonBadVersion.tx}
+                        tx={{
+                            ...PayButtonBadVersion.tx,
+                            parsed: PayButtonBadVersion.parsed,
+                        }}
                         hashes={['e628f12f1e911c9f20ec2eeb1847e3a2ffad5fcc']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1568,14 +1542,17 @@ describe('<Tx />', () => {
         expect(screen.getByAltText('tx-paybutton')).toBeInTheDocument();
 
         // We see expected protocol label
-        expect(screen.getByText('(Invalid)')).toBeInTheDocument();
+        expect(screen.getByText('Invalid PayButton')).toBeInTheDocument();
     });
     it('eCash chat tx', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={MsgFromEcashChat.tx}
+                        tx={{
+                            ...MsgFromEcashChat.tx,
+                            parsed: MsgFromEcashChat.parsed,
+                        }}
                         hashes={['0b7d35fda03544a08e65464d54cfae4257eb6db7']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1599,7 +1576,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Mar 30, 2024, 08:54:10')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('10 XEC')).toBeInTheDocument();
+        expect(screen.getByText('10.00 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
@@ -1609,7 +1586,7 @@ describe('<Tx />', () => {
         expect(screen.getByTitle('tx-chat')).toBeInTheDocument();
 
         // We see expected protocol label
-        expect(screen.getByText('eCash Chat')).toBeInTheDocument();
+        expect(screen.getByText('eCashChat')).toBeInTheDocument();
 
         // We see expected chat msg
         expect(
@@ -1625,14 +1602,8 @@ describe('<Tx />', () => {
                 <ThemeProvider theme={theme}>
                     <Tx
                         tx={{
-                            ...MsgFromEcashChat.tx,
-                            outputs: [
-                                {
-                                    ...MsgFromEcashChat.tx.outputs[0],
-                                    outputScript: '6a0463686174',
-                                },
-                                ...MsgFromEcashChat.tx.outputs.slice(1),
-                            ],
+                            ...offSpecEcashChat.tx,
+                            parsed: offSpecEcashChat.parsed,
                         }}
                         hashes={['0b7d35fda03544a08e65464d54cfae4257eb6db7']}
                         fiatPrice={0.00003}
@@ -1657,7 +1628,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Mar 30, 2024, 08:54:10')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('10 XEC')).toBeInTheDocument();
+        expect(screen.getByText('10.00 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
@@ -1667,14 +1638,14 @@ describe('<Tx />', () => {
         expect(screen.getByTitle('tx-chat')).toBeInTheDocument();
 
         // We see expected protocol label
-        expect(screen.getByText('Invalid eCash Chat')).toBeInTheDocument();
+        expect(screen.getByText('Invalid eCashChat')).toBeInTheDocument();
     });
     it('slpv1 fungible token MINT', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={SlpV1Mint.tx}
+                        tx={{ ...SlpV1Mint.tx, parsed: SlpV1Mint.parsed }}
                         hashes={['95e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1716,9 +1687,6 @@ describe('<Tx />', () => {
         // We see the mint icon
         expect(screen.getByTitle('tx-mint')).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
-
         // We see the token name
         expect(screen.getByText('Cachet')).toBeInTheDocument();
 
@@ -1733,7 +1701,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={SlpV1Mint.tx}
+                        tx={{ ...SlpV1Mint.tx, parsed: SlpV1Mint.parsed }}
                         hashes={['95e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1772,9 +1740,6 @@ describe('<Tx />', () => {
         // We see the mint icon
         expect(screen.getByTitle('tx-mint')).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getByText('SLP')).toBeInTheDocument();
-
         // We do not see the token name
         expect(screen.queryByText('Cachet')).not.toBeInTheDocument();
 
@@ -1789,7 +1754,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={MsgFromElectrum.tx}
+                        tx={{
+                            ...MsgFromElectrum.tx,
+                            parsed: MsgFromElectrum.parsed,
+                        }}
                         hashes={['4e532257c01b310b3b5c1fd947c79a72addf8523']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1813,7 +1781,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Mar 2, 2024, 04:21:10')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('6 XEC')).toBeInTheDocument();
+        expect(screen.getByText('6.00 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
@@ -1838,7 +1806,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={unknownAppTx.tx}
+                        tx={{ ...unknownAppTx.tx, parsed: unknownAppTx.parsed }}
                         hashes={['d18b7b500f17c5db64303fec630f9dbb85aa9596']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1893,7 +1861,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={AlpTx.tx}
+                        tx={{ ...AlpTx.tx, parsed: AlpTx.parsed }}
                         hashes={['dee50f576362377dd2f031453c0bb09009acaf81']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1931,9 +1899,6 @@ describe('<Tx />', () => {
                 'icon for cdcdcdcdcdc9dda4c92bb1145aa84945c024346ea66fd4b699e344e45df2e145',
             ),
         ).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getByText('ALP')).toBeInTheDocument();
         // We see the token name
         expect(screen.getByText('Credo In Unum Deo')).toBeInTheDocument();
         // We see the token ticker
@@ -1947,7 +1912,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={AlpTx.tx}
+                        tx={{ ...AlpTx.tx, parsed: AlpTx.parsed }}
                         hashes={['dee50f576362377dd2f031453c0bb09009acaf81']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -1976,15 +1941,15 @@ describe('<Tx />', () => {
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
 
+        // We see expected Token Send action icon
+        expect(screen.getByTitle('Token Send')).toBeInTheDocument();
+
         // We see the token icon
         expect(
             screen.getByAltText(
                 'icon for cdcdcdcdcdc9dda4c92bb1145aa84945c024346ea66fd4b699e344e45df2e145',
             ),
         ).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getByText('ALP')).toBeInTheDocument();
 
         // We see the expected token action text for a received ALP fungible token tx
         expect(screen.getByText('Received')).toBeInTheDocument();
@@ -1994,7 +1959,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={CashtabMsg.tx}
+                        tx={{ ...CashtabMsg.tx, parsed: CashtabMsg.parsed }}
                         hashes={[CashtabMsg.tx.outputs[1].outputScript]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -2018,7 +1983,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Apr 8, 2024, 22:48:33')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('5.5 XEC')).toBeInTheDocument();
+        expect(screen.getByText('5.50 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
@@ -2046,16 +2011,10 @@ describe('<Tx />', () => {
                 <ThemeProvider theme={theme}>
                     <Tx
                         tx={{
-                            ...CashtabMsg.tx,
-                            outputs: [
-                                {
-                                    ...CashtabMsg.tx.outputs[0],
-                                    outputScript: '6a0400746162',
-                                },
-                                ...CashtabMsg.tx.outputs.slice(1),
-                            ],
+                            ...offSpecCashtabMsg.tx,
+                            parsed: offSpecCashtabMsg.parsed,
                         }}
-                        hashes={[CashtabMsg.tx.outputs[1].outputScript]}
+                        hashes={[offSpecCashtabMsg.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={{
@@ -2078,7 +2037,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Apr 8, 2024, 22:48:33')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('5.5 XEC')).toBeInTheDocument();
+        expect(screen.getByText('5.50 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('$0.00')).toBeInTheDocument();
@@ -2095,7 +2054,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={SlpNftParentFanTx.tx}
+                        tx={{
+                            ...SlpNftParentFanTx.tx,
+                            parsed: SlpNftParentFanTx.parsed,
+                        }}
                         hashes={[SlpNftParentFanTx.tx.outputs[1].outputScript]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -2134,9 +2096,6 @@ describe('<Tx />', () => {
             ),
         ).toBeInTheDocument();
 
-        // Rendered token type for SLP1 NFT Parent is NFT Collection
-        expect(screen.getByText('NFT Collection')).toBeInTheDocument();
-
         // We see the token name
         expect(
             screen.getByText('The Four Half-Coins of Jin-qua'),
@@ -2160,7 +2119,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={SlpNftMint.tx}
+                        tx={{ ...SlpNftMint.tx, parsed: SlpNftMint.parsed }}
                         hashes={[SlpNftMint.tx.outputs[1].outputScript]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -2202,9 +2161,6 @@ describe('<Tx />', () => {
         // We see the NFT mint icon
         expect(screen.getByTitle('Mint NFT')).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
-
         // We see the token name
         expect(screen.getByText('Wu Fang Choi')).toBeInTheDocument();
 
@@ -2216,14 +2172,17 @@ describe('<Tx />', () => {
 
         // We see a second token action for burning the NFT Mint Input
         expect(screen.getByTitle('tx-token-burn')).toBeInTheDocument();
-        expect(screen.getByText('Burned 1 NFT Mint Input')).toBeInTheDocument();
+        expect(screen.getByText('Burned 1')).toBeInTheDocument();
     });
     it('Genesis tx of an SLP1 Parent Token (i.e. "Creating an NFT Collection")', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={SlpParentGenesisTxMock.tx}
+                        tx={{
+                            ...SlpParentGenesisTxMock.tx,
+                            parsed: SlpParentGenesisTxMock.parsed,
+                        }}
                         hashes={[
                             SlpParentGenesisTxMock.tx.outputs[1].outputScript,
                         ]}
@@ -2270,9 +2229,6 @@ describe('<Tx />', () => {
         // We see the genesis action
         expect(screen.getByText('GENESIS')).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getAllByText('NFT Collection')[0]).toBeInTheDocument();
-
         // We see the token name
         expect(screen.getByText('The Heisman')).toBeInTheDocument();
 
@@ -2287,7 +2243,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={paywallPaymentTx.tx}
+                        tx={{
+                            ...paywallPaymentTx.tx,
+                            parsed: paywallPaymentTx.parsed,
+                        }}
                         hashes={[paywallPaymentTx.tx.outputs[1].outputScript]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -2328,16 +2287,10 @@ describe('<Tx />', () => {
                 <ThemeProvider theme={theme}>
                     <Tx
                         tx={{
-                            ...paywallPaymentTx.tx,
-                            outputs: [
-                                {
-                                    ...paywallPaymentTx.tx.outputs[0],
-                                    outputScript: '6a0470617977', // no data after the paywall lokad ID
-                                },
-                                ...paywallPaymentTx.tx.outputs.slice(1),
-                            ],
+                            ...offSpecPaywallPaymentTx.tx,
+                            parsed: offSpecPaywallPaymentTx.parsed,
                         }}
-                        hashes={[paywallPaymentTx.tx.outputs[1].outputScript]}
+                        hashes={[offSpecPaywallPaymentTx.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={{
@@ -2363,14 +2316,17 @@ describe('<Tx />', () => {
         expect(screen.getByText('-')).toBeInTheDocument();
 
         // We see the invalid paywall tx description
-        expect(screen.getByText('Invalid Paywall Payment')).toBeInTheDocument();
+        expect(screen.getByText('Invalid Paywall')).toBeInTheDocument();
     });
     it('Sent eCashChat article reply tx', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={eCashChatArticleReplyTx.tx}
+                        tx={{
+                            ...eCashChatArticleReplyTx.tx,
+                            parsed: eCashChatArticleReplyTx.parsed,
+                        }}
                         hashes={[
                             eCashChatArticleReplyTx.tx.outputs[2].outputScript,
                         ]}
@@ -2410,14 +2366,8 @@ describe('<Tx />', () => {
                 <ThemeProvider theme={theme}>
                     <Tx
                         tx={{
-                            ...eCashChatArticleReplyTx.tx,
-                            outputs: [
-                                {
-                                    ...eCashChatArticleReplyTx.tx.outputs[0],
-                                    outputScript: '6a04626c6f6704726c6f67', // no data after the article reply lokad ID i.e. stackArray !== 4
-                                },
-                                ...eCashChatArticleReplyTx.tx.outputs.slice(1),
-                            ],
+                            ...offSpecEcashChatArticleReplyTx.tx,
+                            parsed: offSpecEcashChatArticleReplyTx.parsed,
                         }}
                         hashes={[
                             eCashChatArticleReplyTx.tx.outputs[2].outputScript,
@@ -2445,7 +2395,7 @@ describe('<Tx />', () => {
 
         // We see the invalid article tx description
         expect(
-            screen.getByText('Invalid eCashChat Article Reply'),
+            screen.getByText('Invalid eCashChat Article'),
         ).toBeInTheDocument();
     });
     it('Sent eCashChat article tx', async () => {
@@ -2453,7 +2403,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={eCashChatArticleTx.tx}
+                        tx={{
+                            ...eCashChatArticleTx.tx,
+                            parsed: eCashChatArticleTx.parsed,
+                        }}
                         hashes={[eCashChatArticleTx.tx.outputs[2].outputScript]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -2487,14 +2440,8 @@ describe('<Tx />', () => {
                 <ThemeProvider theme={theme}>
                     <Tx
                         tx={{
-                            ...eCashChatArticleTx.tx,
-                            outputs: [
-                                {
-                                    ...eCashChatArticleTx.tx.outputs[0],
-                                    outputScript: '6a04626c6f67', // no data after the article lokad ID
-                                },
-                                ...eCashChatArticleTx.tx.outputs.slice(1),
-                            ],
+                            ...offSpecEcashChatArticleTx.tx,
+                            parsed: offSpecEcashChatArticleTx.parsed,
                         }}
                         hashes={[eCashChatArticleTx.tx.outputs[2].outputScript]}
                         fiatPrice={0.00003}
@@ -2528,11 +2475,11 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={eCashChatAuthenticationTx.tx}
-                        hashes={[
-                            eCashChatAuthenticationTx.tx.outputs[2]
-                                .outputScript,
-                        ]}
+                        tx={{
+                            ...eCashChatAuthenticationTx.tx,
+                            parsed: eCashChatAuthenticationTx.parsed,
+                        }}
+                        hashes={[eCashChatAuthenticationTx.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={{
@@ -2555,22 +2502,23 @@ describe('<Tx />', () => {
         expect(screen.getByText('Aug 11, 2024, 10:36:00')).toBeInTheDocument();
 
         // We see the formatted XEC amount
-        expect(screen.getByText('-5.5 XEC')).toBeInTheDocument();
+        expect(screen.getByText('-5.50 XEC')).toBeInTheDocument();
 
         // We see the formatted fiat amount
         expect(screen.getByText('-$0.00')).toBeInTheDocument();
 
         // We see the article tx description
-        expect(
-            screen.getByText('eCash Chat Authentication'),
-        ).toBeInTheDocument();
+        expect(screen.getByText('Auth')).toBeInTheDocument();
     });
     it('Ad setup tx for an SLP1 NFT Agora offer (cached)', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={agoraAdSetupTxSlpNft.tx}
+                        tx={{
+                            ...agoraAdSetupTxSlpNft.tx,
+                            parsed: agoraAdSetupTxSlpNft.parsed,
+                        }}
                         hashes={[
                             agoraAdSetupTxSlpNft.tx.inputs[0].outputScript,
                         ]}
@@ -2589,8 +2537,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to/)).toBeInTheDocument();
@@ -2599,7 +2547,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Oct 22, 2024, 21:24:27')).toBeInTheDocument();
 
         // We see the expected send amount
-        expect(screen.getByText('-8.6 XEC')).toBeInTheDocument();
+        expect(screen.getByText('-8.60 XEC')).toBeInTheDocument();
 
         // We see the a fiat amount
         expect(screen.getByText('-$0.00')).toBeInTheDocument();
@@ -2613,9 +2561,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Offer icon
         expect(screen.getByTitle('Agora Offer')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
 
         // We see the token name
         expect(screen.getByText('Nile Kinnick')).toBeInTheDocument();
@@ -2631,7 +2576,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={agoraAdSetupTxSlpNft.tx}
+                        tx={{
+                            ...agoraAdSetupTxSlpNft.tx,
+                            parsed: agoraAdSetupTxSlpNft.parsed,
+                        }}
                         hashes={[
                             agoraAdSetupTxSlpNft.tx.inputs[0].outputScript,
                         ]}
@@ -2647,8 +2595,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to/)).toBeInTheDocument();
@@ -2657,7 +2605,7 @@ describe('<Tx />', () => {
         expect(screen.getByText('Oct 22, 2024, 21:24:27')).toBeInTheDocument();
 
         // We see the expected send amount
-        expect(screen.getByText('-8.6 XEC')).toBeInTheDocument();
+        expect(screen.getByText('-8.60 XEC')).toBeInTheDocument();
 
         // We see the a fiat amount
         expect(screen.getByText('-$0.00')).toBeInTheDocument();
@@ -2672,11 +2620,8 @@ describe('<Tx />', () => {
         // We see the Agora Offer icon
         expect(screen.getByTitle('Agora Offer')).toBeInTheDocument();
 
-        // We see the token type
-        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
-
         // We see SEND but not the token name (uncached)
-        expect(screen.getByText('SEND')).toBeInTheDocument();
+        expect(screen.getByText('Agora Offer')).toBeInTheDocument();
 
         // We do not see the token ticker in parenthesis in the summary column
         expect(screen.queryByText('(NK)')).not.toBeInTheDocument();
@@ -2689,11 +2634,11 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={agoraOneshotSaleTx.tx}
-                        // See mock
-                        // Buy from this wallet
-                        // You can't reference the usual 0 input outputScript bc it's an agora p2sh
-                        hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
+                        tx={{
+                            ...agoraOneshotBuyTx.tx,
+                            parsed: agoraOneshotBuyTx.parsed,
+                        }}
+                        hashes={[agoraOneshotBuyTx.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={{
@@ -2709,8 +2654,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to/)).toBeInTheDocument();
@@ -2733,9 +2678,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Purchase icon
         expect(screen.getByTitle('Agora Purchase')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
 
         // We see the token name
         expect(screen.getByText('Nile Kinnick')).toBeInTheDocument();
@@ -2751,11 +2693,11 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={agoraOneshotSaleTx.tx}
-                        // See mock
-                        // Buy from this wallet
-                        // You can't reference the usual 0 input outputScript bc it's an agora p2sh
-                        hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
+                        tx={{
+                            ...agoraOneshotBuyTx.tx,
+                            parsed: agoraOneshotBuyTx.parsed,
+                        }}
+                        hashes={[agoraOneshotBuyTx.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
@@ -2766,8 +2708,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to/)).toBeInTheDocument();
@@ -2790,20 +2732,20 @@ describe('<Tx />', () => {
 
         // We see the Agora Purchase icon
         expect(screen.getByTitle('Agora Purchase')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
     });
     it('Agora one-shot sell tx (token info available in cache)', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={agoraOneshotSaleTx.tx}
+                        tx={{
+                            ...agoraOneshotSaleTx.tx,
+                            parsed: agoraOneshotSaleTx.parsed,
+                        }}
                         // See mock
                         // Buy from this wallet
                         // You can't reference the usual 0 input outputScript bc it's an agora p2sh
-                        hashes={['95e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d']}
+                        hashes={[agoraOneshotSaleTx.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={{
@@ -2819,8 +2761,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Received from/)).toBeInTheDocument();
@@ -2843,9 +2785,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Purchase icon
         expect(screen.getByTitle('Agora Sale')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
 
         // We see the token name
         expect(screen.getByText('Nile Kinnick')).toBeInTheDocument();
@@ -2861,11 +2800,14 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={agoraOneshotSaleTx.tx}
+                        tx={{
+                            ...agoraOneshotSaleTx.tx,
+                            parsed: agoraOneshotSaleTx.parsed,
+                        }}
                         // See mock
                         // Buy from this wallet
                         // You can't reference the usual 0 input outputScript bc it's an agora p2sh
-                        hashes={['95e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d']}
+                        hashes={[agoraOneshotSaleTx.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
@@ -2876,8 +2818,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Received from/)).toBeInTheDocument();
@@ -2900,16 +2842,16 @@ describe('<Tx />', () => {
 
         // We see the Agora Purchase icon
         expect(screen.getByTitle('Agora Sale')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
     });
     it('Agora one-shot cancel tx (token info available in cache)', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={AgoraOneshotCancelTx.tx}
+                        tx={{
+                            ...AgoraOneshotCancelTx.tx,
+                            parsed: AgoraOneshotCancelTx.parsed,
+                        }}
                         // See mock
                         // Buy from this wallet
                         // You can't reference the usual 0 input outputScript bc it's an agora p2sh
@@ -2929,8 +2871,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
@@ -2950,9 +2892,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Cancel icon
         expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
 
         // We see the token name
         expect(screen.getByText('Nile Kinnick')).toBeInTheDocument();
@@ -2968,7 +2907,10 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={AgoraOneshotCancelTx.tx}
+                        tx={{
+                            ...AgoraOneshotCancelTx.tx,
+                            parsed: AgoraOneshotCancelTx.parsed,
+                        }}
                         // See mock
                         // Buy from this wallet
                         // You can't reference the usual 0 input outputScript bc it's an agora p2sh
@@ -2983,8 +2925,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
@@ -3004,9 +2946,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Cancel icon
         expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('NFT')[0]).toBeInTheDocument();
     });
     it('Agora partial cancel tx (token info available in cache)', async () => {
         const thisMock = agoraPartialCancelTx;
@@ -3014,7 +2953,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={thisMock.tx}
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
                         hashes={['7847fe7070bec8567b3e810f543f2f80cc3e03be']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -3031,8 +2970,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
@@ -3050,9 +2989,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Sale icon
         expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
 
         // We see the token name
         expect(
@@ -3079,7 +3015,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={thisMock.tx}
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
                         hashes={['7847fe7070bec8567b3e810f543f2f80cc3e03be']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -3091,8 +3027,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
@@ -3107,18 +3043,18 @@ describe('<Tx />', () => {
             screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
         ).toBeInTheDocument();
 
-        // We see the Agora Sale icon
+        // We see the Agora Cancel icon
         expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
     });
     it('Agora partial bux buy tx renders correct bought amount (token info available in cache)', async () => {
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={agoraPartialBuxBuyTx.tx}
+                        tx={{
+                            ...agoraPartialBuxBuyTx.tx,
+                            parsed: agoraPartialBuxBuyTx.parsed,
+                        }}
                         hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -3135,8 +3071,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to/)).toBeInTheDocument();
@@ -3158,9 +3094,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Sale icon
         expect(screen.getByTitle('Agora Purchase')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
 
         // We see the token name
         expect(
@@ -3189,8 +3122,11 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={agoraPartialBuxBuyTx.tx}
-                        hashes={['76458db0ed96fe9863fc1ccec9fa2cfab884b0f6']}
+                        tx={{
+                            ...agoraPartialBuxBuyTx.tx,
+                            parsed: agoraPartialBuxBuyTx.parsed,
+                        }}
+                        hashes={[agoraPartialBuxBuyTx.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
@@ -3201,8 +3137,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to/)).toBeInTheDocument();
@@ -3229,20 +3165,21 @@ describe('<Tx />', () => {
             screen.getByAltText(`icon for ${agoraPartialBuxBuyTx.cache[0][0]}`),
         ).toBeInTheDocument();
 
-        // We see the Agora Sale icon
+        // We see the Agora Purchase icon
         expect(screen.getByTitle('Agora Purchase')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
     });
     it('Agora partial bux sell tx renders correct bought amount (token info available in cache)', async () => {
+        // TODO if this is supposed to be a sell tx, we need to make the SELL version of it with the right SELL hash in mocks
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={agoraPartialBuxBuyTx.tx}
+                        tx={{
+                            ...agoraPartialBuxSellTx.tx,
+                            parsed: agoraPartialBuxSellTx.parsed,
+                        }}
                         // the seller is paid at outputs[1]
-                        hashes={['dee50f576362377dd2f031453c0bb09009acaf81']}
+                        hashes={[agoraPartialBuxSellTx.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={{
@@ -3258,8 +3195,8 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Received from/)).toBeInTheDocument();
@@ -3278,9 +3215,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Sale icon
         expect(screen.getByTitle('Agora Sale')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
 
         // We see the token name
         expect(
@@ -3304,13 +3238,16 @@ describe('<Tx />', () => {
             ),
         ).toBeInTheDocument();
     });
-    it('Agora partial CTD cancel tx renders correct bought amount (token info available in cache)', async () => {
-        const thisMock = agoraPartialCancelTwo;
+    it('Another agora partial sell tx renders correct sell amount (token info available in cache)', async () => {
+        const thisMock = partialSellBull;
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={thisMock.tx}
+                        tx={{
+                            ...thisMock.tx,
+                            parsed: thisMock.parsed,
+                        }}
                         hashes={[thisMock.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -3327,8 +3264,72 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Received icon for the XEC action
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Nov 6, 2024, 02:33:04')).toBeInTheDocument();
+
+        // We see the purchase price in XEC and fiat, as sale earnings
+        expect(screen.getByText('28.13k XEC')).toBeInTheDocument();
+        expect(screen.getByText('$0.84')).toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Sale icon
+        expect(screen.getByTitle('Agora Sale')).toBeInTheDocument();
+
+        // We see the token name
+        expect(
+            screen.getByText(thisMock.cache[0][1].genesisInfo.tokenName),
+        ).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(
+            screen.getByText(
+                `(${thisMock.cache[0][1].genesisInfo.tokenTicker})`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the expected token action
+        const SOLD_AMOUNT = '375';
+        expect(
+            screen.getByText(
+                `Sold ${SOLD_AMOUNT} ${thisMock.cache[0][1].genesisInfo.tokenTicker}`,
+            ),
+        ).toBeInTheDocument();
+    });
+    it('Agora partial CTD cancel tx renders correct bought amount (token info available in cache)', async () => {
+        const thisMock = agoraPartialCancelTwo;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(thisMock.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Self Send icon for the XEC action
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
 
         // We see expected label
         expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
@@ -3357,9 +3358,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Sale icon
         expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
 
         // We see the token name
         expect(
@@ -3387,7 +3385,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={thisMock.tx}
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
                         hashes={[thisMock.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -3399,10 +3397,12 @@ describe('<Tx />', () => {
             </MemoryRouter>,
         );
 
-        // We see the Agora Tx icon
-        expect(screen.getByTitle('Agora Tx')).toBeInTheDocument();
+        // We see the Self Send icon for the XEC action
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
 
         // We see expected label
+        // Agora cancel txs are arguably XEC send
+        // But we are getting satoshis back from the p2sh we created earlier with a send
         expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
 
         // We render the timestamp
@@ -3428,9 +3428,6 @@ describe('<Tx />', () => {
 
         // We see the Agora Sale icon
         expect(screen.getByTitle('Agora Cancel')).toBeInTheDocument();
-
-        // We see the token type
-        expect(screen.getAllByText('SLP')[0]).toBeInTheDocument();
     });
     it('Parse a mint tx for SLP NFT parent distinct from fan-out tx (token info available in cache)', async () => {
         const thisMock = SlpNftParentMintTx;
@@ -3438,7 +3435,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={thisMock.tx}
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
                         hashes={[thisMock.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -3482,9 +3479,6 @@ describe('<Tx />', () => {
         expect(
             screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
         ).toBeInTheDocument();
-
-        // Rendered token type for SLP1 NFT Parent is NFT Collection
-        expect(screen.getByText('NFT Collection')).toBeInTheDocument();
 
         // We DO NOT see the Fan Out icon
         expect(screen.queryByTitle('Fan Out')).not.toBeInTheDocument();
@@ -3514,7 +3508,7 @@ describe('<Tx />', () => {
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={thisMock.tx}
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
                         hashes={[thisMock.sendingHash]}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
@@ -3554,13 +3548,381 @@ describe('<Tx />', () => {
             screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
         ).toBeInTheDocument();
 
-        // Rendered token type for SLP1 NFT Parent is NFT Collection
-        expect(screen.getByText('NFT Collection')).toBeInTheDocument();
-
         // We DO NOT see the Fan Out icon
         expect(screen.queryByTitle('Fan Out')).not.toBeInTheDocument();
 
         // We see the expected token action without qty or token ticker
         expect(screen.getByText(`Minted`)).toBeInTheDocument();
+    });
+    it('ALP burn tx', async () => {
+        const thisMock = alpBurnTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(thisMock.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+        // We see the Self Send icon
+        expect(screen.getByTitle('Self Send')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Nov 23, 2024, 15:09:21')).toBeInTheDocument();
+
+        // We see the expected self-send amount
+        expect(screen.getByText('-')).toBeInTheDocument();
+
+        // We do not see the a fiat amount
+        expect(screen.queryByText('$')).not.toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the token burn icon
+        expect(screen.getByTitle('tx-token-burn')).toBeInTheDocument();
+
+        // We see the token name
+        expect(
+            screen.getByText(thisMock.cache[0][1].genesisInfo.tokenName),
+        ).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(
+            screen.getByText(
+                `(${thisMock.cache[0][1].genesisInfo.tokenTicker})`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the expected token action text for a received SLPv1 fungible token tx
+        expect(
+            screen.getByText(
+                `Burned 1 ${thisMock.cache[0][1].genesisInfo.tokenTicker}`,
+            ),
+        ).toBeInTheDocument();
+    });
+    it('Ad setup tx for an ALP Agora offer (cached)', async () => {
+        const thisMock = alpAgoraListingTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(thisMock.cache),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see the Sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Nov 26, 2024, 17:40:01')).toBeInTheDocument();
+
+        // We see the expected send amount
+        expect(screen.getByText('-5.46 XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('-$0.00')).toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Offer icon
+        expect(screen.getByTitle('Agora Offer')).toBeInTheDocument();
+
+        // We see the token name
+        expect(
+            screen.getByText(thisMock.cache[0][1].genesisInfo.tokenName),
+        ).toBeInTheDocument();
+
+        // We see the token ticker in parenthesis in the summary column
+        expect(
+            screen.getByText(
+                `(${thisMock.cache[0][1].genesisInfo.tokenTicker})`,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the expected token action for listing this NFT
+        expect(
+            screen.getByText(
+                `Listed 99,106 ${thisMock.cache[0][1].genesisInfo.tokenTicker}`,
+            ),
+        ).toBeInTheDocument();
+    });
+    it('Ad setup tx for an ALP Agora offer (uncached)', async () => {
+        const thisMock = alpAgoraListingTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see a conventional tx-sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Nov 26, 2024, 17:40:01')).toBeInTheDocument();
+
+        // We see the expected send amount
+        expect(screen.getByText('-5.46 XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('-$0.00')).toBeInTheDocument();
+
+        // We see the token icon
+        expect(
+            screen.getByAltText(`icon for ${thisMock.cache[0][0]}`),
+        ).toBeInTheDocument();
+
+        // We see the Agora Offer icon for the token action
+        expect(screen.getByTitle('Agora Offer')).toBeInTheDocument();
+
+        // We see 'Agora Offer' as the rendered tx type but not the token name (uncached)
+        expect(screen.getByText('Agora Offer')).toBeInTheDocument();
+
+        // We do not see the token ticker in parenthesis in the summary column
+        expect(
+            screen.queryByText(
+                `(${thisMock.cache[0][1].genesisInfo.tokenTicker})`,
+            ),
+        ).not.toBeInTheDocument();
+
+        // We see the expected token action text for a listed ALP fungible token tx, but no quantity
+        expect(screen.getByText('Listed')).toBeInTheDocument();
+    });
+    it('Valid XECX tx', async () => {
+        const thisMock = xecxTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see a conventional tx-received icon for the XEC action
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Dec 27, 2024, 24:00:01')).toBeInTheDocument();
+
+        // We see the expected received amount
+        expect(screen.getByText('312.5k XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('$9.38')).toBeInTheDocument();
+
+        // We see XECX icon
+        expect(screen.getByAltText(`XECX reward`)).toBeInTheDocument();
+
+        // We see the parsed App Action
+        expect(
+            screen.getByText(
+                /XEC staking reward to all XECX holders with balance/,
+            ),
+        ).toBeInTheDocument();
+
+        // We see the parsed min eligible balance
+        expect(screen.getByText(/34,580.56 XECX/)).toBeInTheDocument();
+    });
+    it('Invalid XECX tx', async () => {
+        const thisMock = invalidXecxTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsed }}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see a conventional tx-received icon for the XEC action
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Dec 27, 2024, 24:00:01')).toBeInTheDocument();
+
+        // We see the expected received amount
+        expect(screen.getByText('312.5k XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('$9.38')).toBeInTheDocument();
+
+        // We see XECX icon
+        expect(screen.getByAltText(`XECX reward`)).toBeInTheDocument();
+
+        // We see the invalid App Action
+        expect(screen.getByText('Invalid XECX EMPP')).toBeInTheDocument();
+    });
+    it('Outgoing FIRMA yield payment', async () => {
+        const thisMock = firmaYieldTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsedSend }}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see a conventional tx-sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Feb 25, 2025, 23:00:04')).toBeInTheDocument();
+
+        // We see the expected sent amount
+        expect(screen.getByText('-65.52 XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('-$0.00')).toBeInTheDocument();
+
+        // We see Firma icon
+        expect(screen.getByAltText(`Firma reward`)).toBeInTheDocument();
+
+        // We see Firma yield app action
+        expect(screen.getByText(`Firma yield payment`)).toBeInTheDocument();
+    });
+    it('Incoming FIRMA yield payment', async () => {
+        const thisMock = firmaYieldTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsedReceive }}
+                        hashes={[thisMock.receivingHashHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(),
+                            },
+                        }}
+                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see a conventional tx-received icon for the XEC action
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('Feb 25, 2025, 23:00:04')).toBeInTheDocument();
+
+        // We see the expected sent amount
+        expect(screen.getByText('5.46 XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('$0.00')).toBeInTheDocument();
+
+        // We see Firma icon
+        expect(screen.getByAltText(`Firma reward`)).toBeInTheDocument();
+
+        // We see Firma yield app action
+        expect(screen.getByText(`Firma yield payment`)).toBeInTheDocument();
     });
 });

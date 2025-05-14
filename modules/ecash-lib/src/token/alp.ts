@@ -7,20 +7,29 @@ import { strToBytes } from '../io/str.js';
 import { Writer } from '../io/writer.js';
 import { WriterBytes } from '../io/writerbytes.js';
 import { WriterLength } from '../io/writerlength.js';
-import { Amount, BURN, GENESIS, GenesisInfo, MINT, SEND } from './common.js';
+import { BURN, GENESIS, GenesisInfo, MINT, SEND } from './common.js';
+
+/** LOKAD ID for ALP as string */
+export const ALP_LOKAD_ID_STR = 'SLP2';
 
 /** LOKAD ID for ALP */
-export const ALP_LOKAD_ID = strToBytes('SLP2');
+export const ALP_LOKAD_ID = strToBytes(ALP_LOKAD_ID_STR);
 
 /** ALP standard token type number */
 export const ALP_STANDARD = 0;
 
-/** Mint data specifying mint amounts and batons of a GENESIS/MINT tx */
+/** Supported ALP token types */
+export type AlpTokenType = typeof ALP_STANDARD;
+
+/** ALP limits lengths/sizes to this number, e.g. the number of outputs */
+export const ALP_MAX_SIZE = 127;
+
+/** Mint data specifying mint amounts (in atoms) and batons of a GENESIS/MINT tx */
 export interface MintData {
     /**
-     * List of amounts to be minted by this tx, each having their own tx output.
+     * Array of amounts in atoms to be minted by this tx, each having their own tx output.
      */
-    amounts: Amount[];
+    atomsArray: bigint[];
     /** Number of mint batons to create, each having their own tx output. */
     numBatons: number;
 }
@@ -38,7 +47,7 @@ export function alpGenesis(
         putVarBytes(strToBytes(genesisInfo.tokenTicker ?? ''), writer);
         putVarBytes(strToBytes(genesisInfo.tokenName ?? ''), writer);
         putVarBytes(strToBytes(genesisInfo.url ?? ''), writer);
-        putVarBytes(genesisInfo.data ?? new Uint8Array(), writer);
+        putVarBytes(fromHex(genesisInfo.data ?? ''), writer);
         putVarBytes(fromHex(genesisInfo.authPubkey ?? ''), writer);
         writer.putU8(genesisInfo.decimals ?? 0);
         putMintData(mintData, writer);
@@ -80,7 +89,7 @@ export function alpMint(
 export function alpSend(
     tokenId: string,
     tokenType: number,
-    sendAmounts: Amount[],
+    sendAtomsArray: bigint[],
 ): Uint8Array {
     const tokenIdBytes = fromHexRev(tokenId);
     const writeSection = (writer: Writer) => {
@@ -89,9 +98,9 @@ export function alpSend(
         writer.putU8(SEND.length);
         writer.putBytes(SEND);
         writer.putBytes(tokenIdBytes);
-        writer.putU8(sendAmounts.length);
-        for (const amount of sendAmounts) {
-            putAlpAmount(amount, writer);
+        writer.putU8(sendAtomsArray.length);
+        for (const atoms of sendAtomsArray) {
+            putAlpAtoms(atoms, writer);
         }
     };
     const writerLength = new WriterLength();
@@ -105,7 +114,7 @@ export function alpSend(
 export function alpBurn(
     tokenId: string,
     tokenType: number,
-    burnAmount: Amount,
+    burnAtoms: bigint,
 ): Uint8Array {
     const tokenIdBytes = fromHexRev(tokenId);
     const writeSection = (writer: Writer) => {
@@ -114,7 +123,7 @@ export function alpBurn(
         writer.putU8(BURN.length);
         writer.putBytes(BURN);
         writer.putBytes(tokenIdBytes);
-        putAlpAmount(burnAmount, writer);
+        putAlpAtoms(burnAtoms, writer);
     };
     const writerLength = new WriterLength();
     writeSection(writerLength);
@@ -124,17 +133,17 @@ export function alpBurn(
 }
 
 function putMintData(mintData: MintData, writer: Writer) {
-    writer.putU8(mintData.amounts.length);
-    for (const amount of mintData.amounts) {
-        putAlpAmount(amount, writer);
+    writer.putU8(mintData.atomsArray.length);
+    for (const atoms of mintData.atomsArray) {
+        putAlpAtoms(atoms, writer);
     }
     writer.putU8(mintData.numBatons);
 }
 
-function putAlpAmount(amount: Amount, writer: Writer) {
-    const amountN = BigInt(amount);
-    writer.putU32(amountN & 0xffffffffn);
-    writer.putU16(amountN >> 32n);
+function putAlpAtoms(atoms: bigint, writer: Writer) {
+    const atomsN = BigInt(atoms);
+    writer.putU32(atomsN & 0xffffffffn);
+    writer.putU16(atomsN >> 32n);
 }
 
 function putVarBytes(bytes: Uint8Array, writer: Writer) {

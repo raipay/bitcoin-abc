@@ -2,11 +2,16 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+import rewire from 'rewire';
 import * as chai from 'chai';
 import chaiAsPromised from 'chai-as-promised';
-import { FailoverProxy } from '../src/failoverProxy';
+import { FailoverProxy, appendWsUrls } from '../src/failoverProxy';
 import { isValidWsSubscription } from '../src/validation';
 import vectors from './vectors';
+
+// --- Rewire Setup ---
+const chronikClientModule = rewire('../src/ChronikClient');
+const sortNodesByLatency = chronikClientModule.__get__('sortNodesByLatency');
 
 const expect = chai.expect;
 chai.use(chaiAsPromised);
@@ -18,7 +23,6 @@ describe('FailoverProxy', () => {
             'https://chronik.fabien.cash',
             'https://chronik2.fabien.cash',
         ];
-        const proxyInterface = new FailoverProxy(urls);
         const expectedResult = [
             {
                 url: 'https://chronik.be.cash/xec',
@@ -33,7 +37,7 @@ describe('FailoverProxy', () => {
                 wsUrl: 'wss://chronik2.fabien.cash/ws',
             },
         ];
-        expect(proxyInterface.appendWsUrls(urls)).to.eql(expectedResult);
+        expect(appendWsUrls(urls)).to.eql(expectedResult);
     });
     it('appendWsUrls combines an array of mixed valid https and http urls with wsUrls', () => {
         const urls = [
@@ -41,7 +45,6 @@ describe('FailoverProxy', () => {
             'http://chronik.fabien.cash',
             'https://chronik2.fabien.cash',
         ];
-        const proxyInterface = new FailoverProxy(urls);
         const expectedResult = [
             {
                 url: 'https://chronik.be.cash/xec',
@@ -56,29 +59,18 @@ describe('FailoverProxy', () => {
                 wsUrl: 'wss://chronik2.fabien.cash/ws',
             },
         ];
-        expect(proxyInterface.appendWsUrls(urls)).to.eql(expectedResult);
+        expect(appendWsUrls(urls)).to.eql(expectedResult);
     });
     it('appendWsUrls returns an empty array for an empty input', () => {
-        const urls = [
-            'https://chronik.be.cash/xec',
-            'http://chronik.fabien.cash',
-            'https://chronik2.fabien.cash',
-        ];
-        const proxyInterface = new FailoverProxy(urls);
-        expect(proxyInterface.appendWsUrls([])).to.eql([]);
+        expect(appendWsUrls([])).to.eql([]);
     });
     it('appendWsUrls throws error on an invalid regular endpoint', () => {
-        const urls = [
-            'http://chronik.fabien.cash',
-            'https://chronik2.fabien.cash',
-        ];
-        const proxyInterface = new FailoverProxy(urls);
         const oneBrokenUrl = [
             'https://chronik.fabien.cash',
             'not-a-valid-url',
             'https://chronik2.fabien.cash',
         ];
-        expect(() => proxyInterface.appendWsUrls(oneBrokenUrl)).to.throw(
+        expect(() => appendWsUrls(oneBrokenUrl)).to.throw(
             `Invalid url found in array: ${oneBrokenUrl[1]}`,
         );
     });
@@ -162,5 +154,243 @@ describe('isValidWsSubscription', () => {
         it(`isValidWsSubscription: ${description}`, () => {
             expect(isValidWsSubscription(subscription)).to.eql(result);
         });
+    });
+});
+
+describe('useStrategy functionality tests', () => {
+    const originalMeasureWebsocketLatency = chronikClientModule.__get__(
+        'measureWebsocketLatency',
+    );
+
+    afterEach(() => {
+        chronikClientModule.__set__(
+            'measureWebsocketLatency',
+            originalMeasureWebsocketLatency,
+        );
+    });
+
+    it('sortNodesByLatency returns original order when all nodes timeout', async () => {
+        const urls = [
+            'https://chronik1.alitayin.com',
+            'https://chronik2.alitayin.com',
+            'https://chronik3.alitayin.com',
+            'https://chronik4.alitayin.com',
+            'https://chronik5.alitayin.com',
+        ];
+
+        chronikClientModule.__set__('measureWebsocketLatency', async () => {
+            return Infinity;
+        });
+
+        const sortedUrls = await sortNodesByLatency(urls);
+
+        expect(sortedUrls).to.deep.equal(urls);
+    });
+
+    it('sortNodesByLatency correctly sorts nodes by latency', async () => {
+        const urls = [
+            'https://chronik1.alitayin.com',
+            'https://chronik2.alitayin.com',
+            'https://chronik3.alitayin.com',
+            'https://chronik4.alitayin.com',
+            'https://chronik5.alitayin.com',
+        ];
+
+        chronikClientModule.__set__(
+            'measureWebsocketLatency',
+            async (wsUrl: string) => {
+                if (wsUrl.includes('chronik3.alitayin.com')) return 50;
+                if (wsUrl.includes('chronik1.alitayin.com')) return 100;
+                if (wsUrl.includes('chronik5.alitayin.com')) return 100;
+                return Infinity;
+            },
+        );
+
+        const sortedUrls = await sortNodesByLatency(urls);
+
+        expect(sortedUrls).to.deep.equal([
+            'https://chronik3.alitayin.com',
+            'https://chronik1.alitayin.com',
+            'https://chronik5.alitayin.com',
+            'https://chronik2.alitayin.com',
+            'https://chronik4.alitayin.com',
+        ]);
+    });
+
+    it('ChronikClient.useStrategy correctly uses sorted URLs with ClosestFirst strategy', async () => {
+        const urls = [
+            'https://chronik1.alitayin.com',
+            'https://chronik2.alitayin.com',
+            'https://chronik3.alitayin.com',
+            'https://chronik4.alitayin.com',
+            'https://chronik5.alitayin.com',
+        ];
+
+        chronikClientModule.__set__(
+            'measureWebsocketLatency',
+            async (wsUrl: string) => {
+                if (wsUrl.includes('chronik3.alitayin.com')) return 50;
+                if (wsUrl.includes('chronik1.alitayin.com')) return 100;
+                if (wsUrl.includes('chronik4.alitayin.com')) return 100;
+                return Infinity;
+            },
+        );
+
+        const client = await chronikClientModule
+            .__get__('ChronikClient')
+            .useStrategy(
+                chronikClientModule.__get__('ConnectionStrategy').ClosestFirst,
+                urls,
+            );
+
+        const expectedOrder = [
+            'https://chronik3.alitayin.com',
+            'https://chronik1.alitayin.com',
+            'https://chronik4.alitayin.com',
+            'https://chronik2.alitayin.com',
+            'https://chronik5.alitayin.com',
+        ];
+        const actualOrder = client
+            .proxyInterface()
+            .getEndpointArray()
+            .map((endpoint: { url: string }) => endpoint.url);
+
+        expect(actualOrder).to.deep.equal(expectedOrder);
+    });
+
+    it('ChronikClient constructor uses original URL order without strategy', async () => {
+        const urls = [
+            'https://chronik1.alitayin.com',
+            'https://chronik2.alitayin.com',
+            'https://chronik3.alitayin.com',
+            'https://chronik4.alitayin.com',
+            'https://chronik5.alitayin.com',
+        ];
+
+        chronikClientModule.__set__(
+            'measureWebsocketLatency',
+            async (wsUrl: string) => {
+                if (wsUrl.includes('chronik3.alitayin.com')) return 50;
+                if (wsUrl.includes('chronik1.alitayin.com')) return 100;
+                if (wsUrl.includes('chronik2.alitayin.com')) return 150;
+                return Infinity;
+            },
+        );
+
+        const client = new (chronikClientModule.__get__('ChronikClient'))(urls);
+
+        const actualOrder = client
+            .proxyInterface()
+            .getEndpointArray()
+            .map((endpoint: { url: string }) => endpoint.url);
+
+        expect(actualOrder).to.deep.equal(urls);
+    });
+});
+
+describe('FailoverProxy.connectWs failover', () => {
+    it('should cycle workingIndex through all endpoints on consecutive ws onclose', async () => {
+        const urls = [
+            'https://chronik1.alitayin.com',
+            'https://chronik2.alitayin.com',
+            'https://chronik3.alitayin.com',
+            'https://chronik4.alitayin.com',
+        ];
+        const proxy = new FailoverProxy(urls);
+
+        const originalConnectWs = proxy.connectWs;
+
+        // This function prevents subsequent calls to connectWS from onclose handler - only the first call will execute
+        let connectWsCallCount = 0;
+        proxy.connectWs = async function (endpoint) {
+            connectWsCallCount++;
+            if (connectWsCallCount === 1) {
+                return originalConnectWs.call(proxy, endpoint);
+            }
+            return Promise.resolve();
+        };
+
+        proxy['_websocketUrlConnects'] = async (_wsUrl: string) => {
+            return true;
+        };
+
+        const wsEndpoint: any = {
+            manuallyClosed: false,
+            autoReconnect: true,
+            subs: { scripts: [], lokadIds: [], tokens: [], blocks: false },
+        };
+
+        await proxy.connectWs(wsEndpoint);
+        expect(proxy['deriveEndpointIndex'](0)).to.equal(0);
+
+        // Trigger onclose to update index
+        wsEndpoint.ws.onclose({} as any);
+        expect(proxy['deriveEndpointIndex'](0)).to.equal(1);
+
+        wsEndpoint.ws.onclose({} as any);
+        expect(proxy['deriveEndpointIndex'](0)).to.equal(2);
+
+        wsEndpoint.ws.onclose({} as any);
+        expect(proxy['deriveEndpointIndex'](0)).to.equal(3);
+
+        wsEndpoint.ws.onclose({} as any);
+        expect(proxy['deriveEndpointIndex'](0)).to.equal(0);
+
+        if (wsEndpoint.ws) {
+            wsEndpoint.ws.close();
+            wsEndpoint.ws = null;
+        }
+    });
+});
+
+describe('FailoverProxy.connectWs with manuallyClosed', () => {
+    it('should not cycle workingIndex when manuallyClosed is true', async () => {
+        const urls = [
+            'https://chronik4.alitayin.com',
+            'https://chronik2.alitayin.com',
+            'https://chronik3.alitayin.com',
+            'https://chronik1.alitayin.com',
+        ];
+        const proxy = new FailoverProxy(urls);
+
+        const originalConnectWs = proxy.connectWs;
+
+        let connectWsCallCount = 0;
+        proxy.connectWs = async function (endpoint) {
+            connectWsCallCount++;
+            if (connectWsCallCount === 1) {
+                return originalConnectWs.call(proxy, endpoint);
+            }
+            return Promise.resolve();
+        };
+
+        proxy['_websocketUrlConnects'] = async (_wsUrl: string) => {
+            return true;
+        };
+
+        const wsEndpoint: any = {
+            manuallyClosed: false,
+            autoReconnect: true,
+            subs: { scripts: [], lokadIds: [], tokens: [], blocks: false },
+        };
+
+        await proxy.connectWs(wsEndpoint);
+        expect(proxy['deriveEndpointIndex'](0)).to.equal(0);
+
+        wsEndpoint.ws.onclose({} as any);
+        expect(proxy['deriveEndpointIndex'](0)).to.equal(1);
+
+        wsEndpoint.manuallyClosed = true;
+
+        wsEndpoint.ws.onclose({} as any);
+        expect(proxy['deriveEndpointIndex'](0)).to.equal(1);
+
+        wsEndpoint.ws.onclose({} as any);
+        expect(proxy['deriveEndpointIndex'](0)).to.equal(1);
+
+        if (wsEndpoint.ws) {
+            wsEndpoint.ws.close();
+            wsEndpoint.ws = null;
+        }
     });
 });

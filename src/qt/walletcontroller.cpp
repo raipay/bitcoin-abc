@@ -129,11 +129,18 @@ WalletModel *WalletController::getOrCreateWallet(
 
     // Instantiate model and register it.
     WalletModel *wallet_model = new WalletModel(
-        std::move(wallet), m_client_model, m_platform_style, nullptr);
-    // Handler callback runs in a different thread so fix wallet model thread
-    // affinity.
+        std::move(wallet), m_client_model, m_platform_style,
+        nullptr /* required for the following moveToThread() call */);
+
+    // Move WalletModel object to the thread that created the WalletController
+    // object (GUI main thread), instead of the current thread, which could be
+    // an outside wallet thread or RPC thread sending a LoadWallet notification.
+    // This ensures queued signals sent to the WalletModel object will be
+    // handled on the GUI event loop.
     wallet_model->moveToThread(thread());
-    wallet_model->setParent(this);
+    QMetaObject::invokeMethod(
+        this, [wallet_model, this] { wallet_model->setParent(this); },
+        GUIUtil::blockingGUIThreadConnection());
     m_wallets.push_back(wallet_model);
 
     // WalletModel::startPollBalance needs to be called in a thread managed by
@@ -167,7 +174,6 @@ WalletModel *WalletController::getOrCreateWallet(
     connect(wallet_model, &WalletModel::coinsSent, this,
             &WalletController::coinsSent);
 
-    // Notify walletAdded signal on the GUI thread.
     Q_EMIT walletAdded(wallet_model);
 
     return wallet_model;
@@ -254,14 +260,15 @@ void CreateWalletActivity::createWallet() {
         flags |= WALLET_FLAG_DESCRIPTORS;
     }
 
-    QTimer::singleShot(500, worker(), [this, name, flags] {
-        std::unique_ptr<interfaces::Wallet> wallet =
-            node().walletClient().createWallet(
-                name, m_passphrase, flags, m_error_message, m_warning_message);
+    QTimer::singleShot(500ms, worker(), [this, name, flags] {
+        auto wallet{node().walletClient().createWallet(
+            name, m_passphrase, flags, m_warning_message)};
 
         if (wallet) {
             m_wallet_model =
-                m_wallet_controller->getOrCreateWallet(std::move(wallet));
+                m_wallet_controller->getOrCreateWallet(std::move(*wallet));
+        } else {
+            m_error_message = util::ErrorString(wallet);
         }
 
         QTimer::singleShot(500, this, &CreateWalletActivity::finish);
@@ -340,13 +347,13 @@ void OpenWalletActivity::open(const std::string &path) {
         tr("Opening Wallet <b>%1</b>...").arg(name.toHtmlEscaped()));
 
     QTimer::singleShot(0, worker(), [this, path] {
-        std::unique_ptr<interfaces::Wallet> wallet =
-            node().walletClient().loadWallet(path, m_error_message,
-                                             m_warning_message);
+        auto wallet{node().walletClient().loadWallet(path, m_warning_message)};
 
         if (wallet) {
             m_wallet_model =
-                m_wallet_controller->getOrCreateWallet(std::move(wallet));
+                m_wallet_controller->getOrCreateWallet(std::move(*wallet));
+        } else {
+            m_error_message = util::ErrorString(wallet);
         }
 
         QTimer::singleShot(0, this, &OpenWalletActivity::finish);

@@ -25,6 +25,9 @@ class HTTPRPCRequestProcessor;
 namespace interfaces {
 struct BlockAndHeaderTipInfo;
 }
+namespace kernel {
+struct Context;
+}
 namespace node {
 struct NodeContext;
 } // namespace node
@@ -54,13 +57,13 @@ bool AppInitBasicSetup(const ArgsManager &args);
  */
 bool AppInitParameterInteraction(Config &config, const ArgsManager &args);
 /**
- * Initialization sanity checks: ecc init, sanity checks, dir lock.
+ * Initialization sanity checks.
  * @note This can be done before daemonization.
  * Do not call Shutdown() if this function fails.
  * @pre Parameters should be parsed and config file should be read,
  * AppInitParameterInteraction should have been called.
  */
-bool AppInitSanityChecks();
+bool AppInitSanityChecks(const kernel::Context &kernel);
 /**
  * Lock bitcoin data directory.
  * @note This should only be done after daemonization.
@@ -89,5 +92,11 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
  * Register all arguments with the ArgsManager
  */
 void SetupServerArgs(node::NodeContext &node);
+
+/**
+ * Validates requirements to run the indexes and spawns each index initial
+ * sync thread
+ */
+bool StartIndexBackgroundSync(node::NodeContext &node);
 
 #endif // BITCOIN_INIT_H

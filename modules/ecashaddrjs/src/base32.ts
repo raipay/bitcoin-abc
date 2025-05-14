@@ -1,13 +1,8 @@
-/**
- * @license
- * https://reviews.bitcoinabc.org
- * Copyright (c) 2017-2020 Emilio Almansi
- * Copyright (c) 2023-2024 Bitcoin ABC
- * Distributed under the MIT software license, see the accompanying
- * file LICENSE or http://www.opensource.org/licenses/mit-license.php.
- */
+// Copyright (c) 2023-2025 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-'use strict';
+// Copyright (c) 2017-2020 Emilio Almansi
 
 import validation from './validation';
 const { validate } = validation;
@@ -22,13 +17,13 @@ const { validate } = validation;
  * Charset containing the 32 symbols used in the base32 encoding.
  * @private
  */
-export var CHARSET: string = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+export const CHARSET: string = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 
 /**
  * Inverted index mapping each symbol into its index within the charset.
  * @private
  */
-var CHARSET_INVERSE_INDEX: { [key: string]: number } = {
+const CHARSET_INVERSE_INDEX: { [key: string]: number } = {
     q: 0,
     p: 1,
     z: 2,
@@ -72,9 +67,9 @@ var CHARSET_INVERSE_INDEX: { [key: string]: number } = {
  */
 function encode(data: Uint8Array): string {
     validate(data instanceof Uint8Array, 'Invalid data: ' + data + '.');
-    var base32 = '';
-    for (var i = 0; i < data.length; ++i) {
-        var value = data[i];
+    let base32 = '';
+    for (let i = 0; i < data.length; ++i) {
+        const value = data[i];
         validate(0 <= value && value < 32, 'Invalid value: ' + value + '.');
         base32 += CHARSET[value];
     }
@@ -93,9 +88,9 @@ function decode(string: string): Uint8Array {
         typeof string === 'string',
         'Invalid base32-encoded string: ' + string + '.',
     );
-    var data = new Uint8Array(string.length);
-    for (var i = 0; i < string.length; ++i) {
-        var value = string[i];
+    const data = new Uint8Array(string.length);
+    for (let i = 0; i < string.length; ++i) {
+        const value = string[i];
         validate(
             value in CHARSET_INVERSE_INDEX,
             'Invalid value: ' + value + '.',

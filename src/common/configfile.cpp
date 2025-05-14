@@ -8,6 +8,7 @@
 #include <sync.h>
 #include <tinyformat.h>
 #include <univalue.h>
+#include <util/chaintype.h>
 #include <util/fs.h>
 #include <util/settings.h>
 #include <util/string.h>
@@ -61,8 +62,10 @@ GetConfigOptions(std::istream &stream, const std::string &filepath,
                 return false;
             } else if ((pos = str.find('=')) != std::string::npos) {
                 std::string name =
-                    prefix + TrimString(str.substr(0, pos), pattern);
-                std::string value = TrimString(str.substr(pos + 1), pattern);
+                    prefix +
+                    TrimString(std::string_view{str}.substr(0, pos), pattern);
+                std::string_view value = TrimStringView(
+                    std::string_view{str}.substr(pos + 1), pattern);
                 if (used_hash &&
                     name.find("rpcpassword") != std::string::npos) {
                     error = strprintf(
@@ -159,7 +162,7 @@ bool ArgsManager::ReadConfigFiles(std::string &error,
             }
         }
         if (use_conf_file) {
-            std::string chain_id = GetChainName();
+            std::string chain_id = GetChainTypeString();
             std::vector<std::string> conf_file_names;
 
             auto add_includes = [&](const std::string &network,
@@ -206,7 +209,7 @@ bool ArgsManager::ReadConfigFiles(std::string &error,
             conf_file_names.clear();
             add_includes(chain_id, /* skip= */ chain_includes);
             add_includes({}, /* skip= */ default_includes);
-            std::string chain_id_final = GetChainName();
+            std::string chain_id_final = GetChainTypeString();
             if (chain_id_final != chain_id) {
                 // Also warn about recursive includeconf for the chain that was
                 // specified in one of the includeconfs

@@ -62,7 +62,6 @@ store_path() {
 # Set environment variables to point the NATIVE toolchain to the right
 # includes/libs
 NATIVE_GCC="$(store_path gcc-toolchain)"
-NATIVE_GCC_STATIC="$(store_path gcc-toolchain static)"
 NATIVE_GCC_LIBS="$(store_path gcc lib)"
 
 unset LIBRARY_PATH
@@ -72,11 +71,19 @@ unset CPLUS_INCLUDE_PATH
 unset OBJC_INCLUDE_PATH
 unset OBJCPLUS_INCLUDE_PATH
 
-export LIBRARY_PATH="${NATIVE_GCC}/lib:${NATIVE_GCC_STATIC}/lib:${NATIVE_GCC_LIBS}/lib"
 export C_INCLUDE_PATH="${NATIVE_GCC}/include"
 export CPLUS_INCLUDE_PATH="${NATIVE_GCC}/include/c++:${NATIVE_GCC}/include"
 export OBJC_INCLUDE_PATH="${NATIVE_GCC}/include"
 export OBJCPLUS_INCLUDE_PATH="${NATIVE_GCC}/include/c++:${NATIVE_GCC}/include"
+
+case "$HOST" in
+    *darwin*) export LIBRARY_PATH="${NATIVE_GCC}/lib:${NATIVE_GCC_LIBS}/lib" ;;
+    *mingw*) export LIBRARY_PATH="${NATIVE_GCC}/lib:${NATIVE_GCC_LIBS}/lib" ;;
+    *)
+        NATIVE_GCC_STATIC="$(store_path gcc-toolchain static)"
+        export LIBRARY_PATH="${NATIVE_GCC}/lib:${NATIVE_GCC_STATIC}/lib:${NATIVE_GCC_LIBS}/lib"
+        ;;
+esac
 
 # Set environment variables to point the CROSS toolchain to the right
 # includes/libs for $HOST
@@ -138,18 +145,7 @@ for p in "${PATHS[@]}"; do
 done
 
 # Disable Guix ld auto-rpath behavior
-case "$HOST" in
-    *darwin*)
-        # The auto-rpath behavior is necessary for darwin builds as some native
-        # tools built by depends refer to and depend on Guix-built native
-        # libraries
-        #
-        # After the native packages in depends are built, the ld wrapper should
-        # no longer affect our build, as clang would instead reach for
-        # x86_64-apple-darwin-ld from cctools
-        ;;
-    *) export GUIX_LD_WRAPPER_DISABLE_RPATH=yes ;;
-esac
+export GUIX_LD_WRAPPER_DISABLE_RPATH=yes
 
 # Make /usr/bin if it doesn't exist
 [ -e /usr/bin ] || mkdir -p /usr/bin
@@ -174,16 +170,6 @@ esac
 # Environment variables for determinism
 export TAR_OPTIONS="--owner=0 --group=0 --numeric-owner --mtime='@${SOURCE_DATE_EPOCH}' --sort=name"
 export TZ="UTC"
-case "$HOST" in
-    *darwin*)
-        # cctools AR, unlike GNU binutils AR, does not have a deterministic mode
-        # or a configure flag to enable determinism by default, it only
-        # understands if this env-var is set or not. See:
-        #
-        # https://github.com/tpoechtrager/cctools-port/blob/55562e4073dea0fbfd0b20e0bf69ffe6390c7f97/cctools/ar/archive.c#L334
-        export ZERO_AR_DATE=yes
-        ;;
-esac
 
 ####################
 # Depends Building #
@@ -200,8 +186,7 @@ make -C depends --jobs="$JOBS" HOST="$HOST" \
                                    x86_64_linux_AR=x86_64-linux-gnu-gcc-ar \
                                    x86_64_linux_RANLIB=x86_64-linux-gnu-gcc-ranlib \
                                    x86_64_linux_NM=x86_64-linux-gnu-gcc-nm \
-                                   x86_64_linux_STRIP=x86_64-linux-gnu-strip \
-                                   FORCE_USE_SYSTEM_CLANG=1
+                                   x86_64_linux_STRIP=x86_64-linux-gnu-strip
 
 
 ###########################
@@ -228,47 +213,43 @@ case "$HOST" in
         ;;
 esac
 
-case "$HOST" in
-    *darwin*)
-        # We don't build chronik for MacOS, so we don't need rustup
-        ;;
-    *)
-        curl -sSf https://static.rust-lang.org/rustup/archive/1.26.0/x86_64-unknown-linux-gnu/rustup-init -o rustup-init
-        echo "0b2f6c8f85a3d02fde2efc0ced4657869d73fccfce59defb4e8d29233116e6db rustup-init" | sha256sum -c
-        chmod +x rustup-init
-        ./rustup-init -y --default-toolchain=1.76.0
-        rm ./rustup-init
-        # shellcheck disable=SC1091
-        source "$HOME/.cargo/env"
-        rustup target add "${RUST_TARGET}"
-        ;;
-esac
+curl -sSf https://static.rust-lang.org/rustup/archive/1.26.0/x86_64-unknown-linux-gnu/rustup-init -o rustup-init
+echo "0b2f6c8f85a3d02fde2efc0ced4657869d73fccfce59defb4e8d29233116e6db rustup-init" | sha256sum -c
+chmod +x rustup-init
+./rustup-init -y --default-toolchain=1.76.0
+rm ./rustup-init
+# shellcheck disable=SC1091
+source "$HOME/.cargo/env"
+rustup target add "${RUST_TARGET}"
+
+# Make $HOST-specific native binaries from depends available in $PATH
+export PATH="${BASEPREFIX}/${HOST}/native/bin:${PATH}"
+
+# Prepare for making the source_package
+# Also gather useful data from cmake: project name
+mkdir -p source_package
+pushd source_package
+cmake -GNinja .. \
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE} \
+    -DBUILD_BITCOIN_WALLET=OFF \
+    -DBUILD_BITCOIN_CHRONIK=OFF \
+    -DBUILD_BITCOIN_QT=OFF \
+    -DBUILD_BITCOIN_ZMQ=OFF \
+    -DENABLE_QRCODE=OFF \
+    -DENABLE_NATPMP=OFF \
+    -DENABLE_UPNP=OFF \
+    -DUSE_JEMALLOC=OFF \
+    -DENABLE_CLANG_TIDY=OFF \
+    -DENABLE_BIP70=OFF \
+    -DUSE_LINKER=
+PROJECT_NAME=$(ninja print-project-name | sed '$!d')
 
 # Produce the source package if it does not already exist
-if ! ls "${OUTDIR_BASE}"/src/bitcoin-abc-*.tar.gz 1> /dev/null 2>&1; then
-    mkdir -p source_package
-    pushd source_package
-
-    cmake -GNinja .. \
-        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE} \
-        -DBUILD_BITCOIN_WALLET=OFF \
-        -DBUILD_BITCOIN_CHRONIK=OFF \
-        -DBUILD_BITCOIN_QT=OFF \
-        -DBUILD_BITCOIN_ZMQ=OFF \
-        -DENABLE_QRCODE=OFF \
-        -DENABLE_NATPMP=OFF \
-        -DENABLE_UPNP=OFF \
-        -DUSE_JEMALLOC=OFF \
-        -DENABLE_CLANG_TIDY=OFF \
-        -DENABLE_BIP70=OFF \
-        -DUSE_LINKER=
-
+if ! ls "${OUTDIR_BASE}"/src/${PROJECT_NAME}-*.tar.gz 1> /dev/null 2>&1; then
     ninja package_source
-    SOURCEDIST=$(echo bitcoin-abc-*.tar.gz)
+    SOURCEDIST=$(echo ${PROJECT_NAME}-*.tar.gz)
     mv ${SOURCEDIST} ..
-
     popd
-    rm -rf source_package
 
     DISTNAME=${SOURCEDIST//.tar.*/}
 
@@ -279,9 +260,13 @@ if ! ls "${OUTDIR_BASE}"/src/bitcoin-abc-*.tar.gz 1> /dev/null 2>&1; then
     tar --create --mode='u+rw,go+r-w,a+X' ${DISTNAME} | gzip -9n > "${OUTDIR_BASE}/src/${SOURCEDIST}"
     rm -rf ${DISTNAME}
 else
+    popd
     echo Skipping source package generation because it already exists.
-    DISTNAME=$(basename -s .tar.gz "${OUTDIR_BASE}"/src/bitcoin-abc-*.tar.gz)
+    DISTNAME=$(basename -s .tar.gz "${OUTDIR_BASE}"/src/${PROJECT_NAME}-*.tar.gz)
 fi
+
+# Remove temporary build dir
+rm -rf source_package
 
 mkdir -p "$OUTDIR"
 OUTDIR=$(realpath "${OUTDIR}")
@@ -306,13 +291,22 @@ case "$HOST" in
     *mingw*)  HOST_LDFLAGS="-Wl,--no-insert-timestamp" ;;
 esac
 
+# Needed for rustup, cargo and rustc
+export LD_LIBRARY_PATH="${LIBRARY_PATH}"
+
 # CMake flags
 case "$HOST" in
     *mingw*)
-        CMAKE_EXTRA_OPTIONS=(-DBUILD_BITCOIN_SEEDER=OFF -DBUILD_BITCOIN_CHRONIK=ON -DCPACK_STRIP_FILES=ON -DCPACK_PACKAGE_FILE_NAME="${DISTNAME}-win64-setup-unsigned")
+        CMAKE_EXTRA_OPTIONS=(-DBUILD_BITCOIN_SEEDER=OFF -DCPACK_STRIP_FILES=ON -DCPACK_PACKAGE_FILE_NAME="${DISTNAME}-win64-setup-unsigned")
         ;;
     *linux*)
-        CMAKE_EXTRA_OPTIONS=(-DENABLE_STATIC_LIBSTDCXX=ON -DENABLE_GLIBC_BACK_COMPAT=ON -DBUILD_BITCOIN_CHRONIK=ON -DBUILD_BITCOIN_CHRONIK_PLUGINS=OFF -DUSE_LINKER=)
+        CMAKE_EXTRA_OPTIONS=(-DENABLE_STATIC_LIBSTDCXX=ON -DUSE_LINKER=)
+
+        # Work around a false positive in aws-lc-sys which detects a bug in GCC even if
+        # the version is free of the bug. It seeems to not affect the cmake build for
+        # this crate, so use that instead.
+        # See https://github.com/aws/aws-lc-rs/issues/474
+        export AWS_LC_SYS_CMAKE_BUILDER=1
         ;;
     *darwin*)
         # GUIX doesn't properly set /bin/cc and /bin/c++ so cmake will pick the
@@ -321,7 +315,13 @@ case "$HOST" in
         export CC=clang
         export CXX=clang++
 
-        # Prevent clang from using gcc libs
+        # Needed for the crates that read this environment variable. Otherwise
+        # they could default to a lower and unsupported target.
+        export MACOSX_DEPLOYMENT_TARGET=11.0
+
+        # Prevent clang from using gcc libs.
+        # We need to unset LIBRARY_PATH because clang targeting darwin will look
+        # at it first, before even its sysroot.
         unset LIBRARY_PATH
         unset CPATH
         unset C_INCLUDE_PATH
@@ -331,8 +331,6 @@ case "$HOST" in
         ;;
 esac
 
-# Make $HOST-specific native binaries from depends available in $PATH
-export PATH="${BASEPREFIX}/${HOST}/native/bin:${PATH}"
 mkdir -p "$DISTSRC"
 (
     cd "$DISTSRC"
@@ -342,8 +340,7 @@ mkdir -p "$DISTSRC"
     # binary tarballs.
     INSTALLPATH=$(pwd)/installed/${DISTNAME}
     mkdir -p "${INSTALLPATH}"
-    # Needed for rustup, cargo and rustc
-    export LD_LIBRARY_PATH="${LIBRARY_PATH}"
+
     # rocksdb-sys uses libclang to parse the headers but it doesn't know what
     # the host arch is. As a consequence it fails to parse gnu/stubs.h if the
     # multilib headers are not installed because it falls back to the 32 bits
@@ -368,6 +365,7 @@ mkdir -p "$DISTSRC"
       -DENABLE_REDUCE_EXPORTS=ON \
       -DCMAKE_INSTALL_PREFIX="${INSTALLPATH}" \
       -DCCACHE=OFF \
+      -DBUILD_BITCOIN_CHRONIK=ON \
       "${CMAKE_EXTRA_OPTIONS[@]}" \
       "${CMAKE_C_FLAGS}" \
       "${CMAKE_CXX_FLAGS}" \
@@ -416,7 +414,10 @@ EOF
             popd
             ;;
         *darwin*)
-            ninja install/strip
+            # This workaround can be dropped for CMake >= 3.27.
+            # See the upstream commit 689616785f76acd844fd448c51c5b2a0711aafa2.
+            find . -name 'cmake_install.cmake' -exec sed -i 's| -u -r | |g' {} +
+            cmake --install . --strip ${V:+--verbose}
 
             export PYTHONPATH="${BASEPREFIX}/${HOST}/native/lib/python3/dist-packages:${PYTHONPATH}"
             ninja osx-deploydir
@@ -426,13 +427,11 @@ EOF
             cp osx_volname unsigned-app-${HOST}/
             cp ../contrib/macdeploy/detached-sig-apply.sh unsigned-app-${HOST}
             cp ../contrib/macdeploy/detached-sig-create.sh unsigned-app-${HOST}
-            cp ${BASEPREFIX}/${HOST}/native/bin/${HOST}-codesign_allocate unsigned-app-${HOST}/codesign_allocate
-            cp ${BASEPREFIX}/${HOST}/native/bin/${HOST}-pagestuff unsigned-app-${HOST}/pagestuff
             mv dist unsigned-app-${HOST}
             find unsigned-app-${HOST} -print0 | sort --zero-terminated | tar --create --no-recursion --mode='u+rw,go+r-w,a+X' --null --files-from=- | gzip -9n > ${OUTDIR}/${DISTNAME}-osx-unsigned.tar.gz
 
-            ninja osx-dmg
-            mv "${OSX_VOLNAME}.dmg" ${OUTDIR}/${DISTNAME}-osx-unsigned.dmg
+            ninja osx-zip
+            mv "${OSX_VOLNAME}.zip" ${OUTDIR}/${DISTNAME}-osx-unsigned.zip
 
             pushd installed
             find . -path "*.app*" -type f -executable -exec mv {} ${DISTNAME}/bin/bitcoin-qt \;

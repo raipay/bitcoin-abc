@@ -16,7 +16,12 @@
 #include <boost/multi_index/ordered_index.hpp>
 #include <boost/multi_index_container.hpp>
 
+#include <cstdint>
+#include <functional>
+#include <utility>
 #include <vector>
+
+class CBlockIndex;
 
 namespace avalanche {
 
@@ -146,7 +151,9 @@ public:
     /**
      * Promote cache entries to a the active chain tip.
      */
-    void promoteToBlock(const CBlockIndex *activeTip, PeerManager &pm);
+    void promoteToBlock(
+        const CBlockIndex *activeTip,
+        std::function<bool(const ProofId &proofid)> const &shouldPromote);
 
     /**
      * Set proof(s) that should be treated as winners (already finalized). This
@@ -161,19 +168,26 @@ public:
     bool accept(const StakeContenderId &contenderId);
     bool finalize(const StakeContenderId &contenderId);
     bool reject(const StakeContenderId &contenderId);
-    bool invalidate(const StakeContenderId &contenderId);
 
     /**
      * Get contender acceptance state for avalanche voting.
      * Returns 0 for accepted, 1 for rejected, and -1 for not in cache.
+     * prevblockhashout gets set if the contender is in the cache.
      */
-    int getVoteStatus(const StakeContenderId &contenderId) const;
+    int getVoteStatus(const StakeContenderId &contenderId,
+                      BlockHash &prevblockhashout) const;
 
     /**
-     * Get payout scripts of the winning proofs.
+     * Get the best ranking contenders, accepted contenders ranking first. The
+     * output of this function is only reliable to select contenders to
+     * reconcile and should not be called after contender polling begins.
      */
+    size_t getPollableContenders(
+        const BlockHash &prevblockhash, size_t maxPollable,
+        std::vector<StakeContenderId> &pollableContenders) const;
+
     bool getWinners(const BlockHash &prevblockhash,
-                    std::vector<CScript> &payouts) const;
+                    std::vector<std::pair<ProofId, CScript>> &winners) const;
 };
 
 } // namespace avalanche

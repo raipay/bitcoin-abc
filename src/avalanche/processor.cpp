@@ -36,7 +36,7 @@ static constexpr std::chrono::milliseconds AVALANCHE_TIME_STEP{10};
 static const std::string AVAPEERS_FILE_NAME{"avapeers.dat"};
 
 namespace avalanche {
-static const uint256 GetVoteItemId(const AnyVoteItem &item) {
+static uint256 GetVoteItemId(const AnyVoteItem &item) {
     return std::visit(variant::overloaded{
                           [](const ProofRef &proof) {
                               uint256 id = proof->getId();
@@ -45,6 +45,9 @@ static const uint256 GetVoteItemId(const AnyVoteItem &item) {
                           [](const CBlockIndex *pindex) {
                               uint256 hash = pindex->GetBlockHash();
                               return hash;
+                          },
+                          [](const StakeContenderId &contenderId) {
+                              return uint256(contenderId);
                           },
                           [](const CTransactionRef &tx) {
                               uint256 id = tx->GetId();
@@ -152,7 +155,7 @@ Processor::Processor(Config avaconfigIn, interfaces::Chain &chain,
     : avaconfig(std::move(avaconfigIn)), connman(connmanIn),
       chainman(chainmanIn), mempool(mempoolIn), round(0),
       peerManager(std::make_unique<PeerManager>(
-          stakeUtxoDustThreshold, chainman,
+          stakeUtxoDustThreshold, chainman, stakingPreConsensus,
           peerDataIn ? peerDataIn->proof : ProofRef())),
       peerData(std::move(peerDataIn)), sessionKey(std::move(sessionKeyIn)),
       minQuorumScore(minQuorumTotalScoreIn),
@@ -337,11 +340,17 @@ Processor::MakeProcessor(const ArgsManager &argsman, interfaces::Chain &chain,
 
     double minQuorumConnectedStakeRatio =
         AVALANCHE_DEFAULT_MIN_QUORUM_CONNECTED_STAKE_RATIO;
-    if (argsman.IsArgSet("-avaminquorumconnectedstakeratio") &&
-        !ParseDouble(argsman.GetArg("-avaminquorumconnectedstakeratio", ""),
-                     &minQuorumConnectedStakeRatio)) {
-        error = _("The avalanche min quorum connected stake ratio is invalid.");
-        return nullptr;
+    if (argsman.IsArgSet("-avaminquorumconnectedstakeratio")) {
+        // Parse the parameter with a precision of 0.000001.
+        int64_t megaMinRatio;
+        if (!ParseFixedPoint(
+                argsman.GetArg("-avaminquorumconnectedstakeratio", ""), 6,
+                &megaMinRatio)) {
+            error =
+                _("The avalanche min quorum connected stake ratio is invalid.");
+            return nullptr;
+        }
+        minQuorumConnectedStakeRatio = double(megaMinRatio) / 1000000;
     }
 
     if (minQuorumConnectedStakeRatio < 0 || minQuorumConnectedStakeRatio > 1) {
@@ -405,7 +414,13 @@ Processor::MakeProcessor(const ArgsManager &argsman, interfaces::Chain &chain,
 
 static bool isNull(const AnyVoteItem &item) {
     return item.valueless_by_exception() ||
-           std::visit([](const auto &item) { return item == nullptr; }, item);
+           std::visit(variant::overloaded{
+                          [](const StakeContenderId &contenderId) {
+                              return contenderId == uint256::ZERO;
+                          },
+                          [](const auto &item) { return item == nullptr; },
+                      },
+                      item);
 };
 
 bool Processor::addToReconcile(const AnyVoteItem &item) {
@@ -477,6 +492,10 @@ bool Processor::isRecentlyFinalized(const uint256 &itemId) const {
     return WITH_LOCK(cs_finalizedItems, return finalizedItems.contains(itemId));
 }
 
+void Processor::setRecentlyFinalized(const uint256 &itemId) {
+    WITH_LOCK(cs_finalizedItems, finalizedItems.insert(itemId));
+}
+
 void Processor::clearFinalizedItems() {
     LOCK(cs_finalizedItems);
     finalizedItems.reset();
@@ -520,7 +539,9 @@ void Processor::sendResponse(CNode *pfrom, Response response) const {
 
 bool Processor::registerVotes(NodeId nodeid, const Response &response,
                               std::vector<VoteItemUpdate> &updates,
-                              int &banscore, std::string &error) {
+                              bool &disconnect, std::string &error) {
+    disconnect = false;
+    updates.clear();
     {
         // Save the time at which we can query again.
         LOCK(cs_peerManager);
@@ -537,13 +558,12 @@ bool Processor::registerVotes(NodeId nodeid, const Response &response,
 
     {
         // Check that the query exists. There is a possibility that it has been
-        // deleted if the query timed out, so we don't increase the ban score to
-        // slowly banning nodes for poor networking over time. Banning has to be
-        // handled at callsite to avoid DoS.
+        // deleted if the query timed out, so we don't disconnect for poor
+        // networking over time.
+        // Disconnecting has to be handled at callsite to avoid DoS.
         auto w = queries.getWriteView();
         auto it = w->find(std::make_tuple(nodeid, response.getRound()));
         if (it == w.end()) {
-            banscore = 0;
             error = "unexpected-ava-response";
             return false;
         }
@@ -556,14 +576,14 @@ bool Processor::registerVotes(NodeId nodeid, const Response &response,
     const std::vector<Vote> &votes = response.GetVotes();
     size_t size = invs.size();
     if (votes.size() != size) {
-        banscore = 100;
+        disconnect = true;
         error = "invalid-ava-response-size";
         return false;
     }
 
     for (size_t i = 0; i < size; i++) {
         if (invs[i].hash != votes[i].GetHash()) {
-            banscore = 100;
+            disconnect = true;
             error = "invalid-ava-response-content";
             return false;
         }
@@ -641,13 +661,6 @@ bool Processor::registerVotes(NodeId nodeid, const Response &response,
         }
 
         const auto &item = update.getVoteItem();
-
-        if (update.getStatus() == VoteStatus::Finalized) {
-            // Always track finalized items regardless of type. Once finalized
-            // they should never become invalid.
-            WITH_LOCK(cs_finalizedItems,
-                      return finalizedItems.insert(GetVoteItemId(item)));
-        }
 
         if (!std::holds_alternative<const CBlockIndex *>(item)) {
             continue;
@@ -761,7 +774,7 @@ bool Processor::stopEventLoop() {
 void Processor::avaproofsSent(NodeId nodeid) {
     AssertLockNotHeld(cs_main);
 
-    if (chainman.ActiveChainstate().IsInitialBlockDownload()) {
+    if (chainman.IsInitialBlockDownload()) {
         // Before IBD is complete there is no way to make sure a proof is valid
         // or not, e.g. it can be spent in a block we don't know yet. In order
         // to increase confidence that our proof set is similar to other nodes
@@ -806,7 +819,7 @@ bool Processor::isQuorumEstablished() {
     }
 
     // Don't do Avalanche while node is IBD'ing
-    if (chainman.ActiveChainstate().IsInitialBlockDownload()) {
+    if (chainman.IsInitialBlockDownload()) {
         return false;
     }
 
@@ -851,8 +864,15 @@ bool Processor::isQuorumEstablished() {
     // Attempt to compute the staking rewards winner now so we don't have to
     // wait for a block if we already have all the prerequisites.
     const CBlockIndex *pprev = WITH_LOCK(cs_main, return chainman.ActiveTip());
+    bool computedRewards = false;
     if (pprev && IsStakingRewardsActivated(chainman.GetConsensus(), pprev)) {
-        computeStakingReward(pprev);
+        computedRewards = computeStakingReward(pprev);
+    }
+    if (pprev && m_stakingPreConsensus && !computedRewards) {
+        // It's possible to have quorum shortly after startup if peers were
+        // loaded from disk, but staking rewards may not be ready yet. In this
+        // case, we can still promote and poll for contenders.
+        promoteAndPollStakeContenders(pprev);
     }
 
     return true;
@@ -893,15 +913,23 @@ bool Processor::computeStakingReward(const CBlockIndex *pindex) {
     StakingReward _stakingRewards;
     _stakingRewards.blockheight = pindex->nHeight;
 
+    bool rewardsInserted = false;
     if (WITH_LOCK(cs_peerManager, return peerManager->selectStakingRewardWinner(
                                       pindex, _stakingRewards.winners))) {
-        LOCK(cs_stakingRewards);
-        return stakingRewards
-            .emplace(pindex->GetBlockHash(), std::move(_stakingRewards))
-            .second;
+        {
+            LOCK(cs_stakingRewards);
+            rewardsInserted =
+                stakingRewards
+                    .emplace(pindex->GetBlockHash(), std::move(_stakingRewards))
+                    .second;
+        }
+
+        if (m_stakingPreConsensus) {
+            promoteAndPollStakeContenders(pindex);
+        }
     }
 
-    return false;
+    return rewardsInserted;
 }
 
 bool Processor::eraseStakingRewardWinner(const BlockHash &prevBlockHash) {
@@ -910,19 +938,26 @@ bool Processor::eraseStakingRewardWinner(const BlockHash &prevBlockHash) {
 }
 
 void Processor::cleanupStakingRewards(const int minHeight) {
-    LOCK(cs_stakingRewards);
-    // std::erase_if is only defined since C++20
-    for (auto it = stakingRewards.begin(); it != stakingRewards.end();) {
-        if (it->second.blockheight < minHeight) {
-            it = stakingRewards.erase(it);
-        } else {
-            ++it;
+    // Avoid cs_main => cs_peerManager reverse order locking
+    AssertLockNotHeld(::cs_main);
+    AssertLockNotHeld(cs_stakingRewards);
+    AssertLockNotHeld(cs_peerManager);
+
+    {
+        LOCK(cs_stakingRewards);
+        // std::erase_if is only defined since C++20
+        for (auto it = stakingRewards.begin(); it != stakingRewards.end();) {
+            if (it->second.blockheight < minHeight) {
+                it = stakingRewards.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 
     if (m_stakingPreConsensus) {
-        WITH_LOCK(cs_stakeContenderCache,
-                  return stakeContenderCache.cleanup(minHeight));
+        WITH_LOCK(cs_peerManager,
+                  return peerManager->cleanupStakeContenders(minHeight));
     }
 }
 
@@ -968,9 +1003,23 @@ bool Processor::setStakingRewardWinners(const CBlockIndex *pprev,
     }
 
     if (m_stakingPreConsensus) {
-        LOCK(cs_stakeContenderCache);
-        stakeContenderCache.setWinners(pprev, payouts);
+        LOCK(cs_peerManager);
+        peerManager->setStakeContenderWinners(pprev, payouts);
     }
+
+    LOCK(cs_stakingRewards);
+    return stakingRewards.insert_or_assign(pprev->GetBlockHash(), stakingReward)
+        .second;
+}
+
+bool Processor::setStakingRewardWinners(
+    const CBlockIndex *pprev,
+    const std::vector<std::pair<ProofId, CScript>> &winners) {
+    assert(pprev);
+
+    StakingReward stakingReward;
+    stakingReward.blockheight = pprev->nHeight;
+    stakingReward.winners = winners;
 
     LOCK(cs_stakingRewards);
     return stakingRewards.insert_or_assign(pprev->GetBlockHash(), stakingReward)
@@ -985,34 +1034,95 @@ void Processor::FinalizeNode(const ::Config &config, const CNode &node) {
     WITH_LOCK(cs_delayedAvahelloNodeIds, delayedAvahelloNodeIds.erase(nodeid));
 }
 
-void Processor::addStakeContender(const ProofRef &proof) {
-    AssertLockHeld(cs_main);
-    const CBlockIndex *activeTip = chainman.ActiveTip();
-    WITH_LOCK(cs_stakeContenderCache,
-              return stakeContenderCache.add(activeTip, proof));
-}
-
 int Processor::getStakeContenderStatus(
     const StakeContenderId &contenderId) const {
-    return WITH_LOCK(cs_stakeContenderCache,
-                     return stakeContenderCache.getVoteStatus(contenderId));
+    AssertLockNotHeld(cs_peerManager);
+    AssertLockNotHeld(cs_stakingRewards);
+
+    BlockHash prevblockhash;
+    int status =
+        WITH_LOCK(cs_peerManager, return peerManager->getStakeContenderStatus(
+                                      contenderId, prevblockhash));
+
+    if (status != -1) {
+        std::vector<std::pair<ProofId, CScript>> winners;
+        getStakingRewardWinners(prevblockhash, winners);
+        if (winners.size() == 0) {
+            // If we have not selected a local staking rewards winner yet,
+            // indicate this contender is pending to avoid convergence issues.
+            return -2;
+        }
+    }
+
+    return status;
 }
 
-void Processor::promoteStakeContendersToTip() {
-    const CBlockIndex *activeTip =
-        WITH_LOCK(cs_main, return chainman.ActiveTip());
-    assert(activeTip);
+void Processor::acceptStakeContender(const StakeContenderId &contenderId) {
+    LOCK(cs_peerManager);
+    peerManager->acceptStakeContender(contenderId);
+}
 
-    if (!hasFinalizedTip()) {
-        // Avoid growing the contender cache until we have finalized a block
+void Processor::finalizeStakeContender(const StakeContenderId &contenderId) {
+    AssertLockNotHeld(cs_main);
+
+    BlockHash prevblockhash;
+    std::vector<std::pair<ProofId, CScript>> winners;
+    {
+        LOCK(cs_peerManager);
+        peerManager->finalizeStakeContender(contenderId, prevblockhash,
+                                            winners);
+    }
+
+    // Set staking rewards to include newly finalized contender
+    if (winners.size() > 0) {
+        const CBlockIndex *block = WITH_LOCK(
+            cs_main,
+            return chainman.m_blockman.LookupBlockIndex(prevblockhash));
+        if (block) {
+            setStakingRewardWinners(block, winners);
+        }
+    }
+}
+
+void Processor::rejectStakeContender(const StakeContenderId &contenderId) {
+    LOCK(cs_peerManager);
+    peerManager->rejectStakeContender(contenderId);
+}
+
+void Processor::promoteAndPollStakeContenders(const CBlockIndex *pprev) {
+    assert(pprev);
+
+    if (!isQuorumEstablished()) {
+        // Avoid growing the contender cache before it's possible to clean it up
+        // (by finalizing blocks).
         return;
     }
 
-    LOCK(cs_peerManager);
-    LOCK(cs_stakeContenderCache);
-    stakeContenderCache.promoteToBlock(activeTip, *peerManager);
+    {
+        LOCK(cs_peerManager);
+        peerManager->promoteStakeContendersToBlock(pprev);
+    }
 
-    // TODO reconcile remoteProofs contenders
+    // If staking rewards have not been computed yet, we will try again when
+    // they have been.
+    std::vector<StakeContenderId> pollableContenders;
+    if (setContenderStatusForLocalWinners(pprev, pollableContenders)) {
+        for (const StakeContenderId &contender : pollableContenders) {
+            addToReconcile(contender);
+        }
+    }
+}
+
+bool Processor::setContenderStatusForLocalWinners(
+    const CBlockIndex *pindex,
+    std::vector<StakeContenderId> &pollableContenders) {
+    const BlockHash prevblockhash = pindex->GetBlockHash();
+    std::vector<std::pair<ProofId, CScript>> winners;
+    getStakingRewardWinners(prevblockhash, winners);
+
+    LOCK(cs_peerManager);
+    return peerManager->setContenderStatusForLocalWinners(
+        pindex, winners, AVALANCHE_CONTENDER_MAX_POLLABLE, pollableContenders);
 }
 
 void Processor::updatedBlockTip() {
@@ -1063,7 +1173,11 @@ void Processor::updatedBlockTip() {
     }
 
     if (m_stakingPreConsensus) {
-        promoteStakeContendersToTip();
+        const CBlockIndex *activeTip =
+            WITH_LOCK(cs_main, return chainman.ActiveTip());
+        if (activeTip) {
+            promoteAndPollStakeContenders(activeTip);
+        }
     }
 }
 
@@ -1202,6 +1316,9 @@ std::vector<CInv> Processor::getInvsForNextPoll(bool forPoll) {
         [](const CBlockIndex *pindex) {
             return CInv(MSG_BLOCK, pindex->GetBlockHash());
         },
+        [](const StakeContenderId &contenderId) {
+            return CInv(MSG_AVA_STAKE_CONTENDER, contenderId);
+        },
         [](const CTransactionRef &tx) { return CInv(MSG_TX, tx->GetHash()); },
     };
 
@@ -1235,6 +1352,10 @@ AnyVoteItem Processor::getVoteItemFromInv(const CInv &inv) const {
     if (inv.IsMsgProof()) {
         return WITH_LOCK(cs_peerManager,
                          return peerManager->getProof(ProofId(inv.hash)));
+    }
+
+    if (inv.IsMsgStakeContender()) {
+        return StakeContenderId(inv.hash);
     }
 
     if (mempool && inv.IsMsgTx()) {
@@ -1296,24 +1417,28 @@ bool Processor::IsWorthPolling::operator()(const ProofRef &proof) const {
            processor.peerManager->isInConflictingPool(proofid);
 }
 
+bool Processor::IsWorthPolling::operator()(
+    const StakeContenderId &contenderId) const {
+    AssertLockNotHeld(processor.cs_peerManager);
+    AssertLockNotHeld(processor.cs_stakingRewards);
+
+    // Only worth polling for contenders that we know about
+    return processor.getStakeContenderStatus(contenderId) != -1;
+}
+
 bool Processor::IsWorthPolling::operator()(const CTransactionRef &tx) const {
     if (!processor.mempool) {
         return false;
     }
 
     AssertLockNotHeld(processor.mempool->cs);
-    LOCK(processor.mempool->cs);
-
-    return processor.mempool->exists(tx->GetId()) ||
-           processor.mempool->withConflicting(
-               [&tx](const TxConflicting &conflicting) {
-                   return conflicting.HaveTx(tx->GetId());
-               });
+    return WITH_LOCK(processor.mempool->cs,
+                     return processor.mempool->isWorthPolling(tx));
 }
 
 bool Processor::isWorthPolling(const AnyVoteItem &item) const {
-    return std::visit(IsWorthPolling(*this), item) &&
-           !isRecentlyFinalized(GetVoteItemId(item));
+    return !isRecentlyFinalized(GetVoteItemId(item)) &&
+           std::visit(IsWorthPolling(*this), item);
 }
 
 bool Processor::GetLocalAcceptance::operator()(
@@ -1330,6 +1455,14 @@ bool Processor::GetLocalAcceptance::operator()(const ProofRef &proof) const {
     return WITH_LOCK(
         processor.cs_peerManager,
         return processor.peerManager->isBoundToPeer(proof->getId()));
+}
+
+bool Processor::GetLocalAcceptance::operator()(
+    const StakeContenderId &contenderId) const {
+    AssertLockNotHeld(processor.cs_peerManager);
+    AssertLockNotHeld(processor.cs_stakingRewards);
+
+    return processor.getStakeContenderStatus(contenderId) == 0;
 }
 
 bool Processor::GetLocalAcceptance::operator()(

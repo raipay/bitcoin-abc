@@ -26,12 +26,13 @@
 from __future__ import annotations
 
 import hashlib
+import struct
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 from mnemonic import Mnemonic
 
-from . import bitcoin, mnemo, networks
+from . import avalanche, bitcoin, mnemo, networks, slip39
 from .address import Address, PublicKey
 from .bip32 import (
     CKD_pub,
@@ -63,6 +64,7 @@ if TYPE_CHECKING:
     from electrumabc_gui.qt.util import TaskThread
     from electrumabc_plugins.hw_wallet import HardwareHandlerBase, HWPluginBase
 
+    from .avalanche.proof import Stake
     from .transaction import Transaction
 
 
@@ -122,6 +124,9 @@ class KeyStore(PrintError):
     def set_wallet_advice(self, addr, advice):
         pass
 
+    def supports_stake_signature(self):
+        return not self.is_watching_only()
+
 
 class SoftwareKeyStore(KeyStore):
     def __init__(self):
@@ -153,6 +158,24 @@ class SoftwareKeyStore(KeyStore):
         # Sign
         if keypairs:
             tx.sign(keypairs, use_cache=use_cache)
+
+    def sign_stake(
+        self,
+        stake: Stake,
+        index: Tuple[int],
+        expiration_time: int,
+        master_pubkey: avalanche.primitives.PublicKey,
+        password: Optional[str],
+    ):
+        privkey, compressed = self.get_private_key(index, password)
+        key = avalanche.primitives.Key(privkey, compressed)
+        stake.pubkey = key.get_pubkey()
+
+        stake_commitment = Hash(
+            struct.pack("<q", expiration_time) + master_pubkey.serialize()
+        )
+
+        return key.sign_schnorr(stake.get_hash(stake_commitment))
 
 
 class ImportedKeyStore(SoftwareKeyStore):
@@ -672,6 +695,21 @@ class HardwareKeyStore(KeyStore, Xpub):
         password = self.get_pubkey_from_xpub(xpub, ())
         return password.hex()
 
+    def supports_stake_signature(self):
+        # Override if the HW supports stake signature
+        return False
+
+    @abstractmethod
+    def sign_stake(
+        self,
+        stake: Stake,
+        index: Tuple[int],
+        expiration_time: int,
+        master_pubkey: avalanche.primitives.PublicKey,
+        password: Optional[str],
+    ):
+        raise NotImplementedError("This wallet does not support stake signing")
+
 
 # extended pubkeys
 
@@ -833,28 +871,41 @@ def bip39_normalize_passphrase(passphrase):
     return mnemo.normalize_text(passphrase or "", is_passphrase=True)
 
 
-def from_seed(seed, passphrase, *, seed_type="", derivation=None) -> KeyStore:
+def from_bip32_seed_and_derivation(bip32_seed: bytes, derivation: str) -> BIP32KeyStore:
+    xtype = "standard"
+    keystore = BIP32KeyStore({})
+    keystore.add_xprv_from_seed(bip32_seed, xtype, derivation)
+    return keystore
+
+
+def from_seed(
+    seed: str | slip39.EncryptedSeed, passphrase, *, seed_type="", derivation=None
+) -> KeyStore:
     if not seed_type:
         seed_type = mnemo.seed_type_name(seed)  # auto-detect
     if seed_type == "old":
         keystore = OldKeyStore({})
         keystore.add_seed(seed, seed_type=seed_type)
     elif seed_type in ["standard", "electrum"]:
-        keystore = BIP32KeyStore({})
+        derivation = "m/"
+        bip32_seed = mnemo.MnemonicElectrum.mnemonic_to_seed(seed, passphrase)
+        keystore = from_bip32_seed_and_derivation(bip32_seed, derivation)
         keystore.add_seed(seed, seed_type="electrum")  # force it to be "electrum"
         keystore.passphrase = passphrase
-        bip32_seed = mnemo.MnemonicElectrum.mnemonic_to_seed(seed, passphrase)
-        derivation = "m/"
-        xtype = "standard"
-        keystore.add_xprv_from_seed(bip32_seed, xtype, derivation)
     elif seed_type == "bip39":
-        keystore = BIP32KeyStore({})
+        derivation = derivation or bip44_derivation_xec(0)
+        bip32_seed = mnemo.bip39_mnemonic_to_seed(seed, passphrase or "")
+        keystore = from_bip32_seed_and_derivation(bip32_seed, derivation)
         keystore.add_seed(seed, seed_type=seed_type)
         keystore.passphrase = passphrase
-        bip32_seed = mnemo.bip39_mnemonic_to_seed(seed, passphrase or "")
-        xtype = "standard"  # bip43
+    elif seed_type == "slip39":
         derivation = derivation or bip44_derivation_xec(0)
-        keystore.add_xprv_from_seed(bip32_seed, xtype, derivation)
+        bip32_seed = seed.decrypt(passphrase)
+        keystore = from_bip32_seed_and_derivation(bip32_seed, derivation)
+        keystore.seed_type = "slip39"
+        # We don't save the "seed" (the shares) and passphrase to disk for now.
+        # Users won't be able to display the "seed" (the shares used to restore the
+        # wallet).
     else:
         raise InvalidSeed()
     return keystore

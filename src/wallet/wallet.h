@@ -17,6 +17,7 @@
 #include <psbt.h>
 #include <tinyformat.h>
 #include <util/message.h>
+#include <util/result.h>
 #include <util/strencodings.h>
 #include <util/string.h>
 #include <util/translation.h>
@@ -44,6 +45,8 @@
 
 #include <boost/signals2/signal.hpp>
 
+struct WalletContext;
+
 using LoadWalletFn =
     std::function<void(std::unique_ptr<interfaces::Wallet> wallet)>;
 
@@ -56,25 +59,37 @@ struct bilingual_str;
 //! by the shared pointer deleter.
 void UnloadWallet(std::shared_ptr<CWallet> &&wallet);
 
-bool AddWallet(const std::shared_ptr<CWallet> &wallet);
-bool RemoveWallet(const std::shared_ptr<CWallet> &wallet,
+bool AddWallet(WalletContext &context, const std::shared_ptr<CWallet> &wallet);
+bool RemoveWallet(WalletContext &context,
+                  const std::shared_ptr<CWallet> &wallet,
                   std::optional<bool> load_on_start,
                   std::vector<bilingual_str> &warnings);
-bool RemoveWallet(const std::shared_ptr<CWallet> &wallet,
+bool RemoveWallet(WalletContext &context,
+                  const std::shared_ptr<CWallet> &wallet,
                   std::optional<bool> load_on_start);
-std::vector<std::shared_ptr<CWallet>> GetWallets();
-std::shared_ptr<CWallet> GetWallet(const std::string &name);
+
+std::vector<std::shared_ptr<CWallet>> GetWallets(WalletContext &context);
+std::shared_ptr<CWallet> GetWallet(WalletContext &context,
+                                   const std::string &name);
 std::shared_ptr<CWallet>
-LoadWallet(interfaces::Chain &chain, const std::string &name,
+LoadWallet(WalletContext &context, const std::string &name,
            std::optional<bool> load_on_start, const DatabaseOptions &options,
            DatabaseStatus &status, bilingual_str &error,
            std::vector<bilingual_str> &warnings);
 std::shared_ptr<CWallet>
-CreateWallet(interfaces::Chain &chain, const std::string &name,
-             std::optional<bool> load_on_start, const DatabaseOptions &options,
+CreateWallet(WalletContext &context, const std::string &name,
+             std::optional<bool> load_on_start, DatabaseOptions &options,
              DatabaseStatus &status, bilingual_str &error,
              std::vector<bilingual_str> &warnings);
-std::unique_ptr<interfaces::Handler> HandleLoadWallet(LoadWalletFn load_wallet);
+std::shared_ptr<CWallet>
+RestoreWallet(WalletContext &context, const fs::path &backup_file,
+              const std::string &wallet_name, std::optional<bool> load_on_start,
+              DatabaseStatus &status, bilingual_str &error,
+              std::vector<bilingual_str> &warnings);
+std::unique_ptr<interfaces::Handler> HandleLoadWallet(WalletContext &context,
+                                                      LoadWalletFn load_wallet);
+void NotifyWalletLoaded(WalletContext &context,
+                        const std::shared_ptr<CWallet> &wallet);
 std::unique_ptr<WalletDatabase>
 MakeWalletDatabase(const std::string &name, const DatabaseOptions &options,
                    DatabaseStatus &status, bilingual_str &error);
@@ -261,6 +276,7 @@ private:
     std::atomic<bool> fAbortRescan{false};
     // controlled by WalletRescanReserver
     std::atomic<bool> fScanningWallet{false};
+    std::atomic<bool> m_attaching_chain{false};
     std::atomic<int64_t> m_scanning_start{0};
     std::atomic<double> m_scanning_progress{0};
     friend class WalletRescanReserver;
@@ -380,6 +396,15 @@ private:
     // ScriptPubKeyMan::GetID. In many cases it will be the hash of an internal
     // structure
     std::map<uint256, std::unique_ptr<ScriptPubKeyMan>> m_spk_managers;
+
+    /**
+     * Catch wallet up to current chain, scanning new blocks, updating the best
+     * block locator and m_last_block_processed, and registering for
+     * notifications about new blocks and transactions.
+     */
+    static bool AttachChain(const std::shared_ptr<CWallet> &wallet,
+                            interfaces::Chain &chain, bilingual_str &error,
+                            std::vector<bilingual_str> &warnings);
 
 public:
     /*
@@ -602,7 +627,8 @@ public:
         EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     void transactionAddedToMempool(const CTransactionRef &tx,
                                    uint64_t mempool_sequence) override;
-    void blockConnected(const CBlock &block, int height) override;
+    void blockConnected(ChainstateRole role, const CBlock &block,
+                        int height) override;
     void blockDisconnected(const CBlock &block, int height) override;
     void updatedBlockTip() override;
     int64_t RescanFromTime(int64_t startTime,
@@ -765,10 +791,9 @@ public:
     void MarkDestinationsDirty(const std::set<CTxDestination> &destinations)
         EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
-    bool GetNewDestination(const OutputType type, const std::string label,
-                           CTxDestination &dest, std::string &error);
-    bool GetNewChangeDestination(const OutputType type, CTxDestination &dest,
-                                 std::string &error);
+    util::Result<CTxDestination> GetNewDestination(const OutputType type,
+                                                   const std::string &label);
+    util::Result<CTxDestination> GetNewChangeDestination(const OutputType type);
 
     isminetype IsMine(const CTxDestination &dest) const
         EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
@@ -787,9 +812,10 @@ public:
     /** should probably be renamed to IsRelevantToMe */
     bool IsFromMe(const CTransaction &tx) const;
     Amount GetDebit(const CTransaction &tx, const isminefilter &filter) const;
-    void chainStateFlushed(const CBlockLocator &loc) override;
+    void chainStateFlushed(ChainstateRole role,
+                           const CBlockLocator &loc) override;
 
-    DBErrors LoadWallet(bool &fFirstRunRet);
+    DBErrors LoadWallet();
     DBErrors ZapSelectTx(std::vector<TxId> &txIdsIn,
                          std::vector<TxId> &txIdsOut)
         EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
@@ -890,7 +916,7 @@ public:
      * in case of an error.
      */
     static std::shared_ptr<CWallet>
-    Create(interfaces::Chain &chain, const std::string &name,
+    Create(WalletContext &context, const std::string &name,
            std::unique_ptr<WalletDatabase> database,
            uint64_t wallet_creation_flags, bilingual_str &error,
            std::vector<bilingual_str> &warnings);
@@ -952,7 +978,7 @@ public:
      * Returns a bracketed wallet name for displaying in logs, will return
      * [default wallet] if the wallet has no name.
      */
-    const std::string GetDisplayName() const override {
+    std::string GetDisplayName() const override {
         std::string wallet_name =
             GetName().length() == 0 ? "default wallet" : GetName();
         return strprintf("[%s]", wallet_name);
@@ -1095,7 +1121,7 @@ public:
  * resend their transactions. Actual rebroadcast schedule is managed by the
  * wallets themselves.
  */
-void MaybeResendWalletTxs();
+void MaybeResendWalletTxs(WalletContext &context);
 
 /** RAII object to check and reserve a wallet rescan */
 class WalletRescanReserver {

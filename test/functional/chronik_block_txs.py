@@ -16,7 +16,6 @@ from test_framework.blocktools import (
     GENESIS_BLOCK_HASH,
     create_block,
     create_coinbase,
-    make_conform_to_ctor,
 )
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.p2p import P2PDataStore
@@ -126,12 +125,10 @@ class ChronikBlockTxsTest(BitcoinTestFramework):
 
         tx_coinbase = create_coinbase(102, b"\x03" * 33)
 
-        block = create_block(int(tip, 16), tx_coinbase, 1300000500)
-        block.vtx += [tx1, tx2]
-        make_conform_to_ctor(block)
-        block.hashMerkleRoot = block.calc_merkle_root()
+        block = create_block(int(tip, 16), tx_coinbase, 1300000500, txlist=[tx1, tx2])
         block.solve()
         peer.send_blocks_and_test([block], node)
+        node.syncwithvalidationinterfacequeue()
 
         block_metadata = pb.BlockMetadata(
             height=102,
@@ -151,7 +148,7 @@ class ChronikBlockTxsTest(BitcoinTestFramework):
             ],
             outputs=[
                 pb.TxOutput(
-                    value=coinvalue,
+                    sats=coinvalue,
                     output_script=bytes(tx_coinbase.vout[0].scriptPubKey),
                 ),
                 pb.TxOutput(
@@ -172,13 +169,13 @@ class ChronikBlockTxsTest(BitcoinTestFramework):
                     prev_out=pb.OutPoint(txid=bytes.fromhex(cointx)[::-1], out_idx=0),
                     input_script=bytes(SCRIPTSIG_OP_TRUE),
                     output_script=bytes(P2SH_OP_TRUE),
-                    value=coinvalue,
+                    sats=coinvalue,
                     sequence_no=0,
                 ),
             ],
             outputs=[
                 pb.TxOutput(
-                    value=coinvalue - 10000,
+                    sats=coinvalue - 10000,
                     output_script=bytes(P2SH_OP_TRUE),
                     spent_by=pb.SpentBy(
                         txid=bytes.fromhex(tx2.hash)[::-1],
@@ -186,7 +183,7 @@ class ChronikBlockTxsTest(BitcoinTestFramework):
                     ),
                 ),
                 pb.TxOutput(
-                    value=1000,
+                    sats=1000,
                     output_script=bytes(CScript([OP_RETURN, b"test"])),
                 ),
             ],
@@ -203,17 +200,17 @@ class ChronikBlockTxsTest(BitcoinTestFramework):
                     prev_out=pb.OutPoint(txid=bytes.fromhex(tx1.hash)[::-1], out_idx=0),
                     input_script=bytes(SCRIPTSIG_OP_TRUE),
                     output_script=bytes(P2SH_OP_TRUE),
-                    value=coinvalue - 10000,
+                    sats=coinvalue - 10000,
                     sequence_no=0,
                 ),
             ],
             outputs=[
                 pb.TxOutput(
-                    value=3000,
+                    sats=3000,
                     output_script=bytes(CScript([OP_RETURN, b"test"])),
                 ),
                 pb.TxOutput(
-                    value=coinvalue - 20000,
+                    sats=coinvalue - 20000,
                     output_script=bytes(P2SH_OP_TRUE),
                 ),
             ],

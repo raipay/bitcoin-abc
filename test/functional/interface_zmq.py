@@ -7,14 +7,10 @@ from io import BytesIO
 from time import sleep
 
 from test_framework.address import ADDRESS_ECREG_P2SH_OP_TRUE, ADDRESS_ECREG_UNSPENDABLE
-from test_framework.blocktools import (
-    create_block,
-    create_coinbase,
-    make_conform_to_ctor,
-)
+from test_framework.blocktools import create_block, create_coinbase
 from test_framework.messages import CTransaction, FromHex, hash256
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, assert_raises_rpc_error
+from test_framework.util import assert_equal, assert_raises_rpc_error, ensure_for
 
 # Test may be skipped and not have zmq installed
 try:
@@ -105,6 +101,9 @@ class ZMQTest(BitcoinTestFramework):
 
     def run_test(self):
         self.ctx = zmq.Context()
+        if self.is_wallet_compiled():
+            # This can be removed after backport of core#24653
+            self.import_deterministic_coinbase_privkeys()
         try:
             self.test_basic()
             self.test_sequence()
@@ -485,14 +484,15 @@ class ZMQTest(BitcoinTestFramework):
             block_count = self.nodes[0].getblockcount()
             best_hash = self.nodes[0].getbestblockhash()
             self.nodes[0].invalidateblock(best_hash)
-            # Bit of room to make sure transaction things happened
-            sleep(2)
 
             # Make sure getrawmempool mempool_sequence results aren't "queued"
             # but immediately reflective of the time they were gathered.
-            assert (
-                self.nodes[0].getrawmempool(mempool_sequence=True)["mempool_sequence"]
-                > seq_num
+            ensure_for(
+                duration=2,
+                f=lambda: self.nodes[0].getrawmempool(mempool_sequence=True)[
+                    "mempool_sequence"
+                ]
+                > seq_num,
             )
 
             assert_equal((payment_txid_2, "R", seq_num), seq.receive_sequence())
@@ -519,17 +519,16 @@ class ZMQTest(BitcoinTestFramework):
                 )
 
             raw_tx = self.nodes[0].getrawtransaction(orig_txid)
+            txs_to_add = [
+                FromHex(CTransaction(), tx_hex)
+                for tx_hex in [raw_tx]
+                + [self.nodes[0].getrawtransaction(txid) for txid in more_tx]
+            ]
             block = create_block(
                 int(self.nodes[0].getbestblockhash(), 16),
                 create_coinbase(self.nodes[0].getblockcount() + 1),
+                txlist=txs_to_add,
             )
-            tx = FromHex(CTransaction(), raw_tx)
-            block.vtx.append(tx)
-            for txid in more_tx:
-                tx = FromHex(CTransaction(), self.nodes[0].getrawtransaction(txid))
-                block.vtx.append(tx)
-            make_conform_to_ctor(block)
-            block.hashMerkleRoot = block.calc_merkle_root()
             block.solve()
             assert_equal(self.nodes[0].submitblock(block.serialize().hex()), None)
             tip = self.nodes[0].getbestblockhash()

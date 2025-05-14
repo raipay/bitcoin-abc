@@ -3,7 +3,6 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <chainparams.h>
-#include <chainparamsbase.h>
 #include <config.h>
 #include <net.h>
 #include <net_permissions.h>
@@ -17,6 +16,7 @@
 #include <test/util/net.h>
 #include <test/util/setup_common.h>
 #include <util/asmap.h>
+#include <util/chaintype.h>
 
 #include <cstdint>
 #include <optional>
@@ -24,8 +24,7 @@
 #include <vector>
 
 void initialize_net() {
-    static const auto testing_setup =
-        MakeNoLogFileContext<>(CBaseChainParams::MAIN);
+    static const auto testing_setup = MakeNoLogFileContext<>(ChainType::MAIN);
 }
 
 FUZZ_TARGET_INIT(net, initialize_net) {
@@ -43,9 +42,10 @@ FUZZ_TARGET_INIT(net, initialize_net) {
         return;
     }
 
+    const auto sock = std::make_shared<FuzzedSock>(fuzzed_data_provider);
     CNode node{
         fuzzed_data_provider.ConsumeIntegral<NodeId>(),
-        INVALID_SOCKET,
+        sock,
         *address,
         fuzzed_data_provider.ConsumeIntegral<uint64_t>(),
         fuzzed_data_provider.ConsumeIntegral<uint64_t>(),

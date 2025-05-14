@@ -40,15 +40,11 @@
 final class LocaleDependenceLinter extends ArcanistLinter {
 
   const KNOWN_VIOLATIONS = array(
-    "src/bitcoin-tx.cpp" => [
-      "stoul",
-      "trim_right",
-    ],
+    "src/bitcoin-tx.cpp" => ["stoul"],
     "src/dbwrapper.cpp" => [
         "stoul",
         "vsnprintf"
     ],
-    "src/httprpc.cpp" => ["trim"],
     "src/node/blockstorage.cpp" => ["atoi"],
     "src/netbase.cpp" => ["to_lower"],
     "src/qt/rpcconsole.cpp" => [
@@ -76,13 +72,16 @@ final class LocaleDependenceLinter extends ArcanistLinter {
       "setlocale",
     ],
     "src/test/fuzz/parse_numbers.cpp" => ["atoi"],
-    "src/common/args.cpp" => ["atoi"],
-    "src/util/strencodings.cpp" => [
-      "atoi",
+    "src/test/fuzz/string.cpp" => [
       "strtol",
       "strtoll",
       "strtoul",
       "strtoull",
+    ],
+    "src/common/args.cpp" => ["atoi"],
+    "src/util/strencodings.cpp" => [
+      "atoi",
+      "strtoll",
     ],
     "src/util/strencodings.h" => ["atoi"],
     // False positive DbEnv::strerror

@@ -4,87 +4,7 @@ Testing utility to mock the Chronik indexer client and support unit tests that n
 
 ## Usage
 
-Import the MockChronikClient module via relative path along with any desired mock objects from `/mocks/mockChronikResponses`.
-
-```
-const { MockChronikClient } = require('/index');
-// Import any mock responses from '/mocks/mockChronikResponses'
-const ecashaddr = require('ecashaddrjs');
-const mockedChronik = new MockChronikClient();
-```
-
-**_Mocking API Responses_**
-
-Chronik-client APIs which **don't** rely on a preceding `.script()` call can use the `.setMock()` function to inject the mock API response.
-
-This includes:
-
--   `.block()`
--   `.tx()`
--   `.token()`
--   `.blockchainInfo()`
--   `.broadcastTx()`
--   `.ws()`
-
-Example: mocking the chronik.token() call
-
-```
-const { mockTokenInfo } = require('/mocks/mockChronikResponses');
-// Initialize chronik mock with token info
-mockedChronik.setMock('token', {
-	input: 'some token ID',
-	output: mockTokenInfo,
-});
-
-// Execute the API call
-const result = await mockedChronik.token('some token ID');
-assert.deepEqual(result, mockTokenInfo);
-```
-
-Chronik-client APIs which **do** rely on a preceding `.script()` call will need to firstly set the intended script (address type and hash) before setting the specific mock function.
-
-This includes:
-
--   `.script().utxos()`
--   `.script().history()`
-
-Example: mocking the chronik.script(type, hash).utxos() call
-
-```
-const { mockP2pkhUtxos } = require('/mocks/mockChronikResponses');
-// Initialize chronik mock with script and utxo info
-const P2PKH_ADDRESS = 'ecash:qzth8qvakhr6y8zcefdrvx30zrdmt2z2gvp7zc5vj8';
-const { type, hash } = ecashaddr.decode(P2PKH_ADDRESS, true);
-mockedChronik.setScript(type, hash);
-mockedChronik.setUtxos(type, hash, mockP2pkhUtxos);
-
-// Execute the API call
-const result = await mockedChronik.script(type, hash).utxos();
-assert.deepEqual(result, mockP2pkhUtxos);
-```
-
-**_Mocking API Errors_**
-
-To test your app's behavior in handling an API error from Chronik, simply set an Error object as the mock output.
-
-Example: mocking an error from the chronik.broadcastTx() call
-
-```
-const mockInvalidRawTxHex = 'not a valid raw tx hex';
-const expectedError = new Error('Bad response from Chronik');
-mockedChronik.setMock('broadcastTx', {
-	input: mockInvalidRawTxHex,
-	output: expectedError,
-});
-
-// Execute the API call
-await assert.rejects(
-	async () => {
-		await mockedChronik.broadcastTx(mockInvalidRawTxHex);
-	},
-	expectedError,
-);
-```
+Mock chronik API calls including tx broadcasting and paginated tx history. Also includes an Agora mock. See unit tests for latest usage.
 
 ## Questions?
 
@@ -156,3 +76,51 @@ If you have any implementation questions regarding this mock tool please check t
 1.12.0
 
 -   Extend `MockAgora` support to cover `offeredFungibleTokenIds()` and `activeOffersByTokenId()` methods [D16929](https://reviews.bitcoinabc.org/D16929)
+
+1.12.1
+
+-   Build published version with dependencies from `npm` [D17227](https://reviews.bitcoinabc.org/D17227)
+
+1.12.2
+
+-   Add `MockAgora` to stub ts declarations [D17274](https://reviews.bitcoinabc.org/D17274)
+
+1.12.3
+
+-   Add dummy `plugin` method to allow construction of `new Agora()` from `ecash-agora` with a `MockChronikClient` [D17279](https://reviews.bitcoinabc.org/D17279)
+
+2.0.0
+
+[D17332](https://reviews.bitcoinabc.org/D17332)
+
+-   Full implementation of typescript
+-   Set history and utxos by script, address, or tokenId in one step (prev 2)
+-   Set history by lokadId in one step (prev 2)
+-   Better type checking
+-   Improved mock websocket (now it more closely follows the API of chronik-client)
+-   Add `broadcastTxs` method
+-   Add `chronikInfo` method
+
+2.0.1
+
+-   Build before deployment so it also works for non-ts users [D17338](https://reviews.bitcoinabc.org/D17338)
+
+2.1.0
+
+-   Support for Agora plugin websocket subscriptions [D17369](https://reviews.bitcoinabc.org/D17369)
+
+2.1.1
+
+-   Upgrade to dependency-free `ecashaddrjs` [D17269](https://reviews.bitcoinabc.org/D17269)
+
+2.1.2
+
+-   Update README [D17506](https://reviews.bitcoinabc.org/D17506)
+
+2.1.3
+
+-   Update `package.json` paths for correct typescript `dist` [D17542](https://reviews.bitcoinabc.org/D17542)
+
+3.0.0
+
+-   Update types to match latest breaking changes in `chronik-client` [D17727](https://reviews.bitcoinabc.org/D17727)

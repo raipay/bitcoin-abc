@@ -7,6 +7,7 @@
 
 #include <compat.h>
 #include <sync.h>
+#include <util/chaintype.h>
 #include <util/fs.h>
 #include <util/settings.h>
 
@@ -17,6 +18,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 class ArgsManager;
@@ -183,12 +185,12 @@ public:
      * in the default section but not overridden on the command line or in a
      * network-specific section in the config file.
      */
-    const std::set<std::string> GetUnsuitableSectionOnlyArgs() const;
+    std::set<std::string> GetUnsuitableSectionOnlyArgs() const;
 
     /**
      * Log warnings for unrecognized section names in the config file.
      */
-    const std::list<SectionInfo> GetUnrecognizedSections() const;
+    std::list<SectionInfo> GetUnrecognizedSections() const;
 
     /**
      * Get blocks directory path
@@ -320,10 +322,17 @@ public:
     /**
      * Looks for -regtest, -testnet and returns the appropriate BIP70 chain
      * name.
-     * @return CBaseChainParams::MAIN by default; raises runtime error if an
+     * @return ChainType::MAIN by default; raises runtime error if an invalid
+     * combination, or unknown chain is given.
+     */
+    ChainType GetChainType() const;
+
+    /**
+     * Returns the appropriate chain name string from the program arguments.
+     * @return ChainType::MAIN string by default; raises runtime error if an
      * invalid combination is given.
      */
-    std::string GetChainName() const;
+    std::string GetChainTypeString() const;
 
     /**
      * Add argument
@@ -422,6 +431,14 @@ private:
      *         non-directory path would be returned
      */
     fs::path GetDataDir(bool net_specific) const;
+
+    /**
+     * Return -regtest/--testnet/-chain= setting as a ChainType enum if a
+     * recognized chain name was set, or as a string if an unrecognized chain
+     * name was set. Raise an exception if an invalid combination of flags was
+     * provided.
+     */
+    std::variant<ChainType, std::string> GetChainArg() const;
 
     // Helper function for LogArgs().
     void

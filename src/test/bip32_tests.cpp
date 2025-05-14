@@ -93,10 +93,10 @@ TestVector test3 =
 // clang-format on
 
 static void RunTest(const TestVector &test) {
-    std::vector<uint8_t> seed = ParseHex(test.strHexMaster);
+    std::vector<std::byte> seed{ParseHex<std::byte>(test.strHexMaster)};
     CExtKey key;
     CExtPubKey pubkey;
-    key.SetSeed(seed.data(), seed.size());
+    key.SetSeed(seed);
     pubkey = key.Neuter();
     for (const TestDerivation &derive : test.vDerive) {
         uint8_t data[74];

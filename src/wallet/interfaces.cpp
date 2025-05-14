@@ -112,8 +112,9 @@ namespace {
 
     class WalletImpl : public Wallet {
     public:
-        explicit WalletImpl(const std::shared_ptr<CWallet> &wallet)
-            : m_wallet(wallet) {}
+        explicit WalletImpl(WalletContext &context,
+                            const std::shared_ptr<CWallet> &wallet)
+            : m_context(context), m_wallet(wallet) {}
 
         bool encryptWallet(const SecureString &wallet_passphrase) override {
             return m_wallet->EncryptWallet(wallet_passphrase);
@@ -135,11 +136,11 @@ namespace {
             return m_wallet->BackupWallet(filename);
         }
         std::string getWalletName() override { return m_wallet->GetName(); }
-        bool getNewDestination(const OutputType type, const std::string label,
-                               CTxDestination &dest) override {
+        util::Result<CTxDestination>
+        getNewDestination(const OutputType type,
+                          const std::string &label) override {
             LOCK(m_wallet->cs_wallet);
-            std::string error;
-            return m_wallet->GetNewDestination(type, label, dest, error);
+            return m_wallet->GetNewDestination(type, label);
         }
         const CChainParams &getChainParams() override {
             return m_wallet->GetChainParams();
@@ -240,18 +241,21 @@ namespace {
             LOCK(m_wallet->cs_wallet);
             return m_wallet->ListLockedCoins(outputs);
         }
-        CTransactionRef
+        util::Result<CTransactionRef>
         createTransaction(const std::vector<CRecipient> &recipients,
                           const CCoinControl &coin_control, bool sign,
-                          int &change_pos, Amount &fee,
-                          bilingual_str &fail_reason) override {
+                          int &change_pos, Amount &fee) override {
             LOCK(m_wallet->cs_wallet);
-            CTransactionRef tx;
-            if (!CreateTransaction(*m_wallet, recipients, tx, fee, change_pos,
-                                   fail_reason, coin_control, sign)) {
-                return {};
+            auto res = CreateTransaction(*m_wallet, recipients, change_pos,
+                                         coin_control, sign);
+            if (!res) {
+                return util::Error{util::ErrorString(res)};
             }
-            return tx;
+            const auto &txr = *res;
+            fee = txr.fee;
+            change_pos = txr.change_pos;
+
+            return txr.tx;
         }
         void commitTransaction(CTransactionRef tx, WalletValueMap value_map,
                                WalletOrderForm order_form) override {
@@ -423,7 +427,7 @@ namespace {
             return m_wallet->m_default_max_tx_fee;
         }
         void remove() override {
-            RemoveWallet(m_wallet, false /* load_on_start */);
+            RemoveWallet(m_context, m_wallet, false /* load_on_start */);
         }
         bool isLegacy() override { return m_wallet->IsLegacy(); }
         std::unique_ptr<Handler> handleUnload(UnloadFn fn) override {
@@ -472,6 +476,7 @@ namespace {
         }
         CWallet *wallet() override { return m_wallet.get(); }
 
+        WalletContext &m_context;
         std::shared_ptr<CWallet> m_wallet;
     };
 
@@ -481,7 +486,7 @@ namespace {
             m_context.chain = &chain;
             m_context.args = &args;
         }
-        ~WalletClientImpl() override { UnloadWallets(); }
+        ~WalletClientImpl() override { UnloadWallets(m_context); }
 
         //! ChainClient methods
         void registerRpcs(const Span<const CRPCCommand> &commands) {
@@ -507,40 +512,72 @@ namespace {
             registerRpcs(GetWalletDumpRPCCommands());
             registerRpcs(GetWalletEncryptRPCCommands());
         }
-        bool verify() override { return VerifyWallets(*m_context.chain); }
-        bool load() override { return LoadWallets(*m_context.chain); }
+        bool verify() override { return VerifyWallets(m_context); }
+        bool load() override { return LoadWallets(m_context); }
         void start(CScheduler &scheduler) override {
-            return StartWallets(scheduler, *Assert(m_context.args));
+            return StartWallets(m_context, scheduler);
         }
-        void flush() override { return FlushWallets(); }
-        void stop() override { return StopWallets(); }
+        void flush() override { return FlushWallets(m_context); }
+        void stop() override { return StopWallets(m_context); }
         void setMockTime(int64_t time) override { return SetMockTime(time); }
 
         //! WalletClient methods
-        std::unique_ptr<Wallet>
+        util::Result<std::unique_ptr<Wallet>>
         createWallet(const std::string &name, const SecureString &passphrase,
-                     uint64_t wallet_creation_flags, bilingual_str &error,
+                     uint64_t wallet_creation_flags,
                      std::vector<bilingual_str> &warnings) override {
-            std::shared_ptr<CWallet> wallet;
             DatabaseOptions options;
             DatabaseStatus status;
             options.require_create = true;
             options.create_flags = wallet_creation_flags;
             options.create_passphrase = passphrase;
-
-            return MakeWallet(CreateWallet(*m_context.chain, name,
-                                           true /* load_on_start */, options,
-                                           status, error, warnings));
+            bilingual_str error;
+            std::unique_ptr<Wallet> wallet{MakeWallet(
+                m_context, CreateWallet(m_context, name, /*load_on_start=*/true,
+                                        options, status, error, warnings))};
+            if (wallet) {
+                // std::move should be unneccessary but is temporarily needed to
+                // work around clang bug
+                // (https://github.com/bitcoin/bitcoin/pull/25977#issuecomment-1564350880)
+                return {std::move(wallet)};
+            }
+            return util::Error{error};
         }
-        std::unique_ptr<Wallet>
-        loadWallet(const std::string &name, bilingual_str &error,
+        util::Result<std::unique_ptr<Wallet>>
+        loadWallet(const std::string &name,
                    std::vector<bilingual_str> &warnings) override {
             DatabaseOptions options;
             DatabaseStatus status;
             options.require_existing = true;
-            return MakeWallet(LoadWallet(*m_context.chain, name,
-                                         true /* load_on_start */, options,
-                                         status, error, warnings));
+            bilingual_str error;
+            std::unique_ptr<Wallet> wallet{MakeWallet(
+                m_context, CreateWallet(m_context, name, /*load_on_start=*/true,
+                                        options, status, error, warnings))};
+            if (wallet) {
+                // std::move should be unneccessary but is temporarily needed to
+                // work around clang bug
+                // (https://github.com/bitcoin/bitcoin/pull/25977#issuecomment-1564350880)
+                return {std::move(wallet)};
+            }
+            return util::Error{error};
+        }
+        util::Result<std::unique_ptr<Wallet>>
+        restoreWallet(const fs::path &backup_file,
+                      const std::string &wallet_name,
+                      std::vector<bilingual_str> &warnings) override {
+            DatabaseStatus status;
+            bilingual_str error;
+            std::unique_ptr<Wallet> wallet{MakeWallet(
+                m_context, RestoreWallet(m_context, backup_file, wallet_name,
+                                         /*load_on_start=*/true, status, error,
+                                         warnings))};
+            if (wallet) {
+                // std::move should be unneccessary but is temporarily needed to
+                // work around clang bug
+                // (https://github.com/bitcoin/bitcoin/pull/25977#issuecomment-1564350880)
+                return {std::move(wallet)};
+            }
+            return util::Error{error};
         }
         std::string getWalletDir() override {
             return fs::PathToString(GetWalletDir());
@@ -555,15 +592,16 @@ namespace {
 
         std::vector<std::unique_ptr<Wallet>> getWallets() override {
             std::vector<std::unique_ptr<Wallet>> wallets;
-            for (const auto &wallet : GetWallets()) {
-                wallets.emplace_back(MakeWallet(wallet));
+            for (const auto &wallet : GetWallets(m_context)) {
+                wallets.emplace_back(MakeWallet(m_context, wallet));
             }
             return wallets;
         }
 
         std::unique_ptr<Handler> handleLoadWallet(LoadWalletFn fn) override {
-            return HandleLoadWallet(std::move(fn));
+            return HandleLoadWallet(m_context, std::move(fn));
         }
+        WalletContext *context() override { return &m_context; }
 
         WalletContext m_context;
         const std::vector<std::string> m_wallet_filenames;
@@ -574,8 +612,10 @@ namespace {
 } // namespace wallet
 
 namespace interfaces {
-std::unique_ptr<Wallet> MakeWallet(const std::shared_ptr<CWallet> &wallet) {
-    return wallet ? std::make_unique<wallet::WalletImpl>(wallet) : nullptr;
+std::unique_ptr<Wallet> MakeWallet(WalletContext &context,
+                                   const std::shared_ptr<CWallet> &wallet) {
+    return wallet ? std::make_unique<wallet::WalletImpl>(context, wallet)
+                  : nullptr;
 }
 
 std::unique_ptr<WalletClient> MakeWalletClient(Chain &chain,

@@ -22,6 +22,8 @@
 
 #include <thread>
 
+enum class ChainstateRole;
+
 using node::BlockAssembler;
 
 namespace validation_block_tests {
@@ -54,7 +56,8 @@ struct TestSubscriber final : public CValidationInterface {
         BOOST_CHECK_EQUAL(m_expected_tip, pindexNew->GetBlockHash());
     }
 
-    void BlockConnected(const std::shared_ptr<const CBlock> &block,
+    void BlockConnected(ChainstateRole role,
+                        const std::shared_ptr<const CBlock> &block,
                         const CBlockIndex *pindex) override {
         BOOST_CHECK_EQUAL(m_expected_tip, block->hashPrevBlock);
         BOOST_CHECK_EQUAL(m_expected_tip, pindex->pprev->GetBlockHash());
@@ -214,19 +217,21 @@ BOOST_AUTO_TEST_CASE(processnewblock_signals_ordering) {
     // the ValidationInterface will subscribe to events generated during block
     // validation and assert on ordering invariance
     std::vector<std::thread> threads;
+    threads.reserve(10);
     for (int i = 0; i < 10; i++) {
         threads.emplace_back([&]() {
             bool tlignored;
             FastRandomContext insecure;
             for (int j = 0; j < 1000; j++) {
-                auto block = blocks[insecure.randrange(blocks.size() - 1)];
+                const auto &block =
+                    blocks[insecure.randrange(blocks.size() - 1)];
                 Assert(m_node.chainman)
                     ->ProcessNewBlock(block, true, true, &tlignored);
             }
 
             // to make sure that eventually we process the full chain - do it
             // here
-            for (auto block : blocks) {
+            for (const auto &block : blocks) {
                 if (block->vtx.size() == 1) {
                     bool processed =
                         Assert(m_node.chainman)

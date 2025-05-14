@@ -11,10 +11,9 @@ import {
     Script,
     TxBuilder,
     fromHex,
-    initWasm,
     shaRmd160,
 } from 'ecash-lib';
-import { decode, encode } from 'ecashaddrjs';
+import { decodeCashAddress, encodeCashAddress } from 'ecashaddrjs';
 import express, { Express, Request, Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 
@@ -22,12 +21,12 @@ function getIp(req: Request) {
     return req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 }
 
-function getBalanceSatoshi(utxos: ScriptUtxo[]) {
-    let balanceSatoshi = 0;
+function getBalanceSats(utxos: ScriptUtxo[]): bigint {
+    let balanceSats = 0n;
     for (const utxo of utxos) {
-        balanceSatoshi += utxo.value;
+        balanceSats += utxo.sats;
     }
-    return balanceSatoshi;
+    return balanceSats;
 }
 
 // Prepare the common error responses
@@ -49,13 +48,10 @@ console.log(`*** Bitcoin ABC faucet ***`);
 console.log('Loading configuration...');
 import { config } from './config';
 
-console.log('Initialize WASM...');
-initWasm().then(async () => {
+(async () => {
     console.log('Initialize ECC...');
     const ecc = new Ecc();
 
-    // The IP address => request time map used to rate limit the requests
-    const ipMap = new Map();
     // The eCash address => request time map used to rate limit the requests
     const addressMap = new Map();
 
@@ -66,9 +62,9 @@ initWasm().then(async () => {
 
     // Generate the pubkey for this wallet so we can show a refund address
     const walletPublicKey = ecc.derivePubkey(walletPrivateKey);
-    const walletAddress = encode(
+    const walletAddress = encodeCashAddress(
         config.prefix,
-        'P2PKH',
+        'p2pkh',
         shaRmd160(walletPublicKey),
     );
     const walletP2PKH = Script.fromAddress(walletAddress);
@@ -86,16 +82,16 @@ initWasm().then(async () => {
             }`,
         );
     }
-    const balance = getBalanceSatoshi(utxos);
+    const balance = getBalanceSats(utxos);
     console.log(
-        `Current balance for the faucet wallet is ${balance / 100} ${
+        `Current balance for the faucet wallet is ${Number(balance) / 100} ${
             config.ticker
         }`,
     );
 
     console.log(`Setting up the addresses cleanup routine...`);
     setInterval(() => {
-        let eligibleAddresses = [];
+        const eligibleAddresses = [];
         const now = Date.now();
         for (const [address, lastRequestTimeMs] of addressMap) {
             if (
@@ -156,7 +152,7 @@ initWasm().then(async () => {
             // the prefix, and also checks the validity of the address.
             let destinationScript;
             try {
-                const { prefix, type, hash } = decode(address);
+                const { prefix, type, hash } = decodeCashAddress(address);
                 if (prefix !== config.prefix) {
                     return invalidAddress(
                         res,
@@ -164,7 +160,7 @@ initWasm().then(async () => {
                         `wrong prefix (expected ${config.prefix})`,
                     );
                 }
-                address = encode(prefix, type, hash);
+                address = encodeCashAddress(prefix, type, hash);
                 destinationScript = Script.fromAddress(address);
             } catch (err: unknown) {
                 return invalidAddress(res, address, (err as Error).message);
@@ -185,10 +181,10 @@ initWasm().then(async () => {
                 const chronikResponse = await chronik
                     .address(walletAddress)
                     .utxos();
-                const balance = await getBalanceSatoshi(chronikResponse.utxos);
+                const balance = await getBalanceSats(chronikResponse.utxos);
                 if (balance < config.amount) {
                     console.log(
-                        `Balance is too low (${balance / 100} ${
+                        `Balance is too low (${Number(balance) / 100} ${
                             config.ticker
                         })`,
                     );
@@ -205,7 +201,7 @@ initWasm().then(async () => {
                         input: {
                             prevOut: utxo.outpoint,
                             signData: {
-                                value: utxo.value,
+                                sats: utxo.sats,
                                 outputScript: walletP2PKH,
                             },
                         },
@@ -220,14 +216,17 @@ initWasm().then(async () => {
                     inputs: inputs,
                     outputs: [
                         {
-                            value: config.amount,
+                            sats: config.amount,
                             script: destinationScript,
                         },
                         walletP2PKH,
                     ],
                 });
 
-                const tx = txBuilder.sign(ecc, config.feeSatPerKB, config.dust);
+                const tx = txBuilder.sign({
+                    feePerKb: config.feeSatPerKB,
+                    dustSats: config.dust,
+                });
                 const resp = await chronik.broadcastTx(
                     tx.ser(),
                     /*skipTokenChecks=*/ true,
@@ -254,7 +253,7 @@ initWasm().then(async () => {
             addressMap.set(address, Date.now());
 
             console.log(
-                `Successfully sent ${config.amount / 100} ${
+                `Successfully sent ${Number(config.amount) / 100} ${
                     config.ticker
                 } to ${address}: ${txid}`,
             );
@@ -268,7 +267,7 @@ initWasm().then(async () => {
     );
 
     if (config.enableBalanceEndpoint) {
-        faucet.get('/balance', async function (req: Request, res: Response) {
+        faucet.get('/balance', async function (_req: Request, res: Response) {
             let utxos: ScriptUtxo[] = [];
             try {
                 const resp = await chronik.address(walletAddress).utxos();
@@ -285,7 +284,7 @@ initWasm().then(async () => {
                 });
             }
 
-            const balance = await getBalanceSatoshi(utxos);
+            const balance = await getBalanceSats(utxos);
             return res.status(200).json({
                 address: walletAddress,
                 balance: balance,
@@ -295,4 +294,4 @@ initWasm().then(async () => {
 
     // Kill with CTRL+C or use a process manager like systemd
     faucet.listen(config.port);
-});
+})();

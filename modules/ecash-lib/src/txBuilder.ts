@@ -7,7 +7,7 @@ import { sha256d } from './hash.js';
 import { WriterBytes } from './io/writerbytes.js';
 import { pushBytesOp } from './op.js';
 import { Script } from './script.js';
-import { SigHashType } from './sigHashType.js';
+import { SigHashType, SigHashTypeVariant } from './sigHashType.js';
 import {
     DEFAULT_TX_VERSION,
     Tx,
@@ -84,7 +84,7 @@ export class TxBuilder {
             if (input.input.signData === undefined) {
                 return undefined;
             }
-            inputSum += BigInt(input.input.signData.value);
+            inputSum += BigInt(input.input.signData.sats);
         }
         return inputSum;
     }
@@ -96,20 +96,23 @@ export class TxBuilder {
     } {
         let fixedOutputSum = 0n;
         let leftoverIdx: number | undefined = undefined;
-        let outputs: TxOutput[] = new Array(this.outputs.length);
+        const outputs: TxOutput[] = new Array(this.outputs.length);
         for (let idx = 0; idx < this.outputs.length; ++idx) {
             const builderOutput = this.outputs[idx];
-            if (builderOutput instanceof Script) {
+            if ('bytecode' in builderOutput) {
+                // If builderOutput instanceof Script
+                // Note that the "builderOutput instanceof Script" check may fail due
+                // to discrepancies between nodejs and browser environments
                 if (leftoverIdx !== undefined) {
                     throw 'Multiple leftover outputs, can at most use one';
                 }
                 leftoverIdx = idx;
                 outputs[idx] = {
-                    value: 0, // placeholder
+                    sats: 0n, // placeholder
                     script: builderOutput.copy(),
                 };
             } else {
-                fixedOutputSum += BigInt(builderOutput.value);
+                fixedOutputSum += BigInt(builderOutput.sats);
                 outputs[idx] = copyTxOutput(builderOutput);
             }
         }
@@ -117,7 +120,12 @@ export class TxBuilder {
     }
 
     /** Sign the tx built by this builder and return a Tx */
-    public sign(ecc: Ecc, feePerKb?: number, dustLimit?: number): Tx {
+    public sign(params?: {
+        ecc?: Ecc;
+        feePerKb?: bigint;
+        dustSats?: bigint;
+    }): Tx {
+        const ecc = params?.ecc ?? new Ecc();
         const { fixedOutputSum, leftoverIdx, outputs } = this.prepareOutputs();
         const inputs = this.inputs.map(input => copyTxInput(input.input));
         const updateSignatories = (ecc: Ecc, unsignedTx: UnsignedTx) => {
@@ -139,20 +147,20 @@ export class TxBuilder {
             const inputSum = this.inputSum();
             if (inputSum === undefined) {
                 throw new Error(
-                    'Using a leftover output requires setting SignData.value for all inputs',
+                    'Using a leftover output requires setting SignData.sats for all inputs',
                 );
             }
-            if (feePerKb === undefined) {
+            if (params?.feePerKb === undefined) {
                 throw new Error(
                     'Using a leftover output requires setting feePerKb',
                 );
             }
-            if (!Number.isInteger(feePerKb)) {
-                throw new Error('feePerKb must be an integer');
+            if (typeof params.feePerKb !== 'bigint') {
+                throw new Error('feePerKb must be a bigint');
             }
-            if (dustLimit === undefined) {
+            if (params?.dustSats === undefined) {
                 throw new Error(
-                    'Using a leftover output requires setting dustLimit',
+                    'Using a leftover output requires setting dustSats',
                 );
             }
             const dummyUnsignedTx = UnsignedTx.dummyFromTx(
@@ -166,22 +174,22 @@ export class TxBuilder {
             // Must use dummy here because ECDSA sigs could be too small for fee calc
             updateSignatories(new EccDummy(), dummyUnsignedTx);
             let txSize = dummyUnsignedTx.tx.serSize();
-            let txFee = calcTxFee(txSize, feePerKb);
-            const leftoverValue = inputSum - (fixedOutputSum + txFee);
-            if (leftoverValue < dustLimit) {
+            let txFee = calcTxFee(txSize, params.feePerKb);
+            const leftoverSats = inputSum - (fixedOutputSum + txFee);
+            if (leftoverSats < params.dustSats) {
                 // inputs cannot pay for a dust leftover -> remove & recalc
                 outputs.splice(leftoverIdx, 1);
                 dummyUnsignedTx.tx.outputs = outputs;
                 // Must update signatories again as they might depend on outputs
                 updateSignatories(new EccDummy(), dummyUnsignedTx);
                 txSize = dummyUnsignedTx.tx.serSize();
-                txFee = calcTxFee(txSize, feePerKb);
+                txFee = calcTxFee(txSize, params.feePerKb);
             } else {
-                outputs[leftoverIdx].value = leftoverValue;
+                outputs[leftoverIdx].sats = leftoverSats;
             }
             if (inputSum < fixedOutputSum + txFee) {
                 throw new Error(
-                    `Insufficient input value (${inputSum}): Can only pay for ${
+                    `Insufficient input sats (${inputSum}): Can only pay for ${
                         inputSum - fixedOutputSum
                     } fees, but ${txFee} required`,
                 );
@@ -202,7 +210,7 @@ export class TxBuilder {
 
 /** Calculate the required tx fee for the given txSize and feePerKb,
  *  rounding up */
-export function calcTxFee(txSize: number, feePerKb: number): bigint {
+export function calcTxFee(txSize: number, feePerKb: bigint): bigint {
     return (BigInt(txSize) * BigInt(feePerKb) + 999n) / 1000n;
 }
 
@@ -217,6 +225,23 @@ export function flagSignature(
     return writer.data;
 }
 
+/**
+ * Sign the sighash using Schnorr for BIP143 signatures and ECDSA for Legacy
+ * signatures, and then flags the signature correctly
+ **/
+export function signWithSigHash(
+    ecc: Ecc,
+    sk: Uint8Array,
+    sigHash: Uint8Array,
+    sigHashType: SigHashType,
+): Uint8Array {
+    const sig =
+        sigHashType.variant == SigHashTypeVariant.LEGACY
+            ? ecc.ecdsaSign(sk, sigHash)
+            : ecc.schnorrSign(sk, sigHash);
+    return flagSignature(sig, sigHashType);
+}
+
 /** Signatory for a P2PKH input. Always uses Schnorr signatures */
 export const P2PKHSignatory = (
     sk: Uint8Array,
@@ -226,8 +251,8 @@ export const P2PKHSignatory = (
     return (ecc: Ecc, input: UnsignedTxInput): Script => {
         const preimage = input.sigHashPreimage(sigHashType);
         const sighash = sha256d(preimage.bytes);
-        const sig = flagSignature(ecc.schnorrSign(sk, sighash), sigHashType);
-        return Script.p2pkhSpend(pk, sig);
+        const sigFlagged = signWithSigHash(ecc, sk, sighash, sigHashType);
+        return Script.p2pkhSpend(pk, sigFlagged);
     };
 };
 
@@ -236,7 +261,7 @@ export const P2PKSignatory = (sk: Uint8Array, sigHashType: SigHashType) => {
     return (ecc: Ecc, input: UnsignedTxInput): Script => {
         const preimage = input.sigHashPreimage(sigHashType);
         const sighash = sha256d(preimage.bytes);
-        const sig = flagSignature(ecc.schnorrSign(sk, sighash), sigHashType);
-        return Script.fromOps([pushBytesOp(sig)]);
+        const sigFlagged = signWithSigHash(ecc, sk, sighash, sigHashType);
+        return Script.fromOps([pushBytesOp(sigFlagged)]);
     };
 };

@@ -138,6 +138,29 @@ const miners: Miners = {
                 coinbaseHexFragment: '65617374706f6f6c', // ascii eastpool
             },
         ],
+        [
+            // NB this seems to be the consistent output (smaller); probably pays the pool itself
+            '76a9146657bcc784bfa56301962567c62feda9d1eb37ba88ac',
+            {
+                miner: 'solo.minemine.online',
+                coinbaseHexFragment: '736f6c6f2e6d696e656d696e652e6f6e6c696e65', // ascii solo.minemine.online
+            },
+        ],
+        [
+            // NB this seems to be the consistent output (smaller); probably pays the pool itself
+            '76a9147e10ebf54a4f7425b124d7faf9c4ef1916c1563b88ac',
+            {
+                miner: 'pool.minemine.online',
+                coinbaseHexFragment: '706f6f6c2e6d696e656d696e652e6f6e6c696e65', // ascii pool.minemine.online
+            },
+        ],
+        [
+            '76a9149f9528b4e5b68220dbb1324cf65880066ad3b91488ac',
+            {
+                miner: 'Kryptex',
+                coinbaseHexFragment: '706f6f6c2e6b7279707465782e636f6d', // ascii pool.kryptex.com
+            },
+        ],
     ],
 };
 

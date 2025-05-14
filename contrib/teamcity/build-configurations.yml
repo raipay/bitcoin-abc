@@ -56,6 +56,7 @@ templates:
   #    relative to the repository top level (no trailing /).
   #  - DEPENDS_MOCK_CHRONIK_CLIENT: "true" if these tests require
   #    the mock-chronik-client library, otherwise unset
+  #  - DEPENDS_B58_TS: "true" if these tests require b58-ts to be built, otherwise unset
   #  - DEPENDS_ECASH_LIB_WASM: "true" if these tests require ecash-lib-wasm
   #    to be built, otherwise unset
   #  - DEPENDS_ECASH_LIB: "true" if these tests require ecash-lib to be
@@ -78,82 +79,10 @@ templates:
       PROJECT_NAME="$(basename ${JS_PROJECT_ROOT})"
       TEST_SUITE_NAME="$(project_to_suite ${PROJECT_NAME})"
 
-      # Install ecashaddrjs dependencies if this test uses them
-      if [ -z "${DEPENDS_ECASHADDRJS+x}" ] ; then
-        echo "Test does not depend on ecashaddrjs, skipping ecashaddrjs dependencies..."
-      else
-        echo "Test depends on ecashaddrjs. Installing ecashaddrjs dependencies..."
-        pushd "${TOPLEVEL}/modules/ecashaddrjs"
-        npm ci
-        npm run build
-      fi
-
-      # Install mock-chronik-client dependencies if this test uses them
-      if [ -z "${DEPENDS_MOCK_CHRONIK_CLIENT+x}" ] ; then
-        echo "Test does not depend on mock-chronik-client, skipping mock-chronik-client dependencies..."
-      else
-        echo "Test depends on mock-chronik-client. Installing mock-chronik-client dependencies..."
-        pushd "${TOPLEVEL}/modules/mock-chronik-client"
-        npm ci
-      fi
-
-      # Build ecash-lib-wasm for ecash-lib's WebAssembly part
-      if [ -z "${DEPENDS_ECASH_LIB_WASM+x}" ] ; then
-        echo "Test does not depend on ecash-lib-wasm, skipping"
-      else
-        echo "Test depends on ecash-lib-wasm. Building WebAssembly..."
-        pushd "${TOPLEVEL}/modules/ecash-lib-wasm"
-        ./build-wasm.sh
-      fi
-
-      if [ -z "${DEPENDS_CHRONIK_CLIENT+x}" ] ; then
-        echo "Test does not depend on chronik-client"
-      else
-        echo "Test depends on chronik-client. Building TypeScript..."
-        pushd "${TOPLEVEL}/modules/chronik-client"
-        npm ci
-      fi
-
-      if [ -z "${DEPENDS_ECASH_LIB+x}" ] ; then
-        echo "Test does not depend on ecash-lib"
-      else
-        echo "Test depends on ecash-lib. Building TypeScript..."
-        pushd "${TOPLEVEL}/modules/ecash-lib"
-        npm ci
-        npm run build
-      fi
-
-      if [ -z "${DEPENDS_ECASH_AGORA+x}" ] ; then
-        echo "Test does not depend on ecash-agora"
-      else
-        echo "Test depends on ecash-agora. Building TypeScript..."
-        pushd "${TOPLEVEL}/modules/ecash-agora"
-        npm ci
-        npm run build
-      fi
-
-      # Install ecash-script dependencies if this test uses them
-      if [ -z "${DEPENDS_ECASH_SCRIPT+x}" ] ; then
-        echo "Test does not depend on ecash-script, skipping ecash-script dependencies..."
-      else
-        echo "Test depends on ecash-script. Installing ecash-script dependencies..."
-        pushd "${TOPLEVEL}/modules/ecash-script"
-        npm ci
-      fi
-
-      # Install ecash-coinselect dependencies if this test uses them
-      if [ -z "${DEPENDS_ECASH_COINSELECT+x}" ] ; then
-        echo "Test does not depend on ecash-coinselect, skipping ecash-coinselect dependencies..."
-      else
-        echo "Test depends on ecash-coinselect. Installing ecash-coinselect dependencies..."
-        pushd "${TOPLEVEL}/modules/ecash-coinselect"
-        npm ci
-      fi
-
       pushd "${TOPLEVEL}/${JS_PROJECT_ROOT}"
 
       MOCHA_JUNIT_DIR="test_results"
-      MOCHA_JUNIT_PATH="${MOCHA_JUNIT_DIR}/${PROJECT_NAME}-junit.xml"
+      MOCHA_JUNIT_PATH="${MOCHA_JUNIT_DIR}/junit_results_${PROJECT_NAME}.xml"
       rm -rf "${MOCHA_JUNIT_DIR}" && mkdir -p "${MOCHA_JUNIT_DIR}"
 
       npm ci
@@ -166,9 +95,11 @@ templates:
         npm run build
       fi
 
-      # Make sure the report is available even if the tests fail
+      # Make sure the report is available even if the tests fail.
+      # Note the report might not exist (e.g. if the build failed before the
+      # tests are run) so we discard the errors here.
       move_junit_report() {
-        mv "${MOCHA_JUNIT_PATH}" "${BUILD_DIR}/"
+        mv "${MOCHA_JUNIT_PATH}" "${BUILD_DIR}/" &> /dev/null || true
       }
       trap "move_junit_report" EXIT
 
@@ -211,53 +142,22 @@ templates:
       PROJECT_NAME="$(basename ${JS_PROJECT_ROOT})"
       TEST_SUITE_NAME="$(project_to_suite ${PROJECT_NAME})"
 
-      # Install ecashaddrjs dependencies if this test uses them
-      if [ -z "${DEPENDS_ECASHADDRJS+x}" ] ; then
-        echo "Test does not depend on ecashaddrjs, skipping ecashaddrjs dependencies..."
-      else
-        echo "Test depends on ecashaddrjs. Installing ecashaddrjs dependencies..."
-        pushd "${TOPLEVEL}/modules/ecashaddrjs"
-        npm ci
-        npm run build
-      fi
-
-      # Build ecash-lib-wasm for ecash-lib's WebAssembly part
-      if [ -z "${DEPENDS_ECASH_LIB_WASM+x}" ] ; then
-        echo "Test does not depend on ecash-lib-wasm, skipping"
-      else
-        echo "Test depends on ecash-lib-wasm. Building WebAssembly..."
-        pushd "${TOPLEVEL}/modules/ecash-lib-wasm"
-        ./build-wasm.sh
-      fi
-
-      if [ -z "${DEPENDS_CHRONIK_CLIENT+x}" ] ; then
-        echo "Test does not depend on chronik-client"
-      else
-        echo "Test depends on chronik-client. Building TypeScript..."
-        pushd "${TOPLEVEL}/modules/chronik-client"
-        npm ci
-      fi
-
-      if [ -z "${DEPENDS_ECASH_LIB+x}" ] ; then
-        echo "Test does not depend on ecash-lib"
-      else
-        echo "Test depends on ecash-lib. Building TypeScript..."
-        pushd "${TOPLEVEL}/modules/ecash-lib"
-        npm ci
-        npm run build
-      fi
-
       pushd "${TOPLEVEL}/${JS_PROJECT_ROOT}"
 
       MOCHA_JUNIT_DIR="test_results"
-      MOCHA_JUNIT_PATH="${MOCHA_JUNIT_DIR}/${PROJECT_NAME}-integration-tests-junit.xml"
+      MOCHA_JUNIT_PATH="${MOCHA_JUNIT_DIR}/junit_results_integration_tests_${PROJECT_NAME}.xml"
       rm -rf "${MOCHA_JUNIT_DIR}" && mkdir -p "${MOCHA_JUNIT_DIR}"
 
+      # Install deps and build
+      # Note that all js-mocha-integration-tests template builds are ts and must be built
       npm ci
+      npm run build
 
-      # Make sure the report is available even if the tests fail
+      # Make sure the report is available even if the tests fail.
+      # Note the report might not exist (e.g. if the build failed before the
+      # tests are run) so we discard the errors here.
       move_junit_report() {
-        mv "${MOCHA_JUNIT_PATH}" "${BUILD_DIR}/"
+        mv "${MOCHA_JUNIT_PATH}" "${BUILD_DIR}/" &> /dev/null || true
       }
       trap "move_junit_report" EXIT
 
@@ -328,9 +228,27 @@ builds:
         "Bitcoin ABC Benchmark" \
         "${BUILD_DIR}/src/bench/BitcoinABC_Bench.json"
 
+  build-bitcoinsuite-chronik-client:
+    runOnDiffRegex:
+      - modules/bitcoinsuite-chronik-client/
+    cmake_flags:
+      - '-DBUILD_BITCOIN_CHRONIK=ON'
+      - '-DBUILD_BITCOIN_CHRONIK_PLUGINS=ON'
+    targets:
+      - - all
+    post_build: |
+      # Navigate to the bitcoinsuite-chronik-client directory
+      pushd "${TOPLEVEL}/modules/bitcoinsuite-chronik-client"
+      cargo build
+      cargo test -p bitcoinsuite-chronik-client
+      popd
+    timeout: 1200
+
   build-chronik:
     runOnDiffRegex:
       - chronik/
+      - Cargo.toml
+      - Cargo.lock
     cmake_flags:
       - '-DBUILD_BITCOIN_CHRONIK=ON'
     targets:
@@ -343,6 +261,8 @@ builds:
   build-chronik-plugins:
     runOnDiffRegex:
       - chronik/
+      - Cargo.toml
+      - Cargo.lock
     cmake_flags:
       - '-DBUILD_BITCOIN_CHRONIK=ON'
       - '-DBUILD_BITCOIN_CHRONIK_PLUGINS=ON'
@@ -420,6 +340,18 @@ builds:
     timeout: 600
     artifacts:
       doc/*: doc
+
+  build-explorer:
+    runOnDiffRegex:
+      - web/explorer/
+      - Cargo.lock
+      - Cargo.toml
+    script: |
+      # Build the main explorer project, will run on all sub dir
+      pushd "${TOPLEVEL}/web/explorer"
+      cargo build --locked
+      cargo test -p explorer-server -p explorer-exe
+    timeout: 1200
 
   build-fuzzer:
     runOnDiffRegex:
@@ -503,7 +435,7 @@ builds:
         - install-secp256k1
       - - check-extended
         - check-upgrade-activated-extended
-        - check-electrum
+      - - check-electrum
     timeout: 4800
 
   build-native-osx:
@@ -526,10 +458,10 @@ builds:
         - install-tests
     post_build: |
       export PYTHONPATH="${TOPLEVEL}/depends/x86_64-apple-darwin/native/lib/python3/dist-packages:${PYTHONPATH:-}"
-      ninja osx-dmg
+      ninja osx-zip
     timeout: 3600
     artifacts:
-      Bitcoin-ABC.dmg: Bitcoin-ABC.dmg
+      Bitcoin-ABC.zip: Bitcoin-ABC.zip
 
   build-secp256k1:
     runOnDiffRegex:
@@ -736,6 +668,74 @@ builds:
     script: |
       "${TOPLEVEL}/test/lint/lint-circular-dependencies.sh"
 
+  b58-ts:
+    script: |
+      pushd "${TOPLEVEL}/modules/b58-ts"
+      npm ci
+      npm run build
+
+  ecashaddrjs:
+    script: |
+      pushd "${TOPLEVEL}/modules/ecashaddrjs"
+      npm ci
+      npm run build
+
+  ecash-lib-wasm:
+    script: |
+      pushd "${TOPLEVEL}/modules/ecash-lib-wasm"
+      ./build-wasm.sh
+
+  ecash-wallet:
+    depends:
+      - chronik-client
+      - ecash-lib
+    script: |
+      pushd "${TOPLEVEL}/modules/ecash-wallet"
+      npm ci
+      npm run build
+
+  chronik-client:
+    depends:
+      - ecashaddrjs
+    script: |
+      pushd "${TOPLEVEL}/modules/chronik-client"
+      npm ci
+      npm run build
+
+  mock-chronik-client:
+    depends:
+      - ecashaddrjs
+      - chronik-client
+    script: |
+      pushd "${TOPLEVEL}/modules/mock-chronik-client"
+      npm ci
+      npm run build
+
+  ecash-lib:
+    depends:
+      - ecash-lib-wasm
+      - b58-ts
+      - ecashaddrjs
+      - chronik-client
+    script: |
+      pushd "${TOPLEVEL}/modules/ecash-lib"
+      npm ci
+      npm run build
+
+  ecash-agora:
+    depends:
+      - chronik-client
+      - ecash-lib
+    script: |
+      pushd "${TOPLEVEL}/modules/ecash-agora"
+      npm ci
+      npm run build
+
+  ecash-script:
+    script: |
+      pushd "${TOPLEVEL}/modules/ecash-script"
+      npm ci
+
   cashtab-tests:
     runOnDiffRegex:
       - cashtab/
@@ -753,54 +753,24 @@ builds:
       JEST_SUITE_NAME: "Cashtab Test suites"
       JEST_JUNIT_SUITE_NAME: "CashTab Unit Tests"
       JEST_JUNIT_OUTPUT_DIR: "test/junit"
-      JEST_JUNIT_OUTPUT_NAME: "cashtab.xml"
+      JEST_JUNIT_OUTPUT_NAME: "junit_results_cashtab.xml"
+    depends:
+      - ecashaddrjs
+      - chronik-client
+      - mock-chronik-client
+      - ecash-script
+      - ecash-lib
+      - ecash-agora
     script: |
-      # Cashtab tests depend on libraries hosted in the monorepo
-      # Install their dependencies (and build them, if necessary) before tests
-      # ecashaddrjs
-      echo "Installing ecashaddrjs dependencies..."
-      pushd "${TOPLEVEL}/modules/ecashaddrjs"
-      npm ci
-      npm run build
-
-      # mock-chronik-client
-      echo "Installing mock-chronik-client dependencies..."
-      pushd "${TOPLEVEL}/modules/mock-chronik-client"
-      npm ci
-
-      # chronik-client
-      echo "Installing chronik-client dependencies..."
-      pushd "${TOPLEVEL}/modules/chronik-client"
-      npm ci
-      npm run build
-
-      # ecash-script
-      echo "Installing ecash-script dependencies..."
-      pushd "${TOPLEVEL}/modules/ecash-script"
-      npm ci
-
-      # ecash-lib-wasm
-      pushd "${TOPLEVEL}/modules/ecash-lib-wasm"
-      ./build-wasm.sh
-
-      # ecash-lib
-      pushd "${TOPLEVEL}/modules/ecash-lib"
-      npm ci
-      npm run build
-
-      # ecash-agora
-      echo "Installing ecash-agora dependencies..."
-      pushd "${TOPLEVEL}/modules/ecash-agora"
-      npm ci
-      npm run build
-
       pushd "${TOPLEVEL}/cashtab"
       npm ci
       npm run build
 
-      # Make sure the report is available even if the tests fail
+      # Make sure the report is available even if the tests fail.
+      # Note the report might not exist (e.g. if the build failed before the
+      # tests are run) so we discard the errors here.
       move_junit_report() {
-        mv test "${BUILD_DIR}/"
+        mv ${JEST_JUNIT_OUTPUT_DIR}/${JEST_JUNIT_OUTPUT_NAME} "${BUILD_DIR}/" &> /dev/null || true
       }
       trap "move_junit_report" EXIT
 
@@ -822,34 +792,22 @@ builds:
       popd
       mv coverage/coverage.tar.gz "${BUILD_DIR}/"
 
-  alias-server-tests:
-    runOnDiffRegex:
-      - apps/alias-server/
-      - modules/mock-chronik-client/
-      - modules/ecashaddrjs/
-    env:
-      JS_PROJECT_ROOT: apps/alias-server
-      DEPENDS_ECASHADDRJS: "true"
-      DEPENDS_ECASH_SCRIPT: "true"
-      DEPENDS_CHRONIK_CLIENT: "true"
-      DEPENDS_MOCK_CHRONIK_CLIENT: "true"
-    templates:
-      - js-mocha
-
   ecash-herald-tests:
     runOnDiffRegex:
       - apps/ecash-herald/
       - modules/mock-chronik-client/
       - modules/ecashaddrjs/
+      - modules/chronik-client/
     env:
       JS_PROJECT_ROOT: apps/ecash-herald
-      DEPENDS_MOCK_CHRONIK_CLIENT: "true"
-      DEPENDS_CHRONIK_CLIENT: "true"
-      DEPENDS_ECASH_SCRIPT: "true"
-      DEPENDS_ECASHADDRJS: "true"
-      DEPENDS_ECASH_LIB_WASM: "true"
-      DEPENDS_ECASH_LIB: "true"
-      DEPENDS_ECASH_AGORA: "true"
+    # Ordering matters
+    depends:
+      - ecashaddrjs
+      - chronik-client
+      - ecash-lib
+      - ecash-agora
+      - ecash-script
+      - mock-chronik-client
     templates:
       - js-mocha
 
@@ -858,14 +816,15 @@ builds:
       - apps/token-server/
       - modules/mock-chronik-client/
       - modules/ecashaddrjs/
+      - modules/chronik-client/
     env:
       JS_PROJECT_ROOT: apps/token-server
-      DEPENDS_MOCK_CHRONIK_CLIENT: "true"
-      DEPENDS_ECASHADDRJS: "true"
-      DEPENDS_CHRONIK_CLIENT: "true"
-      DEPENDS_ECASH_LIB_WASM: "true"
-      DEPENDS_ECASH_LIB: "true"
       RUN_NPM_BUILD: "true"
+    depends:
+      - ecashaddrjs
+      - chronik-client
+      - mock-chronik-client
+      - ecash-lib
     templates:
       - js-mocha
 
@@ -875,7 +834,17 @@ builds:
       - modules/ecashaddrjs/
     env:
       JS_PROJECT_ROOT: modules/mock-chronik-client
-      DEPENDS_ECASHADDRJS: "true"
+    depends:
+      - ecashaddrjs
+    templates:
+      - js-mocha
+
+  b58-ts-tests:
+    runOnDiffRegex:
+      - modules/b58-ts/
+    env:
+      JS_PROJECT_ROOT: modules/b58-ts
+      RUN_NPM_BUILD: "true"
     templates:
       - js-mocha
 
@@ -885,7 +854,8 @@ builds:
       - modules/ecashaddrjs/
     env:
       JS_PROJECT_ROOT: modules/chronik-client
-      DEPENDS_ECASHADDRJS: "true"
+    depends:
+      - ecashaddrjs
     templates:
       - js-mocha
 
@@ -898,9 +868,11 @@ builds:
     env:
       JS_PROJECT_ROOT: modules/ecash-lib
       RUN_NPM_BUILD: "true"
-      DEPENDS_ECASHADDRJS: "true"
-      DEPENDS_ECASH_LIB_WASM: "true"
-      DEPENDS_CHRONIK_CLIENT: "true"
+    depends:
+      - b58-ts
+      - ecash-lib-wasm
+      - ecashaddrjs
+      - chronik-client
     templates:
       - js-mocha
 
@@ -912,10 +884,10 @@ builds:
       - src/secp256k1/
     env:
       JS_PROJECT_ROOT: modules/ecash-agora
-      DEPENDS_ECASHADDRJS: "true"
-      DEPENDS_ECASH_LIB_WASM: "true"
-      DEPENDS_CHRONIK_CLIENT: "true"
-      DEPENDS_ECASH_LIB: "true"
+    depends:
+      - ecashaddrjs
+      - chronik-client
+      - ecash-lib
     templates:
       - js-mocha
 
@@ -933,12 +905,14 @@ builds:
       - modules/ecash-lib-wasm/
       - modules/ecashaddrjs/
       - src/secp256k1/
+      - Cargo.toml
+      - Cargo.lock
     env:
       JS_PROJECT_ROOT: modules/ecash-agora
-      DEPENDS_ECASHADDRJS: "true"
-      DEPENDS_ECASH_LIB_WASM: "true"
-      DEPENDS_CHRONIK_CLIENT: "true"
-      DEPENDS_ECASH_LIB: "true"
+    depends:
+      - ecashaddrjs
+      - chronik-client
+      - ecash-lib
     templates:
       - js-mocha-integration-tests
 
@@ -954,13 +928,31 @@ builds:
       - modules/ecash-lib-wasm/
       - modules/ecashaddrjs/
       - src/secp256k1/
+      - Cargo.toml
+      - Cargo.lock
     env:
       JS_PROJECT_ROOT: modules/ecash-lib
-      DEPENDS_ECASHADDRJS: "true"
-      DEPENDS_ECASH_LIB_WASM: "true"
-      DEPENDS_CHRONIK_CLIENT: "true"
+    depends:
+      - b58-ts
+      - ecashaddrjs
+      - ecash-lib-wasm
+      - chronik-client
     templates:
       - js-mocha-integration-tests
+
+  ecash-wallet-tests:
+    runOnDiffRegex:
+      - modules/ecash-wallet/
+      - modules/ecash-lib/
+      - modules/ecash-lib-wasm/
+      - src/secp256k1/
+    env:
+      JS_PROJECT_ROOT: modules/ecash-wallet
+    depends:
+      - chronik-client
+      - ecash-lib
+    templates:
+      - js-mocha
 
   chronik-client-integration-tests:
     cmake_flags:
@@ -972,9 +964,12 @@ builds:
       - chronik/
       - modules/chronik-client/
       - modules/ecashaddrjs/
+      - Cargo.toml
+      - Cargo.lock
     env:
       JS_PROJECT_ROOT: modules/chronik-client
-      DEPENDS_ECASHADDRJS: "true"
+    depends:
+      - ecashaddrjs
     templates:
       - js-mocha-integration-tests
 
@@ -991,14 +986,6 @@ builds:
       - modules/ecash-script/
     env:
       JS_PROJECT_ROOT: modules/ecash-script
-    templates:
-      - js-mocha
-
-  ecash-coinselect-tests:
-    runOnDiffRegex:
-      - modules/ecash-coinselect/
-    env:
-      JS_PROJECT_ROOT: modules/ecash-coinselect
     templates:
       - js-mocha
 
@@ -1024,17 +1011,17 @@ builds:
 
   preview-chronik.e.cash:
     docker:
-      context: modules/
+      dockerfile: chronik.e.cash.Dockerfile
       build_args:
         - "NGINX_CONF=nginx-preview.conf"
 
   preview-explorer:
     docker:
-      context: web/explorer
+      dockerfile: explorer.Dockerfile
       port: 3035
 
   preview-cashtab:
     docker:
-      context: cashtab
+      dockerfile: cashtab.Dockerfile
       build_args:
         - "NGINX_CONF=nginx-preview.conf"

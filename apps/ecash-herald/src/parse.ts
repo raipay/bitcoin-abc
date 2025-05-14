@@ -11,8 +11,13 @@ import {
     jsonReviver,
     bigNumberAmountToLocaleString,
     CoinGeckoPrice,
+    toXec,
 } from '../src/utils';
-import cashaddr from 'ecashaddrjs';
+import {
+    encodeCashAddress,
+    encodeOutputScript,
+    getTypeAndHashFromOutputScript,
+} from 'ecashaddrjs';
 import BigNumber from 'bignumber.js';
 import {
     TOKEN_SERVER_OUTPUTSCRIPT,
@@ -26,6 +31,7 @@ import {
     returnAddressPreview,
     containsOnlyPrintableAscii,
 } from './utils';
+import { CoinDanceStaker } from './events';
 import lokadMap from '../constants/lokad';
 import { scriptOps } from 'ecash-agora';
 import { Script, fromHex, OP_0 } from 'ecash-lib';
@@ -35,6 +41,8 @@ import {
     Tx,
     TxOutput,
     GenesisInfo,
+    SlpTokenType_Type,
+    AlpTokenType_Type,
 } from 'chronik-client';
 import { MemoryCache } from 'cache-manager';
 
@@ -49,7 +57,8 @@ const SLP_1_NFT_COLLECTION_PROTOCOL_NUMBER = 129;
 const SLP_1_NFT_PROTOCOL_NUMBER = 65;
 
 // Miner fund output script
-const minerFundOutputScript = 'a914d37c4c809fe9840e7bfa77b86bd47163f6fb6c6087';
+export const IFP_OUTPUTSCRIPT =
+    'a914d37c4c809fe9840e7bfa77b86bd47163f6fb6c6087';
 
 interface PriceInfo {
     usd: number;
@@ -59,7 +68,7 @@ interface PriceInfo {
 }
 interface HeraldStaker {
     staker: string;
-    reward: number;
+    reward: bigint;
 }
 interface HeraldOpReturnInfo {
     app: string;
@@ -81,14 +90,14 @@ interface HeraldParsedTx {
     opReturnInfo: false | HeraldOpReturnInfo;
     txFee: number;
     xecSendingOutputScripts: Set<string>;
-    xecReceivingOutputs: Map<string, number>;
-    totalSatsSent: number;
+    xecReceivingOutputs: Map<string, bigint>;
+    totalSatsSent: bigint;
     tokenSendInfo: false | TokenSendInfo;
     tokenBurnInfo:
         | false
         | {
               tokenId: string;
-              undecimalizedTokenBurnAmount: string;
+              actualBurnAtoms: bigint;
           };
 }
 export interface HeraldParsedBlock {
@@ -115,46 +124,49 @@ enum TrackedTokenAction {
 interface TokenAction {
     count: number;
 }
+interface AgoraAction extends TokenAction {
+    volume: bigint;
+}
 interface TokenActions {
     actionCount: number;
     send?: TokenAction;
     mint?: TokenAction;
     burn?: TokenAction;
     adPrep?: TokenAction;
-    buy?: TokenAction;
+    buy?: AgoraAction;
     list?: TokenAction;
     cancel?: TokenAction;
     genesis?:
         | TokenAction
-        | { hasBaton: boolean; amount: string; count?: number };
+        | { hasBaton: boolean; atoms: bigint; count?: number };
 }
+
+export const STAKING_ACTIVATION_HEIGHT = 818670;
+const STAKING_REWARDS_PERCENT = 10n;
 
 export const getStakerFromCoinbaseTx = (
     blockHeight: number,
     coinbaseOutputs: TxOutput[],
 ): HeraldStaker | false => {
-    const STAKING_ACTIVATION_HEIGHT = 818670;
     if (blockHeight < STAKING_ACTIVATION_HEIGHT) {
         // Do not parse for staking rwds if they are not expected to exist
         return false;
     }
-    const STAKING_REWARDS_PERCENT = 10;
+
     const totalCoinbaseSats = coinbaseOutputs
-        .map(output => output.value)
-        .reduce((prev, curr) => prev + curr, 0);
+        .map(output => output.sats)
+        .reduce((prev, curr) => prev + curr, 0n);
     for (const output of coinbaseOutputs) {
-        const thisValue = output.value;
-        const minStakerValue = Math.floor(
-            totalCoinbaseSats * STAKING_REWARDS_PERCENT * 0.01,
-        );
+        const thisValue = output.sats;
+        const minStakerValue =
+            (totalCoinbaseSats * STAKING_REWARDS_PERCENT) / 100n;
         // In practice, the staking reward will almost always be the one that is exactly 10% of totalCoinbaseSats
         // Use a STAKER_PERCENT_PADDING range to exclude miner and ifp outputs
-        const STAKER_PERCENT_PADDING = 1;
-        const assumedMaxStakerValue = Math.floor(
-            totalCoinbaseSats *
-                (STAKING_REWARDS_PERCENT + STAKER_PERCENT_PADDING) *
-                0.01,
-        );
+        const STAKER_PERCENT_PADDING = 1n;
+        const assumedMaxStakerValue =
+            (totalCoinbaseSats *
+                (STAKING_REWARDS_PERCENT + STAKER_PERCENT_PADDING)) /
+            100n;
         if (thisValue >= minStakerValue && thisValue <= assumedMaxStakerValue) {
             return {
                 // Return the script, there is no guarantee that we can use
@@ -169,10 +181,69 @@ export const getStakerFromCoinbaseTx = (
     return false;
 };
 
+export const getMinerOutputScript = (
+    blockHeight: number,
+    coinbaseOutputs: TxOutput[],
+): string => {
+    let hasStakingRwd = true;
+    if (blockHeight < STAKING_ACTIVATION_HEIGHT) {
+        // Do not parse for staking rwds if they are not expected to exist
+        hasStakingRwd = false;
+    }
+
+    const totalCoinbaseSats = coinbaseOutputs
+        .map(output => output.sats)
+        .reduce((prev, curr) => prev + curr, 0n);
+
+    let bestGuess;
+
+    // Test each outputScript for the miner
+    for (const output of coinbaseOutputs) {
+        if (output.outputScript === IFP_OUTPUTSCRIPT) {
+            // We know the IFP output is not the miner
+            continue;
+        }
+        // Everything but the IFP_OUTPUTSCRIPT is a bestguess
+        bestGuess = output.outputScript;
+
+        if (hasStakingRwd) {
+            // Check for staking reward output if we know there will be one
+            const thisValue = output.sats;
+            const minStakerValue =
+                (totalCoinbaseSats * STAKING_REWARDS_PERCENT) / 100n;
+
+            // In practice, the staking reward will almost always be the one that is exactly 10% of totalCoinbaseSats
+            // Use a STAKER_PERCENT_PADDING range to exclude miner and ifp outputs
+            const STAKER_PERCENT_PADDING = 1n;
+            const assumedMaxStakerValue =
+                (totalCoinbaseSats *
+                    (STAKING_REWARDS_PERCENT + STAKER_PERCENT_PADDING)) /
+                100n;
+            if (
+                thisValue >= minStakerValue &&
+                thisValue <= assumedMaxStakerValue
+            ) {
+                // Very likely this is a staking reward and not a miner output
+                continue;
+            }
+        }
+
+        // If it is not the IFP or the staker, it is (probably) the miner
+        // Note we may have more than one miner output
+        // This function picks the first non-IFP non-staker as "the" miner
+        return output.outputScript;
+    }
+
+    // If for some reason we fail to parse, return the last addr we check that was not the IFP
+    // NB bestGuess will always be defined unless a coinbase tx only sends outputs to the IFP address
+    return bestGuess!;
+};
+
 export const getMinerFromCoinbaseTx = (
     coinbaseScriptsig: string,
     coinbaseOutputs: TxOutput[],
     knownMiners: KnownMiners,
+    blockHeight: number,
 ): string => {
     // When you find the miner, minerInfo will come from knownMiners
     let minerInfo: boolean | MinerInfo = false;
@@ -200,18 +271,15 @@ export const getMinerFromCoinbaseTx = (
 
     if (!minerInfo) {
         // We're still unable to identify the miner, so resort to
-        // indentifying by the last chars of the payout address. For now
-        // we assume the ordering of outputs such as the miner reward is at
-        // the first position.
-        const minerPayoutSript = coinbaseOutputs[0].outputScript;
+        // indentifying by the last chars of the payout address.
         try {
-            const minerAddress = cashaddr.encodeOutputScript(minerPayoutSript);
-            return `unknown, ...${minerAddress.slice(-4)}`;
-        } catch (err) {
-            console.log(
-                `Error converting miner payout script (${minerPayoutSript}) to eCash address`,
-                err,
+            const minerAddress = getMinerOutputScript(
+                blockHeight,
+                coinbaseOutputs,
             );
+            return `unknown, ...${encodeOutputScript(minerAddress).slice(-4)}`;
+        } catch (err) {
+            console.error(`Error determining miner address`, err);
             // Give up
             return 'unknown';
         }
@@ -498,7 +566,7 @@ export const parseMemoOutputScript = (
 
             // The address is a hex-encoded hash160
             // all memo addresses are p2pkh
-            const address = cashaddr.encode('ecash', 'P2PKH', stackArray[1]);
+            const address = encodeCashAddress('ecash', 'p2pkh', stackArray[1]);
 
             // Link to the address in the msg
             msg += `<a href="${
@@ -593,7 +661,7 @@ export const parseMemoOutputScript = (
 
             // The address is a hex-encoded hash160
             // all memo addresses are p2pkh
-            const address = cashaddr.encode('ecash', 'P2PKH', stackArray[1]);
+            const address = encodeCashAddress('ecash', 'p2pkh', stackArray[1]);
 
             // Link to the address in the msg
             msg += `<a href="${
@@ -911,7 +979,7 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
         | false
         | {
               tokenId: string;
-              undecimalizedTokenBurnAmount: string;
+              actualBurnAtoms: bigint;
           } = false;
 
     /* Collect xecSendInfo for all txs, since all txs are XEC sends
@@ -921,11 +989,11 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
 
     // xecSend parsing variables
     const xecSendingOutputScripts: Set<string> = new Set();
-    const xecReceivingOutputs = new Map();
-    let xecInputAmountSats = 0;
-    let xecOutputAmountSats = 0;
-    let totalSatsSent = 0;
-    let changeAmountSats = 0;
+    const xecReceivingOutputs: Map<string, bigint> = new Map();
+    let xecInputAmountSats = 0n;
+    let xecOutputAmountSats = 0n;
+    let totalSatsSent = 0n;
+    let changeAmountSats = 0n;
 
     if (
         tx.tokenStatus !== 'TOKEN_STATUS_NON_TOKEN' &&
@@ -940,11 +1008,11 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
         // TODO handle txs with multiple tokenEntries
         const parsedTokenAction = tx.tokenEntries[0];
 
-        const { tokenId, tokenType, txType, burnSummary, actualBurnAmount } =
+        const { tokenId, tokenType, txType, burnSummary, actualBurnAtoms } =
             parsedTokenAction;
         const { protocol, number } = tokenType;
         const isUnintentionalBurn =
-            burnSummary !== '' && actualBurnAmount !== '0';
+            burnSummary !== '' && actualBurnAtoms !== 0n;
 
         // Get token type
         // TODO present the token type in msgs
@@ -982,7 +1050,7 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
                 if (isUnintentionalBurn) {
                     tokenBurnInfo = {
                         tokenId,
-                        undecimalizedTokenBurnAmount: actualBurnAmount,
+                        actualBurnAtoms,
                     };
                 } else {
                     tokenSendInfo = {
@@ -1005,7 +1073,7 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
             xecSendingOutputScripts.add(input.outputScript);
         }
 
-        xecInputAmountSats += input.value;
+        xecInputAmountSats += input.sats;
         // The input that sent the token utxos will have key 'slpToken'
         if (typeof input.token !== 'undefined') {
             // Add amount to undecimalizedTokenInputAmount
@@ -1013,7 +1081,7 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
             // Could have mistakes in parsing ALP txs otherwise
             // For now, this is outside the scope of migration
             undecimalizedTokenInputAmount = undecimalizedTokenInputAmount.plus(
-                input.token.amount,
+                input.token.atoms.toString(),
             );
             // Collect the input outputScripts to identify change output
             if (typeof input.outputScript !== 'undefined') {
@@ -1024,12 +1092,12 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
 
     // Iterate over outputs to check for OP_RETURN msgs
     for (const output of outputs) {
-        const { value, outputScript } = output;
-        xecOutputAmountSats += value;
+        const { sats, outputScript } = output;
+        xecOutputAmountSats += sats;
         // If this output script is the same as one of the sendingOutputScripts
         if (xecSendingOutputScripts.has(outputScript)) {
             // Then this XEC amount is change
-            changeAmountSats += value;
+            changeAmountSats += sats;
         } else {
             // Add an xecReceivingOutput
 
@@ -1037,11 +1105,11 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
             // If this outputScript is already in xecReceivingOutputs, increment its value
             xecReceivingOutputs.set(
                 outputScript,
-                (xecReceivingOutputs.get(outputScript) ?? 0) + value,
+                (xecReceivingOutputs.get(outputScript) ?? 0n) + sats,
             );
 
             // Increment totalSatsSent
-            totalSatsSent += value;
+            totalSatsSent += sats;
         }
         // Don't parse OP_RETURN values of etoken txs, this info is available from chronik
         if (outputScript.startsWith(opReturn.opReturnPrefix) && !isTokenTx) {
@@ -1057,7 +1125,7 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
                     outputScript,
                     (
                         tokenChangeOutputs.get(outputScript) ?? new BigNumber(0)
-                    ).plus(output.token.amount),
+                    ).plus(output.token.atoms.toString()),
                 );
             } else {
                 /* This is the sent token qty
@@ -1072,14 +1140,14 @@ export const parseTx = (tx: Tx): HeraldParsedTx => {
                     (
                         tokenReceivingOutputs.get(outputScript) ??
                         new BigNumber(0)
-                    ).plus(output.token.amount),
+                    ).plus(output.token.atoms.toString()),
                 );
             }
         }
     }
 
     // Determine tx fee
-    const txFee = xecInputAmountSats - xecOutputAmountSats;
+    const txFee = Number(xecInputAmountSats - xecOutputAmountSats);
 
     // If this is a token send tx, return token send parsing info and not 'false' for tokenSendInfo
     if (tokenSendInfo) {
@@ -1124,11 +1192,12 @@ export const parseBlockTxs = (
         coinbaseTx.inputs[0].inputScript,
         coinbaseTx.outputs,
         miners,
+        blockHeight,
     );
     const staker = getStakerFromCoinbaseTx(blockHeight, coinbaseTx.outputs);
     if (staker !== false) {
         try {
-            staker.staker = cashaddr.encodeOutputScript(staker.staker);
+            staker.staker = encodeOutputScript(staker.staker);
         } catch {
             staker.staker = 'script(' + staker.staker + ')';
         }
@@ -1142,7 +1211,7 @@ export const parseBlockTxs = (
 
     // Sort parsedTxs by totalSatsSent, highest to lowest
     parsedTxs = parsedTxs.sort((a, b) => {
-        return b.totalSatsSent - a.totalSatsSent;
+        return Number(b.totalSatsSent - a.totalSatsSent);
     });
 
     // Collect token info needed to parse token send txs
@@ -1204,18 +1273,18 @@ export const parseBlockTxs = (
  * Build a msg about an encrypted cashtab msg tx
  * @param sendingAddress
  * @param xecReceivingOutputs
- * @param coingeckoPrices
+ * @param xecPrice
  * @returns msg
  */
 export const getEncryptedCashtabMsg = (
     sendingAddress: string,
-    xecReceivingOutputs: Map<string, number>,
-    totalSatsSent: number,
-    coingeckoPrices: false | CoinGeckoPrice[],
+    xecReceivingOutputs: Map<string, bigint>,
+    totalSatsSent: bigint,
+    xecPrice?: number,
 ): string => {
     const displayedSentQtyString = satsToFormattedValue(
         totalSatsSent,
-        coingeckoPrices,
+        xecPrice,
     );
 
     // Remove OP_RETURNs from xecReceivingOutputs
@@ -1227,7 +1296,7 @@ export const getEncryptedCashtabMsg = (
     }
 
     let msgRecipientString = `${returnAddressPreview(
-        cashaddr.encodeOutputScript(receivingOutputscripts[0]),
+        encodeOutputScript(receivingOutputscripts[0]),
     )}`;
     if (receivingOutputscripts.length > 1) {
         // Subtract 1 because you have already rendered one receiving address
@@ -1246,16 +1315,16 @@ export const getEncryptedCashtabMsg = (
  * @param airdropSendingAddress
  * @param airdropRecipientsMap
  * @param tokenInfo token info for the swapped token. optional. Bool False if API call failed.
- * @param coingeckoPrices object containing price info from coingecko. Bool False if API call failed.
+ * @param xecPrice
  * @returns msg ready to send through Telegram API
  */
 export const getAirdropTgMsg = (
     stackArray: string[],
     airdropSendingAddress: string,
-    airdropRecipientsMap: Map<string, number>,
-    totalSatsAirdropped: number,
+    airdropRecipientsMap: Map<string, bigint>,
+    totalSatsAirdropped: bigint,
     tokenInfo: false | GenesisInfo,
-    coingeckoPrices: false | CoinGeckoPrice[],
+    xecPrice?: number,
 ): string => {
     // stackArray for an airdrop tx will be
     // [airdrop_protocol_identifier, airdropped_tokenId, optional_cashtab_msg_protocol_identifier, optional_cashtab_msg]
@@ -1273,7 +1342,7 @@ export const getAirdropTgMsg = (
 
     const displayedAirdroppedQtyString = satsToFormattedValue(
         totalSatsAirdropped,
-        coingeckoPrices,
+        xecPrice,
     );
 
     // Add to msg
@@ -1482,27 +1551,30 @@ export const getSwapTgMsg = (
 
 /**
  * Build a string formatted for Telegram's API using HTML encoding
- * @param {object} parsedBlock
- * @param {array or false} coingeckoPrices if no coingecko API error
- * @param {Map or false} tokenInfoMap if no chronik API error
- * @param {Map or false} addressInfoMap if no chronik API error
- * @returns {function} splitOverflowTgMsg(tgMsg)
+ * @param parsedBlock
+ * @param coingeckoPrices if no coingecko API error
+ * @param tokenInfoMap if no chronik API error
+ * @param addressInfoMap if no chronik API error
  */
 export const getBlockTgMessage = (
     parsedBlock: HeraldParsedBlock,
     coingeckoPrices: false | CoinGeckoPrice[],
     tokenInfoMap: false | Map<string, GenesisInfo>,
     outputScriptInfoMap: false | Map<string, OutputscriptInfo>,
+    activeStakers?: CoinDanceStaker[],
 ): string[] => {
     const { hash, height, miner, staker, numTxs, parsedTxs } = parsedBlock;
     const { emojis } = config;
+
+    const xecPrice =
+        coingeckoPrices !== false ? coingeckoPrices[0].price : undefined;
 
     // Define newsworthy types of txs in parsedTxs
     // These arrays will be used to present txs in batches by type
     const genesisTxTgMsgLines = [];
     let cashtabTokenRewards = 0;
     let cashtabXecRewardTxs = 0;
-    let cashtabXecRewardsTotalXec = 0;
+    let cashtabXecRewardsTotalSats = 0n;
     const tokenSendTxTgMsgLines: string[] = [];
     const tokenBurnTxTgMsgLines = [];
     const opReturnTxTgMsgLines = [];
@@ -1577,12 +1649,12 @@ export const getBlockTgMessage = (
 
                     const displayedSentAmount = satsToFormattedValue(
                         totalSatsSent,
-                        coingeckoPrices,
+                        xecPrice,
                     );
 
                     const displayedTxFee = satsToFormattedValue(
                         txFee,
-                        coingeckoPrices,
+                        xecPrice,
                     );
 
                     app += `, ${displayedSentAmount} for ${displayedTxFee}`;
@@ -1590,12 +1662,12 @@ export const getBlockTgMessage = (
                 }
                 case opReturn.knownApps.cashtabMsgEncrypted.app: {
                     msg = getEncryptedCashtabMsg(
-                        cashaddr.encodeOutputScript(
+                        encodeOutputScript(
                             xecSendingOutputScripts.values().next().value!,
                         ), // Assume first input is sender
                         xecReceivingOutputs,
                         totalSatsSent,
-                        coingeckoPrices,
+                        xecPrice,
                     );
                     appEmoji = emojis.cashtabEncrypted;
                     break;
@@ -1603,7 +1675,7 @@ export const getBlockTgMessage = (
                 case opReturn.knownApps.airdrop.app: {
                     msg = getAirdropTgMsg(
                         stackArray!,
-                        cashaddr.encodeOutputScript(
+                        encodeOutputScript(
                             xecSendingOutputScripts.values().next().value!,
                         ), // Assume first input is sender
                         xecReceivingOutputs,
@@ -1611,7 +1683,7 @@ export const getBlockTgMessage = (
                         tokenId && tokenInfoMap
                             ? tokenInfoMap.get(tokenId)!
                             : false,
-                        coingeckoPrices,
+                        xecPrice,
                     );
                     appEmoji = emojis.airdrop;
                     break;
@@ -1630,7 +1702,7 @@ export const getBlockTgMessage = (
                     // totalSatsSent is total amount fused
                     const displayedFusedQtyString = satsToFormattedValue(
                         totalSatsSent,
-                        coingeckoPrices,
+                        xecPrice,
                     );
 
                     msg += `Fused ${displayedFusedQtyString} from ${xecSendingOutputScripts.size} inputs into ${xecReceivingOutputs.size} outputs`;
@@ -1738,7 +1810,7 @@ export const getBlockTgMessage = (
 
         if (tokenBurnInfo && tokenInfoMap) {
             // If this is a token burn tx and you have tokenInfoMap
-            const { tokenId, undecimalizedTokenBurnAmount } = tokenBurnInfo;
+            const { tokenId, actualBurnAtoms } = tokenBurnInfo;
 
             if (typeof tokenId !== 'undefined' && tokenInfoMap.has(tokenId)) {
                 // Some txs may have tokenBurnInfo, but did not get tokenSendInfo
@@ -1758,12 +1830,12 @@ export const getBlockTgMessage = (
                 // Use decimals to calculate the burned amount as string
                 const decimalizedTokenBurnAmount =
                     bigNumberAmountToLocaleString(
-                        undecimalizedTokenBurnAmount,
+                        actualBurnAtoms.toString(),
                         decimals,
                     );
 
                 const tokenBurningAddressStr = returnAddressPreview(
-                    cashaddr.encodeOutputScript(
+                    encodeOutputScript(
                         xecSendingOutputScripts.values().next().value!,
                     ),
                 );
@@ -1781,16 +1853,16 @@ export const getBlockTgMessage = (
 
         const displayedSentAmount = satsToFormattedValue(
             totalSatsSent,
-            coingeckoPrices,
+            xecPrice,
         );
 
-        const displayedTxFee = satsToFormattedValue(txFee, coingeckoPrices);
+        const displayedTxFee = satsToFormattedValue(txFee, xecPrice);
 
         // Clone xecReceivingOutputs so that you don't modify unit test mocks
         const xecReceivingAddressOutputs = new Map(xecReceivingOutputs);
 
         // Throw out OP_RETURN outputs for txs parsed as XEC send txs
-        xecReceivingAddressOutputs.forEach((value, key, map) => {
+        xecReceivingAddressOutputs.forEach((_value, key, map) => {
             if (key.startsWith(opReturn.opReturnPrefix)) {
                 map.delete(key);
             }
@@ -1809,7 +1881,7 @@ export const getBlockTgMessage = (
 
             if (firstXecSendingOutputScript === TOKEN_SERVER_OUTPUTSCRIPT) {
                 cashtabXecRewardTxs += 1;
-                cashtabXecRewardsTotalXec += totalSatsSent;
+                cashtabXecRewardsTotalSats += totalSatsSent;
                 continue;
             }
 
@@ -1845,7 +1917,7 @@ export const getBlockTgMessage = (
                           xecSendingOutputScripts.size > 1
                               ? `${xecSendingOutputScripts.size} addresses`
                               : returnAddressPreview(
-                                    cashaddr.encodeOutputScript(
+                                    encodeOutputScript(
                                         xecSendingOutputScripts.values().next()
                                             .value!,
                                     ),
@@ -1863,7 +1935,7 @@ export const getBlockTgMessage = (
             }/tx/${txid}">${displayedSentAmount} for ${displayedTxFee}</a>${
                 xecSenderEmoji !== '' || xecReceiverEmoji !== ''
                     ? ` ${xecSenderEmoji}${returnAddressPreview(
-                          cashaddr.encodeOutputScript(
+                          encodeOutputScript(
                               xecSendingOutputScripts.values().next().value!,
                           ),
                       )} ${config.emojis.arrowRight} ${
@@ -1871,7 +1943,7 @@ export const getBlockTgMessage = (
                           xecSendingOutputScripts.values().next().value
                               ? 'itself'
                               : `${xecReceiverEmoji}${returnAddressPreview(
-                                    cashaddr.encodeOutputScript(
+                                    encodeOutputScript(
                                         xecReceivingAddressOutputs.keys().next()
                                             .value!,
                                     ),
@@ -1925,14 +1997,24 @@ export const getBlockTgMessage = (
     // Staker
     // Staking rewards to <staker>
     if (staker) {
+        // Get ParsedStaker
+        const parsedStaker = parseStaker(staker, activeStakers);
+
         // Get fiat amount of staking rwds
         tgMsg.push(
             `${emojis.staker}${satsToFormattedValue(
                 staker.reward,
-                coingeckoPrices,
+                xecPrice,
             )} to <a href="${config.blockExplorer}/address/${
                 staker.staker
-            }">${returnAddressPreview(staker.staker)}</a>`,
+            }">${returnAddressPreview(staker.staker)}</a>${
+                typeof parsedStaker !== 'undefined'
+                    ? ` ${satsToFormattedValue(
+                          parsedStaker.stakedSatoshisThisWinner,
+                          xecPrice,
+                      )} staked (${parsedStaker.oddsThisWinner})`
+                    : ''
+            }`,
         );
     }
 
@@ -1990,7 +2072,7 @@ export const getBlockTgMessage = (
                 `<b>${cashtabXecRewardTxs}</b> new user${
                     cashtabXecRewardTxs > 1 ? `s` : ''
                 } received <b>${satsToFormattedValue(
-                    cashtabXecRewardsTotalXec,
+                    cashtabXecRewardsTotalSats,
                 )}</b>`,
             );
         }
@@ -2127,7 +2209,7 @@ export const guessRejectReason = async (
     // This output is a constant so it's easy to look for
     let hasMinerFundOuptut = false;
     for (let i = 0; i < coinbaseData.outputs.length; i += 1) {
-        if (coinbaseData.outputs[i].outputScript === minerFundOutputScript) {
+        if (coinbaseData.outputs[i].outputScript === IFP_OUTPUTSCRIPT) {
             hasMinerFundOuptut = true;
             break;
         }
@@ -2171,7 +2253,7 @@ export const guessRejectReason = async (
                 // if it is not possible.
                 if (typeof address !== 'undefined') {
                     try {
-                        const wrongWinnerAddress = cashaddr.encodeOutputScript(
+                        const wrongWinnerAddress = encodeOutputScript(
                             wrongWinner.staker,
                         );
                         return `wrong staking reward payout (${wrongWinnerAddress} instead of ${address})`;
@@ -2204,6 +2286,10 @@ export const guessRejectReason = async (
     return 'unknown';
 };
 
+interface AdditionalActionParams {
+    volume: bigint;
+}
+
 /**
  * Initialize action data for a token if not yet intialized
  * Update action count if initialized
@@ -2211,33 +2297,53 @@ export const guessRejectReason = async (
  * @param existingAction result from tokenActionMap.get(tokenId)
  * @param tokenId
  * @param action
+ * @param additionalActionParams other info about this particular action, if present
  */
 export const initializeOrIncrementTokenData = (
     tokenActionMap: Map<string, TokenActions>,
     existingActions: undefined | TokenActions,
     tokenId: string,
     action: TrackedTokenAction,
+    additionalActionParams?: AdditionalActionParams,
 ) => {
-    tokenActionMap.set(
-        tokenId,
-        typeof existingActions === 'undefined'
-            ? {
-                  [action]: {
-                      count: 1,
-                  },
-                  actionCount: 1,
-              }
-            : {
-                  ...existingActions,
-                  [action]: {
-                      count:
-                          action in existingActions
-                              ? existingActions[action]!.count! + 1
-                              : 1,
-                  },
-                  actionCount: existingActions.actionCount + 1,
-              },
-    );
+    if (typeof existingActions === 'undefined') {
+        return tokenActionMap.set(tokenId, {
+            [action]: {
+                count: 1,
+                ...additionalActionParams,
+            },
+            actionCount: 1,
+        });
+    }
+    // Build data to set
+    const incrementedTokenActions = {
+        ...existingActions,
+        [action]: {
+            ...existingActions[action],
+            count:
+                typeof existingActions[action]?.count !== 'undefined'
+                    ? existingActions[action]!.count! + 1
+                    : 1,
+        },
+        actionCount: existingActions.actionCount + 1,
+    };
+    if (
+        action === TrackedTokenAction.Buy &&
+        typeof additionalActionParams !== 'undefined'
+    ) {
+        const existingBuyAction =
+            incrementedTokenActions[TrackedTokenAction.Buy];
+
+        const existingVolume = existingBuyAction?.volume;
+
+        // increment volume
+        existingBuyAction!.volume =
+            typeof existingVolume === 'undefined'
+                ? additionalActionParams.volume
+                : existingVolume + additionalActionParams.volume;
+    }
+
+    tokenActionMap.set(tokenId, incrementedTokenActions);
 };
 
 /**
@@ -2257,13 +2363,19 @@ export const initializeOrIncrementTokenData = (
  * @param now unix timestamp in seconds
  * @param txs array of CONFIRMED Txs
  * @param tokenInfoMap tokenId => genesisInfo
+ * @param agoraTokensMaxRender how many agora tokens to render, useful for showing more or less info
+ * @param nonAgoraTokensMaxRender same for non-agora token actions. this info is less interesting in the summary.
  * @param priceInfo { usd, usd_market_cap, usd_24h_vol, usd_24h_change }
+ * @param activeStakers
  */
 export const summarizeTxHistory = (
     now: number,
     txs: Tx[],
     tokenInfoMap: false | Map<string, GenesisInfo>,
+    agoraTokensMaxRender: number,
+    nonAgoraTokensMaxRender: number,
     priceInfo?: PriceInfo,
+    activeStakers?: CoinDanceStaker[],
 ): string[] => {
     const xecPriceUsd =
         typeof priceInfo !== 'undefined' ? priceInfo.usd : undefined;
@@ -2278,6 +2390,15 @@ export const summarizeTxHistory = (
     const blockCount =
         txs[txCount - 1].block!.height - txs[0].block!.height + 1;
 
+    // Get theoretical max capacity of the network for this block count
+    const BLOCK_SIZE_SOFT_LIMIT_MB = 32;
+    const BYTES_PER_KB = 1024;
+    const KB_PER_MB = 1024;
+    const MAX_BLOCK_SIZE_BYTES =
+        BLOCK_SIZE_SOFT_LIMIT_MB * KB_PER_MB * BYTES_PER_KB;
+
+    const availableCapacityBytes = blockCount * MAX_BLOCK_SIZE_BYTES;
+
     // Initialize objects useful for summarizing data
 
     // miner => blocks found
@@ -2288,7 +2409,7 @@ export const summarizeTxHistory = (
     const viabtcMinerMap = new Map();
 
     // stakerOutputScript => {count, reward}
-    const stakerMap = new Map();
+    const stakerMap: Map<string, { count: number; reward: bigint }> = new Map();
 
     // TODO more info about send txs
     // inputs[0].outputScript => {count, satoshisSent}
@@ -2297,14 +2418,14 @@ export const summarizeTxHistory = (
     // lokad name => count
     const appTxMap = new Map();
 
-    let totalStakingRewardSats = 0;
+    let totalStakingRewardSats = 0n;
     let cashtabXecRewardCount = 0;
-    let cashtabXecRewardSats = 0;
+    let cashtabXecRewardSats = 0n;
     let cashtabCachetRewardCount = 0;
     let binanceWithdrawalCount = 0;
-    let binanceWithdrawalSats = 0;
+    let binanceWithdrawalSats = 0n;
 
-    let slpFungibleTxs = 0;
+    let fungibleTokenTxs = 0;
     let appTxs = 0;
     let unknownLokadTxs = 0;
 
@@ -2313,7 +2434,6 @@ export const summarizeTxHistory = (
     let invalidTokenEntries = 0;
     let nftNonAgoraTokenEntries = 0;
     let mintVaultTokenEntries = 0;
-    let alpTokenEntries = 0;
 
     let newSlpTokensFixedSupply = 0;
     let newSlpTokensVariableSupply = 0;
@@ -2328,12 +2448,19 @@ export const summarizeTxHistory = (
 
     // Agora vars
     let agoraTxs = 0;
-    const agoraActions = new Map();
-    let oneshotVolumeSatoshis = 0;
-    let partialVolumeSatoshis = 0;
+    const agoraActions: Map<string, TokenActions> = new Map();
+    let oneshotVolumeSatoshis = 0n;
+    let partialVolumeSatoshis = 0n;
 
+    // Token reference
+    // We have this in tokenInfoMap, but it's easier to set and access here
+    const tokenTypeMap: Map<string, SlpTokenType_Type | AlpTokenType_Type> =
+        new Map();
+
+    let utilizedCapacityBytes = 0;
     for (const tx of txs) {
-        const { inputs, outputs, block, tokenEntries, isCoinbase } = tx;
+        const { inputs, outputs, block, tokenEntries, isCoinbase, size } = tx;
+        utilizedCapacityBytes += size;
 
         if (isCoinbase) {
             // Coinbase tx - get miner and staker info
@@ -2341,6 +2468,7 @@ export const summarizeTxHistory = (
                 tx.inputs[0].inputScript,
                 outputs,
                 miners,
+                block!.height!,
             );
             if (miner.includes('ViaBTC')) {
                 viaBtcBlocks += 1;
@@ -2392,9 +2520,9 @@ export const summarizeTxHistory = (
                 // XEC rwd
                 cashtabXecRewardCount += 1;
                 for (const output of outputs) {
-                    const { value, outputScript } = output;
+                    const { sats, outputScript } = output;
                     if (outputScript !== TOKEN_SERVER_OUTPUTSCRIPT) {
-                        cashtabXecRewardSats += value;
+                        cashtabXecRewardSats += sats;
                     }
                 }
             }
@@ -2405,11 +2533,11 @@ export const summarizeTxHistory = (
             // Tx sent by Binance
             // Make sure it's not just a utxo consolidation
             for (const output of outputs) {
-                const { value, outputScript } = output;
+                const { sats, outputScript } = output;
                 if (outputScript !== BINANCE_OUTPUTSCRIPT) {
                     // If we have an output that is not sending to the binance hot wallet
                     // Increment total value amount withdrawn
-                    binanceWithdrawalSats += value;
+                    binanceWithdrawalSats += sats;
                     // We also call this a withdrawal
                     // Note that 1 tx from the hot wallet may include more than 1 withdrawal
                     binanceWithdrawalCount += 1;
@@ -2428,9 +2556,10 @@ export const summarizeTxHistory = (
                     txType,
                     groupTokenId,
                     isInvalid,
-                    actualBurnAmount,
+                    actualBurnAtoms,
                 } = tokenEntry;
                 const { type } = tokenType;
+                tokenTypeMap.set(tokenId, type);
 
                 if (isInvalid) {
                     // TODO find this for test tx
@@ -2438,17 +2567,6 @@ export const summarizeTxHistory = (
                     // Log to console so if we see this tx, we can analyze it for parsing
                     console.info(
                         `Unparsed isInvalid tokenEntry in tx: ${tx.txid}`,
-                    );
-                    // No other parsing for this tokenEntry
-                    continue;
-                }
-
-                if (type === 'ALP_TOKEN_TYPE_STANDARD') {
-                    // TODO ALP parsing
-                    alpTokenEntries += 1;
-                    // Log to console so if we see this tx, we can analyze it for parsing
-                    console.info(
-                        `Unparsed ALP_TOKEN_TYPE_STANDARD tokenEntry in tx: ${tx.txid}`,
                     );
                     // No other parsing for this tokenEntry
                     continue;
@@ -2540,7 +2658,7 @@ export const summarizeTxHistory = (
                                     // a listing, an ad setup, a buy, or a cancel
                                     try {
                                         const { type } =
-                                            cashaddr.getTypeAndHashFromOutputScript(
+                                            getTypeAndHashFromOutputScript(
                                                 outputScript!,
                                             );
                                         if (type === 'p2sh') {
@@ -2595,9 +2713,12 @@ export const summarizeTxHistory = (
 
                                                 // ONESHOT purchases include the purchase price at the
                                                 // 1-indexed output
+                                                let volumeSatoshisThisBuy = 0n;
                                                 if (tx.outputs.length >= 2) {
+                                                    volumeSatoshisThisBuy =
+                                                        tx.outputs[1].sats;
                                                     oneshotVolumeSatoshis +=
-                                                        tx.outputs[1].value;
+                                                        volumeSatoshisThisBuy;
                                                 } else {
                                                     // Should never happen. Log to review if we see this.
                                                     console.error(
@@ -2610,6 +2731,9 @@ export const summarizeTxHistory = (
                                                     existingNftAgoraActions,
                                                     groupTokenId,
                                                     TrackedTokenAction.Buy,
+                                                    {
+                                                        volume: volumeSatoshisThisBuy,
+                                                    },
                                                 );
                                                 isAgoraBuySellList = true;
                                                 // Stop processing inputs for this tx
@@ -2618,7 +2742,7 @@ export const summarizeTxHistory = (
                                         }
                                     } catch {
                                         console.error(
-                                            `Error in cashaddr.getTypeAndHashFromOutputScript(${outputScript}) from txid ${tx.txid}`,
+                                            `Error in getTypeAndHashFromOutputScript(${outputScript}) from txid ${tx.txid}`,
                                         );
                                         // Do not parse it as an agora tx
                                     }
@@ -2642,7 +2766,7 @@ export const summarizeTxHistory = (
                                     // No other known use cases at the moment
                                     try {
                                         const { type } =
-                                            cashaddr.getTypeAndHashFromOutputScript(
+                                            getTypeAndHashFromOutputScript(
                                                 outputScript,
                                             );
 
@@ -2660,7 +2784,7 @@ export const summarizeTxHistory = (
                                         }
                                     } catch {
                                         console.error(
-                                            `Error in cashaddr.getTypeAndHashFromOutputScript(${outputScript}) for output from txid ${tx.txid}`,
+                                            `Error in getTypeAndHashFromOutputScript(${outputScript}) for output from txid ${tx.txid}`,
                                         );
                                         // Do not parse it as an agora tx
                                     }
@@ -2674,7 +2798,7 @@ export const summarizeTxHistory = (
                                 continue;
                             }
 
-                            if (actualBurnAmount !== '0') {
+                            if (actualBurnAtoms !== 0n) {
                                 nftNonAgoraTokenEntries += 1;
                                 // Parse as burn
                                 // Note this is not currently supported in Cashtab
@@ -2747,8 +2871,11 @@ export const summarizeTxHistory = (
                             continue;
                     }
                 }
-                if (type === 'SLP_TOKEN_TYPE_FUNGIBLE') {
-                    slpFungibleTxs += 1;
+                if (
+                    type === 'SLP_TOKEN_TYPE_FUNGIBLE' ||
+                    type === 'ALP_TOKEN_TYPE_STANDARD'
+                ) {
+                    fungibleTokenTxs += 1;
                     switch (txType) {
                         case 'NONE': {
                             invalidTokenEntries += 1;
@@ -2770,7 +2897,7 @@ export const summarizeTxHistory = (
                         }
                         case 'GENESIS': {
                             const genesis = {
-                                amount: '0',
+                                atoms: 0n,
                                 hasBaton: false,
                             };
                             // See if we already have tokenActions at this tokenId
@@ -2780,14 +2907,14 @@ export const summarizeTxHistory = (
                                     if (output.token.tokenId === tokenId) {
                                         // Per spec, SLP 1 genesis qty is always at output index 1
                                         // But we iterate over all outputs to check for mint batons
-                                        const { amount, isMintBaton } =
+                                        // ALP spec includes mint batons first and qty after, so makes sense
+                                        // to check them all
+                                        const { atoms, isMintBaton } =
                                             output.token;
                                         if (isMintBaton) {
-                                            newSlpTokensVariableSupply += 1;
                                             genesis.hasBaton = true;
                                         } else {
-                                            newSlpTokensFixedSupply += 1;
-                                            genesis.amount = amount;
+                                            genesis.atoms = atoms;
                                         }
                                     }
                                     // We do not use initializeOrIncrementTokenData here
@@ -2808,6 +2935,11 @@ export const summarizeTxHistory = (
                                     // No further parsing for this tokenEntry
                                     continue;
                                 }
+                            }
+                            if (genesis.hasBaton === true) {
+                                newSlpTokensVariableSupply += 1;
+                            } else {
+                                newSlpTokensFixedSupply += 1;
                             }
                             break;
                         }
@@ -2830,27 +2962,29 @@ export const summarizeTxHistory = (
                                 if (typeof input.token !== 'undefined') {
                                     const { outputScript, inputScript } = input;
                                     // A token input that is p2sh may be
-                                    // a listing, an ad setup, a buy, or a cancel
+                                    // an SLP listing, a buy, or a cancel
                                     try {
-                                        const { type } =
-                                            cashaddr.getTypeAndHashFromOutputScript(
+                                        const addrType =
+                                            getTypeAndHashFromOutputScript(
                                                 outputScript!,
-                                            );
-                                        if (type === 'p2sh') {
+                                            ).type;
+                                        if (addrType === 'p2sh') {
                                             // We are only parsing SLP agora txs here
-                                            // A listing will have AGR0 lokad in input script
-                                            const AGORA_LOKAD_STARTSWITH =
-                                                '0441475230';
+                                            // An SLP Agora listing will have AGR0 lokad in input script
+                                            const AGORA_LOKAD = '41475230';
 
                                             if (
-                                                inputScript.startsWith(
-                                                    AGORA_LOKAD_STARTSWITH,
+                                                inputScript.includes(
+                                                    AGORA_LOKAD,
                                                 )
                                             ) {
-                                                // Agora tx
-                                                // For now, we know all listing txs only have a single p2sh input
-
-                                                if (inputs.length === 1) {
+                                                if (
+                                                    inputs.length === 1 &&
+                                                    type ===
+                                                        'SLP_TOKEN_TYPE_FUNGIBLE'
+                                                ) {
+                                                    // Agora tx
+                                                    // For now, we know all SLP_TOKEN_TYPE_FUNGIBLE listing txs only have a single p2sh input
                                                     // Agora listing
                                                     initializeOrIncrementTokenData(
                                                         agoraActions,
@@ -2894,11 +3028,15 @@ export const summarizeTxHistory = (
 
                                                     // Partial purchases include the purchase price at the
                                                     // 1-indexed output
+                                                    let volumeSatoshisThisBuy =
+                                                        0n;
                                                     if (
                                                         tx.outputs.length >= 2
                                                     ) {
+                                                        volumeSatoshisThisBuy =
+                                                            tx.outputs[1].sats;
                                                         partialVolumeSatoshis +=
-                                                            tx.outputs[1].value;
+                                                            volumeSatoshisThisBuy;
                                                     } else {
                                                         // Should never happen. Log to review if we see this.
                                                         console.error(
@@ -2911,6 +3049,9 @@ export const summarizeTxHistory = (
                                                         existingAgoraActions,
                                                         tokenId,
                                                         TrackedTokenAction.Buy,
+                                                        {
+                                                            volume: volumeSatoshisThisBuy,
+                                                        },
                                                     );
                                                     isAgoraBuySellList = true;
                                                     // Stop processing inputs for this tx
@@ -2920,7 +3061,7 @@ export const summarizeTxHistory = (
                                         }
                                     } catch {
                                         console.error(
-                                            `Error in cashaddr.getTypeAndHashFromOutputScript(${outputScript}) from txid ${tx.txid}`,
+                                            `Error in getTypeAndHashFromOutputScript(${outputScript}) from txid ${tx.txid}`,
                                         );
                                         // Do not parse it as an agora tx
                                     }
@@ -2934,38 +3075,93 @@ export const summarizeTxHistory = (
                                 continue;
                             }
 
-                            // Check for ad prep tx
-                            let isAdPrep = false;
-                            for (const output of outputs) {
-                                if (typeof output.token !== 'undefined') {
-                                    const { outputScript } = output;
-                                    // We assume a p2sh token output is an ad setup tx
-                                    // No other known use cases at the moment
-                                    try {
-                                        const { type } =
-                                            cashaddr.getTypeAndHashFromOutputScript(
-                                                outputScript,
+                            // Check for ALP listing
+                            // ALP agora listing txs have
+                            // - p2pkh input
+                            // - p2sh output
+                            // - agora plugin info in output
+                            if (
+                                type === 'ALP_TOKEN_TYPE_STANDARD' &&
+                                !isAgoraBuySellList
+                            ) {
+                                for (const output of outputs) {
+                                    if (typeof output.token !== 'undefined') {
+                                        // Is it a p2sh output?
+                                        const { outputScript } = output;
+                                        // We assume a p2sh token output for SLP 1 fungible is an ad setup tx
+                                        // No other known use cases at the moment
+                                        try {
+                                            const addrType =
+                                                getTypeAndHashFromOutputScript(
+                                                    outputScript,
+                                                ).type;
+                                            if (addrType === 'p2sh') {
+                                                // Is it agora?
+                                                if (
+                                                    typeof output.plugins !==
+                                                        'undefined' &&
+                                                    typeof output.plugins
+                                                        .agora !== 'undefined'
+                                                ) {
+                                                    agoraTxs += 1;
+                                                    // Agora listing
+                                                    initializeOrIncrementTokenData(
+                                                        agoraActions,
+                                                        existingAgoraActions,
+                                                        tokenId,
+                                                        TrackedTokenAction.List,
+                                                    );
+                                                    isAgoraBuySellList = true;
+                                                    break;
+                                                }
+                                            }
+                                        } catch (err) {
+                                            console.error(
+                                                `Error getting addrType while checking for ALP list tx: ${tx.txid}`,
+                                                err,
                                             );
-                                        if (type === 'p2sh') {
-                                            // Agora ad setup tx for SLP1
-                                            initializeOrIncrementTokenData(
-                                                agoraActions,
-                                                existingAgoraActions,
-                                                tokenId,
-                                                TrackedTokenAction.AdPrep,
-                                            );
-                                            isAdPrep = true;
-                                            break;
-                                            // Stop iterating over outputs
+                                            // no action
                                         }
-                                    } catch {
-                                        console.error(
-                                            `Error in cashaddr.getTypeAndHashFromOutputScript(${outputScript}) for output from txid ${tx.txid}`,
-                                        );
-                                        // Do not parse it as an agora tx
                                     }
                                 }
                             }
+
+                            // Check for ad prep tx
+                            let isAdPrep = false;
+                            // Only SLP1 has ad prep txs
+                            if (type === 'SLP_TOKEN_TYPE_FUNGIBLE') {
+                                for (const output of outputs) {
+                                    if (typeof output.token !== 'undefined') {
+                                        const { outputScript } = output;
+                                        // We assume a p2sh token output for SLP 1 fungible is an ad setup tx
+                                        // No other known use cases at the moment
+                                        try {
+                                            const addrType =
+                                                getTypeAndHashFromOutputScript(
+                                                    outputScript,
+                                                ).type;
+                                            if (addrType === 'p2sh') {
+                                                // Agora ad setup tx for SLP1
+                                                initializeOrIncrementTokenData(
+                                                    agoraActions,
+                                                    existingAgoraActions,
+                                                    tokenId,
+                                                    TrackedTokenAction.AdPrep,
+                                                );
+                                                isAdPrep = true;
+                                                break;
+                                                // Stop iterating over outputs
+                                            }
+                                        } catch {
+                                            console.error(
+                                                `Error in getTypeAndHashFromOutputScript(${outputScript}) for output from txid ${tx.txid}`,
+                                            );
+                                            // Do not parse it as an agora tx
+                                        }
+                                    }
+                                }
+                            }
+
                             if (isAdPrep) {
                                 agoraTxs += 1;
                                 // We have processed this tx as an Agora Ad setup tx
@@ -2974,7 +3170,7 @@ export const summarizeTxHistory = (
                             }
 
                             // Parse as burn
-                            if (actualBurnAmount !== '0') {
+                            if (actualBurnAtoms !== 0n) {
                                 initializeOrIncrementTokenData(
                                     tokenActions,
                                     existingTokenActions,
@@ -3053,6 +3249,36 @@ export const summarizeTxHistory = (
         }
     }
 
+    const avgTxSize = utilizedCapacityBytes / txCount;
+    const theoreticalMaxTxs = availableCapacityBytes / avgTxSize;
+
+    // Print this to console so dev can check logs
+    // For now, too technical to keep this in the msg
+    console.info(
+        `Avg tx size bytes: ${avgTxSize.toLocaleString('en-US', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+        })}`,
+    );
+    console.info(
+        `Max tx count: ${theoreticalMaxTxs.toLocaleString('en-US', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+        })}`,
+    );
+
+    // Determine % capacity for ecash ops over this interval
+    const operatingCapacity =
+        (100 * utilizedCapacityBytes) / availableCapacityBytes;
+
+    // Choose between 3 available capacity emojis
+    const capacityEmoji =
+        operatingCapacity < 10
+            ? config.emojis.capacityLow
+            : operatingCapacity < 50
+            ? config.emojis.capacityMed
+            : config.emojis.capacityHigh;
+
     // Add ViaBTC as a single entity to minerMap
     minerMap.set(`ViaBTC`, viaBtcBlocks);
     // Sort miner map by blocks found
@@ -3072,19 +3298,26 @@ export const summarizeTxHistory = (
     // Build your msg
     const tgMsg = [];
 
+    const SECONDS_PER_DAY = 86400;
     tgMsg.push(
-        `<b>${new Date(now * 1000).toLocaleDateString('en-GB', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            timeZone: 'UTC',
-        })}</b>`,
+        `<b>${new Date((now - SECONDS_PER_DAY) * 1000).toLocaleDateString(
+            'en-GB',
+            {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                timeZone: 'UTC',
+            },
+        )}</b>`,
     );
     tgMsg.push(
         `${config.emojis.block}${blockCount.toLocaleString('en-US')} blocks`,
     );
     tgMsg.push(
         `${config.emojis.arrowRight}${txs.length.toLocaleString('en-US')} txs`,
+    );
+    tgMsg.push(
+        `${capacityEmoji}<i>${operatingCapacity.toFixed(2)}% capacity</i>`,
     );
     tgMsg.push('');
 
@@ -3129,66 +3362,87 @@ export const summarizeTxHistory = (
     }
     tgMsg.push('');
 
-    const SATOSHIS_PER_XEC = 100;
-    const totalStakingRewardsXec = totalStakingRewardSats / SATOSHIS_PER_XEC;
-    const renderedTotalStakingRewards =
-        typeof xecPriceUsd !== 'undefined'
-            ? `$${(totalStakingRewardsXec * xecPriceUsd).toLocaleString(
-                  'en-US',
-                  {
-                      minimumFractionDigits: 0,
-                      maximumFractionDigits: 0,
-                  },
-              )}`
-            : `${totalStakingRewardsXec.toLocaleString('en-US', {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 0,
-              })} XEC`;
-
-    // Conditionally render agora volume the same way
+    const renderedTotalStakingRewards = satsToFormattedValue(
+        totalStakingRewardSats,
+        xecPriceUsd,
+    );
     // Oneshot volume
-    const oneshotVolumeXec = oneshotVolumeSatoshis / SATOSHIS_PER_XEC;
-    const renderedOneshotVolume =
-        typeof xecPriceUsd !== 'undefined'
-            ? `$${(oneshotVolumeXec * xecPriceUsd).toLocaleString('en-US', {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 0,
-              })}`
-            : `${oneshotVolumeXec.toLocaleString('en-US', {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 0,
-              })} XEC`;
+    const renderedOneshotVolume = satsToFormattedValue(
+        oneshotVolumeSatoshis,
+        xecPriceUsd,
+    );
+
     // Partial volume
-    const partialVolumeXec = partialVolumeSatoshis / SATOSHIS_PER_XEC;
-    const renderedPartialVolume =
-        typeof xecPriceUsd !== 'undefined'
-            ? `$${(partialVolumeXec * xecPriceUsd).toLocaleString('en-US', {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 0,
-              })}`
-            : `${partialVolumeXec.toLocaleString('en-US', {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 0,
-              })} XEC`;
+    const renderedPartialVolume = satsToFormattedValue(
+        partialVolumeSatoshis,
+        xecPriceUsd,
+    );
 
     // Top stakers
     const STAKERS_TO_SHOW = 3;
     tgMsg.push(
         `<b><i>${config.emojis.staker}${sortedStakerMap.size} stakers earned ${renderedTotalStakingRewards}</i></b>`,
     );
+    // Line for total staked amount of XEC
+    let totalSatsStaked;
+    if (typeof activeStakers !== 'undefined') {
+        totalSatsStaked = activeStakers.reduce((acc, current) => {
+            // Parse the stake string to float for addition.
+            // Note: Assuming stake is always a string with 2 decimal places
+            // Cursory review shows values like "stake": "22000000000.00",
+            // so seems to be how it's typed
+            return acc + BigInt(current.stake.replace('.', ''));
+        }, 0n);
+        tgMsg.push(
+            `<b><i>${config.emojis.stakingNode} ${
+                activeStakers.length
+            } nodes staking <code>${toXec(totalSatsStaked).toLocaleString(
+                'en-US',
+                {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                },
+            )}</code> XEC (${satsToFormattedValue(
+                totalSatsStaked,
+                xecPriceUsd,
+            )})</i></b>`,
+        );
+    }
     tgMsg.push(`<u>Top ${STAKERS_TO_SHOW}</u>`);
     const topStakers = [...sortedStakerMap.entries()].slice(0, STAKERS_TO_SHOW);
+
     for (let i = 0; i < topStakers.length; i += 1) {
         const staker = topStakers[i];
-        const count = staker[1].count;
+        const { count } = staker[1];
         const pct = (100 * (count / blockCount)).toFixed(0);
-        const addr = cashaddr.encodeOutputScript(staker[0]);
+        const addr = encodeOutputScript(staker[0]);
+        let thisStakerPercentStake;
+        if (
+            typeof activeStakers !== 'undefined' &&
+            typeof totalSatsStaked !== 'undefined'
+        ) {
+            const thisStaker = activeStakers.find(
+                activeStaker => activeStaker.payoutAddress === addr,
+            );
+            if (typeof thisStaker !== 'undefined') {
+                thisStakerPercentStake =
+                    (
+                        (100 * parseFloat(thisStaker.stake)) /
+                        (Number(totalSatsStaked) / 100)
+                    ).toFixed(0) + '%';
+            }
+        }
+
         tgMsg.push(
             `${i + 1}. ${`<a href="${
                 config.blockExplorer
             }/address/${addr}">${returnAddressPreview(addr)}</a>`}, ${
                 staker[1].count
-            } <i>(${pct}%)</i>`,
+            } <i>(${pct}%${
+                typeof thisStakerPercentStake !== 'undefined'
+                    ? ` won, ${thisStakerPercentStake} expected`
+                    : ''
+            })</i>`,
         );
     }
 
@@ -3221,8 +3475,8 @@ export const summarizeTxHistory = (
                 `${
                     config.emojis.tokenSend
                 } <b>${cashtabCachetRewardCount}</b> <a href="${
-                    config.blockExplorer
-                }/tx/aed861a31b96934b88c0252ede135cb9700d7649f69191235087a3030e553cb1">CACHET</a> reward${
+                    config.tokenLandingBase
+                }/aed861a31b96934b88c0252ede135cb9700d7649f69191235087a3030e553cb1">CACHET</a> reward${
                     cashtabCachetRewardCount > 1 ? `s` : ''
                 }`,
             );
@@ -3232,28 +3486,14 @@ export const summarizeTxHistory = (
 
     // Agora partials
     if (agoraTxs > 0) {
-        // Zero out counters for sorting purposes
-        agoraActions.forEach((agoraActionInfo, tokenId) => {
-            // Note we do not check adPrep as any token with adPrep has listing
-            const { buy, list, cancel } = agoraActionInfo;
-
-            if (typeof buy === 'undefined') {
-                agoraActionInfo.buy = { count: 0 };
-            }
-            if (typeof list === 'undefined') {
-                agoraActionInfo.list = { count: 0 };
-            }
-            if (typeof cancel === 'undefined') {
-                agoraActionInfo.cancel = { count: 0 };
-            }
-            agoraActions.set(tokenId, agoraActionInfo);
-        });
-
-        // Sort agoraActions by buys
+        // Sort agoraActions by volume
         const sortedAgoraActions = new Map(
             [...agoraActions.entries()].sort(
-                (keyValueArrayA, keyValueArrayB) =>
-                    keyValueArrayB[1].buy.count - keyValueArrayA[1].buy.count,
+                (keyValueArrayA, keyValueArrayB) => {
+                    const volA = Number(keyValueArrayA[1].buy?.volume ?? 0n);
+                    const volB = Number(keyValueArrayB[1].buy?.volume ?? 0n);
+                    return volB - volA;
+                },
             ),
         );
 
@@ -3275,17 +3515,18 @@ export const summarizeTxHistory = (
             );
         }
 
-        const AGORA_TOKENS_TO_SHOW = 10;
-
         // Handle case where we do not see as many agora tokens as our max
         const agoraTokensToShow =
-            agoraTokenCount < AGORA_TOKENS_TO_SHOW
+            agoraTokenCount < agoraTokensMaxRender
                 ? agoraTokenCount
-                : AGORA_TOKENS_TO_SHOW;
+                : agoraTokensMaxRender;
         const newsworthyAgoraTokens = agoraTokens.slice(0, agoraTokensToShow);
 
-        if (agoraTokenCount > AGORA_TOKENS_TO_SHOW) {
-            tgMsg.push(`<u>Top ${AGORA_TOKENS_TO_SHOW}</u>`);
+        if (
+            agoraTokenCount > agoraTokensMaxRender &&
+            agoraTokensMaxRender !== 0
+        ) {
+            tgMsg.push(`<u>Top ${agoraTokensMaxRender}</u>`);
         }
 
         // Emoji key
@@ -3295,14 +3536,20 @@ export const summarizeTxHistory = (
 
         for (let i = 0; i < newsworthyAgoraTokens.length; i += 1) {
             const tokenId = newsworthyAgoraTokens[i];
-            const tokenActionInfo = sortedAgoraActions.get(tokenId);
+            const tokenActionInfo = sortedAgoraActions.get(
+                tokenId,
+            ) as TokenActions;
             const genesisInfo =
                 tokenInfoMap === false ? undefined : tokenInfoMap.get(tokenId);
 
             const { buy, list, cancel } = tokenActionInfo;
 
+            const isAlp =
+                tokenTypeMap.get(tokenId) === 'ALP_TOKEN_TYPE_STANDARD';
             tgMsg.push(
-                `<a href="${config.blockExplorer}/tx/${tokenId}">${
+                `${isAlp ? config.emojis.alp : ''}<a href="${
+                    config.tokenLandingBase
+                }/${tokenId}">${
                     typeof genesisInfo === 'undefined'
                         ? `${tokenId.slice(0, 3)}...${tokenId.slice(-3)}`
                         : genesisInfo.tokenName
@@ -3313,19 +3560,26 @@ export const summarizeTxHistory = (
                         ? ` (${genesisInfo.tokenTicker})`
                         : ''
                 }: ${
-                    buy.count > 0
+                    typeof buy !== 'undefined'
                         ? `${config.emojis.agoraBuy}${
                               buy.count > 1 ? `x${buy.count}` : ''
+                          }${
+                              typeof buy!.volume !== 'undefined'
+                                  ? ` (${satsToFormattedValue(
+                                        buy.volume,
+                                        xecPriceUsd,
+                                    )})`
+                                  : ''
                           }`
                         : ''
                 }${
-                    list.count > 0
+                    typeof list !== 'undefined'
                         ? `${config.emojis.agoraList}${
                               list.count > 1 ? `x${list.count}` : ''
                           }`
                         : ''
                 }${
-                    cancel.count > 0
+                    typeof cancel !== 'undefined'
                         ? `${config.emojis.agoraCancel}${
                               cancel.count > 1 ? `x${cancel.count}` : ''
                           }`
@@ -3338,28 +3592,14 @@ export const summarizeTxHistory = (
     }
     // Agora ONESHOT (NFTs)
     if (agoraOneshotTxs > 0) {
-        // Zero out counters for sorting purposes
-        nftAgoraActions.forEach((agoraActionInfo, tokenId) => {
-            // Note we do not check adPrep as any token with adPrep has listing
-            const { buy, list, cancel } = agoraActionInfo;
-
-            if (typeof buy === 'undefined') {
-                agoraActionInfo.buy = { count: 0 };
-            }
-            if (typeof list === 'undefined') {
-                agoraActionInfo.list = { count: 0 };
-            }
-            if (typeof cancel === 'undefined') {
-                agoraActionInfo.cancel = { count: 0 };
-            }
-            nftAgoraActions.set(tokenId, agoraActionInfo);
-        });
-
         // Sort agoraActions by buys
         const sortedNftAgoraActions = new Map(
             [...nftAgoraActions.entries()].sort(
-                (keyValueArrayA, keyValueArrayB) =>
-                    keyValueArrayB[1].buy.count - keyValueArrayA[1].buy.count,
+                (keyValueArrayA, keyValueArrayB) => {
+                    const buyCountA = keyValueArrayA[1].buy?.count ?? 0;
+                    const buyCountB = keyValueArrayB[1].buy?.count ?? 0;
+                    return buyCountB - buyCountA;
+                },
             ),
         );
 
@@ -3385,7 +3625,7 @@ export const summarizeTxHistory = (
             );
         }
 
-        const AGORA_COLLECTIONS_TO_SHOW = 10;
+        const AGORA_COLLECTIONS_TO_SHOW = 3;
 
         // Handle case where we do not see as many agora tokens as our max
         const agoraCollectionsToShow =
@@ -3401,11 +3641,6 @@ export const summarizeTxHistory = (
             tgMsg.push(`<u>Top ${AGORA_COLLECTIONS_TO_SHOW}</u>`);
         }
 
-        // Repeat emoji key
-        tgMsg.push(
-            `${config.emojis.agoraBuy}Buy, ${config.emojis.agoraList}List, ${config.emojis.agoraCancel}Cancel`,
-        );
-
         for (let i = 0; i < newsworthyAgoraCollections.length; i += 1) {
             const tokenId = newsworthyAgoraCollections[i];
             const tokenActionInfo = sortedNftAgoraActions.get(tokenId);
@@ -3415,7 +3650,7 @@ export const summarizeTxHistory = (
             const { buy, list, cancel } = tokenActionInfo;
 
             tgMsg.push(
-                `<a href="${config.blockExplorer}/tx/${tokenId}">${
+                `<a href="${config.tokenLandingBase}/${tokenId}">${
                     typeof genesisInfo === 'undefined'
                         ? `${tokenId.slice(0, 3)}...${tokenId.slice(-3)}`
                         : genesisInfo.tokenName
@@ -3426,19 +3661,26 @@ export const summarizeTxHistory = (
                         ? ` (${genesisInfo.tokenTicker})`
                         : ''
                 }: ${
-                    buy.count > 0
+                    typeof buy !== 'undefined'
                         ? `${config.emojis.agoraBuy}${
                               buy.count > 1 ? `x${buy.count}` : ''
+                          }${
+                              typeof buy.volume !== 'undefined'
+                                  ? ` (${satsToFormattedValue(
+                                        buy.volume,
+                                        xecPriceUsd,
+                                    )})`
+                                  : ''
                           }`
                         : ''
                 }${
-                    list.count > 0
+                    typeof list !== 'undefined'
                         ? `${config.emojis.agoraList}${
                               list.count > 1 ? `x${list.count}` : ''
                           }`
                         : ''
                 }${
-                    cancel.count > 0
+                    typeof cancel !== 'undefined'
                         ? `${config.emojis.agoraCancel}${
                               cancel.count > 1 ? `x${cancel.count}` : ''
                           }`
@@ -3450,8 +3692,8 @@ export const summarizeTxHistory = (
         tgMsg.push('');
     }
 
-    // SLP 1 fungible summary
-    if (slpFungibleTxs > 0) {
+    // Fungible summary (ALP and SLP1 Fungible)
+    if (fungibleTokenTxs > 0) {
         // Sort tokenActions map by number of token actions
         const sortedTokenActions = new Map(
             [...tokenActions.entries()].sort(
@@ -3467,24 +3709,26 @@ export const summarizeTxHistory = (
 
         const nonAgoraTokenCount = nonAgoraTokens.length;
         tgMsg.push(
-            `${config.emojis.token} <b><i>${slpFungibleTxs.toLocaleString(
+            `${config.emojis.token} <b><i>${fungibleTokenTxs.toLocaleString(
                 'en-US',
             )} token tx${
-                slpFungibleTxs > 1 ? 's' : ''
+                fungibleTokenTxs > 1 ? 's' : ''
             } from ${nonAgoraTokenCount} token${
                 nonAgoraTokenCount > 1 ? 's' : ''
             }</i></b>`,
         );
 
-        const NON_AGORA_TOKENS_TO_SHOW = 5;
         const nonAgoraTokensToShow =
-            nonAgoraTokenCount < NON_AGORA_TOKENS_TO_SHOW
+            nonAgoraTokenCount < nonAgoraTokensMaxRender
                 ? nonAgoraTokenCount
-                : NON_AGORA_TOKENS_TO_SHOW;
+                : nonAgoraTokensMaxRender;
         const newsworthyTokens = nonAgoraTokens.slice(0, nonAgoraTokensToShow);
 
-        if (nonAgoraTokenCount > NON_AGORA_TOKENS_TO_SHOW) {
-            tgMsg.push(`<u>Top ${NON_AGORA_TOKENS_TO_SHOW}</u>`);
+        if (
+            nonAgoraTokenCount > nonAgoraTokensMaxRender &&
+            nonAgoraTokensMaxRender !== 0
+        ) {
+            tgMsg.push(`<u>Top ${nonAgoraTokensMaxRender}</u>`);
         }
 
         for (let i = 0; i < newsworthyTokens.length; i += 1) {
@@ -3495,8 +3739,12 @@ export const summarizeTxHistory = (
 
             const { send, genesis, burn, mint } = tokenActionInfo;
 
+            const isAlp =
+                tokenTypeMap.get(tokenId) === 'ALP_TOKEN_TYPE_STANDARD';
             tgMsg.push(
-                `<a href="${config.blockExplorer}/tx/${tokenId}">${
+                `${isAlp ? config.emojis.alp : ''}<a href="${
+                    config.tokenLandingBase
+                }/${tokenId}">${
                     typeof genesisInfo === 'undefined'
                         ? `${tokenId.slice(0, 3)}...${tokenId.slice(-3)}`
                         : genesisInfo.tokenName
@@ -3532,8 +3780,10 @@ export const summarizeTxHistory = (
             );
         }
 
-        // Line break for new section
-        tgMsg.push('');
+        if (nonAgoraTokensMaxRender > 0) {
+            // Line break for new section if not rendered as a one-liner
+            tgMsg.push('');
+        }
     }
 
     // NFT summary
@@ -3567,20 +3817,20 @@ export const summarizeTxHistory = (
             }</i></b>`,
         );
 
-        const NON_AGORA_COLLECTIONS_TO_SHOW = 5;
         const nonAgoraCollectionsToShow =
-            collectionsWithNonAgoraActionsCount < NON_AGORA_COLLECTIONS_TO_SHOW
+            collectionsWithNonAgoraActionsCount < nonAgoraTokensMaxRender
                 ? collectionsWithNonAgoraActionsCount
-                : NON_AGORA_COLLECTIONS_TO_SHOW;
+                : nonAgoraTokensMaxRender;
         const newsworthyCollections = collectionsWithNonAgoraActions.slice(
             0,
             nonAgoraCollectionsToShow,
         );
 
         if (
-            collectionsWithNonAgoraActionsCount > NON_AGORA_COLLECTIONS_TO_SHOW
+            collectionsWithNonAgoraActionsCount > nonAgoraTokensMaxRender &&
+            nonAgoraTokensMaxRender !== 0
         ) {
-            tgMsg.push(`<u>Top ${NON_AGORA_COLLECTIONS_TO_SHOW}</u>`);
+            tgMsg.push(`<u>Top ${nonAgoraTokensMaxRender}</u>`);
         }
 
         for (let i = 0; i < newsworthyCollections.length; i += 1) {
@@ -3592,7 +3842,7 @@ export const summarizeTxHistory = (
             const { send, genesis, burn, mint } = tokenActionInfo;
 
             tgMsg.push(
-                `<a href="${config.blockExplorer}/tx/${tokenId}">${
+                `<a href="${config.tokenLandingBase}/${tokenId}">${
                     typeof genesisInfo === 'undefined'
                         ? `${tokenId.slice(0, 3)}...${tokenId.slice(-3)}`
                         : genesisInfo.tokenName
@@ -3629,15 +3879,15 @@ export const summarizeTxHistory = (
                 }`,
             );
         }
-        // Line break for new section
-        tgMsg.push('');
+        if (nonAgoraTokensMaxRender > 0) {
+            // Line break for new section if not rendered as a one-liner
+            tgMsg.push('');
+        }
     }
 
     // Genesis and mints token summary
     const unparsedTokenEntries =
-        alpTokenEntries > 0 ||
-        mintVaultTokenEntries > 0 ||
-        invalidTokenEntries > 0;
+        mintVaultTokenEntries > 0 || invalidTokenEntries > 0;
     const hasTokenSummaryLines =
         nftMints > 0 ||
         newSlpTokensFixedSupply > 0 ||
@@ -3670,13 +3920,6 @@ export const summarizeTxHistory = (
     }
 
     // Unparsed token summary
-    if (alpTokenEntries > 0) {
-        tgMsg.push(
-            `${config.emojis.alp} <b><i>${alpTokenEntries.toLocaleString(
-                'en-US',
-            )} ALP tx${alpTokenEntries > 1 ? 's' : ''}</i></b>`,
-        );
-    }
     if (mintVaultTokenEntries > 0) {
         tgMsg.push(
             `${
@@ -3687,13 +3930,8 @@ export const summarizeTxHistory = (
         );
     }
     if (invalidTokenEntries > 0) {
-        tgMsg.push(
-            `${
-                config.emojis.invalid
-            } <b><i>${invalidTokenEntries.toLocaleString(
-                'en-US',
-            )} invalid token tx${invalidTokenEntries > 1 ? 's' : ''}</i></b>`,
-        );
+        // Interesting but not newsworthy enough for daily msg
+        console.info(`${invalidTokenEntries} invalid token entries`);
     }
     if (hasTokenSummaryLines) {
         tgMsg.push('');
@@ -3747,27 +3985,77 @@ export const summarizeTxHistory = (
 
     if (binanceWithdrawalCount > 0) {
         // Binance hot wallet
-        const binanceWithdrawalXec = binanceWithdrawalSats / SATOSHIS_PER_XEC;
-        const renderedBinanceWithdrawalSats =
-            typeof xecPriceUsd !== 'undefined'
-                ? `$${(binanceWithdrawalXec * xecPriceUsd).toLocaleString(
-                      'en-US',
-                      {
-                          minimumFractionDigits: 0,
-                          maximumFractionDigits: 0,
-                      },
-                  )}`
-                : `${binanceWithdrawalXec.toLocaleString('en-US', {
-                      minimumFractionDigits: 0,
-                      maximumFractionDigits: 0,
-                  })} XEC`;
+        const renderedBinanceWithdrawalQty = satsToFormattedValue(
+            binanceWithdrawalSats,
+            xecPriceUsd,
+        );
         tgMsg.push(`${config.emojis.bank} <b><i>Binance</i></b>`);
         tgMsg.push(
             `<b>${binanceWithdrawalCount}</b> withdrawal${
                 binanceWithdrawalCount > 1 ? 's' : ''
-            }, ${renderedBinanceWithdrawalSats}`,
+            }, ${renderedBinanceWithdrawalQty}`,
         );
     }
 
     return splitOverflowTgMsg(tgMsg);
+};
+
+interface ParsedStaker {
+    /**
+     * Odds of this staker winning a given block
+     * Formatted as a string for pressentation
+     * e.g. 17%
+     */
+    oddsThisWinner: string;
+    /**
+     * The total satoshis this staking reward winner has staked
+     */
+    stakedSatoshisThisWinner: bigint;
+    /**
+     * Total satoshis staked in the XEC ecosystem at time of API call
+     */
+    stakedSatoshisTotal: bigint;
+}
+export const parseStaker = (
+    staker: HeraldStaker,
+    activeStakers?: CoinDanceStaker[],
+): ParsedStaker | undefined => {
+    if (typeof activeStakers === 'undefined') {
+        // Nothing to do
+        return;
+    }
+    // Find thisStaker in activeStakers
+    const thisStaker = activeStakers.find(
+        activeStaker => activeStaker.payoutAddress === staker.staker,
+    );
+
+    // If we can't find thisStaker, do not return a parsedStaker
+    // Should never happen. Could happen in edge cases of API errors,
+    // race conditions
+    // So, if we hit such a condition, we do not report on stakers
+    if (typeof thisStaker === 'undefined') {
+        return;
+    }
+
+    const totalSatsStaked = activeStakers.reduce((acc, current) => {
+        // Parse the stake string to float for addition.
+        // Note: Assuming stake is always a string with 2 decimal places
+        // Cursory review shows values like "stake": "22000000000.00",
+        // so seems to be how it's typed
+        return acc + BigInt(current.stake.replace('.', ''));
+    }, 0n);
+
+    // This staker's percent of all staked
+    // Also the staker's odds of winning any given block staking reward
+    const thisTakerPercentStake =
+        (
+            (100 * parseFloat(thisStaker.stake)) /
+            (Number(totalSatsStaked) / 100)
+        ).toFixed(2) + '%';
+
+    return {
+        oddsThisWinner: thisTakerPercentStake,
+        stakedSatoshisThisWinner: BigInt(thisStaker.stake.replace('.', '')),
+        stakedSatoshisTotal: totalSatsStaked,
+    };
 };

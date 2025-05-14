@@ -446,6 +446,7 @@ BOOST_AUTO_TEST_CASE(TestImportMempool) {
             // addForBlock inserts disconnectTxns in disconnectPool. They
             // simulate transactions that were once confirmed in a block
             std::vector<CTransactionRef> vtx;
+            vtx.reserve(disconnectedTxns.size());
             for (auto tx : disconnectedTxns) {
                 vtx.push_back(MakeTransactionRef(*tx));
             }
@@ -592,13 +593,16 @@ BOOST_AUTO_TEST_CASE(remove_for_finalized_block) {
     for (size_t i = 0; i < 100; i++) {
         CTransactionRef tx = make_tx({int64_t(i + 1) * COIN});
         const TxId &txid = tx->GetId();
-        auto mempoolEntry = entry.FromTx(tx);
+        auto mempoolEntry = entry.Fee(1000 * SATOSHI).FromTx(tx);
 
         pool.addUnchecked(mempoolEntry);
         BOOST_CHECK(pool.exists(txid));
 
-        BOOST_CHECK(pool.setAvalancheFinalized(mempoolEntry));
+        std::vector<TxId> finalizedTxIds;
+        BOOST_CHECK(pool.setAvalancheFinalized(mempoolEntry, finalizedTxIds));
         BOOST_CHECK(pool.isAvalancheFinalized(txid));
+        BOOST_CHECK_EQUAL(finalizedTxIds.size(), 1);
+        BOOST_CHECK_EQUAL(finalizedTxIds[0], txid);
 
         txs.push_back(std::move(tx));
     }

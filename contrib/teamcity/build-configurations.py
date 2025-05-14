@@ -28,7 +28,13 @@ if sys.version_info < (3, 6):
 
 
 class BuildConfiguration:
-    def __init__(self, script_root, config_file, build_name=None):
+    def __init__(self, script_root, config_file, build_name=None, depth=0):
+        if depth > 20:
+            raise Exception(
+                f"More than 20 dependency levels in build {build_name}, is there a circular dependency ?"
+            )
+
+        self.depth = depth
         self.script_root = script_root
         self.config_file = config_file
         self.name = None
@@ -39,6 +45,7 @@ class BuildConfiguration:
         self.junit_reports_dir = None
         self.test_logs_dir = None
         self.jobs = (os.cpu_count() or 0) + 1
+        self.depends = []
 
         self.project_root = PurePath(
             subprocess.run(
@@ -90,6 +97,14 @@ class BuildConfiguration:
                 )
             )
 
+        dependencies = build.get("depends", [])
+        for dependency in dependencies:
+            self.depends.append(
+                BuildConfiguration(
+                    self.script_root, self.config_file, dependency, self.depth + 1
+                )
+            )
+
         # Get a list of the templates, if any
         templates = config.get("templates", {})
 
@@ -117,8 +132,9 @@ class BuildConfiguration:
         # Define the junit and logs directories
         self.junit_reports_dir = self.build_directory.joinpath("test/junit")
         self.test_logs_dir = self.build_directory.joinpath("test/log")
-        self.functional_test_logs = self.build_directory.joinpath(
-            "test/tmp/test_runner_*"
+        self.functional_test_logs_basedir = self.build_directory.joinpath("test/tmp")
+        self.functional_test_logs = self.functional_test_logs_basedir.joinpath(
+            "test_runner_*"
         )
 
         # We will provide the required environment variables
@@ -130,6 +146,8 @@ class BuildConfiguration:
         }
 
     def create_script_file(self, dest, content):
+        # Ensure the directory exists
+        dest.parent.mkdir(parents=True, exist_ok=True)
         # Write the content to a script file using a template
         with open(
             self.script_root.joinpath("bash_script.sh.in"), encoding="utf-8"
@@ -148,6 +166,11 @@ class BuildConfiguration:
         dest.chmod(dest.stat().st_mode | stat.S_IEXEC)
 
     def create_build_steps(self, artifact_dir, preview_url, ip_address):
+        for dependency in self.depends:
+            self.build_steps.extend(
+                dependency.create_build_steps(artifact_dir, preview_url, ip_address)
+            )
+
         # There are 3 possibilities to define the build steps:
         #  - By manually defining a script to run.
         #  - By specifying a docker configuration to build
@@ -160,13 +183,13 @@ class BuildConfiguration:
             script_file = self.build_directory.joinpath("script.sh")
             self.create_script_file(script_file, script)
 
-            self.build_steps = [
+            self.build_steps.append(
                 {
                     "bin": str(script_file),
                     "args": [],
                 }
-            ]
-            return
+            )
+            return self.build_steps
 
         # Check for a docker configuration
         docker_config = self.config.get("docker", None)
@@ -174,17 +197,18 @@ class BuildConfiguration:
             # Make sure we have at least a context
             context = docker_config.get("context", None)
             if context is None:
-                raise AssertionError(
-                    f"The docker configuration for build {self.name} is missing a"
-                    " context, aborting"
-                )
-            # Make the context path absolute
-            context = self.project_root.joinpath(context)
+                context = self.project_root
+            else:
+                # Make the context path absolute
+                context = self.project_root.joinpath(context)
             # Make sure the context is a subdir of the git repository. This
             # prevents e.g. the use of .. as a context path.
-            if Path(self.project_root) not in Path(context).resolve().parents:
+            if (
+                Path(self.project_root) not in Path(context).resolve().parents
+                and Path(self.project_root) != Path(context).resolve()
+            ):
                 raise AssertionError(
-                    "The docker context should be a subdirectory of the project root"
+                    "The docker context should be the project root or a subdirectory"
                 )
 
             dockerfile = docker_config.get("dockerfile", None)
@@ -285,7 +309,7 @@ class BuildConfiguration:
                 }
             )
 
-            return
+            return self.build_steps
 
         # Get the cmake configuration definitions.
         self.cmake_flags = self.config.get("cmake_flags", [])
@@ -412,17 +436,21 @@ class BuildConfiguration:
                 }
             )
 
+        return self.build_steps
+
     def get(self, key, default):
         return self.config.get(key, default)
 
 
 class UserBuild:
-    def __init__(self, configuration):
+    def __init__(self, configuration, args):
         self.configuration = configuration
 
         build_directory = self.configuration.build_directory
 
-        self.artifact_dir = build_directory.joinpath("artifacts")
+        self.artifact_dir = Path(
+            args.artifacts or str(build_directory.joinpath("artifacts"))
+        )
 
         # Build 2 log files:
         #  - the full log will contain all unfiltered content
@@ -436,9 +464,35 @@ class UserBuild:
         if self.configuration.build_directory.is_dir():
             shutil.rmtree(self.configuration.build_directory)
         self.configuration.build_directory.mkdir(exist_ok=True, parents=True)
+        if args.ramdisk:
+            self.symlink_ramdisk(self.configuration.functional_test_logs_basedir)
 
         self.preview_url = build_directory.joinpath("preview_url.log")
         self.ip_address = "127.0.0.1"
+
+    def symlink_ramdisk(self, source):
+        # On linux machine this device is a ramdisk available to non privileged
+        # users
+        ramdisk_dev = Path("/dev/shm")
+        if not ramdisk_dev.is_dir():
+            print(f"Warning: Ramdisk device {ramdisk_dev} doesn't exist, skipping")
+            return
+
+        ramdisk = ramdisk_dev.joinpath("bitcoin-abc").joinpath(
+            source.relative_to(self.configuration.build_directory)
+        )
+
+        try:
+            if ramdisk.is_dir():
+                shutil.rmtree(ramdisk)
+            ramdisk.mkdir(parents=True, exist_ok=True)
+            source.parents[0].mkdir(parents=True, exist_ok=True)
+            source.symlink_to(ramdisk, target_is_directory=True)
+            print(f"Created a ramdisk in {ramdisk}, symlinked to {source}")
+        except Exception as e:
+            print(
+                f"Warning: Unable to create or symlink the ramdisk {ramdisk}, skipping ({e})"
+            )
 
     def copy_artifacts(self, artifacts):
         # Make sure the artifact directory always exists. It is created before
@@ -446,7 +500,7 @@ class UserBuild:
         # have no control on what is being executed, it might very well be
         # deleted by the build as well. This can happen when the artifacts
         # are located in the build directory and the build calls git clean.
-        self.artifact_dir.mkdir(exist_ok=True)
+        self.artifact_dir.mkdir(parents=True, exist_ok=True)
 
         # Find and copy artifacts.
         # The source is relative to the build tree, the destination relative to
@@ -617,7 +671,7 @@ class UserBuild:
         args = args if args is not None else []
         if self.artifact_dir.is_dir():
             shutil.rmtree(self.artifact_dir)
-        self.artifact_dir.mkdir(exist_ok=True)
+        self.artifact_dir.mkdir(parents=True, exist_ok=True)
 
         self.configuration.create_build_steps(
             self.artifact_dir, self.preview_url, self.ip_address
@@ -631,15 +685,15 @@ class UserBuild:
 
 
 class TeamcityBuild(UserBuild):
-    def __init__(self, configuration):
-        super().__init__(configuration)
+    def __init__(self, configuration, args):
+        super().__init__(configuration, args)
 
         # This accounts for the volume mapping from the container.
         # Our local /results is mapped to some relative ./results on the host,
         # so we use /results/artifacts to copy our files but results/artifacts as
         # an artifact path for teamcity.
         # TODO abstract out the volume mapping
-        self.artifact_dir = Path("/results/artifacts")
+        self.artifact_dir = Path(args.artifacts or "/results/artifacts")
 
         self.teamcity_messages = TeamcityServiceMessages()
 
@@ -709,11 +763,24 @@ def main():
     parser = argparse.ArgumentParser(description="Run a CI build")
     parser.add_argument("build", help="The name of the build to run")
     parser.add_argument(
+        "--artifacts",
+        "-a",
+        help="Path to the artifacts directory (default to <build_dir>/artifacts for user builds or /results/artifacts on CI)",
+        type=str,
+        default="",
+    )
+    parser.add_argument(
         "--config",
         "-c",
         help="Path to the builds configuration file (default to {})".format(
             str(default_config_path)
         ),
+    )
+    parser.add_argument(
+        "--ramdisk",
+        "-r",
+        action="store_true",
+        help="Attempt to use a ramdisk to store the regtest blockchain. This might fail and fallback to default behavior if no user ramdisk is available",
     )
 
     args, unknown_args = parser.parse_known_args()
@@ -723,9 +790,9 @@ def main():
     build_configuration = BuildConfiguration(script_dir, config_path, args.build)
 
     if is_running_under_teamcity():
-        build = TeamcityBuild(build_configuration)
+        build = TeamcityBuild(build_configuration, args)
     else:
-        build = UserBuild(build_configuration)
+        build = UserBuild(build_configuration, args)
 
     sys.exit(build.run(unknown_args)[0])
 

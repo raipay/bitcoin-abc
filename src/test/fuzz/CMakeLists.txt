@@ -56,6 +56,7 @@ add_executable(fuzz EXCLUDE_FROM_ALL
 	locale.cpp
 	merkleblock.cpp
 	message.cpp
+	muhash.cpp
 	multiplication_overflow.cpp
 	net.cpp
 	net_permissions.cpp
@@ -87,6 +88,7 @@ add_executable(fuzz EXCLUDE_FROM_ALL
 	secp256k1_ecdsa_signature_parse_der_lax.cpp
 	secp256k1_ec_seckey_import_export_der.cpp
 	signature_checker.cpp
+	socks5.cpp
 	span.cpp
 	spanparsing.cpp
 	string.cpp
@@ -97,6 +99,7 @@ add_executable(fuzz EXCLUDE_FROM_ALL
 	tx_in.cpp
 	tx_out.cpp
 	txrequest.cpp
+	util.cpp
 	validation_load_mempool.cpp
 )
 

@@ -97,13 +97,8 @@ mkdir -p "$CACHEDIR/pip_cache"
 CFLAGS="-g0" "$python" -m pip install --no-deps --no-warn-script-location --no-binary :all: --cache-dir "$CACHEDIR/pip_cache" -r "$CONTRIB/deterministic-build/requirements-pip.txt"
 CFLAGS="-g0" "$python" -m pip install --no-deps --no-warn-script-location --no-binary :all: --cache-dir "$CACHEDIR/pip_cache" -r "$CONTRIB/deterministic-build/requirements-build-appimage.txt"
 CFLAGS="-g0" "$python" -m pip install --no-deps --no-warn-script-location --no-binary :all: --cache-dir "$CACHEDIR/pip_cache" -r "$CONTRIB/deterministic-build/requirements.txt"
-CFLAGS="-g0" "$python" -m pip install --no-deps --no-warn-script-location --no-binary :all: --only-binary PyQt5,PyQt5-Qt5 --cache-dir "$CACHEDIR/pip_cache" -r <(filter_deps /cryptography/ < "$CONTRIB/deterministic-build/requirements-binaries.txt")
-
-# cryptography 42.0.5 with patch for reproducible build, see https://github.com/pyca/cryptography/pull/10627
-CFLAGS="-g0" "$python" -m pip install --no-deps --no-warn-script-location --no-binary :all: --only-binary cmake --cache-dir "$CACHEDIR/pip_cache" git+https://github.com/pyca/cryptography.git@857d6b1d2fb1b93251a89ca3534e2a28b32c4950
-
-# Install hidapi from binary wheels until there is a release fixing https://github.com/trezor/cython-hidapi/issues/155
-CFLAGS="-g0" "$python" -m pip install --no-deps --no-warn-script-location --no-binary :all: --only-binary hidapi --cache-dir "$CACHEDIR/pip_cache" -r "$CONTRIB/deterministic-build/requirements-hw.txt"
+CFLAGS="-g0" "$python" -m pip install --no-deps --no-warn-script-location --no-binary :all: --only-binary PyQt5,PyQt5-Qt5 --cache-dir "$CACHEDIR/pip_cache" -r "$CONTRIB/deterministic-build/requirements-binaries.txt"
+CFLAGS="-g0" "$python" -m pip install --no-deps --no-warn-script-location --no-binary :all: --cache-dir "$CACHEDIR/pip_cache" -r "$CONTRIB/deterministic-build/requirements-hw.txt"
 
 CFLAGS="-g0" "$python" -m pip install --no-deps --no-warn-script-location --cache-dir "$CACHEDIR/pip_cache" "${ELECTRUM_ROOT}"
 
@@ -202,8 +197,9 @@ rm -rf "$PYDIR"/site-packages/PyQt5/Qt.*
 
 # these are deleted as they were not deterministic; and are not needed anyway
 find "$APPDIR" -path '*/__pycache__*' -delete
-rm -rf "$PYDIR"/site-packages/*.dist-info/
 rm -rf "$PYDIR"/site-packages/*.egg-info/
+# Remove the .dist-info directories but keep slip10-*.dist-info because this library needs its metadata.
+find "$PYDIR/site-packages" -maxdepth 1 -mindepth 1 -type d -name "*.dist-info" ! -name "slip10*" -exec rm -rf {} +
 
 # set timestamps in dist, in order to make the installer reproducible
 find -exec touch -h -d '2000-11-11T11:11:11+00:00' {} +

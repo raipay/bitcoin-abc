@@ -180,11 +180,15 @@ class ChronikLokadIdGroup(BitcoinTestFramework):
         ]
         tx3_conflict.rehash()
 
-        block = create_block(int(blockhash, 16), create_coinbase(103), mocktime + 100)
-        block.vtx += [tx3_conflict]
-        block.hashMerkleRoot = block.calc_merkle_root()
+        block = create_block(
+            int(blockhash, 16),
+            create_coinbase(103),
+            mocktime + 100,
+            txlist=[tx3_conflict],
+        )
         block.solve()
         peer.send_blocks_and_test([block], node)
+        node.syncwithvalidationinterfacequeue()
 
         assert_equal(ws1.recv(), ws_msg(tx3.hash, pb.TX_REMOVED_FROM_MEMPOOL))
         assert_equal(ws2.recv(), ws_msg(tx3.hash, pb.TX_REMOVED_FROM_MEMPOOL))

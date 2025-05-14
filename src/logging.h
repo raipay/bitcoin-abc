@@ -71,6 +71,14 @@ enum LogFlags : uint32_t {
     ALL = ~uint32_t(0),
 };
 
+enum class Level {
+    Debug = 0,
+    None = 1,
+    Info = 2,
+    Warning = 3,
+    Error = 4,
+};
+
 class Logger {
 private:
     // Can not use Mutex from sync.h because in debug mode it would cause a
@@ -116,7 +124,8 @@ public:
     /** Send a string to the log output */
     void LogPrintStr(const std::string &str,
                      const std::string &logging_function,
-                     const std::string &source_file, const int source_line);
+                     const std::string &source_file, const int source_line,
+                     const BCLog::LogFlags category, const BCLog::Level level);
 
     /** Returns whether logs will be written to any output */
     bool Enabled() const {
@@ -173,8 +182,14 @@ public:
 
 BCLog::Logger &LogInstance();
 
-/** Return true if log accepts specified category */
-static inline bool LogAcceptCategory(BCLog::LogFlags category) {
+/** Return true if log accepts specified category, at the specified level. */
+static inline bool LogAcceptCategory(BCLog::LogFlags category,
+                                     BCLog::Level level) {
+    // Log messages at Warning and Error level unconditionally, so that
+    // important troubleshooting information doesn't get lost.
+    if (level >= BCLog::Level::Warning) {
+        return true;
+    }
     return LogInstance().WillLogCategory(category);
 }
 
@@ -187,7 +202,8 @@ bool GetLogCategory(BCLog::LogFlags &flag, const std::string &str);
 template <typename... Args>
 static inline void
 LogPrintf_(const std::string &logging_function, const std::string &source_file,
-           const int source_line, const char *fmt, const Args &...args) {
+           const int source_line, const BCLog::LogFlags flag,
+           const BCLog::Level level, const char *fmt, const Args &...args) {
     if (LogInstance().Enabled()) {
         std::string log_msg;
         try {
@@ -200,18 +216,38 @@ LogPrintf_(const std::string &logging_function, const std::string &source_file,
                       "\" while formatting log message: " + fmt;
         }
         LogInstance().LogPrintStr(log_msg, logging_function, source_file,
-                                  source_line);
+                                  source_line, flag, level);
     }
 }
 
-#define LogPrintf(...) LogPrintf_(__func__, __FILE__, __LINE__, __VA_ARGS__)
+#define LogPrintLevel_(category, level, ...)                                   \
+    LogPrintf_(__func__, __FILE__, __LINE__, category, level, __VA_ARGS__)
+
+// Log unconditionally.
+#define LogPrintf(...)                                                         \
+    LogPrintLevel_(BCLog::LogFlags::NONE, BCLog::Level::None, __VA_ARGS__)
+
+// Log unconditionally, prefixing the output with the passed category name.
+#define LogPrintfCategory(category, ...)                                       \
+    LogPrintLevel_(category, BCLog::Level::None, __VA_ARGS__)
 
 // Use a macro instead of a function for conditional logging to prevent
 // evaluating arguments when logging for the category is not enabled.
+
+// Log conditionally, prefixing the output with the passed category name.
 #define LogPrint(category, ...)                                                \
     do {                                                                       \
-        if (LogAcceptCategory((category))) {                                   \
-            LogPrintf(__VA_ARGS__);                                            \
+        if (LogAcceptCategory((category), BCLog::Level::Debug)) {              \
+            LogPrintLevel_(category, BCLog::Level::None, __VA_ARGS__);         \
+        }                                                                      \
+    } while (0)
+
+// Log conditionally, prefixing the output with the passed category name and
+// severity level.
+#define LogPrintLevel(category, level, ...)                                    \
+    do {                                                                       \
+        if (LogAcceptCategory((category), (level))) {                          \
+            LogPrintLevel_(category, level, __VA_ARGS__);                      \
         }                                                                      \
     } while (0)
 
@@ -222,6 +258,7 @@ LogPrintf_(const std::string &logging_function, const std::string &source_file,
  */
 #define LogPrintfToBeContinued LogPrintf
 #define LogPrintToBeContinued LogPrint
+#define LogPrintLevelToBeContinued LogPrintLevel
 
 template <typename... Args> bool error(const char *fmt, const Args &...args) {
     LogPrintf("ERROR: %s\n", tfm::format(fmt, args...));

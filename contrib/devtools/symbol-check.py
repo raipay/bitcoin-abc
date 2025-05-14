@@ -14,24 +14,29 @@ import sys
 
 import lief
 
-# Debian 10 (Buster) EOL: 2024. https://wiki.debian.org/LTS
+# Debian 11 (Bullseye) EOL: 2026. https://wiki.debian.org/LTS
 #
-# - libgcc version 8.3.0 (https://packages.debian.org/search?suite=buster&arch=any&searchon=names&keywords=libgcc1)
-# - libc version 2.28 (https://packages.debian.org/search?suite=buster&arch=any&searchon=names&keywords=libc6)
+# - libgcc version 10.2.1 (https://packages.debian.org/bullseye/libgcc-s1)
+# - libc version 2.31 (https://packages.debian.org/source/bullseye/glibc)
 #
-# CentOS Stream 8 EOL: 2024. https://wiki.centos.org/About/Product
+# Ubuntu 20.04 (Focal) EOL: 2030. https://wiki.ubuntu.com/ReleaseTeam
 #
-# - libgcc version 8.5.0 (http://mirror.centos.org/centos/8-stream/AppStream/x86_64/os/Packages/)
-# - libc version 2.28 (http://mirror.centos.org/centos/8-stream/AppStream/x86_64/os/Packages/)
+# - libgcc version 10.5.0 (https://packages.ubuntu.com/focal/libgcc1)
+# - libc version 2.31 (https://packages.ubuntu.com/focal/libc6)
+#
+# CentOS Stream 9 EOL: 2027. https://www.centos.org/cl-vs-cs/#end-of-life
+#
+# - libgcc version 12.2.1 (https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/)
+# - libc version 2.34 (https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/Packages/)
 #
 # See https://gcc.gnu.org/onlinedocs/libstdc++/manual/abi.html for more info.
 MAX_VERSIONS = {
     "GCC": (8, 3, 0),
     "GLIBC": {
-        lief.ELF.ARCH.i386: (2, 28),
-        lief.ELF.ARCH.x86_64: (2, 28),
-        lief.ELF.ARCH.ARM: (2, 28),
-        lief.ELF.ARCH.AARCH64: (2, 28),
+        lief.ELF.ARCH.i386: (2, 31),
+        lief.ELF.ARCH.x86_64: (2, 31),
+        lief.ELF.ARCH.ARM: (2, 31),
+        lief.ELF.ARCH.AARCH64: (2, 31),
     },
     "LIBATOMIC": (1, 0),
     "V": (0, 5, 0),  # xkb (bitcoin-qt only)
@@ -245,11 +250,17 @@ def check_MACHO_libraries(binary) -> bool:
 
 
 def check_MACHO_min_os(binary) -> bool:
-    return binary.build_version.minos == [10, 15, 0]
+    return binary.build_version.minos == [11, 0, 0]
 
 
 def check_MACHO_sdk(binary) -> bool:
-    return binary.build_version.sdk == [11, 0, 0]
+    return binary.build_version.sdk == [14, 0, 0]
+
+
+def check_MACHO_lld(binary) -> bool:
+    if binary.build_version.tools[0].version == [18, 1, 8]:
+        return True
+    return False
 
 
 def check_PE_libraries(binary) -> bool:
@@ -286,6 +297,7 @@ CHECKS = {
         ("DYNAMIC_LIBRARIES", check_MACHO_libraries),
         ("MIN_OS", check_MACHO_min_os),
         ("SDK", check_MACHO_sdk),
+        ("LLD", check_MACHO_lld),
     ],
     lief.EXE_FORMATS.PE: [
         ("DYNAMIC_LIBRARIES", check_PE_libraries),

@@ -5,6 +5,7 @@
 #include <chainparams.h>
 #include <config.h>
 #include <index/coinstatsindex.h>
+#include <interfaces/chain.h>
 #include <test/util/setup_common.h>
 #include <test/util/validation.h>
 #include <util/time.h>
@@ -30,7 +31,9 @@ static void IndexWaitSynced(BaseIndex &index) {
 }
 
 BOOST_FIXTURE_TEST_CASE(coinstatsindex_initial_sync, TestChain100Setup) {
-    CoinStatsIndex coin_stats_index{1 << 20, true};
+    CoinStatsIndex coin_stats_index{interfaces::MakeChain(m_node, Params()),
+                                    1 << 20, true};
+    BOOST_REQUIRE(coin_stats_index.Init());
 
     const CBlockIndex *block_index;
     {
@@ -45,7 +48,7 @@ BOOST_FIXTURE_TEST_CASE(coinstatsindex_initial_sync, TestChain100Setup) {
     // is started.
     BOOST_CHECK(!coin_stats_index.BlockUntilSyncedToCurrentChain());
 
-    BOOST_REQUIRE(coin_stats_index.Start(m_node.chainman->ActiveChainstate()));
+    BOOST_REQUIRE(coin_stats_index.StartBackgroundSync());
 
     IndexWaitSynced(coin_stats_index);
 
@@ -89,8 +92,9 @@ BOOST_FIXTURE_TEST_CASE(coinstatsindex_unclean_shutdown, TestChain100Setup) {
     Chainstate &chainstate = Assert(m_node.chainman)->ActiveChainstate();
     const Config &config = m_node.chainman->GetConfig();
     {
-        CoinStatsIndex index{1 << 20};
-        BOOST_REQUIRE(index.Start(chainstate));
+        CoinStatsIndex index{interfaces::MakeChain(m_node, Params()), 1 << 20};
+        BOOST_REQUIRE(index.Init());
+        BOOST_REQUIRE(index.StartBackgroundSync());
         IndexWaitSynced(index);
         std::shared_ptr<const CBlock> new_block;
         CBlockIndex *new_block_index = nullptr;
@@ -108,8 +112,8 @@ BOOST_FIXTURE_TEST_CASE(coinstatsindex_unclean_shutdown, TestChain100Setup) {
             BlockValidationOptions options{config};
             BOOST_CHECK(CheckBlock(
                 block, state, config.GetChainParams().GetConsensus(), options));
-            BOOST_CHECK(chainstate.AcceptBlock(new_block, state, true, nullptr,
-                                               nullptr, true));
+            BOOST_CHECK(m_node.chainman->AcceptBlock(new_block, state, true,
+                                                     nullptr, nullptr, true));
 
             // Get the block index (not returned by AcceptBlock since D2127)
             auto it{m_node.chainman->m_blockman.m_block_index.find(
@@ -125,15 +129,16 @@ BOOST_FIXTURE_TEST_CASE(coinstatsindex_unclean_shutdown, TestChain100Setup) {
         // Send block connected notification, then stop the index without
         // sending a chainstate flushed notification. Prior to #24138, this
         // would cause the index to be corrupted and fail to reload.
-        ValidationInterfaceTest::BlockConnected(index, new_block,
-                                                new_block_index);
+        ValidationInterfaceTest::BlockConnected(ChainstateRole::NORMAL, index,
+                                                new_block, new_block_index);
         index.Stop();
     }
 
     {
-        CoinStatsIndex index{1 << 20};
+        CoinStatsIndex index{interfaces::MakeChain(m_node, Params()), 1 << 20};
+        BOOST_REQUIRE(index.Init());
         // Make sure the index can be loaded.
-        BOOST_REQUIRE(index.Start(chainstate));
+        BOOST_REQUIRE(index.StartBackgroundSync());
         index.Stop();
     }
 }

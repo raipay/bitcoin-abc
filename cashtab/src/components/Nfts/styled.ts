@@ -6,7 +6,7 @@ import styled from 'styled-components';
 import { token as tokenConfig } from 'config/token';
 
 export const NftsCtn = styled.div`
-    color: ${props => props.theme.contrast};
+    color: ${props => props.theme.primaryText};
     width: 100%;
     h2 {
         margin: 0 0 20px;
@@ -16,17 +16,18 @@ export const NftsCtn = styled.div`
 
 export const SubHeader = styled.div`
     width: 100%;
-    color: ${props => props.theme.contrast};
-    font-size: 24px;
-    line-height: 24px;
+    color: ${props => props.theme.primaryText};
+    font-size: var(--text-xl);
+    line-height: var(--text-xl--line-height);
     margin-bottom: 12px;
 `;
 
 export const OfferTitle = styled.div`
     margin-top: 12px;
     margin-bottom: 12px;
-    color: ${props => props.theme.contrast};
-    font-size: 20px;
+    color: ${props => props.theme.primaryText};
+    font-size: var(--text-xl);
+    line-height: var(--text-xl--line-height);
     text-align: center;
     font-weight: bold;
 `;
@@ -66,4 +67,13 @@ export const OfferCol = styled.div`
     min-width: 128px;
     display: flex;
     flex-direction: column;
+`;
+export const NftListCtn = styled.div`
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    @media (max-width: 768px) {
+        display: flex;
+        flex-direction: column;
+    }
 `;

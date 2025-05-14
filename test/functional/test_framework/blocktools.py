@@ -54,6 +54,8 @@ MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60
 # (network rule)
 COINBASE_MATURITY = 100
 
+MIN_BLOCKS_TO_KEEP = 288
+
 
 def create_block(
     hashprev: Optional[int] = None,
@@ -62,6 +64,7 @@ def create_block(
     *,
     version: Optional[int] = None,
     tmpl: Optional[dict] = None,
+    txlist: Optional[list] = None,
 ) -> CBlock:
     """Create a block (with regtest difficulty)."""
     block = CBlock()
@@ -76,6 +79,9 @@ def create_block(
         # difficulty retargeting is disabled in REGTEST chainparams
         block.nBits = 0x207FFFFF
     block.vtx.append(coinbase or create_coinbase(height=tmpl["height"]))
+    if txlist:
+        block.vtx.extend(txlist)
+        make_conform_to_ctor(block)
     block.hashMerkleRoot = block.calc_merkle_root()
     block.calc_sha256()
     return block
@@ -97,7 +103,11 @@ def script_BIP34_coinbase_height(height: int) -> CScript:
 
 
 def create_coinbase(
-    height: int, pubkey: Optional[bytes] = None, nValue: int = 50_000_000
+    height: int,
+    pubkey: Optional[bytes] = None,
+    *,
+    script_pubkey: Optional[bytes] = None,
+    nValue: int = 50_000_000,
 ) -> CTransaction:
     """Create a coinbase transaction, assuming no miner fees.
 
@@ -116,6 +126,8 @@ def create_coinbase(
         coinbaseoutput.nValue >>= halvings
     if pubkey is not None:
         coinbaseoutput.scriptPubKey = CScript([pubkey, OP_CHECKSIG])
+    elif script_pubkey is not None:
+        coinbaseoutput.scriptPubKey = script_pubkey
     else:
         coinbaseoutput.scriptPubKey = CScript([OP_TRUE])
     coinbase.vout = [coinbaseoutput]

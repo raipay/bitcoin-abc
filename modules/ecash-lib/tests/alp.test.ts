@@ -8,7 +8,6 @@ import { ChronikClient } from 'chronik-client';
 
 import { Ecc } from '../src/ecc.js';
 import { shaRmd160 } from '../src/hash.js';
-import { initWasm } from '../src/initNodeJs.js';
 import { fromHex, toHex } from '../src/io/hex.js';
 import { Script } from '../src/script.js';
 import { ALL_BIP143 } from '../src/sigHashType.js';
@@ -21,9 +20,10 @@ import {
 } from '../src/token/alp.js';
 import { emppScript } from '../src/token/empp.js';
 import { P2PKHSignatory, TxBuilder } from '../src/txBuilder.js';
+import '../src/initNodeJs.js';
 
 const NUM_COINS = 500;
-const COIN_VALUE = 100000;
+const COIN_VALUE = 100000n;
 
 const ALP_TOKEN_TYPE_STANDARD = {
     number: 0,
@@ -34,13 +34,11 @@ const ALP_TOKEN_TYPE_STANDARD = {
 describe('ALP', () => {
     let runner: TestRunner;
     let chronik: ChronikClient;
-    let ecc: Ecc;
+    const ecc = new Ecc();
 
     before(async () => {
-        await initWasm();
         runner = await TestRunner.setup();
         chronik = runner.chronik;
-        ecc = runner.ecc;
         await runner.setupCoins(NUM_COINS, COIN_VALUE);
     });
 
@@ -69,7 +67,7 @@ describe('ALP', () => {
         const pkh4 = shaRmd160(pk4);
         const p2pkh4 = Script.p2pkh(pkh4);
 
-        await runner.sendToScript(50000, p2pkh1);
+        await runner.sendToScript(50000n, p2pkh1);
 
         const utxos = await chronik.script('p2pkh', toHex(pkh1)).utxos();
         expect(utxos.utxos.length).to.equal(1);
@@ -81,7 +79,7 @@ describe('ALP', () => {
                     input: {
                         prevOut: utxo.outpoint,
                         signData: {
-                            value: utxo.value,
+                            sats: utxo.sats,
                             outputScript: p2pkh1,
                         },
                     },
@@ -90,7 +88,7 @@ describe('ALP', () => {
             ],
             outputs: [
                 {
-                    value: 0,
+                    sats: 0n,
                     script: emppScript([
                         alpGenesis(
                             ALP_STANDARD,
@@ -98,23 +96,23 @@ describe('ALP', () => {
                                 tokenTicker: 'ALP TOKEN',
                                 tokenName: 'ALP Token Name',
                                 url: 'https://example.com',
-                                data: fromHex('01020304'),
+                                data: '01020304',
                                 authPubkey: '03040506',
                                 decimals: 4,
                             },
                             {
-                                amounts: [2000, 2],
+                                atomsArray: [2000n, 2n],
                                 numBatons: 1,
                             },
                         ),
                     ]),
                 },
-                { value: 10000, script: p2pkh2 },
-                { value: 10000, script: p2pkh1 },
-                { value: 10000, script: p2pkh1 },
+                { sats: 10000n, script: p2pkh2 },
+                { sats: 10000n, script: p2pkh1 },
+                { sats: 10000n, script: p2pkh1 },
             ],
         });
-        const genesisTx = txBuildGenesis.sign(ecc);
+        const genesisTx = txBuildGenesis.sign();
         const genesisTxid = (await chronik.broadcastTx(genesisTx.ser())).txid;
         const tokenId = genesisTxid;
 
@@ -125,7 +123,7 @@ describe('ALP', () => {
                 tokenTicker: 'ALP TOKEN',
                 tokenName: 'ALP Token Name',
                 url: 'https://example.com',
-                data: fromHex('01020304'),
+                data: '01020304',
                 authPubkey: '03040506',
                 decimals: 4,
             },
@@ -141,10 +139,10 @@ describe('ALP', () => {
                 },
                 blockHeight: -1,
                 isCoinbase: false,
-                value: 10000,
+                sats: 10000n,
                 isFinal: false,
                 token: {
-                    amount: '2000',
+                    atoms: 2000n,
                     isMintBaton: false,
                     tokenId: tokenId,
                     tokenType: ALP_TOKEN_TYPE_STANDARD,
@@ -161,7 +159,7 @@ describe('ALP', () => {
                             outIdx: 3,
                         },
                         signData: {
-                            value: 10000,
+                            sats: 10000n,
                             outputScript: p2pkh1,
                         },
                     },
@@ -170,19 +168,19 @@ describe('ALP', () => {
             ],
             outputs: [
                 {
-                    value: 0,
+                    sats: 0n,
                     script: emppScript([
                         alpMint(tokenId, ALP_STANDARD, {
-                            amounts: [500],
+                            atomsArray: [500n],
                             numBatons: 1,
                         }),
                     ]),
                 },
-                { value: 546, script: p2pkh1 },
-                { value: 546, script: p2pkh3 },
+                { sats: 546n, script: p2pkh1 },
+                { sats: 546n, script: p2pkh3 },
             ],
         });
-        const mintTx = txBuildMint.sign(ecc);
+        const mintTx = txBuildMint.sign();
         const mintTxid = (await chronik.broadcastTx(mintTx.ser())).txid;
 
         const utxos3 = await chronik.script('p2pkh', toHex(pkh3)).utxos();
@@ -194,10 +192,10 @@ describe('ALP', () => {
                 },
                 blockHeight: -1,
                 isCoinbase: false,
-                value: 546,
+                sats: 546n,
                 isFinal: false,
                 token: {
-                    amount: '0',
+                    atoms: 0n,
                     isMintBaton: true,
                     tokenId: tokenId,
                     tokenType: ALP_TOKEN_TYPE_STANDARD,
@@ -214,7 +212,7 @@ describe('ALP', () => {
                             outIdx: 1,
                         },
                         signData: {
-                            value: 546,
+                            sats: 546n,
                             outputScript: p2pkh1,
                         },
                     },
@@ -227,7 +225,7 @@ describe('ALP', () => {
                             outIdx: 1,
                         },
                         signData: {
-                            value: 10000,
+                            sats: 10000n,
                             outputScript: p2pkh2,
                         },
                     },
@@ -236,28 +234,28 @@ describe('ALP', () => {
             ],
             outputs: [
                 {
-                    value: 0,
+                    sats: 0n,
                     script: emppScript([
                         alpGenesis(
                             ALP_STANDARD,
                             {},
                             {
-                                amounts: [100, 0],
+                                atomsArray: [100n, 0n],
                                 numBatons: 1,
                             },
                         ),
                         // OK to push 01 (not encoded as OP_1)
                         fromHex('01'),
-                        alpSend(tokenId, ALP_STANDARD, [0, 1000, 0, 1500]),
+                        alpSend(tokenId, ALP_STANDARD, [0n, 1000n, 0n, 1500n]),
                     ]),
                 },
-                { value: 546, script: p2pkh1 },
-                { value: 546, script: p2pkh2 },
-                { value: 546, script: p2pkh3 },
-                { value: 546, script: p2pkh4 },
+                { sats: 546n, script: p2pkh1 },
+                { sats: 546n, script: p2pkh2 },
+                { sats: 546n, script: p2pkh3 },
+                { sats: 546n, script: p2pkh4 },
             ],
         });
-        const multiTx = txBuildMulti.sign(ecc);
+        const multiTx = txBuildMulti.sign();
         const multiTxid = (await chronik.broadcastTx(multiTx.ser())).txid;
 
         const multiProtoTx = await chronik.tx(multiTxid);
@@ -271,13 +269,13 @@ describe('ALP', () => {
                     prevOut: multiTx.inputs[0].prevOut,
                     sequenceNo: 0xffffffff,
                     token: {
-                        amount: '500',
+                        atoms: 500n,
                         entryIdx: 1,
                         isMintBaton: false,
                         tokenId: tokenId,
                         tokenType: ALP_TOKEN_TYPE_STANDARD,
                     },
-                    value: 546,
+                    sats: 546n,
                 },
                 {
                     inputScript: toHex(multiTx.inputs[1].script!.bytecode),
@@ -285,87 +283,88 @@ describe('ALP', () => {
                     prevOut: multiTx.inputs[1].prevOut,
                     sequenceNo: 0xffffffff,
                     token: {
-                        amount: '2000',
+                        atoms: 2000n,
                         entryIdx: 1,
                         isMintBaton: false,
                         tokenId: tokenId,
                         tokenType: ALP_TOKEN_TYPE_STANDARD,
                     },
-                    value: 10000,
+                    sats: 10000n,
                 },
             ],
             outputs: [
                 {
-                    value: 0,
+                    sats: 0n,
                     outputScript: toHex(multiTx.outputs[0].script.bytecode),
                 },
                 {
                     outputScript: toHex(p2pkh1.bytecode),
                     token: {
-                        amount: '100',
+                        atoms: 100n,
                         entryIdx: 0,
                         isMintBaton: false,
                         tokenId: multiTxid,
                         tokenType: ALP_TOKEN_TYPE_STANDARD,
                     },
-                    value: 546,
+                    sats: 546n,
                 },
                 {
                     outputScript: toHex(p2pkh2.bytecode),
                     token: {
-                        amount: '1000',
+                        atoms: 1000n,
                         entryIdx: 1,
                         isMintBaton: false,
                         tokenId: tokenId,
                         tokenType: ALP_TOKEN_TYPE_STANDARD,
                     },
-                    value: 546,
+                    sats: 546n,
                 },
                 {
                     outputScript: toHex(p2pkh3.bytecode),
                     token: {
-                        amount: '0',
+                        atoms: 0n,
                         entryIdx: 0,
                         isMintBaton: true,
                         tokenId: multiTxid,
                         tokenType: ALP_TOKEN_TYPE_STANDARD,
                     },
-                    value: 546,
+                    sats: 546n,
                 },
                 {
                     outputScript: toHex(p2pkh4.bytecode),
                     token: {
-                        amount: '1500',
+                        atoms: 1500n,
                         entryIdx: 1,
                         isMintBaton: false,
                         tokenId: tokenId,
                         tokenType: ALP_TOKEN_TYPE_STANDARD,
                     },
-                    value: 546,
+                    sats: 546n,
                 },
             ],
             lockTime: 0,
             timeFirstSeen: 1300000000,
             size: multiTx.serSize(),
             isCoinbase: false,
+            isFinal: false,
             tokenEntries: [
                 {
-                    actualBurnAmount: '0',
+                    actualBurnAtoms: 0n,
                     burnSummary: '',
                     burnsMintBatons: false,
                     failedColorings: [],
-                    intentionalBurn: '0',
+                    intentionalBurnAtoms: 0n,
                     isInvalid: false,
                     tokenId: multiTxid,
                     tokenType: ALP_TOKEN_TYPE_STANDARD,
                     txType: 'GENESIS',
                 },
                 {
-                    actualBurnAmount: '0',
+                    actualBurnAtoms: 0n,
                     burnSummary: '',
                     burnsMintBatons: false,
                     failedColorings: [],
-                    intentionalBurn: '0',
+                    intentionalBurnAtoms: 0n,
                     isInvalid: false,
                     tokenId: tokenId,
                     tokenType: ALP_TOKEN_TYPE_STANDARD,

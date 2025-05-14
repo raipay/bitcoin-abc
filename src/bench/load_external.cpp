@@ -6,6 +6,7 @@
 #include <bench/data.h>
 #include <chainparams.h>
 #include <test/util/setup_common.h>
+#include <util/chaintype.h>
 #include <validation.h>
 
 /**
@@ -23,7 +24,7 @@
  */
 static void LoadExternalBlockFile(benchmark::Bench &bench) {
     const auto testing_setup{
-        MakeNoLogFileContext<const TestingSetup>(CBaseChainParams::MAIN)};
+        MakeNoLogFileContext<const TestingSetup>(ChainType::MAIN)};
 
     // Create a single block as in the blocks files (magic bytes, block size,
     // block data) as a stream object.
@@ -50,15 +51,14 @@ static void LoadExternalBlockFile(benchmark::Bench &bench) {
         fclose(file);
     }
 
-    Chainstate &chainstate{testing_setup->m_node.chainman->ActiveChainstate()};
     std::multimap<BlockHash, FlatFilePos> blocks_with_unknown_parent;
     FlatFilePos pos;
     bench.run([&] {
         // "rb" is "binary, O_RDONLY", positioned to the start of the file.
         // The file will be closed by LoadExternalBlockFile().
         FILE *file{fsbridge::fopen(blkfile, "rb")};
-        chainstate.LoadExternalBlockFile(file, &pos,
-                                         &blocks_with_unknown_parent);
+        testing_setup->m_node.chainman->LoadExternalBlockFile(
+            file, &pos, &blocks_with_unknown_parent);
     });
     fs::remove(blkfile);
 }

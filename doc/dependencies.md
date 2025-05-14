@@ -12,9 +12,10 @@ These are the dependencies currently used by Bitcoin ABC. You can find instructi
 | fontconfig | [2.12.6](https://www.freedesktop.org/software/fontconfig/release/) |  | No | Yes |  |
 | FreeType | [2.11.0](http://download.savannah.gnu.org/releases/freetype) |  | No |  |  |
 | GCC |  | [8.3](https://gcc.gnu.org/) |  |  |  |
+| glibc | | [2.31](https://www.gnu.org/software/libc/) |  |  |  |  |
 | HarfBuzz-NG |  |  |  |  |  |
 | jemalloc | [5.2.1](https://github.com/jemalloc/jemalloc/releases) | 3.6.0 |  |  |  |
-| libevent | [2.1.12-stable](https://github.com/libevent/libevent/releases) | 2.0.22 | No |  |  |
+| libevent | [2.1.12-stable](https://github.com/libevent/libevent/releases) | 2.1.8 | No |  |  |
 | libnatpmp | commit [07004b9...](https://github.com/miniupnp/libnatpmp/commit/07004b97cf691774efebe70404cf22201e4d330d) |  | No |  |  |
 | libpng |  |  |  |  | Yes |
 | librsvg | |  |  |  |  |
@@ -25,7 +26,7 @@ These are the dependencies currently used by Bitcoin ABC. You can find instructi
 | protobuf | [21.12](https://github.com/protocolbuffers/protobuf/releases/tag/v21.12) |  | No |  |  |
 | Python (tests) |  | [3.9](https://www.python.org/downloads) |  |  |  |
 | qrencode | [3.4.4](https://fukuchi.org/works/qrencode) |  | No |  |  |
-| Qt | [5.15.5](https://download.qt.io/official_releases/qt/) | 5.9.5 | No |  |  |
+| Qt | [5.15.14](https://download.qt.io/official_releases/qt/) | 5.9.5 | No |  |  |
 | SQLite | [3.32.1](https://sqlite.org/download.html) | 3.7.17 |  |  |  |
 | systemtap ([tracing](tracing.md))| | | | | |
 | XCB |  |  |  |  | Yes (Linux only) |
@@ -48,7 +49,3 @@ factors that affect the dependency list.
 * qrencode is not needed with `-DENABLE_QRCODE=OFF`.
 * systemtap is not needed with `-DENABLE_TRACING=OFF`.
 * ZeroMQ is not needed with the `-DBUILD_BITCOIN_ZMQ=OFF`.
-
-#### Other
-* librsvg is only needed if you need to run `ninja osx-dmg` on
-  (cross-compilation to) macOS.

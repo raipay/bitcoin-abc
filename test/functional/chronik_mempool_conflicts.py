@@ -88,11 +88,11 @@ class ChronikMempoolConflicts(BitcoinTestFramework):
         block = create_block(
             int(block_hashes[-1], 16),
             create_coinbase(block_height, b"\x03" * 33),
+            txlist=[conflict_tx],
         )
-        block.vtx += [conflict_tx]
-        block.hashMerkleRoot = block.calc_merkle_root()
         block.solve()
         peer.send_blocks_and_test([block], node)
+        node.syncwithvalidationinterfacequeue()
 
         chronik.tx(tx1.hash).err(404)
         chronik.tx(tx2.hash).err(404)

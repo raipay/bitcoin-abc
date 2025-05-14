@@ -17,6 +17,7 @@
 #include <consensus/validation.h>
 #include <crypto/sha256.h>
 #include <init.h>
+#include <init/common.h>
 #include <interfaces/chain.h>
 #include <logging.h>
 #include <mempool_args.h>
@@ -45,6 +46,7 @@
 #include <timedata.h>
 #include <txdb.h>
 #include <txmempool.h>
+#include <util/chaintype.h>
 #include <util/strencodings.h>
 #include <util/thread.h>
 #include <util/threadnames.h>
@@ -94,7 +96,7 @@ std::ostream &operator<<(std::ostream &os, const ScriptError &err) {
 std::vector<const char *> fixture_extra_args{};
 
 BasicTestingSetup::BasicTestingSetup(
-    const std::string &chainName, const std::vector<const char *> &extra_args)
+    const ChainType chainType, const std::vector<const char *> &extra_args)
     : m_path_root{fsbridge::GetTempDirectoryPath() /
                   "test_common_" PACKAGE_NAME /
                   g_insecure_rand_ctx_temp_path.rand256().ToString()},
@@ -127,13 +129,12 @@ BasicTestingSetup::BasicTestingSetup(
         assert(success);
         assert(error.empty());
     }
-    SelectParams(chainName);
+    SelectParams(chainType);
     SeedInsecureRand();
     InitLogging(*m_node.args);
     AppInitParameterInteraction(config, *m_node.args);
     LogInstance().StartLogging();
-    SHA256AutoDetect();
-    ECC_Start();
+    m_node.kernel = std::make_unique<kernel::Context>();
     SetupEnvironment();
     SetupNetworking();
 
@@ -157,7 +158,6 @@ BasicTestingSetup::~BasicTestingSetup() {
     LogInstance().DisconnectTestLogger();
     fs::remove_all(m_path_root);
     gArgs.ClearArgs();
-    ECC_Stop();
 }
 CTxMemPool::Options MemPoolOptionsForTest(const NodeContext &node) {
     CTxMemPool::Options mempool_opts{
@@ -172,8 +172,8 @@ CTxMemPool::Options MemPoolOptionsForTest(const NodeContext &node) {
 }
 
 ChainTestingSetup::ChainTestingSetup(
-    const std::string &chainName, const std::vector<const char *> &extra_args)
-    : BasicTestingSetup(chainName, extra_args) {
+    const ChainType chainType, const std::vector<const char *> &extra_args)
+    : BasicTestingSetup(chainType, extra_args) {
     const Config &config = GetConfig();
 
     // We have to run a scheduler thread to prevent ActivateBestChain
@@ -185,7 +185,7 @@ ChainTestingSetup::ChainTestingSetup(
     GetMainSignals().RegisterBackgroundSignalScheduler(*m_node.scheduler);
 
     m_node.mempool =
-        std::make_unique<CTxMemPool>(MemPoolOptionsForTest(m_node));
+        std::make_unique<CTxMemPool>(config, MemPoolOptionsForTest(m_node));
 
     m_cache_sizes = CalculateCacheSizes(m_args);
 
@@ -262,11 +262,11 @@ void TestingSetup::LoadVerifyActivateChainstate() {
     }
 }
 
-TestingSetup::TestingSetup(const std::string &chainName,
+TestingSetup::TestingSetup(const ChainType chainType,
                            const std::vector<const char *> &extra_args,
                            const bool coins_db_in_memory,
                            const bool block_tree_db_in_memory)
-    : ChainTestingSetup(chainName, extra_args),
+    : ChainTestingSetup(chainType, extra_args),
       m_coins_db_in_memory(coins_db_in_memory),
       m_block_tree_db_in_memory(block_tree_db_in_memory) {
     const Config &config = GetConfig();
@@ -289,7 +289,8 @@ TestingSetup::TestingSetup(const std::string &chainName,
     LoadVerifyActivateChainstate();
 
     m_node.addrman = std::make_unique<AddrMan>(
-        /* asmap= */ std::vector<bool>(), /* consistency_check_ratio= */ 0);
+        /*asmap=*/std::vector<bool>(), /*deterministic=*/false,
+        /*consistency_check_ratio=*/0);
     m_node.banman = std::make_unique<BanMan>(
         m_args.GetDataDirBase() / "banlist.dat", config.GetChainParams(),
         nullptr, DEFAULT_MISBEHAVING_BANTIME);
@@ -310,9 +311,9 @@ TestingSetup::TestingSetup(const std::string &chainName,
 }
 
 TestChain100Setup::TestChain100Setup(
-    const std::string &chain_name, const std::vector<const char *> &extra_args,
+    const ChainType chain_type, const std::vector<const char *> &extra_args,
     const bool coins_db_in_memory, const bool block_tree_db_in_memory)
-    : TestingSetup{CBaseChainParams::REGTEST, extra_args, coins_db_in_memory,
+    : TestingSetup{ChainType::REGTEST, extra_args, coins_db_in_memory,
                    block_tree_db_in_memory} {
     SetMockTime(1598887952);
     constexpr std::array<uint8_t, 32> vchKey = {
@@ -383,7 +384,7 @@ CBlock TestChain100Setup::CreateAndProcessBlock(
         chainstate = &Assert(m_node.chainman)->ActiveChainstate();
     }
 
-    const CBlock block = this->CreateBlock(txns, scriptPubKey, *chainstate);
+    CBlock block = this->CreateBlock(txns, scriptPubKey, *chainstate);
     std::shared_ptr<const CBlock> shared_pblock =
         std::make_shared<const CBlock>(block);
     Assert(m_node.chainman)
@@ -653,8 +654,8 @@ CBlock getBlock13b8a() {
 }
 
 DummyConfig::DummyConfig()
-    : chainParams(CreateChainParams(ArgsManager{}, CBaseChainParams::REGTEST)) {
-}
+    : chainParams(CreateChainParams(ArgsManager{}, ChainType::REGTEST)) {}
 
 DummyConfig::DummyConfig(std::string net)
-    : chainParams(CreateChainParams(ArgsManager{}, net)) {}
+    : chainParams(
+          CreateChainParams(ArgsManager{}, ChainTypeFromString(net).value())) {}

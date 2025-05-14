@@ -194,7 +194,7 @@ static bool AppInit(int argc, char *argv[]) {
         // Check for -chain, -testnet or -regtest parameter (Params() calls are
         // only valid after this clause)
         try {
-            SelectParams(args.GetChainName());
+            SelectParams(args.GetChainType());
         } catch (const std::exception &e) {
             return InitError(Untranslated(strprintf("%s\n", e.what())));
         }
@@ -240,11 +240,14 @@ static bool AppInit(int argc, char *argv[]) {
             // up on console
             return false;
         }
-        if (!AppInitSanityChecks()) {
+
+        node.kernel = std::make_unique<kernel::Context>();
+        if (!AppInitSanityChecks(*node.kernel)) {
             // InitError will have been called with detailed error, which ends
             // up on console
             return false;
         }
+
         if (args.GetBoolArg("-daemon", DEFAULT_DAEMON) ||
             args.GetBoolArg("-daemonwait", DEFAULT_DAEMONWAIT)) {
 #if HAVE_DECL_FORK

@@ -11,15 +11,20 @@ Access Chronik Indexer via browser or Node.
 ## Usage
 
 ```js
-import { ChronikClient } from 'chronik-client';
+import { ChronikClient, ConnectionStrategy } from 'chronik-client';
 
-const chronik = new ChronikClient([
-    'https://yourFirstChronikServerUrl.com',
-    'https://yourSecondChronikServerUrl.com',
-    'https://yourThirdChronikServerUrl.com',
-]);
-
+// Create a Chronik client with Strategy
+// ConnectionStrategy.ClosestFirst - Selects url based on latency
+// ConnectionStrategy.AsOrdered - Uses url in the provided order
 // If the first url is non-responsive it will cycle through the rest of the array.
+const chronik = await ChronikClient.useStrategy(
+    ConnectionStrategy.ClosestFirst,
+    [
+        'https://yourFirstChronikServerUrl.com',
+        'https://yourSecondChronikServerUrl.com',
+        'https://yourThirdChronikServerUrl.com',
+    ],
+);
 
 // Get Genesis block:
 const block = await chronik.block(
@@ -113,3 +118,11 @@ ws.unsubscribeFromScript('p2pkh', 'b8ae1c47effb58f72f7bca819fe7fc252f9e852e');
 -   1.2.0 - Support `history`, `confirmedTxs`, and `unconfirmedTxs` methods for `plugins` endpoints [D16786](https://reviews.bitcoinabc.org/D16786)
 -   1.3.0 - Support an avalanche invalidated websocket block message type and return extra block data for disconnected and avalanche invalidated blocks [D16812](https://reviews.bitcoinabc.org/D16812)
 -   1.3.1 - Install `ecashaddrjs` from npm before publishing to remove manual peer dependency [D16815](https://reviews.bitcoinabc.org/D16815)
+-   1.4.0 - Add `isFinal` key to `Tx` object [D17177](https://reviews.bitcoinabc.org/D17177)
+-   2.0.0 - **(Breaking change)** Change `auth` in `GenesisInfo` to hex string instead of `Uint8Array`, maintaining consistency with other API behavior [D17194](https://reviews.bitcoinabc.org/D17194)
+-   2.1.0 - Add support for `validateRawTx` endpoint [D15631](https://reviews.bitcoinabc.org/D15631)
+-   2.1.1 - Upgrade to dependency-free `ecashaddrjs` [D17269](https://reviews.bitcoinabc.org/D17269)
+-   3.0.0 - Proto update; `atoms` instead of `amount` and `sats` instead of `value` [D17650](https://reviews.bitcoinabc.org/D17650)
+-   3.0.1 - Patch `failoverProxy` to recognize another type of server error [D17814](https://reviews.bitcoinabc.org/D17814)
+-   3.1.0 - Add support for automatic node selection using `useStrategy` method [D17913](https://reviews.bitcoinabc.org/D17913)
+-   3.1.1 - Fix WebSocket retry loop issues during disconnection [D17974](https://reviews.bitcoinabc.org/D17974)

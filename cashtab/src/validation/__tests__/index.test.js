@@ -16,10 +16,7 @@ import {
     migrateLegacyCashtabSettings,
     isValidCashtabCache,
     validateMnemonic,
-    meetsAliasSpec,
-    isValidAliasSendInput,
     isProbablyNotAScam,
-    isValidSideshiftObj,
     isValidMultiSendUserInput,
     shouldSendXecBeDisabled,
     parseAddressInput,
@@ -35,6 +32,8 @@ import {
     getXecListPriceError,
     getAgoraPartialListPriceError,
     getAgoraPartialAcceptTokenQtyError,
+    getAgoraMinBuyError,
+    getReceiveAmountError,
 } from 'validation';
 import {
     validXecAirdropExclusionList,
@@ -45,35 +44,6 @@ import vectors from 'validation/fixtures/vectors';
 import appConfig from 'config/app';
 
 describe('Cashtab validation functions', () => {
-    it(`isValidSideshiftObj() returns true for a valid sideshift library object`, () => {
-        const mockSideshift = {
-            show: () => {
-                return true;
-            },
-            hide: () => {
-                return true;
-            },
-            addEventListener: () => {
-                return true;
-            },
-        };
-        expect(isValidSideshiftObj(mockSideshift)).toBe(true);
-    });
-    it(`isValidSideshiftObj() returns false if the sideshift library object failed to instantiate`, () => {
-        expect(isValidSideshiftObj(null)).toBe(false);
-    });
-    it(`isValidSideshiftObj() returns false for an invalid sideshift library object`, () => {
-        const mockSideshift = {
-            show: () => {
-                return true;
-            },
-            hide: () => {
-                return true;
-            },
-            addEvenListener: 'not-a-function',
-        };
-        expect(isValidSideshiftObj(mockSideshift)).toBe(false);
-    });
     it(`validateMnemonic() returns true for a valid mnemonic`, () => {
         const mnemonic =
             'labor tail bulb distance estate collect lecture into smile differ yard legal';
@@ -257,6 +227,18 @@ describe('Cashtab validation functions', () => {
     it(`isValidAirdropExclusionArray rejects a null airdrop exclusion list`, () => {
         expect(isValidAirdropExclusionArray(null)).toBe(false);
     });
+    it(`isProbablyNotAScam prevents new genesis tx of "XECX" as token ticker`, () => {
+        expect(isProbablyNotAScam('XECX')).toBe(false);
+    });
+    it(`isProbablyNotAScam prevents new genesis tx of "Staked XEC" as token name`, () => {
+        expect(isProbablyNotAScam('Staked XEC')).toBe(false);
+    });
+    it(`isProbablyNotAScam prevents new genesis tx of "FIRMA" as token ticker`, () => {
+        expect(isProbablyNotAScam('FIRMA')).toBe(false);
+    });
+    it(`isProbablyNotAScam prevents new genesis tx of "Firma" as token name`, () => {
+        expect(isProbablyNotAScam('Firma')).toBe(false);
+    });
     it(`isProbablyNotAScam recognizes "bitcoin" is probably a scam token name`, () => {
         expect(isProbablyNotAScam('bitcoin')).toBe(false);
     });
@@ -351,28 +333,6 @@ describe('Cashtab validation functions', () => {
                 expect(
                     parseAddressInput(addressInput, balanceSats, userLocale),
                 ).toStrictEqual(parsedAddressInput);
-            });
-        });
-    });
-    describe('Returns true if a given input meets alias spec or expected error msg if it does not', () => {
-        const { expectedReturns } = vectors.meetsAliasSpecInputCases;
-
-        // Successfully created targetOutputs
-        expectedReturns.forEach(expectedReturn => {
-            const { description, inputStr, response } = expectedReturn;
-            it(`meetsAliasSpec: ${description}`, () => {
-                expect(meetsAliasSpec(inputStr)).toBe(response);
-            });
-        });
-    });
-    describe('Validates user alias input on Send and SendToken screens', () => {
-        const { expectedReturns } = vectors.validAliasSendInputCases;
-
-        // Successfully created targetOutputs
-        expectedReturns.forEach(expectedReturn => {
-            const { description, sendToAliasInput, response } = expectedReturn;
-            it(`isValidAliasSendInput: ${description}`, () => {
-                expect(isValidAliasSendInput(sendToAliasInput)).toBe(response);
             });
         });
     });
@@ -473,14 +433,21 @@ describe('Cashtab validation functions', () => {
     describe('Determines if a user input send or burn token amount is valid', () => {
         const { expectedReturns } = vectors.isValidTokenSendOrBurnAmount;
         expectedReturns.forEach(expectedReturn => {
-            const { description, amount, tokenBalance, decimals, returned } =
-                expectedReturn;
+            const {
+                description,
+                amount,
+                tokenBalance,
+                decimals,
+                tokenProtocol,
+                returned,
+            } = expectedReturn;
             it(`isValidTokenSendOrBurnAmount: ${description}`, () => {
                 expect(
                     isValidTokenSendOrBurnAmount(
                         amount,
                         tokenBalance,
                         decimals,
+                        tokenProtocol,
                     ),
                 ).toBe(returned);
             });
@@ -489,9 +456,12 @@ describe('Cashtab validation functions', () => {
     describe('Determines if a user input token mint amount is valid', () => {
         const { expectedReturns } = vectors.isValidTokenMintAmount;
         expectedReturns.forEach(expectedReturn => {
-            const { description, amount, decimals, returned } = expectedReturn;
+            const { description, amount, decimals, tokenProtocol, returned } =
+                expectedReturn;
             it(`isValidTokenMintAmount: ${description}`, () => {
-                expect(isValidTokenMintAmount(amount, decimals)).toBe(returned);
+                expect(
+                    isValidTokenMintAmount(amount, decimals, tokenProtocol),
+                ).toBe(returned);
             });
         });
     });
@@ -571,7 +541,6 @@ describe('Cashtab validation functions', () => {
                 xecListPrice,
                 selectedCurrency,
                 fiatPrice,
-                minBuyTokenQty,
                 tokenDecimals,
                 returned,
             } = expectedReturn;
@@ -581,7 +550,6 @@ describe('Cashtab validation functions', () => {
                         xecListPrice,
                         selectedCurrency,
                         fiatPrice,
-                        minBuyTokenQty,
                         tokenDecimals,
                     ),
                 ).toBe(returned);
@@ -593,21 +561,68 @@ describe('Cashtab validation functions', () => {
         expectedReturns.forEach(expectedReturn => {
             const {
                 description,
-                acceptTokenQty,
-                offerMinAcceptTokenQty,
-                offerMaxAcceptTokenQty,
+                takeTokenDecimalizedQty,
+                decimalizedTokenQtyMin,
+                decimalizedTokenQtyMax,
                 decimals,
+                userLocale,
                 returned,
             } = expectedReturn;
             it(`getAgoraPartialAcceptTokenQtyError: ${description}`, () => {
                 expect(
                     getAgoraPartialAcceptTokenQtyError(
-                        acceptTokenQty,
-                        offerMinAcceptTokenQty,
-                        offerMaxAcceptTokenQty,
+                        takeTokenDecimalizedQty,
+                        decimalizedTokenQtyMin,
+                        decimalizedTokenQtyMax,
                         decimals,
+                        userLocale,
                     ),
                 ).toBe(returned);
+            });
+        });
+    });
+    describe('Gets error or false for min qty input', () => {
+        const { expectedReturns } = vectors.getAgoraMinBuyError;
+        expectedReturns.forEach(expectedReturn => {
+            const {
+                description,
+                xecListPrice,
+                selectedCurrency,
+                fiatPrice,
+                minBuyTokenQty,
+                offeredTokenQty,
+                tokenDecimals,
+                tokenProtocol,
+                tokenBalance,
+                userLocale,
+                returned,
+            } = expectedReturn;
+            it(`getAgoraMinBuyError: ${description}`, () => {
+                expect(
+                    getAgoraMinBuyError(
+                        xecListPrice,
+                        selectedCurrency,
+                        fiatPrice,
+                        minBuyTokenQty,
+                        offeredTokenQty,
+                        tokenDecimals,
+                        tokenProtocol,
+                        tokenBalance,
+                        userLocale,
+                    ),
+                ).toBe(returned);
+            });
+        });
+    });
+    describe('Gets error for bip21 quantity input on Receive screen', () => {
+        const { expectedReturns } = vectors.getReceiveAmountError;
+        expectedReturns.forEach(expectedReturn => {
+            const { description, amount, decimals, isXec, returned } =
+                expectedReturn;
+            it(`getReceiveAmountError: ${description}`, () => {
+                expect(getReceiveAmountError(amount, decimals, isXec)).toBe(
+                    returned,
+                );
             });
         });
     });

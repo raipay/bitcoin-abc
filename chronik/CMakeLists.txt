@@ -7,7 +7,7 @@ include(FetchContent)
 FetchContent_Declare(
     Corrosion
     GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
-    GIT_TAG v0.5.0
+    GIT_TAG v0.5.1
 )
 FetchContent_MakeAvailable(Corrosion)
 
@@ -56,21 +56,21 @@ function(add_cargo_custom_target TARGET)
     )
 endfunction()
 
-function(add_crate_test_targets CRATE)
+function(_add_crate_test_pattern CRATE PATTERN)
     set(CRATE_TEST_TARGET "check-crate-${CRATE}")
     add_custom_target("${CRATE_TEST_TARGET}")
 
     set(CLIPPY_TARGET "${CRATE_TEST_TARGET}-clippy")
     add_cargo_custom_target("${CLIPPY_TARGET}"
         clippy
-        --package '${CRATE}-*'
+        --package '${PATTERN}'
         -- -D warnings
     )
 
     set(TEST_TARGET "${CRATE_TEST_TARGET}-test")
     add_cargo_custom_target("${TEST_TARGET}"
         test
-        --package '${CRATE}-*'
+        --package '${PATTERN}'
     )
 
     add_dependencies("${CRATE_TEST_TARGET}"
@@ -83,9 +83,18 @@ function(add_crate_test_targets CRATE)
     )
 endfunction()
 
+macro(add_crate_test_targets CRATE)
+    _add_crate_test_pattern("${CRATE}" "${CRATE}-*")
+endmacro()
+
+macro(add_crate_test_single_target CRATE)
+    _add_crate_test_pattern("${CRATE}" "${CRATE}")
+endmacro()
+
 add_custom_target("check-crates")
 add_crate_test_targets(abc-rust)
-add_crate_test_targets(bitcoinsuite)
+add_crate_test_single_target(bitcoinsuite-core)
+add_crate_test_single_target(bitcoinsuite-slp)
 add_crate_test_targets(chronik)
 
 if(BUILD_BITCOIN_CHRONIK_PLUGINS)
@@ -107,6 +116,22 @@ corrosion_import_crate(
     CRATES
         chronik_lib
 )
+
+if (CMAKE_CROSSCOMPILING AND ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    # Corrosion will not pass down all the compilation flags to the cxx crate.
+    # The crate can find the appropriated flags by itself most of the time but
+    # when crosscompiling for Darwin it is not enough. We need to manually pass
+    # the flags down by rebuilding part of the cmake generated command line.
+    # Note that we can't use LDFLAGS to pass down linker flags this way, so use
+    # use the CFLAGS instead. This might introduce warning for unused args.
+    set(CORROSION_CFLAGS "-isysroot${CMAKE_OSX_SYSROOT} ${CMAKE_C_FLAGS} -fuse-ld=lld")
+    set(CORROSION_CXXFLAGS "-isysroot${CMAKE_OSX_SYSROOT} ${CMAKE_CXX_FLAGS}")
+    corrosion_set_env_vars(
+        chronik_lib
+        CFLAGS=${CORROSION_CFLAGS}
+        CXXFLAGS=${CORROSION_CXXFLAGS}
+    )
+endif()
 
 set(Rust_TRIPLE
     "${Rust_CARGO_TARGET_ARCH}"
@@ -223,6 +248,11 @@ include(AddCompilerFlags)
 custom_check_linker_flag(LINKER_HAS_ATOMIC "-latomic")
 if(LINKER_HAS_ATOMIC)
     target_link_libraries(chronik atomic)
+endif()
+
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    find_library(CORE_FOUNDATION CoreFoundation REQUIRED)
+    target_link_libraries(chronik "${CORE_FOUNDATION}")
 endif()
 
 # Add chronik to server

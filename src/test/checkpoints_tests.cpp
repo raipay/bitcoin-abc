@@ -15,6 +15,7 @@
 #include <consensus/validation.h>
 #include <streams.h>
 #include <uint256.h>
+#include <util/chaintype.h>
 #include <util/strencodings.h>
 #include <validation.h>
 
@@ -27,7 +28,7 @@
 BOOST_FIXTURE_TEST_SUITE(checkpoints_tests, TestingSetup)
 
 BOOST_AUTO_TEST_CASE(sanity) {
-    const auto params = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
+    const auto params = CreateChainParams(*m_node.args, ChainType::MAIN);
     const CCheckpointData &checkpoints = params->Checkpoints();
     BlockHash p11111 = BlockHash::fromHex(
         "0000000069e244f73d78e8fd29ba2fd2ed618bd6fa2ee92559f542fdb26e7c1d");
@@ -115,7 +116,7 @@ BOOST_AUTO_TEST_CASE(ban_fork_prior_to_and_at_checkpoints) {
             "92981b70995cffff001d4e6e050001020000000100000000000000000000000000"
             "00000000000000000000000000000000000000ffffffff0d51026302082f454233"
             "322e302fffffffff0100f2052a01000000232103c91f2fa16c94c92d08629eeb8f"
-            "d681658d49f2b3016b13336d67d79f858dbc71ac000000001"),
+            "d681658d49f2b3016b13336d67d79f858dbc71ac00000000"),
         SER_NETWORK, PROTOCOL_VERSION);
     stream >> headerB;
     BOOST_CHECK(headerB.hashPrevBlock == headerG.GetHash());

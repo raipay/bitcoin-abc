@@ -42,6 +42,7 @@ use crate::{
 pub struct Server {
     chronik: ChronikClient,
     base_dir: PathBuf,
+    chain: Chain,
     satoshi_addr_prefix: &'static str,
     tokens_addr_prefix: &'static str,
     token_icon_url: &'static str,
@@ -58,6 +59,7 @@ impl Server {
         Ok(Server {
             chronik,
             base_dir,
+            chain: chain.clone(),
             satoshi_addr_prefix: match chain {
                 Chain::Mainnet => "ecash",
                 Chain::Testnet => "ectest",
@@ -327,7 +329,7 @@ impl Server {
                     .into(),
                     true,
                 ),
-                None => ("Unknown eToken Transaction".into(), false),
+                None => ("Unknown eToken Transaction".into(), true),
             },
             [..] => ("Multi eToken Transaction".into(), true),
         };
@@ -358,20 +360,20 @@ impl Server {
         token_entry: &'a TokenEntry,
     ) -> Result<TokenEntryTemplate<'a>> {
         let token_id = Sha256d::from_hex_be(&token_entry.token_id)?;
-        let mut token_data = None;
         let tx_type = TokenTxType::from_i32(token_entry.tx_type)
             .ok_or_else(|| eyre!("Malformed token_entry.tx_type"))?;
-        if tx_type != TokenTxType::Unknown {
-            token_data = Some(self.chronik.token(&token_id).await?);
-        }
+        let token_data = match tx_type {
+            TokenTxType::Unknown => None,
+            // In the event of an invalid tx with a non existing token id, the
+            // call to chronik.token() will fail.
+            _ => self.chronik.token(&token_id).await.ok(),
+        };
         let token_type = token_entry
             .token_type
             .clone()
             .ok_or_else(|| eyre!("Malformed token_entry.token_type"))?
             .token_type
             .ok_or_else(|| eyre!("Malformed token_entry.token_type"))?;
-        let tx_type = TokenTxType::from_i32(token_entry.tx_type)
-            .ok_or_else(|| eyre!("Malformed token_entry.tx_type"))?;
 
         let action_str = match tx_type {
             TokenTxType::Genesis => "GENESIS",
@@ -466,7 +468,7 @@ impl Server {
         let sats_address = address.with_prefix(self.satoshi_addr_prefix);
         let token_address = address.with_prefix(self.tokens_addr_prefix);
 
-        let legacy_address = to_legacy_address(&address);
+        let legacy_address = to_legacy_address(&address, &self.chain);
         let sats_address = sats_address.as_str();
         let token_address = token_address.as_str();
 
@@ -576,7 +578,6 @@ impl Server {
         token_ids: HashSet<Sha256d>,
     ) -> Result<HashMap<String, TokenInfo>> {
         let mut token_calls = Vec::new();
-        let mut token_map = HashMap::new();
 
         let unknown_token = Sha256d::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000000",
@@ -588,10 +589,14 @@ impl Server {
             }
         }
 
-        let tokens = future::try_join_all(token_calls).await?;
-        for token in tokens.into_iter() {
-            token_map.insert(token.token_id.clone(), token);
-        }
+        let tokens = future::join_all(token_calls).await;
+        // It is very possible to create a token tx with an invalid token id. In
+        // this case chronik has no such token indexed and the call will fail.
+        let token_map: HashMap<String, TokenInfo> = tokens
+            .into_iter()
+            .filter_map(|token| token.ok())
+            .map(|token| (token.token_id.clone(), token))
+            .collect();
 
         Ok(token_map)
     }

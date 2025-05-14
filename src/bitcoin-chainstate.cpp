@@ -13,6 +13,8 @@
 
 #include <kernel/chainparams.h>
 #include <kernel/chainstatemanager_opts.h>
+#include <kernel/checks.h>
+#include <kernel/context.h>
 #include <kernel/validation_cache_sizes.h>
 
 #include <chainparams.h>
@@ -20,18 +22,19 @@
 #include <config.h>
 #include <consensus/validation.h>
 #include <core_io.h>
-#include <init/common.h>
 #include <node/blockstorage.h>
 #include <node/caches.h>
 #include <node/chainstate.h>
 #include <scheduler.h>
 #include <script/scriptcache.h>
 #include <script/sigcache.h>
+#include <util/chaintype.h>
 #include <util/thread.h>
 #include <util/translation.h>
 #include <validation.h>
 #include <validationinterface.h>
 
+#include <cassert>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -59,14 +62,18 @@ int main(int argc, char *argv[]) {
     gArgs.ForceSetArg("-datadir", abs_datadir.string());
 
     // SETUP: Misc Globals
-    SelectParams(CBaseChainParams::MAIN);
+    SelectParams(ChainType::MAIN);
 
     auto chainparams = CChainParams::Main(CChainParams::ChainOptions{});
     auto &config = const_cast<Config &>(GetConfig());
     config.SetChainParams(*chainparams);
 
     // ECC_Start, etc.
-    init::SetGlobals();
+    kernel::Context kernel_context{};
+    // We can't use a goto here, but we can use an assert since none of the
+    // things instantiated so far requires running the epilogue to be torn down
+    // properly
+    assert(kernel::SanityChecks(kernel_context));
 
     // Necessary for CheckInputScripts (eventually called by ProcessNewBlock),
     // which will try the script cache first and fall back to actually
@@ -175,8 +182,8 @@ int main(int argc, char *argv[]) {
                   << "Active Height: " << chainman.ActiveHeight() << std::endl
                   << "\t"
                   << "Active IBD: " << std::boolalpha
-                  << chainman.ActiveChainstate().IsInitialBlockDownload()
-                  << std::noboolalpha << std::endl;
+                  << chainman.IsInitialBlockDownload() << std::noboolalpha
+                  << std::endl;
         CBlockIndex *tip = chainman.ActiveTip();
         if (tip) {
             std::cout << "\t" << tip->ToString() << std::endl;
@@ -311,8 +318,8 @@ epilogue:
     // Without this precise shutdown sequence, there will be a lot of nullptr
     // dereferencing and UB.
     scheduler.stop();
-    if (chainman.m_load_block.joinable()) {
-        chainman.m_load_block.join();
+    if (chainman.m_thread_load.joinable()) {
+        chainman.m_thread_load.join();
     }
     StopScriptCheckWorkerThreads();
 
@@ -327,6 +334,4 @@ epilogue:
         }
     }
     GetMainSignals().UnregisterBackgroundSignalScheduler();
-
-    init::UnsetGlobals();
 }

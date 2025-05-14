@@ -19,14 +19,10 @@ import {
     ALL_BIP143,
     TxOutput,
     TxBuilderOutput,
+    DEFAULT_DUST_SATS,
+    DEFAULT_FEE_SATS_PER_KB,
 } from 'ecash-lib';
 
-const DUST_SATS = 546;
-const SATS_PER_KB = 1000;
-const HASH_TYPES = {
-    SIGHASH_ALL: 0x01,
-    SIGHASH_FORKID: 0x40,
-};
 const SLP_1_PROTOCOL_NUMBER = 1;
 
 export interface SlpInputsAndOutputs {
@@ -58,7 +54,7 @@ export function getSlpInputsAndOutputs(
             utxo?.token?.tokenId === tokenId &&
             utxo?.token?.isMintBaton === false
         ) {
-            totalSendQty += BigInt(utxo.token.amount);
+            totalSendQty += BigInt(utxo.token.atoms);
             slpInputs.push(utxo);
             change = totalSendQty - rewardAmountTokenSats;
             if (change >= 0n) {
@@ -82,11 +78,11 @@ export function getSlpInputsAndOutputs(
     // Build target output(s) per spec
     const script = slpSend(tokenId, SLP_1_PROTOCOL_NUMBER, sendAmounts);
 
-    const slpOutputs: TxOutput[] = [{ script, value: 0 }];
+    const slpOutputs: TxOutput[] = [{ script, sats: 0n }];
 
     // Add first 'to' amount to 1 index. This could be any index between 1 and 19.
     slpOutputs.push({
-        value: DUST_SATS,
+        sats: DEFAULT_DUST_SATS,
         script: Script.fromAddress(destinationAddress),
     });
 
@@ -96,7 +92,7 @@ export function getSlpInputsAndOutputs(
         // Add another targetOutput
         // Change output is denoted by lack of address key
         slpOutputs.push({
-            value: DUST_SATS,
+            sats: DEFAULT_DUST_SATS,
             script: Script.fromAddress(changeAddress),
         });
     }
@@ -149,7 +145,7 @@ export const sendReward = async (
     // This is usually 546*2 (token output and token change)
     // But calculate to support anything
     const satoshisToSend = slpOutputs.reduce(
-        (prevSatoshis, output) => prevSatoshis + Number(output.value),
+        (prevSatoshis, output) => prevSatoshis + Number(output.sats),
         0,
     );
 
@@ -166,7 +162,7 @@ export const sendReward = async (
     // First, see where you are at with the required utxos
     // Then add xec utxos until you don't need anymore
     const inputs = [];
-    let inputSatoshis = 0;
+    let inputSatoshis = 0n;
 
     // For token-server, every utxo will have the same sk
     const { sk } = wallet;
@@ -177,13 +173,13 @@ export const sendReward = async (
             input: {
                 prevOut: slpInput.outpoint,
                 signData: {
-                    value: slpInput.value,
+                    sats: slpInput.sats,
                     outputScript: Script.fromAddress(wallet.address),
                 },
             },
             signatory: P2PKHSignatory(sk, pk, ALL_BIP143),
         });
-        inputSatoshis += slpInput.value;
+        inputSatoshis += slpInput.sats;
     }
 
     let needsAnotherUtxo = inputSatoshis <= satoshisToSend;
@@ -202,13 +198,13 @@ export const sendReward = async (
                 input: {
                     prevOut: utxo.outpoint,
                     signData: {
-                        value: utxo.value,
+                        sats: utxo.sats,
                         outputScript: Script.fromAddress(wallet.address),
                     },
                 },
                 signatory: P2PKHSignatory(sk, pk, ALL_BIP143),
             });
-            inputSatoshis += utxo.value;
+            inputSatoshis += utxo.sats;
 
             needsAnotherUtxo = inputSatoshis <= satoshisToSend;
 
@@ -227,7 +223,10 @@ export const sendReward = async (
         });
         let tx;
         try {
-            tx = txBuilder.sign(ecc, SATS_PER_KB, DUST_SATS);
+            tx = txBuilder.sign({
+                feePerKb: DEFAULT_FEE_SATS_PER_KB,
+                dustSats: DEFAULT_DUST_SATS,
+            });
         } catch (err) {
             if (
                 typeof err === 'object' &&
@@ -273,7 +272,7 @@ export const sendXecAirdrop = async (
     chronik: ChronikClient,
     ecc: Ecc,
     wallet: ServerWallet,
-    xecAirdropAmountSats: number,
+    xecAirdropAmountSats: bigint,
     destinationAddress: string,
 ): Promise<RewardBroadcastSuccess> => {
     // Sync wallet to get latest utxo set
@@ -287,7 +286,7 @@ export const sendXecAirdrop = async (
     // Build XEC outputs around target rewards and change
     const outputs: TxBuilderOutput[] = [
         {
-            value: xecAirdropAmountSats,
+            sats: xecAirdropAmountSats,
             script: Script.fromAddress(destinationAddress),
         },
         Script.fromAddress(address),
@@ -295,7 +294,7 @@ export const sendXecAirdrop = async (
 
     // Prepare inputs
     const inputs = [];
-    let inputSatoshis = 0;
+    let inputSatoshis = 0n;
 
     // For token-server, every utxo will have the same sk
     const { sk } = wallet;
@@ -317,13 +316,13 @@ export const sendXecAirdrop = async (
                 input: {
                     prevOut: utxo.outpoint,
                     signData: {
-                        value: utxo.value,
+                        sats: utxo.sats,
                         outputScript: Script.fromAddress(wallet.address),
                     },
                 },
                 signatory: P2PKHSignatory(sk, pk, ALL_BIP143),
             });
-            inputSatoshis += utxo.value;
+            inputSatoshis += utxo.sats;
 
             needsAnotherUtxo = inputSatoshis <= xecAirdropAmountSats;
 
@@ -342,14 +341,17 @@ export const sendXecAirdrop = async (
         });
         let tx;
         try {
-            tx = txBuilder.sign(ecc, SATS_PER_KB, DUST_SATS);
+            tx = txBuilder.sign({
+                feePerKb: DEFAULT_FEE_SATS_PER_KB,
+                dustSats: DEFAULT_DUST_SATS,
+            });
         } catch (err) {
             if (
                 typeof err === 'object' &&
                 err !== null &&
                 'message' in err &&
                 typeof err.message === 'string' &&
-                err.message.startsWith('Insufficient input value')
+                err.message.startsWith('Insufficient input sats')
             ) {
                 // If we have insufficient funds to cover satoshisToSend + fee
                 // we need to add another input

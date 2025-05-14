@@ -5,6 +5,7 @@
 #ifndef BITCOIN_INTERFACES_CHAIN_H
 #define BITCOIN_INTERFACES_CHAIN_H
 
+#include <primitives/blockhash.h>
 #include <primitives/transaction.h>
 #include <primitives/txid.h>
 #include <util/settings.h> // For util::SettingsValue
@@ -27,8 +28,8 @@ class CScheduler;
 class TxValidationState;
 
 enum class MemPoolRemovalReason;
+enum class ChainstateRole;
 
-struct BlockHash;
 struct bilingual_str;
 struct CBlockLocator;
 namespace node {
@@ -43,6 +44,12 @@ namespace interfaces {
 
 class Handler;
 class Wallet;
+
+//! Hash/height pair to help track and identify blocks.
+struct BlockKey {
+    BlockHash hash;
+    int height = -1;
+};
 
 //! Helper for findBlock to selectively return pieces of block data.
 class FoundBlock {
@@ -72,6 +79,11 @@ public:
         m_in_active_chain = &in_active_chain;
         return *this;
     }
+    //! Return locator if block is in the active chain.
+    FoundBlock &locator(CBlockLocator &locator) {
+        m_locator = &locator;
+        return *this;
+    }
     //! Return next block in the active chain if current block is in the active
     //! chain.
     FoundBlock &nextBlock(const FoundBlock &next_block) {
@@ -91,6 +103,7 @@ public:
     int64_t *m_max_time = nullptr;
     int64_t *m_mtp_time = nullptr;
     bool *m_in_active_chain = nullptr;
+    CBlockLocator *m_locator = nullptr;
     const FoundBlock *m_next_block = nullptr;
     CBlock *m_data = nullptr;
 };
@@ -215,6 +228,9 @@ public:
     //! Check if any block has been pruned.
     virtual bool havePruned() = 0;
 
+    //! Get the current prune height.
+    virtual std::optional<int> getPruneHeight() = 0;
+
     //! Check if the node is ready to broadcast transactions.
     virtual bool isReadyToBroadcast() = 0;
 
@@ -246,10 +262,12 @@ public:
         virtual void transactionRemovedFromMempool(const CTransactionRef &ptx,
                                                    MemPoolRemovalReason reason,
                                                    uint64_t mempool_sequence) {}
-        virtual void blockConnected(const CBlock &block, int height) {}
+        virtual void blockConnected(ChainstateRole role, const CBlock &block,
+                                    int height) {}
         virtual void blockDisconnected(const CBlock &block, int height) {}
         virtual void updatedBlockTip() {}
-        virtual void chainStateFlushed(const CBlockLocator &locator) {}
+        virtual void chainStateFlushed(ChainstateRole role,
+                                       const CBlockLocator &locator) {}
     };
 
     //! Register handler for notifications.
@@ -300,6 +318,13 @@ public:
     //! to be prepared to handle this by ignoring notifications about unknown
     //! removed transactions and already added new transactions.
     virtual void requestMempoolTransactions(Notifications &notifications) = 0;
+
+    //! Return true if an assumed-valid chain is in use.
+    virtual bool hasAssumedValidChain() = 0;
+
+    //! Get internal node context. Useful for testing, but not
+    //! accessible across processes.
+    virtual node::NodeContext *context() { return nullptr; }
 
     //! This Chain's parameters
     virtual const CChainParams &params() const = 0;

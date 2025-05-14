@@ -6,26 +6,19 @@
 
 FROM node:20-bookworm-slim
 
-# Build all local dependencies
-
-# ecashaddrjs
-WORKDIR /app/modules/ecashaddrjs
-COPY modules/ecashaddrjs/ .
-RUN npm ci
-RUN npm run build
-
 # Build mock-chronik-client
-
 WORKDIR /app/modules/mock-chronik-client
 
-# Copy only the package files and install necessary dependencies.
-# This reduces cache busting when source files are changed.
-COPY modules/mock-chronik-client/package.json .
-COPY modules/mock-chronik-client/package-lock.json .
+# Copy all project files as they are required for building
+COPY modules/mock-chronik-client .
+# Install ecashaddrjs from npm, so that module users install it automatically
+RUN npm install ecashaddrjs@latest
+# Install chronik-client from npm, so that module users install it automatically
+# Note that in practice any user of chronik-client probably already has chronik-client installed
+# So it won't really be bloating their node_modules
+RUN npm install chronik-client@latest
 RUN npm ci
-
-# Copy the rest of the project files
-COPY modules/mock-chronik-client/ .
+RUN npm run build
 
 # Publish the module
 CMD [ "npm", "publish" ]

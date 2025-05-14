@@ -130,6 +130,24 @@ class WalletBackupTest(BitcoinTestFramework):
             )
         )
 
+    def restore_invalid_wallet(self):
+        node = self.nodes[3]
+        invalid_wallet_file = os.path.join(
+            self.nodes[0].datadir, "invalid_wallet_file.bak"
+        )
+        open(invalid_wallet_file, "a", encoding="utf8").write("invald wallet")
+        wallet_name = "res0"
+        not_created_wallet_file = os.path.join(
+            node.datadir, self.chain, "wallets", wallet_name
+        )
+        error_message = "Wallet file verification failed. Failed to load database path '{}'. Data is not in recognized format.".format(
+            not_created_wallet_file
+        )
+        assert_raises_rpc_error(
+            -18, error_message, node.restorewallet, wallet_name, invalid_wallet_file
+        )
+        assert not os.path.exists(not_created_wallet_file)
+
     def restore_nonexistent_wallet(self):
         node = self.nodes[3]
         nonexistent_wallet_file = os.path.join(
@@ -143,18 +161,45 @@ class WalletBackupTest(BitcoinTestFramework):
             wallet_name,
             nonexistent_wallet_file,
         )
+        not_created_wallet_file = os.path.join(
+            node.datadir, self.chain, "wallets", wallet_name
+        )
+        assert not os.path.exists(not_created_wallet_file)
 
     def restore_wallet_existent_name(self):
         node = self.nodes[3]
-        wallet_file = os.path.join(self.nodes[0].datadir, "wallet.bak")
+        backup_file = os.path.join(self.nodes[0].datadir, "wallet.bak")
         wallet_name = "res0"
-        assert_raises_rpc_error(
-            -8,
-            "Wallet name already exists.",
-            node.restorewallet,
-            wallet_name,
-            wallet_file,
+        wallet_file = os.path.join(node.datadir, self.chain, "wallets", wallet_name)
+        error_message = (
+            f"Failed to create database path '{wallet_file}'. Database already exists."
         )
+        assert_raises_rpc_error(
+            -36, error_message, node.restorewallet, wallet_name, backup_file
+        )
+        assert os.path.exists(wallet_file)
+
+    def test_pruned_wallet_backup(self):
+        self.log.info(
+            "Test loading backup on a pruned node when the backup was created close "
+            "to the prune height of the restoring node"
+        )
+        node = self.nodes[3]
+        self.restart_node(3, ["-prune=1", "-fastprune=1"])
+        # Ensure the chain tip is at height 214, because this test assume it is.
+        assert_equal(node.getchaintips()[0]["height"], 214)
+        # We need a few more blocks so we can actually get above an realistic
+        # minimal prune height
+        self.generate(node, 50, sync_fun=self.no_op)
+        # Backup created at block height 264
+        node.backupwallet(os.path.join(node.datadir, "wallet_pruned.bak"))
+        # Generate more blocks so we can actually prune the older blocks
+        self.generate(node, 300, sync_fun=self.no_op)
+        # This gives us an actual prune height roughly in the range of 220 - 240
+        node.pruneblockchain(250)
+        # The backup should be updated with the latest height (locator) for
+        # the backup to load successfully this close to the prune height
+        node.restorewallet("pruned", os.path.join(node.datadir, "wallet_pruned.bak"))
 
     def run_test(self):
         self.log.info("Generating initial blockchain")
@@ -203,6 +248,7 @@ class WalletBackupTest(BitcoinTestFramework):
         ##
         self.log.info("Restoring wallets on node 3 using backup files")
 
+        self.restore_invalid_wallet()
         self.restore_nonexistent_wallet()
 
         backup_file_0 = os.path.join(self.nodes[0].datadir, "wallet.bak")
@@ -212,6 +258,16 @@ class WalletBackupTest(BitcoinTestFramework):
         self.nodes[3].restorewallet("res0", backup_file_0)
         self.nodes[3].restorewallet("res1", backup_file_1)
         self.nodes[3].restorewallet("res2", backup_file_2)
+
+        assert os.path.exists(
+            os.path.join(self.nodes[3].datadir, self.chain, "wallets", "res0")
+        )
+        assert os.path.exists(
+            os.path.join(self.nodes[3].datadir, self.chain, "wallets", "res1")
+        )
+        assert os.path.exists(
+            os.path.join(self.nodes[3].datadir, self.chain, "wallets", "res2")
+        )
 
         res0_rpc = self.nodes[3].get_wallet_rpc("res0")
         res1_rpc = self.nodes[3].get_wallet_rpc("res1")
@@ -283,6 +339,8 @@ class WalletBackupTest(BitcoinTestFramework):
             assert_raises_rpc_error(
                 -4, "backup failed", self.nodes[0].backupwallet, sourcePath
             )
+
+        self.test_pruned_wallet_backup()
 
 
 if __name__ == "__main__":

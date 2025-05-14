@@ -7,10 +7,7 @@
 use std::collections::BTreeSet;
 
 use abc_rust_error::Result;
-use bitcoinsuite_core::{
-    hash::Hashed,
-    tx::{Tx, TxId},
-};
+use bitcoinsuite_core::tx::{Tx, TxId};
 use bytes::Bytes;
 use chronik_db::{
     db::Db,
@@ -79,21 +76,19 @@ pub enum QueryGroupHistoryError {
 
     /// Can only request page sizes below a certain maximum.
     #[error(
-        "400: Requested page size {0} is too big, maximum is {}",
-        MAX_HISTORY_PAGE_SIZE
+        "400: Requested page size {0} is too big, \
+         maximum is {max_history_page_size}",
+        max_history_page_size = MAX_HISTORY_PAGE_SIZE,
     )]
     RequestPageSizeTooBig(usize),
 
     /// Can only request page sizes below a certain minimum.
     #[error(
-        "400: Requested page size {0} is too small, minimum is {}",
-        MIN_HISTORY_PAGE_SIZE
+        "400: Requested page size {0} is too small, \
+         minimum is {min_history_page_size}",
+        min_history_page_size = MIN_HISTORY_PAGE_SIZE,
     )]
     RequestPageSizeTooSmall(usize),
-
-    /// Script hash not found
-    #[error("404: Script hash {0:?} not found")]
-    ScriptHashNotFound(String),
 
     /// Script hash index not enabled
     #[error("400: Script hash index disabled")]
@@ -107,11 +102,11 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
         &self,
         member: &GroupMember<G::Member<'_>>,
         db_reader: &GroupHistoryReader<'_, G>,
-    ) -> Result<Bytes> {
+    ) -> Result<Option<Bytes>> {
         match member {
-            GroupMember::Member(member) => Ok(Bytes::copy_from_slice(
+            GroupMember::Member(member) => Ok(Some(Bytes::copy_from_slice(
                 self.group.ser_member(member).as_ref(),
-            )),
+            ))),
             GroupMember::MemberHash(memberhash) => {
                 if !self.is_scripthash_index_enabled {
                     return Err(ScriptHashIndexDisabled.into());
@@ -122,12 +117,12 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
                 if let Some(member_ser) =
                     self.mempool_history.member_ser_by_member_hash(*memberhash)
                 {
-                    return Ok(Bytes::copy_from_slice(member_ser));
+                    return Ok(Some(Bytes::copy_from_slice(member_ser)));
                 }
-                let script_ser = db_reader
-                    .member_ser_by_member_hash(*memberhash)?
-                    .ok_or_else(|| ScriptHashNotFound(memberhash.hex_be()))?;
-                Ok(Bytes::from(script_ser))
+                match db_reader.member_ser_by_member_hash(*memberhash)? {
+                    Some(script_ser) => Ok(Some(Bytes::from(script_ser))),
+                    None => Ok(None),
+                }
             }
         }
     }
@@ -149,7 +144,17 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
             return Err(RequestPageSizeTooBig(request_page_size).into());
         }
         let db_reader = GroupHistoryReader::<G>::new(self.db)?;
-        let member_ser = self.member_ser_from_member(&member, &db_reader)?;
+        let member_ser =
+            match self.member_ser_from_member(&member, &db_reader)? {
+                Some(m) => m,
+                None => {
+                    return Ok(proto::TxHistoryPage {
+                        txs: vec![],
+                        num_pages: 0,
+                        num_txs: 0,
+                    })
+                }
+            };
         let (num_db_pages, num_db_txs) =
             db_reader.member_num_pages_and_txs(member_ser.as_ref())?;
         let num_request_pages =
@@ -249,7 +254,17 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
         }
 
         let db_reader = GroupHistoryReader::<G>::new(self.db)?;
-        let member_ser = self.member_ser_from_member(&member, &db_reader)?;
+        let member_ser =
+            match self.member_ser_from_member(&member, &db_reader)? {
+                Some(m) => m,
+                None => {
+                    return Ok(proto::TxHistoryPage {
+                        txs: vec![],
+                        num_pages: 0,
+                        num_txs: 0,
+                    })
+                }
+            };
         let (_, num_db_txs) =
             db_reader.member_num_pages_and_txs(member_ser.as_ref())?;
 
@@ -400,7 +415,17 @@ impl<'a, G: Group> QueryGroupHistory<'a, G> {
         member: GroupMember<G::Member<'_>>,
     ) -> Result<proto::TxHistoryPage> {
         let db_reader = GroupHistoryReader::<G>::new(self.db)?;
-        let member_ser = self.member_ser_from_member(&member, &db_reader)?;
+        let member_ser =
+            match self.member_ser_from_member(&member, &db_reader)? {
+                Some(m) => m,
+                None => {
+                    return Ok(proto::TxHistoryPage {
+                        txs: vec![],
+                        num_pages: 0,
+                        num_txs: 0,
+                    })
+                }
+            };
         let txs = match self.mempool_history.member_history(member_ser.as_ref())
         {
             Some(mempool_txs) => mempool_txs

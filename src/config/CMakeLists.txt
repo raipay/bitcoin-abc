@@ -10,9 +10,9 @@ include(CheckCXXSymbolExists)
 include(CheckCXXSourceCompiles)
 
 # Version
-set(CLIENT_VERSION_MAJOR ${bitcoin-abc_VERSION_MAJOR})
-set(CLIENT_VERSION_MINOR ${bitcoin-abc_VERSION_MINOR})
-set(CLIENT_VERSION_REVISION ${bitcoin-abc_VERSION_PATCH})
+set(CLIENT_VERSION_MAJOR ${${CMAKE_PROJECT_NAME}_VERSION_MAJOR})
+set(CLIENT_VERSION_MINOR ${${CMAKE_PROJECT_NAME}_VERSION_MINOR})
+set(CLIENT_VERSION_REVISION ${${CMAKE_PROJECT_NAME}_VERSION_PATCH})
 
 option(CLIENT_VERSION_IS_RELEASE "Build a release version" OFF)
 
@@ -111,9 +111,13 @@ function(check_builtin_exist SYMBOL VARIABLE)
 endfunction()
 
 # Bitmanip intrinsics
+# CLZ => Count Leading Zeros; CTZ => Count Trailing Zeros
 check_builtin_exist(__builtin_clz HAVE_DECL___BUILTIN_CLZ)
 check_builtin_exist(__builtin_clzl HAVE_DECL___BUILTIN_CLZL)
 check_builtin_exist(__builtin_clzll HAVE_DECL___BUILTIN_CLZLL)
+check_builtin_exist(__builtin_ctz HAVE_DECL___BUILTIN_CTZ)
+check_builtin_exist(__builtin_ctzl HAVE_DECL___BUILTIN_CTZL)
+check_builtin_exist(__builtin_ctzll HAVE_DECL___BUILTIN_CTZLL)
 check_builtin_exist(__builtin_popcount HAVE_DECL___BUILTIN_POPCOUNT)
 # Overflow math
 check_builtin_exist_with_code(

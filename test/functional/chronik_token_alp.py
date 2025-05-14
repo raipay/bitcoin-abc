@@ -11,12 +11,7 @@ from test_framework.address import (
     P2SH_OP_TRUE,
     SCRIPTSIG_OP_TRUE,
 )
-from test_framework.blocktools import (
-    COINBASE_MATURITY,
-    create_block,
-    create_coinbase,
-    make_conform_to_ctor,
-)
+from test_framework.blocktools import COINBASE_MATURITY, create_block, create_coinbase
 from test_framework.chronik.alp import (
     alp_burn,
     alp_genesis,
@@ -101,15 +96,15 @@ class ChronikTokenAlp(BitcoinTestFramework):
                     token_id=tx.hash,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.GENESIS,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                 ),
             ],
             inputs=[pb.Token()],
             outputs=[
                 pb.Token(),
-                alp_token(token_id=tx.hash, amount=10),
-                alp_token(token_id=tx.hash, amount=20),
-                alp_token(token_id=tx.hash, amount=30),
+                alp_token(token_id=tx.hash, atoms=10),
+                alp_token(token_id=tx.hash, atoms=20),
+                alp_token(token_id=tx.hash, atoms=30),
                 pb.Token(),
                 alp_token(token_id=tx.hash, is_mint_baton=True),
                 alp_token(token_id=tx.hash, is_mint_baton=True),
@@ -160,13 +155,13 @@ class ChronikTokenAlp(BitcoinTestFramework):
                     token_id=genesis.txid,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.MINT,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                 )
             ],
             inputs=[alp_token(token_id=genesis.txid, is_mint_baton=True)],
             outputs=[
                 pb.Token(),
-                alp_token(token_id=genesis.txid, amount=5),
+                alp_token(token_id=genesis.txid, atoms=5),
                 pb.Token(),
                 alp_token(token_id=genesis.txid, is_mint_baton=True),
             ],
@@ -203,17 +198,17 @@ class ChronikTokenAlp(BitcoinTestFramework):
                     token_id=genesis.txid,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.SEND,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                 )
             ],
             inputs=[
-                alp_token(token_id=genesis.txid, amount=10),
-                alp_token(token_id=genesis.txid, amount=5),
+                alp_token(token_id=genesis.txid, atoms=10),
+                alp_token(token_id=genesis.txid, atoms=5),
             ],
             outputs=[
                 pb.Token(),
-                alp_token(token_id=genesis.txid, amount=3),
-                alp_token(token_id=genesis.txid, amount=12),
+                alp_token(token_id=genesis.txid, atoms=3),
+                alp_token(token_id=genesis.txid, atoms=12),
             ],
         )
         txs.append(send)
@@ -250,13 +245,13 @@ class ChronikTokenAlp(BitcoinTestFramework):
                     token_id=tx.hash,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.GENESIS,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                 ),
             ],
             inputs=[pb.Token()],
             outputs=[
                 pb.Token(),
-                alp_token(token_id=tx.hash, amount=100),
+                alp_token(token_id=tx.hash, atoms=100),
                 alp_token(token_id=tx.hash, is_mint_baton=True),
                 alp_token(token_id=tx.hash, is_mint_baton=True),
                 pb.Token(),
@@ -318,33 +313,33 @@ class ChronikTokenAlp(BitcoinTestFramework):
                     token_id=tx.hash,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.GENESIS,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                 ),
                 pb.TokenEntry(
                     token_id=genesis2.txid,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.MINT,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                 ),
                 pb.TokenEntry(
                     token_id=genesis.txid,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.SEND,
-                    intentional_burn=1,
-                    actual_burn_amount="1",
+                    intentional_burn_atoms=1,
+                    actual_burn_atoms="1",
                 ),
             ],
             inputs=[
-                alp_token(token_id=genesis.txid, amount=3, entry_idx=2),
+                alp_token(token_id=genesis.txid, atoms=3, entry_idx=2),
                 alp_token(token_id=genesis2.txid, is_mint_baton=True, entry_idx=1),
             ],
             outputs=[
                 pb.Token(),
-                alp_token(token_id=tx.hash, amount=0xFFFF_FFFF_FFFF),
-                alp_token(token_id=genesis2.txid, amount=5, entry_idx=1),
+                alp_token(token_id=tx.hash, atoms=0xFFFF_FFFF_FFFF),
+                alp_token(token_id=genesis2.txid, atoms=5, entry_idx=1),
                 alp_token(token_id=tx.hash, is_mint_baton=True),
                 pb.Token(),
-                alp_token(token_id=genesis.txid, amount=2, entry_idx=2),
+                alp_token(token_id=genesis.txid, atoms=2, entry_idx=2),
                 pb.Token(),
             ],
             token_info=pb.TokenInfo(
@@ -433,7 +428,7 @@ class ChronikTokenAlp(BitcoinTestFramework):
                     token_id=tx.hash,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.GENESIS,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                     burn_summary="Invalid coloring at pushdata idx 1: GENESIS must be the first pushdata",
                     failed_colorings=[
                         pb.TokenFailedColoring(
@@ -446,17 +441,17 @@ class ChronikTokenAlp(BitcoinTestFramework):
                     token_id=genesis2.txid,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.MINT,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                 ),
                 pb.TokenEntry(
                     token_id=genesis.txid,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.MINT,
-                    intentional_burn=2,
-                    actual_burn_amount="0",
+                    intentional_burn_atoms=2,
+                    actual_burn_atoms="0",
                     burn_summary=f"""\
 Invalid coloring at pushdata idx 2: Too few outputs, expected 107 but got 11. Invalid \
-coloring at pushdata idx 3: Overlapping amount when trying to color 281474976710655 at \
+coloring at pushdata idx 3: Overlapping atoms when trying to color 281474976710655 at \
 index 2, output is already colored with 7 of {tx.hash} (ALP STANDARD (V0)). Invalid \
 coloring at pushdata idx 4: Overlapping mint baton when trying to color mint baton at \
 index 2, output is already colored with 7 of {tx.hash} (ALP STANDARD (V0)). Invalid \
@@ -471,7 +466,7 @@ Invalid coloring at pushdata idx 9: Duplicate intentional burn token_id \
                         pb.TokenFailedColoring(
                             pushdata_idx=3,
                             error=f"""\
-Overlapping amount when trying to color 281474976710655 at index 2, output is already \
+Overlapping atoms when trying to color 281474976710655 at index 2, output is already \
 colored with 7 of {tx.hash} (ALP STANDARD (V0))""",
                         ),
                         pb.TokenFailedColoring(
@@ -494,7 +489,7 @@ colored with 7 of {tx.hash} (ALP STANDARD (V0))""",
                     token_id=multi.txid,
                     token_type=pb.TokenType(alp=pb.ALP_TOKEN_TYPE_STANDARD),
                     tx_type=pb.SEND,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                     burn_summary=f"""\
 Invalid coloring at pushdata idx 10: Too few outputs, expected 13 but got 11. Invalid \
 coloring at pushdata idx 12: Duplicate token_id {multi.txid}, found in section 3. \
@@ -519,32 +514,32 @@ be in ascending order""",
                     token_id="00" * 32,
                     token_type=pb.TokenType(alp=0x89),
                     tx_type=pb.UNKNOWN,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                 ),
                 pb.TokenEntry(
                     token_id="00" * 32,
                     token_type=pb.TokenType(alp=0x9A),
                     tx_type=pb.UNKNOWN,
-                    actual_burn_amount="0",
+                    actual_burn_atoms="0",
                 ),
             ],
             inputs=[
                 alp_token(token_id=genesis2.txid, is_mint_baton=True, entry_idx=1),
                 alp_token(token_id=genesis.txid, is_mint_baton=True, entry_idx=2),
-                alp_token(token_id=multi.txid, amount=0xFFFF_FFFF_FFFF, entry_idx=3),
+                alp_token(token_id=multi.txid, atoms=0xFFFF_FFFF_FFFF, entry_idx=3),
             ],
             outputs=[
                 pb.Token(),
                 # success MINT: token ID 3
-                alp_token(token_id=genesis2.txid, amount=3, entry_idx=1),
+                alp_token(token_id=genesis2.txid, atoms=3, entry_idx=1),
                 # success GENESIS
-                alp_token(token_id=tx.hash, amount=7),
+                alp_token(token_id=tx.hash, atoms=7),
                 # success MINT: token ID 3
                 alp_token(token_id=genesis2.txid, is_mint_baton=True, entry_idx=1),
                 # success MINT: token ID 2
-                alp_token(token_id=genesis.txid, amount=2, entry_idx=2),
+                alp_token(token_id=genesis.txid, atoms=2, entry_idx=2),
                 # success GENESIS
-                alp_token(token_id=tx.hash, amount=1),
+                alp_token(token_id=tx.hash, atoms=1),
                 # success GENESIS
                 alp_token(token_id=tx.hash, is_mint_baton=True),
                 # success GENESIS
@@ -558,7 +553,7 @@ be in ascending order""",
                 # success SEND: token ID 4
                 alp_token(
                     token_id=multi.txid,
-                    amount=0xFFFF_FFFF_FFFF,
+                    atoms=0xFFFF_FFFF_FFFF,
                     entry_idx=3,
                 ),
             ],
@@ -573,19 +568,18 @@ be in ascending order""",
             int(block_hashes[-1], 16),
             create_coinbase(block_height, b"\x03" * 33),
             1300000500,
+            txlist=[
+                genesis.tx,
+                mint.tx,
+                send.tx,
+                genesis2.tx,
+                multi.tx,
+                all_things.tx,
+            ],
         )
-        block.vtx += [
-            genesis.tx,
-            mint.tx,
-            send.tx,
-            genesis2.tx,
-            multi.tx,
-            all_things.tx,
-        ]
-        make_conform_to_ctor(block)
-        block.hashMerkleRoot = block.calc_merkle_root()
         block.solve()
         peer.send_blocks_and_test([block], node)
+        node.syncwithvalidationinterfacequeue()
         all_things.test(chronik, block.hash)
 
         # After being mined, all previous txs still work fine:
@@ -609,12 +603,12 @@ be in ascending order""",
                 int(prev_hash, 16),
                 create_coinbase(block_height + block_idx, b"\x03" * 33),
                 1300000500 + block_idx,
+                txlist=[mined_tx.tx],
             )
-            block.vtx += [mined_tx.tx]
-            block.hashMerkleRoot = block.calc_merkle_root()
             block.solve()
             prev_hash = block.hash
             peer.send_blocks_and_test([block], node)
+            node.syncwithvalidationinterfacequeue()
             tx_block_hashes[block_idx] = block.hash
 
             # All txs still work on every block
@@ -626,11 +620,11 @@ be in ascending order""",
             int(prev_hash, 16),
             create_coinbase(block_height + len(txs), b"\x03" * 33),
             1300000500 + len(txs),
+            txlist=[all_things.tx],
         )
-        block.vtx += [all_things.tx]
-        block.hashMerkleRoot = block.calc_merkle_root()
         block.solve()
         peer.send_blocks_and_test([block], node)
+        node.syncwithvalidationinterfacequeue()
         all_things.test(chronik, block.hash)
         for tx, block_hash in zip(txs, tx_block_hashes):
             tx.test(chronik, block_hash)
@@ -656,11 +650,11 @@ be in ascending order""",
             int(block_hashes[-1], 16),
             create_coinbase(block_height, b"\x03" * 33),
             1300000500,
+            txlist=[conflict_tx],
         )
-        block.vtx += [conflict_tx]
-        block.hashMerkleRoot = block.calc_merkle_root()
         block.solve()
         peer.send_blocks_and_test([block], node)
+        node.syncwithvalidationinterfacequeue()
         for tx in txs:
             chronik.tx(tx.txid).err(404)
 

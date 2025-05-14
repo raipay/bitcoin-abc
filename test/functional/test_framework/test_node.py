@@ -11,6 +11,7 @@ import http.client
 import json
 import logging
 import os
+import pprint
 import re
 import shlex
 import subprocess
@@ -20,11 +21,12 @@ import time
 import urllib.parse
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from .address import ADDRESS_ECREG_UNSPENDABLE
 from .authproxy import JSONRPCException
 from .descriptors import descsum_create
+from .jsonrpctools import ChronikElectrumClient
 from .messages import XEC, CTransaction, FromHex
 from .p2p import P2P_SUBVERSION
 from .util import (
@@ -36,6 +38,7 @@ from .util import (
     get_rpc_proxy,
     p2p_port,
     rpc_url,
+    tor_port,
     wait_until_helper,
 )
 
@@ -75,6 +78,7 @@ class TestNode:
         rpc_port,
         p2p_port,
         chronik_port,
+        chronik_electrum_port,
         timewait,
         timeout_factor,
         bitcoind,
@@ -106,6 +110,7 @@ class TestNode:
         self.rpc_port = rpc_port
         self.p2p_port = p2p_port
         self.chronik_port = chronik_port
+        self.chronik_electrum_port = chronik_electrum_port
         self.name = f"testnode-{i}"
         self.rpc_timeout = timewait
         self.binary = bitcoind
@@ -117,8 +122,11 @@ class TestNode:
         self.coverage_dir = coverage_dir
         self.cwd = cwd
         self.descriptors = descriptors
+        self.has_explicit_bind = False
         if extra_conf is not None:
             append_config(datadir, extra_conf)
+            # Remember if there is bind=... in the config file.
+            self.has_explicit_bind = any(e.startswith("bind=") for e in extra_conf)
         # Most callers will just need to add extra args to the default list
         # below.
         # For those callers that need more flexibility, they can access the
@@ -307,6 +315,19 @@ class TestNode:
         if extra_args is None:
             extra_args = self.extra_args
 
+        # If listening and no -bind is given, then bitcoind would bind P2P ports on
+        # 0.0.0.0:P and 127.0.0.1:18445 (for incoming Tor connections), where P is
+        # a unique port chosen by the test framework and configured as port=P in
+        # bitcoin.conf. To avoid collisions on 127.0.0.1:18445, change it to
+        # 127.0.0.1:tor_port().
+        will_listen = all(e != "-nolisten" and e != "-listen=0" for e in extra_args)
+        has_explicit_bind = self.has_explicit_bind or any(
+            e.startswith("-bind=") for e in extra_args
+        )
+        if will_listen and not has_explicit_bind:
+            extra_args.append(f"-bind=0.0.0.0:{p2p_port(self.index)}")
+            extra_args.append(f"-bind=127.0.0.1:{tor_port(self.index)}=onion")
+
         # Add a new stdout and stderr file each time bitcoind is started
         if stderr is None:
             stderr = tempfile.NamedTemporaryFile(dir=self.stderr_dir, delete=False)
@@ -370,7 +391,7 @@ class TestNode:
                 # Wait for the node to finish reindex, block import, and
                 # loading the mempool. Usually importing happens fast or
                 # even "immediate" when the node is started. However, there
-                # is no guarantee and sometimes ThreadImport might finish
+                # is no guarantee and sometimes ImportBlocks might finish
                 # later. This is going to cause intermittent test failures,
                 # because generally the tests assume the node is fully
                 # ready after being started.
@@ -471,7 +492,7 @@ class TestNode:
         expiration: int,
         master: str,
         stakes: List[Dict[str, Any]],
-        payoutAddress: Optional[str] = ADDRESS_ECREG_UNSPENDABLE,
+        payoutAddress: str = ADDRESS_ECREG_UNSPENDABLE,
     ) -> str:
         return self.__getattr__("buildavalancheproof")(
             sequence=sequence,
@@ -566,8 +587,8 @@ class TestNode:
     def debug_log_path(self) -> Path:
         return self.chain_path / "debug.log"
 
-    def debug_log_bytes(self) -> int:
-        with open(self.debug_log_path, encoding="utf-8") as dl:
+    def debug_log_size(self, **kwargs) -> int:
+        with open(self.debug_log_path, **kwargs) as dl:
             dl.seek(0, 2)
             return dl.tell()
 
@@ -588,13 +609,17 @@ class TestNode:
         if unexpected_msgs is None:
             unexpected_msgs = []
         time_end = time.time() + timeout * self.timeout_factor
-        prev_size = self.debug_log_bytes()
+        prev_size = self.debug_log_size(
+            encoding="utf-8"
+        )  # Must use same encoding that is used to read() below
 
         yield
 
+        missing = []
         while True:
             found = True
-            with open(self.debug_log_path, encoding="utf-8") as dl:
+            missing = []
+            with open(self.debug_log_path, encoding="utf-8", errors="replace") as dl:
                 dl.seek(prev_size)
                 log = dl.read()
             print_log = " - " + "\n - ".join(log.splitlines())
@@ -606,15 +631,22 @@ class TestNode:
                     )
             for expected_msg in expected_msgs:
                 if re.search(re.escape(expected_msg), log, flags=re.MULTILINE) is None:
+                    missing.append(expected_msg)
                     found = False
             if found:
                 return
             if time.time() >= time_end:
                 break
             time.sleep(0.05)
+
+        missing_msg = f'Missing messages: "{pprint.pformat(missing, width=120)}"'
+        if len(expected_msgs) == len(missing):
+            # Do not confuse by duplicating expected_msgs
+            missing_msg = "All expected messages are missing."
+
         self._raise_assertion_error(
-            f'Expected messages "{expected_msgs}" does not partially match '
-            f"log:\n\n{print_log}\n\n"
+            f"Captured debug log:\n\n{print_log}\n\n"
+            f'Expected messages "{pprint.pformat(expected_msgs, width=120)}" does not partially match the above log.\n\n{missing_msg}\n'
         )
 
     @contextlib.contextmanager
@@ -630,12 +662,16 @@ class TestNode:
         If a chatty_callable is provided, it is repeated at every iteration.
         """
         time_end = time.time() + timeout * self.timeout_factor
-        prev_size = self.debug_log_bytes()
+        prev_size = self.debug_log_size(
+            mode="rb"
+        )  # Must use same mode that is used to read() below
 
         yield
 
+        missing: List[bytes] = []
         while True:
             found = True
+            missing = []
 
             if chatty_callable is not None:
                 # Ignore the chatty_callable returned value, as we are only
@@ -648,6 +684,7 @@ class TestNode:
 
             for expected_msg in expected_msgs:
                 if expected_msg not in log:
+                    missing.append(expected_msg)
                     found = False
 
             if found:
@@ -661,9 +698,14 @@ class TestNode:
 
             time.sleep(interval)
 
+        missing_msg = f'Missing messages: "{pprint.pformat(missing, width=120)}"'
+        if len(expected_msgs) == len(missing):
+            # Do not confuse by duplicating expected_msgs
+            missing_msg = "All expected messages are missing."
+
         self._raise_assertion_error(
-            f'Expected messages "{str(expected_msgs)}" does not partially match '
-            f"log:\n\n{print_log}\n\n"
+            f"Captured debug log:\n\n{print_log}\n\n"
+            f'Expected messages "{pprint.pformat(expected_msgs, width=120)}" does not partially match the above log.\n\n{missing_msg}\n'
         )
 
     @contextlib.contextmanager
@@ -777,6 +819,7 @@ class TestNode:
         Will throw if bitcoind starts without an error.
         Will throw if an expected_msg is provided and it does not match bitcoind's stdout.
         """
+        assert not self.running
         with tempfile.NamedTemporaryFile(
             dir=self.stderr_dir, delete=False
         ) as log_stderr, tempfile.NamedTemporaryFile(
@@ -851,7 +894,9 @@ class TestNode:
         ctx = FromHex(CTransaction(), self.getrawtransaction(txid))
         return self.calculate_fee(ctx)
 
-    def add_p2p_connection(self, p2p_conn, *, wait_for_verack=True, **kwargs):
+    def add_p2p_connection(
+        self, p2p_conn, *, wait_for_verack=True, wait_for_connection=True, **kwargs
+    ):
         """Add an inbound p2p connection to the node.
 
         This method adds the p2p connection to the self.p2ps list and also
@@ -865,28 +910,31 @@ class TestNode:
             **kwargs, net=self.chain, timeout_factor=self.timeout_factor
         )()
         self.p2ps.append(p2p_conn)
+        if not wait_for_connection:
+            return p2p_conn
         p2p_conn.wait_until(lambda: p2p_conn.is_connected, check_connected=False)
-        if wait_for_verack:
-            # Wait for the node to send us the version and verack
-            p2p_conn.wait_for_verack()
-            # At this point we have sent our version message and received the version and verack, however the full node
-            # has not yet received the verack from us (in reply to their version). So, the connection is not yet fully
-            # established (fSuccessfullyConnected).
-            #
-            # This shouldn't lead to any issues when sending messages, since the verack will be in-flight before the
-            # message we send. However, it might lead to races where we are expecting to receive a message. E.g. a
-            # transaction that will be added to the mempool as soon as we return here.
-            #
-            # So syncing here is redundant when we only want to send a message, but the cost is low (a few milliseconds)
-            # in comparison to the upside of making tests less fragile and
-            # unexpected intermittent errors less likely.
-            p2p_conn.sync_with_ping()
+        if not wait_for_verack:
+            return p2p_conn
+        # Wait for the node to send us the version and verack
+        p2p_conn.wait_for_verack()
+        # At this point we have sent our version message and received the version and verack, however the full node
+        # has not yet received the verack from us (in reply to their version). So, the connection is not yet fully
+        # established (fSuccessfullyConnected).
+        #
+        # This shouldn't lead to any issues when sending messages, since the verack will be in-flight before the
+        # message we send. However, it might lead to races where we are expecting to receive a message. E.g. a
+        # transaction that will be added to the mempool as soon as we return here.
+        #
+        # So syncing here is redundant when we only want to send a message, but the cost is low (a few milliseconds)
+        # in comparison to the upside of making tests less fragile and
+        # unexpected intermittent errors less likely.
+        p2p_conn.sync_with_ping()
 
-            # Consistency check that the Bitcoin ABC has received our user agent
-            # string. This checks the node's newest peer. It could be racy if
-            # another Bitcoin ABC node has connected since we opened our
-            # connection, but we don't expect that to happen.
-            assert_equal(self.getpeerinfo()[-1]["subver"], P2P_SUBVERSION)
+        # Consistency check that the Bitcoin ABC has received our user agent
+        # string. This checks the node's newest peer. It could be racy if
+        # another Bitcoin ABC node has connected since we opened our
+        # connection, but we don't expect that to happen.
+        assert_equal(self.getpeerinfo()[-1]["subver"], P2P_SUBVERSION)
 
         return p2p_conn
 
@@ -961,6 +1009,27 @@ class TestNode:
             self.chronik_port,
             timeout=DEFAULT_TIMEOUT * self.timeout_factor,
         )
+
+    def get_chronik_electrum_client(self, timeout=None) -> ChronikElectrumClient:
+        # host is always None in practice, we should get rid of it at some
+        # point. In the meantime, let's properly handle the API.
+        host = self.host if self.host is not None else "127.0.0.1"
+        timeout = (
+            timeout or ChronikElectrumClient.DEFAULT_TIMEOUT
+        ) * self.timeout_factor
+        t = 0.0
+        while True:
+            try:
+                return ChronikElectrumClient(
+                    host,
+                    self.chronik_electrum_port,
+                    timeout=timeout,
+                )
+            except ConnectionRefusedError:
+                if t > timeout:
+                    raise
+                time.sleep(0.1)
+                t += 0.1
 
     def bumpmocktime(self, seconds):
         """Fast forward using setmocktime to self.mocktime + seconds. Requires setmocktime to have

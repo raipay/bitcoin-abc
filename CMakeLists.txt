@@ -7,7 +7,7 @@ set(CMAKE_USER_MAKE_RULES_OVERRIDE
 )
 
 project(bitcoin-abc
-	VERSION 0.30.5
+	VERSION 0.31.3
 	DESCRIPTION "Bitcoin ABC is a full node implementation of the eCash protocol."
 	HOMEPAGE_URL "https://www.bitcoinabc.org"
 )
@@ -17,12 +17,17 @@ add_custom_target(print-version
   COMMAND "${CMAKE_COMMAND}" -E echo "${PROJECT_VERSION}"
 )
 
+add_custom_target(print-project-name
+  COMMENT "Print the current ${PROJECT_NAME}"
+  COMMAND "${CMAKE_COMMAND}" -E echo "${PROJECT_NAME}"
+)
+
 # Package information
 set(PACKAGE_NAME "Bitcoin ABC")
 set(PACKAGE_BUGREPORT "https://github.com/Bitcoin-ABC/bitcoin-abc/issues")
 
 # Copyright
-set(COPYRIGHT_YEAR 2024)
+set(COPYRIGHT_YEAR 2025)
 set(COPYRIGHT_HOLDERS "The %s developers")
 set(COPYRIGHT_HOLDERS_SUBSTITUTION Bitcoin)
 string(REPLACE "%s" ${COPYRIGHT_HOLDERS_SUBSTITUTION} COPYRIGHT_HOLDERS_FINAL ${COPYRIGHT_HOLDERS})

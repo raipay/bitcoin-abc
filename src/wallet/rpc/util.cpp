@@ -62,9 +62,11 @@ bool GetWalletNameFromJSONRPCRequest(const JSONRPCRequest &request,
 std::shared_ptr<CWallet>
 GetWalletForJSONRPCRequest(const JSONRPCRequest &request) {
     CHECK_NONFATAL(request.mode == JSONRPCRequest::EXECUTE);
+    WalletContext &context = EnsureWalletContext(request.context);
+
     std::string wallet_name;
     if (GetWalletNameFromJSONRPCRequest(request, wallet_name)) {
-        std::shared_ptr<CWallet> pwallet = GetWallet(wallet_name);
+        std::shared_ptr<CWallet> pwallet = GetWallet(context, wallet_name);
         if (!pwallet) {
             throw JSONRPCError(
                 RPC_WALLET_NOT_FOUND,
@@ -73,7 +75,7 @@ GetWalletForJSONRPCRequest(const JSONRPCRequest &request) {
         return pwallet;
     }
 
-    std::vector<std::shared_ptr<CWallet>> wallets = GetWallets();
+    std::vector<std::shared_ptr<CWallet>> wallets = GetWallets(context);
     if (wallets.size() == 1) {
         return wallets[0];
     }
@@ -130,31 +132,31 @@ std::string LabelFromValue(const UniValue &value) {
     return label;
 }
 
-std::tuple<std::shared_ptr<CWallet>, std::vector<bilingual_str>>
-LoadWalletHelper(WalletContext &context, UniValue load_on_start_param,
-                 const std::string wallet_name) {
-    DatabaseOptions options;
-    DatabaseStatus status;
-    options.require_existing = true;
-    bilingual_str error;
-    std::vector<bilingual_str> warnings;
-    std::optional<bool> load_on_start =
-        load_on_start_param.isNull()
-            ? std::nullopt
-            : std::make_optional<bool>(load_on_start_param.get_bool());
-    std::shared_ptr<CWallet> const wallet =
-        LoadWallet(*context.chain, wallet_name, load_on_start, options, status,
-                   error, warnings);
+void HandleWalletError(const std::shared_ptr<CWallet> wallet,
+                       DatabaseStatus &status, bilingual_str &error) {
     if (!wallet) {
         // Map bad format to not found, since bad format is returned
         // when the wallet directory exists, but doesn't contain a data
         // file.
-        RPCErrorCode code = status == DatabaseStatus::FAILED_NOT_FOUND ||
-                                    status == DatabaseStatus::FAILED_BAD_FORMAT
-                                ? RPC_WALLET_NOT_FOUND
-                                : RPC_WALLET_ERROR;
+        RPCErrorCode code = RPC_WALLET_ERROR;
+        switch (status) {
+            case DatabaseStatus::FAILED_NOT_FOUND:
+            case DatabaseStatus::FAILED_BAD_FORMAT:
+                code = RPC_WALLET_NOT_FOUND;
+                break;
+            case DatabaseStatus::FAILED_ALREADY_LOADED:
+                code = RPC_WALLET_ALREADY_LOADED;
+                break;
+            case DatabaseStatus::FAILED_ALREADY_EXISTS:
+                code = RPC_WALLET_ALREADY_EXISTS;
+                break;
+            case DatabaseStatus::FAILED_INVALID_BACKUP_FILE:
+                code = RPC_INVALID_PARAMETER;
+                break;
+            default:
+                // RPC_WALLET_ERROR is returned for all other cases.
+                break;
+        }
         throw JSONRPCError(code, error.original);
     }
-
-    return {wallet, warnings};
 }

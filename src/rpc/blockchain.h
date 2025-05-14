@@ -19,6 +19,7 @@ class CBlockIndex;
 class Chainstate;
 class RPCHelpMan;
 namespace node {
+class BlockManager;
 struct NodeContext;
 } // namespace node
 
@@ -46,11 +47,18 @@ UniValue blockheaderToJSON(const CBlockIndex *tip,
     LOCKS_EXCLUDED(cs_main);
 
 /**
- * Helper to create UTXO snapshots given a chainstate and a file handle.
+ * Test-only helper to create UTXO snapshots given a chainstate and a file
+ * handle.
  * @return a UniValue map containing metadata about the snapshot.
  */
 UniValue CreateUTXOSnapshot(node::NodeContext &node, Chainstate &chainstate,
                             AutoFile &afile, const fs::path &path,
                             const fs::path &tmppath);
+
+//! Return height of highest block that has been pruned, or std::nullopt if no
+//!  blocks have been pruned
+std::optional<int> GetPruneHeight(const node::BlockManager &blockman,
+                                  const CChain &chain)
+    EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
 #endif // BITCOIN_RPC_BLOCKCHAIN_H

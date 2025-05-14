@@ -102,10 +102,13 @@ struct DBHashKey {
 
 static std::map<BlockFilterType, BlockFilterIndex> g_filter_indexes;
 
-BlockFilterIndex::BlockFilterIndex(BlockFilterType filter_type,
+BlockFilterIndex::BlockFilterIndex(std::unique_ptr<interfaces::Chain> chain,
+                                   BlockFilterType filter_type,
                                    size_t n_cache_size, bool f_memory,
                                    bool f_wipe)
-    : m_filter_type(filter_type) {
+    : BaseIndex(std::move(chain),
+                BlockFilterTypeName(filter_type) + " block filter index"),
+      m_filter_type(filter_type) {
     const std::string &filter_name = BlockFilterTypeName(filter_type);
     if (filter_name.empty()) {
         throw std::invalid_argument("unknown filter_type");
@@ -115,14 +118,14 @@ BlockFilterIndex::BlockFilterIndex(BlockFilterType filter_type,
         gArgs.GetDataDirNet() / "indexes" / "blockfilter" / filter_name;
     fs::create_directories(path);
 
-    m_name = filter_name + " block filter index";
     m_db = std::make_unique<BaseIndex::DB>(path / "db", n_cache_size, f_memory,
                                            f_wipe);
     m_filter_fileseq = std::make_unique<FlatFileSeq>(std::move(path), "fltr",
                                                      FLTR_FILE_CHUNK_SIZE);
 }
 
-bool BlockFilterIndex::Init() {
+bool BlockFilterIndex::CustomInit(
+    const std::optional<interfaces::BlockKey> &block) {
     if (!m_db->Read(DB_FILTER_POS, m_next_filter_pos)) {
         // Check that the cause of the read failure is that the key does not
         // exist. Any other errors indicate database corruption or a disk
@@ -138,10 +141,10 @@ bool BlockFilterIndex::Init() {
         m_next_filter_pos.nFile = 0;
         m_next_filter_pos.nPos = 0;
     }
-    return BaseIndex::Init();
+    return true;
 }
 
-bool BlockFilterIndex::CommitInternal(CDBBatch &batch) {
+bool BlockFilterIndex::CustomCommit(CDBBatch &batch) {
     const FlatFilePos &pos = m_next_filter_pos;
 
     // Flush current filter file to disk.
@@ -155,7 +158,7 @@ bool BlockFilterIndex::CommitInternal(CDBBatch &batch) {
     }
 
     batch.Write(DB_FILTER_POS, pos);
-    return BaseIndex::CommitInternal(batch);
+    return true;
 }
 
 bool BlockFilterIndex::ReadFilterFromDisk(const FlatFilePos &pos,
@@ -495,11 +498,14 @@ void ForEachBlockFilterIndex(std::function<void(BlockFilterIndex &)> fn) {
     }
 }
 
-bool InitBlockFilterIndex(BlockFilterType filter_type, size_t n_cache_size,
-                          bool f_memory, bool f_wipe) {
+bool InitBlockFilterIndex(
+    std::function<std::unique_ptr<interfaces::Chain>()> make_chain,
+    BlockFilterType filter_type, size_t n_cache_size, bool f_memory,
+    bool f_wipe) {
     auto result = g_filter_indexes.emplace(
         std::piecewise_construct, std::forward_as_tuple(filter_type),
-        std::forward_as_tuple(filter_type, n_cache_size, f_memory, f_wipe));
+        std::forward_as_tuple(make_chain(), filter_type, n_cache_size, f_memory,
+                              f_wipe));
     return result.second;
 }
 

@@ -27,7 +27,6 @@ static constexpr int CFCHECKPT_INTERVAL = 1000;
 class BlockFilterIndex final : public BaseIndex {
 private:
     BlockFilterType m_filter_type;
-    std::string m_name;
     std::unique_ptr<BaseIndex::DB> m_db;
 
     FlatFilePos m_next_filter_pos;
@@ -47,9 +46,9 @@ private:
     bool AllowPrune() const override { return true; }
 
 protected:
-    bool Init() override;
+    bool CustomInit(const std::optional<interfaces::BlockKey> &block) override;
 
-    bool CommitInternal(CDBBatch &batch) override;
+    bool CustomCommit(CDBBatch &batch) override;
 
     bool WriteBlock(const CBlock &block, const CBlockIndex *pindex) override;
 
@@ -58,11 +57,10 @@ protected:
 
     BaseIndex::DB &GetDB() const override { return *m_db; }
 
-    const char *GetName() const override { return m_name.c_str(); }
-
 public:
     /** Constructs the index, which becomes available to be queried. */
-    explicit BlockFilterIndex(BlockFilterType filter_type, size_t n_cache_size,
+    explicit BlockFilterIndex(std::unique_ptr<interfaces::Chain> chain,
+                              BlockFilterType filter_type, size_t n_cache_size,
                               bool f_memory = false, bool f_wipe = false);
 
     BlockFilterType GetFilterType() const { return m_filter_type; }
@@ -98,8 +96,10 @@ void ForEachBlockFilterIndex(std::function<void(BlockFilterIndex &)> fn);
  * exist. Returns true if a new index is created and false if one has already
  * been initialized.
  */
-bool InitBlockFilterIndex(BlockFilterType filter_type, size_t n_cache_size,
-                          bool f_memory = false, bool f_wipe = false);
+bool InitBlockFilterIndex(
+    std::function<std::unique_ptr<interfaces::Chain>()> make_chain,
+    BlockFilterType filter_type, size_t n_cache_size, bool f_memory = false,
+    bool f_wipe = false);
 
 /**
  * Destroy the block filter index with the given type. Returns false if no such

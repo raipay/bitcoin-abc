@@ -44,7 +44,12 @@ No other options are needed, the paths are automatically configured.
 
 #### For macOS cross compilation
 
-    sudo apt-get install libbz2-dev libcap-dev libtinfo5 python3-setuptools xorriso
+    apt install clang lld llvm g++ zip
+
+Clang 18 or later is required. You must also obtain the macOS SDK before
+proceeding with a cross-compile. Under the depends directory, create a
+subdirectory named `SDKs`. Then, place the extracted SDK under this new directory.
+For more information, see [SDK Extraction](../contrib/macdeploy/README.md#sdk-extraction).
 
 #### For Win64 cross compilation
 
@@ -84,6 +89,8 @@ The following can be set when running make: `make FOO=bar`
 - `BASE_CACHE`: Built packages will be placed here
 - `SDK_PATH`: Path where SDKs can be found (used by macOS)
 - `FALLBACK_DOWNLOAD_PATH`: If a source file can't be fetched, try here before giving up
+- `C_STANDARD`: Set the C standard version used. Defaults to `gnu11`.
+- `CXX_STANDARD`: Set the C++ standard version used. Defaults to `c++17`.
 - `NO_QT`: Don't download/build/cache Qt and its dependencies
 - `NO_QR`: Don't download/build/cache packages needed for enabling qrencode
 - `NO_ZMQ`: Don't download/build/cache packages needed for enabling ZeroMQ
@@ -100,9 +107,6 @@ The following can be set when running make: `make FOO=bar`
 - `HOST_ID_SALT`: Optional salt to use when generating host package ids
 - `BUILD_ID_SALT`: Optional salt to use when generating build package ids
 - `JOBS`: Number of jobs to use for each package build
-- `FORCE_USE_SYSTEM_CLANG`: (EXPERTS ONLY) When cross-compiling for macOS, use Clang found in the
-  system's `$PATH` rather than the default prebuilt release of Clang
-  from llvm.org. Clang 8 or later is required
 - `LOG`: Use file-based logging for individual packages. During a package build its log file
   resides in the `depends` directory, and the log file is printed out automatically in case
   of build error. After successful build log files are moved along with package archives

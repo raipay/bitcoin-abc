@@ -21,7 +21,6 @@ process.on('unhandledRejection', err => {
 // Ensure environment variables are read.
 require('../config/env');
 
-// eslint-disable-next-line jest/no-jest-import
 const jest = require('jest');
 let argv = process.argv.slice(2);
 
@@ -31,6 +30,11 @@ if (!process.env.CI && argv.indexOf('--watchAll=false') === -1) {
     argv.push('--watchAll');
     // Update snapshots
     argv.push('--updateSnapshot');
+}
+
+// Silence logs unless env var DEBUG=true
+if (process.env.DEBUG !== 'true') {
+    argv.push('--silent');
 }
 
 jest.run(argv);

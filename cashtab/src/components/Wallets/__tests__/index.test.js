@@ -23,8 +23,10 @@ import { validSavedWallets } from 'components/App/fixtures/mocks';
 import CashtabTestWrapper from 'components/App/fixtures/CashtabTestWrapper';
 import * as bip39 from 'bip39';
 import { cashtabWalletsFromJSON } from 'helpers';
+import { Ecc } from 'ecash-lib';
 
 describe('<Wallets />', () => {
+    const ecc = new Ecc();
     let user;
     beforeEach(() => {
         // Set up userEvent
@@ -178,7 +180,13 @@ describe('<Wallets />', () => {
             walletToBeActivatedLaterInTest,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} route="/wallets" />);
+        render(
+            <CashtabTestWrapper
+                ecc={ecc}
+                chronik={mockedChronik}
+                route="/wallets"
+            />,
+        );
 
         // Wait for the app to load
         await waitFor(() =>
@@ -265,7 +273,7 @@ describe('<Wallets />', () => {
         // The wallet has been renamed. The new name is updated in all locations.
         const activeWalletLabels = await screen.findAllByText('ACTIVE WALLET');
         const EXPECTED_ACTIVE_WALLET_LABELS_IN_DOCUMENT = 2;
-        expect(activeWalletLabels.length).toBe(
+        expect(activeWalletLabels).toHaveLength(
             EXPECTED_ACTIVE_WALLET_LABELS_IN_DOCUMENT,
         );
 
@@ -364,7 +372,11 @@ describe('<Wallets />', () => {
             'pioneer waste next tired armed course expand stairs load brick asthma ',
         );
         // The validation msg is in the document
-        expect(screen.getByText('Invalid mnemonic')).toBeInTheDocument();
+        expect(
+            screen.getByText(
+                'Invalid 12-word mnemonic. Note: all letters must be lowercase.',
+            ),
+        ).toBeInTheDocument();
 
         // Type in the rest
         await user.type(
@@ -373,7 +385,11 @@ describe('<Wallets />', () => {
         );
 
         // The validation msg is not in the document
-        expect(screen.queryByText('Invalid mnemonic')).not.toBeInTheDocument();
+        expect(
+            screen.queryByText(
+                'Invalid 12-word mnemonic. Note: all letters must be lowercase.',
+            ),
+        ).not.toBeInTheDocument();
 
         // The button is not disabled
         expect(importBtn).toHaveProperty('disabled', false);
@@ -452,7 +468,7 @@ describe('<Wallets />', () => {
 
         // Now "bravo" is the active wallet
         const newActiveWalletLabels = await screen.findAllByText('bravo');
-        expect(newActiveWalletLabels.length).toBe(
+        expect(newActiveWalletLabels).toHaveLength(
             EXPECTED_ACTIVE_WALLET_LABELS_IN_DOCUMENT,
         );
 

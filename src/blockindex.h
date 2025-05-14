@@ -50,13 +50,8 @@ public:
     //! chain up to and including this block
     arith_uint256 nChainWork{};
 
-    //! Number of transactions in this block.
-    //! Note: in a potential headers-first mode, this number cannot be relied
-    //! upon
-    //! Note: this value is faked during UTXO snapshot load to ensure that
-    //! LoadBlockIndex() will load index entries for blocks that we lack data
-    //! for.
-    //! @sa ActivateSnapshot
+    //! Number of transactions in this block. This will be nonzero if the block
+    //! reached the VALID_TRANSACTIONS level, and zero otherwise.
     unsigned int nTx{0};
 
     //! Size of this block.
@@ -66,23 +61,12 @@ public:
 
     //! (memory only) Number of transactions in the chain up to and including
     //! this block.
-    //! This value will be non-zero only if and only if transactions for this
-    //! block and all its parents are available. Change to 64-bit type when
-    //! necessary; won't happen before 2030
-    //!
-    //! Note: this value is faked during use of a UTXO snapshot because we don't
-    //! have the underlying block data available during snapshot load.
-    //! @sa AssumeutxoData
-    //! @sa ActivateSnapshot
+    //! This value will be non-zero if this block and all previous blocks back
+    //! to the genesis block or an assumeutxo snapshot block have reached the
+    //! VALID_TRANSACTIONS level.
+    //! Change to 64-bit type when necessary; won't happen before 2030
     unsigned int nChainTx{0};
 
-private:
-    //! (memory only) Size of all blocks in the chain up to and including this
-    //! block. This value will be non-zero only if and only if transactions for
-    //! this block and all its parents are available.
-    uint64_t nChainSize{0};
-
-public:
     //! Verification status of this block. See enum BlockStatus
     BlockStatus nStatus GUARDED_BY(::cs_main){};
 
@@ -154,24 +138,20 @@ public:
     int64_t GetChainTxCount() const { return nChainTx; }
 
     /**
-     * Get the size of all the blocks in the chain so far.
-     */
-    uint64_t GetChainSize() const { return nChainSize; }
-
-    /**
-     * Update chain tx stats.
-     */
-    bool UpdateChainStats();
-
-    /**
-     * Check whether this block's and all previous blocks' transactions have
-     * been downloaded (and stored to disk) at some point.
+     * Check whether this block and all previous blocks back to the genesis
+     * block or an assumeutxo snapshot block have reached VALID_TRANSACTIONS
+     * and had transactions downloaded (and stored to disk) at some point.
      *
      * Does not imply the transactions are consensus-valid (ConnectTip might
-     * fail) Does not imply the transactions are still stored on disk.
+     * fail)
+     * Does not imply the transactions are still stored on disk.
      * (IsBlockPruned might return true)
+     *
+     * Note that this will be true for the snapshot base block, if one is
+     * loaded, since its nChainTx value will have been set manually based on
+     * the related AssumeutxoData entry.
      */
-    bool HaveTxsDownloaded() const { return GetChainTxCount() != 0; }
+    bool HaveNumChainTxs() const { return GetChainTxCount() != 0; }
 
     NodeSeconds Time() const {
         return NodeSeconds{std::chrono::seconds{nTime}};
@@ -214,13 +194,6 @@ public:
         return nStatus.isValid(nUpTo);
     }
 
-    //! @returns true if the block is assumed-valid; this means it is queued
-    //! to be validated by a background chainstate.
-    bool IsAssumedValid() const EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
-        AssertLockHeld(::cs_main);
-        return nStatus.isAssumedValid();
-    }
-
     //! Raise the validity level of this block index entry.
     //! Returns true if the validity was changed.
     bool RaiseValidity(enum BlockValidity nUpTo)
@@ -233,12 +206,6 @@ public:
 
         if (nStatus.getValidity() >= nUpTo) {
             return false;
-        }
-
-        // If this block had been marked assumed-valid and we're raising
-        // its validity to a certain point, there is no longer an assumption.
-        if (IsAssumedValid() && nUpTo >= BlockValidity::SCRIPTS) {
-            nStatus = nStatus.withClearedAssumedValidFlags();
         }
 
         nStatus = nStatus.withValidity(nUpTo);

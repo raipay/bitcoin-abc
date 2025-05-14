@@ -14,6 +14,7 @@
 #include <script/standard.h>           // For CTxDestination
 #include <support/allocators/secure.h> // For SecureString
 #include <util/message.h>
+#include <util/result.h>
 #include <util/ui_change_type.h>
 
 #include <cstdint>
@@ -93,9 +94,8 @@ public:
     virtual const CChainParams &getChainParams() = 0;
 
     // Get a new address.
-    virtual bool getNewDestination(const OutputType type,
-                                   const std::string label,
-                                   CTxDestination &dest) = 0;
+    virtual util::Result<CTxDestination>
+    getNewDestination(const OutputType type, const std::string &label) = 0;
 
     //! Get public key.
     virtual bool getPubKey(const CScript &script, const CKeyID &address,
@@ -152,11 +152,10 @@ public:
     virtual void listLockedCoins(std::vector<COutPoint> &outputs) = 0;
 
     //! Create transaction.
-    virtual CTransactionRef
+    virtual util::Result<CTransactionRef>
     createTransaction(const std::vector<CRecipient> &recipients,
                       const CCoinControl &coin_control, bool sign,
-                      int &change_pos, Amount &fee,
-                      bilingual_str &fail_reason) = 0;
+                      int &change_pos, Amount &fee) = 0;
 
     //! Commit transaction.
     virtual void commitTransaction(CTransactionRef tx, WalletValueMap value_map,
@@ -304,18 +303,23 @@ public:
 class WalletClient : public ChainClient {
 public:
     //! Create new wallet.
-    virtual std::unique_ptr<Wallet>
+    virtual util::Result<std::unique_ptr<Wallet>>
     createWallet(const std::string &name, const SecureString &passphrase,
-                 uint64_t wallet_creation_flags, bilingual_str &error,
+                 uint64_t wallet_creation_flags,
                  std::vector<bilingual_str> &warnings) = 0;
 
     //! Load existing wallet.
-    virtual std::unique_ptr<Wallet>
-    loadWallet(const std::string &name, bilingual_str &error,
+    virtual util::Result<std::unique_ptr<Wallet>>
+    loadWallet(const std::string &name,
                std::vector<bilingual_str> &warnings) = 0;
 
     //! Return default wallet directory.
     virtual std::string getWalletDir() = 0;
+
+    //! Restore backup wallet
+    virtual util::Result<std::unique_ptr<Wallet>>
+    restoreWallet(const fs::path &backup_file, const std::string &wallet_name,
+                  std::vector<bilingual_str> &warnings) = 0;
 
     //! Return available wallets in wallet directory.
     virtual std::vector<std::string> listWalletDir() = 0;
@@ -328,6 +332,9 @@ public:
     //! loaded at startup or by RPC.
     using LoadWalletFn = std::function<void(std::unique_ptr<Wallet> wallet)>;
     virtual std::unique_ptr<Handler> handleLoadWallet(LoadWalletFn fn) = 0;
+
+    //! Return pointer to internal context, useful for testing.
+    virtual WalletContext *context() { return nullptr; }
 };
 
 //! Information about one wallet address.
@@ -402,7 +409,8 @@ struct WalletTxOut {
 
 //! Return implementation of Wallet interface. This function is defined in
 //! dummywallet.cpp and throws if the wallet component is not compiled.
-std::unique_ptr<Wallet> MakeWallet(const std::shared_ptr<CWallet> &wallet);
+std::unique_ptr<Wallet> MakeWallet(WalletContext &context,
+                                   const std::shared_ptr<CWallet> &wallet);
 
 //! Return implementation of ChainClient interface for a wallet client. This
 //! function will be undefined in builds where ENABLE_WALLET is false.

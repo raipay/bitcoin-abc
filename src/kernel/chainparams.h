@@ -11,7 +11,9 @@
 #include <primitives/block.h>
 #include <protocol.h>
 #include <uint256.h>
+#include <util/chaintype.h>
 #include <util/hash_type.h>
+#include <util/vector.h>
 
 #include <cstdint>
 #include <iterator>
@@ -44,8 +46,10 @@ struct AssumeutxoHash : public BaseHash<uint256> {
  * are recognized as valid.
  */
 struct AssumeutxoData {
+    int height;
+
     //! The expected hash of the deserialized UTXO set.
-    const AssumeutxoHash hash_serialized;
+    AssumeutxoHash hash_serialized;
 
     //! Used to populate the nChainTx value, which is used during
     //! BlockManager::LoadBlockIndex().
@@ -53,10 +57,12 @@ struct AssumeutxoData {
     //! We need to hardcode the value here because this is computed cumulatively
     //! using block data, which we do not necessarily have at the time of
     //! snapshot load.
-    const unsigned int nChainTx;
-};
+    unsigned int nChainTx;
 
-using MapAssumeutxo = std::map<int, const AssumeutxoData>;
+    //! The hash of the base block for this snapshot. Used to refer to
+    //! assumeutxo data prior to having a loaded blockindex.
+    BlockHash blockhash;
+};
 
 /**
  * Holds various statistics on transactions within a chain. Used to estimate
@@ -101,6 +107,7 @@ public:
         return a.SetSpecial(addr) ? GetDefaultPort(a.GetNetwork())
                                   : GetDefaultPort();
     }
+    std::vector<int> GetAvailableSnapshotHeights() const;
 
     const CBlock &GenesisBlock() const { return genesis; }
     /** Default value for -checkmempool and -checkblockindex argument */
@@ -123,8 +130,12 @@ public:
     }
     /** Whether it is possible to mine blocks on demand (no retargeting) */
     bool MineBlocksOnDemand() const { return consensus.fPowNoRetargeting; }
-    /** Return the BIP70 network string (main, test or regtest) */
-    std::string NetworkIDString() const { return strNetworkID; }
+    /** Return the chain type string */
+    std::string GetChainTypeString() const {
+        return ChainTypeToString(m_chain_type);
+    }
+    /** Return the chain type */
+    ChainType GetChainType() const { return m_chain_type; }
     /** Return the list of hostnames to look up for DNS seeds */
     const std::vector<uint8_t> &Base58Prefix(Base58Type type) const {
         return base58Prefixes[type];
@@ -133,9 +144,16 @@ public:
     const std::vector<SeedSpec6> &FixedSeeds() const { return vFixedSeeds; }
     const CCheckpointData &Checkpoints() const { return checkpointData; }
 
-    //! Get allowed assumeutxo configuration.
-    //! @see ChainstateManager
-    const MapAssumeutxo &Assumeutxo() const { return m_assumeutxo_data; }
+    std::optional<AssumeutxoData> AssumeutxoForHeight(int height) const {
+        return FindFirst(m_assumeutxo_data,
+                         [&](const auto &d) { return d.height == height; });
+    }
+    std::optional<AssumeutxoData>
+    AssumeutxoForBlockhash(const BlockHash &blockhash) const {
+        return FindFirst(m_assumeutxo_data, [&](const auto &d) {
+            return d.blockhash == blockhash;
+        });
+    }
 
     const ChainTxData &TxData() const { return chainTxData; }
 
@@ -164,7 +182,7 @@ protected:
     std::vector<std::string> vSeeds;
     std::vector<uint8_t> base58Prefixes[MAX_BASE58_TYPES];
     std::string cashaddrPrefix;
-    std::string strNetworkID;
+    ChainType m_chain_type;
     CBlock genesis;
     std::vector<SeedSpec6> vFixedSeeds;
     bool fDefaultConsistencyChecks;
@@ -172,13 +190,16 @@ protected:
     bool m_is_test_chain;
     bool m_is_mockable_chain;
     CCheckpointData checkpointData;
-    MapAssumeutxo m_assumeutxo_data;
+    std::vector<AssumeutxoData> m_assumeutxo_data;
     ChainTxData chainTxData;
 
-    friend const std::vector<std::string>
+    friend std::vector<std::string>
     GetRandomizedDNSSeeds(const CChainParams &params);
 };
 
-const CCheckpointData &CheckpointData(const std::string &chain);
+const CCheckpointData &CheckpointData(const ChainType chain);
+
+std::optional<ChainType>
+GetNetworkForMagic(CMessageHeader::MessageMagic &pchMessageStart);
 
 #endif // BITCOIN_KERNEL_CHAINPARAMS_H

@@ -1,17 +1,14 @@
-/**
- * @license
- * https://reviews.bitcoinabc.org
- * Copyright (c) 2017-2020 Emilio Almansi
- * Copyright (c) 2023 Bitcoin ABC
- * Distributed under the MIT software license, see the accompanying
- * file LICENSE or http://www.opensource.org/licenses/mit-license.php.
- */
-'use strict';
+// Copyright (c) 2023-2025 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-const { assert } = require('chai');
-const { ValidationError } = require('../src/validation');
+// Copyright (c) 2017-2020 Emilio Almansi
+
+import { assert } from 'chai';
 import base32, { CHARSET } from '../src/base32';
-const { Random, MersenneTwister19937 } = require('random-js');
+import { Random, MersenneTwister19937 } from 'random-js';
+import validation from '../src/validation';
+const { ValidationError } = validation;
 
 describe('base32', () => {
     const random = new Random(MersenneTwister19937.seed(42));
@@ -61,7 +58,9 @@ describe('base32', () => {
 
         it('should decode single digits correctly', () => {
             for (let i = 0; i < CHARSET.length; ++i) {
-                assert.equal(i, base32.decode(CHARSET[i]));
+                const decoded = base32.decode(CHARSET[i]);
+                assert.equal(decoded.length, 1);
+                assert.equal(i, decoded[0]);
             }
         });
     });

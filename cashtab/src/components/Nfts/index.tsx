@@ -2,43 +2,39 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-import React, { useState, useEffect } from 'react';
-import { WalletContext } from 'wallet/context';
-import { SwitchLabel, Alert } from 'components/Common/Atoms';
+import React, { useState, useEffect, useContext } from 'react';
+import { WalletContext, isWalletContextLoaded } from 'wallet/context';
+import { SwitchLabel, Alert, PageHeader } from 'components/Common/Atoms';
 import Spinner from 'components/Common/Spinner';
 import { toHex } from 'ecash-lib';
 import { AgoraOffer } from 'ecash-agora';
-import { NftsCtn, SubHeader } from './styled';
-import { SwitchHolder } from 'components/Etokens/Token/styled';
+import { NftsCtn, SubHeader, NftListCtn } from './styled';
+import { SwitchHolder, NftOfferWrapper } from 'components/Etokens/Token/styled';
 import { getUserLocale } from 'helpers';
-import * as wif from 'wif';
 import appConfig from 'config/app';
 import Switch from 'components/Common/Switch';
 import Collection, {
     OneshotSwiper,
     OneshotOffer,
 } from 'components/Agora/Collection';
+import { NftIcon } from 'components/Common/CustomIcons';
+import { CashtabPathInfo } from 'wallet';
 
 const Nfts: React.FC = () => {
-    const userLocale = getUserLocale(navigator);
-    const ContextValue = React.useContext(WalletContext);
-    const {
-        ecc,
-        fiatPrice,
-        chronik,
-        agora,
-        cashtabState,
-        chaintipBlockheight,
-    } = ContextValue;
+    const ContextValue = useContext(WalletContext);
+    if (!isWalletContextLoaded(ContextValue)) {
+        // Confirm we have all context required to load the page
+        return null;
+    }
+    const { fiatPrice, chronik, agora, cashtabState, chaintipBlockheight } =
+        ContextValue;
     const { wallets, settings, cashtabCache } = cashtabState;
-    const wallet = wallets.length > 0 ? wallets[0] : false;
+    const wallet = wallets[0];
     // We get public key when wallet changes
-    const sk =
-        wallet === false
-            ? false
-            : wif.decode(wallet.paths.get(appConfig.derivationPath).wif)
-                  .privateKey;
-    const pk = sk === false ? false : ecc.derivePubkey(sk);
+    const pk = (wallet.paths.get(appConfig.derivationPath) as CashtabPathInfo)
+        .pk;
+
+    const userLocale = getUserLocale(navigator);
 
     const [chronikQueryError, setChronikQueryError] = useState<null | boolean>(
         null,
@@ -93,14 +89,14 @@ const Nfts: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (pk === false) {
-            return;
-        }
         getMyNfts();
     }, [wallet.name]);
 
     return (
         <NftsCtn>
+            <PageHeader>
+                Listed NFTs <NftIcon />
+            </PageHeader>
             {offeredCollections === null && chronikQueryError === null && (
                 <Spinner />
             )}
@@ -109,7 +105,7 @@ const Nfts: React.FC = () => {
                     Error querying listed NFTs. Please try again later.
                 </Alert>
             )}
-            {pk !== false && !chronikQueryError && (
+            {!chronikQueryError && (
                 <>
                     <SwitchHolder>
                         <Switch
@@ -127,13 +123,12 @@ const Nfts: React.FC = () => {
                         <>
                             <SubHeader>Manage Your NFT Listings</SubHeader>
                             {Array.isArray(offeredNftsThisWallet) && (
-                                <>
+                                <NftOfferWrapper>
                                     {offeredNftsThisWallet.length > 0 ? (
                                         <OneshotSwiper
                                             offers={offeredNftsThisWallet}
                                             activePk={pk}
                                             chronik={chronik}
-                                            ecc={ecc}
                                             chaintipBlockheight={
                                                 chaintipBlockheight
                                             }
@@ -147,14 +142,14 @@ const Nfts: React.FC = () => {
                                     ) : (
                                         <p>You have no listed NFTs</p>
                                     )}
-                                </>
+                                </NftOfferWrapper>
                             )}
                         </>
                     ) : (
                         <>
                             <SubHeader>Listed Collections</SubHeader>
                             {Array.isArray(offeredCollections) && (
-                                <>
+                                <NftListCtn>
                                     {offeredCollections.length > 0 ? (
                                         offeredCollections.map(groupTokenId => {
                                             return (
@@ -172,7 +167,6 @@ const Nfts: React.FC = () => {
                                                     chaintipBlockheight={
                                                         chaintipBlockheight
                                                     }
-                                                    ecc={ecc}
                                                     loadOnClick
                                                 />
                                             );
@@ -180,7 +174,7 @@ const Nfts: React.FC = () => {
                                     ) : (
                                         <p>No listed collections</p>
                                     )}
-                                </>
+                                </NftListCtn>
                             )}
                         </>
                     )}

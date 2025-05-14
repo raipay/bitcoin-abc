@@ -266,6 +266,7 @@ BOOST_AUTO_TEST_CASE(rcuptr_test) {
         BOOST_CHECK_EQUAL(rcuptr->getRefCount(), 1);
         BOOST_CHECK_EQUAL(gptr->getRefCount(), 1);
 
+        // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
         auto rcuptrcopy = rcuptr;
         BOOST_CHECK_EQUAL(rcuptrcopy->getRefCount(), 2);
         BOOST_CHECK_EQUAL(rcuptr->getRefCount(), 2);
@@ -345,10 +346,11 @@ public:
 BOOST_AUTO_TEST_CASE(move_rcuptr_test) {
     bool isDestroyed = false;
 
-    // Check tat copy is failing.
+    // Check that copy is failing.
     auto rcuptr1 =
         RCUPtr<RCURefMoveTestItem>::make([&] { isDestroyed = true; });
     BOOST_CHECK_THROW(rcuptr1->incrementRefCount(), std::runtime_error);
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
     BOOST_CHECK_THROW(auto rcuptrcopy = rcuptr1;, std::runtime_error);
 
     // Try to move.

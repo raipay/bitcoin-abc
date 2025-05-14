@@ -252,7 +252,7 @@ static RPCHelpMan deriveaddresses() {
         {
             {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO,
              "The descriptor."},
-            {"range", RPCArg::Type::RANGE, RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"range", RPCArg::Type::RANGE, RPCArg::Optional::OMITTED,
              "If a ranged descriptor is used, this specifies the end or the "
              "range (in [begin,end] notation) to derive."},
         },
@@ -370,9 +370,9 @@ static RPCHelpMan verifymessage() {
             const JSONRPCRequest &request) -> UniValue {
             LOCK(cs_main);
 
-            std::string strAddress = request.params[0].get_str();
-            std::string strSign = request.params[1].get_str();
-            std::string strMessage = request.params[2].get_str();
+            std::string strAddress = self.Arg<std::string>("address");
+            std::string strSign = self.Arg<std::string>("signature");
+            std::string strMessage = self.Arg<std::string>("message");
 
             switch (MessageVerify(config.GetChainParams(), strAddress, strSign,
                                   strMessage)) {
@@ -662,7 +662,7 @@ static RPCHelpMan logging() {
         {
             {"include",
              RPCArg::Type::ARR,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+             RPCArg::Optional::OMITTED,
              "The categories to add to debug logging",
              {
                  {"include_category", RPCArg::Type::STR,
@@ -670,7 +670,7 @@ static RPCHelpMan logging() {
              }},
             {"exclude",
              RPCArg::Type::ARR,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+             RPCArg::Optional::OMITTED,
              "The categories to remove from debug logging",
              {
                  {"exclude_category", RPCArg::Type::STR,
@@ -703,24 +703,10 @@ static RPCHelpMan logging() {
             uint32_t changed_log_categories =
                 original_log_categories ^ updated_log_categories;
 
-            /**
-             * Update libevent logging if BCLog::LIBEVENT has changed.
-             * If the library version doesn't allow it,
-             * UpdateHTTPServerLogging() returns false, in which case we should
-             * clear the BCLog::LIBEVENT flag. Throw an error if the user has
-             * explicitly asked to change only the libevent flag and it failed.
-             */
+            // Update libevent logging if BCLog::LIBEVENT has changed.
             if (changed_log_categories & BCLog::LIBEVENT) {
-                if (!UpdateHTTPServerLogging(
-                        LogInstance().WillLogCategory(BCLog::LIBEVENT))) {
-                    LogInstance().DisableCategory(BCLog::LIBEVENT);
-                    if (changed_log_categories == BCLog::LIBEVENT) {
-                        throw JSONRPCError(
-                            RPC_INVALID_PARAMETER,
-                            "libevent logging cannot be updated when "
-                            "using libevent before v2.1.1.");
-                    }
-                }
+                UpdateHTTPServerLogging(
+                    LogInstance().WillLogCategory(BCLog::LIBEVENT));
             }
 
             UniValue result(UniValue::VOBJ);
@@ -744,25 +730,25 @@ static RPCHelpMan echo(const std::string &name) {
         "argument conversion enabled in the client-side table in "
         "bitcoin-cli and the GUI. There is no server-side difference.",
         {
-            {"arg0", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg0", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
-            {"arg1", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg1", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
-            {"arg2", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg2", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
-            {"arg3", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg3", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
-            {"arg4", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg4", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
-            {"arg5", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg5", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
-            {"arg6", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg6", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
-            {"arg7", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg7", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
-            {"arg8", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg8", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
-            {"arg9", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "",
+            {"arg9", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "",
              RPCArgOptions{.skip_type_check = true}},
         },
         RPCResult{RPCResult::Type::ANY, "", "Returns whatever was passed in"},
@@ -839,8 +825,7 @@ static RPCHelpMan getindexinfo() {
         "Returns the status of one or all available indices currently "
         "running in the node.\n",
         {
-            {"index_name", RPCArg::Type::STR,
-             RPCArg::Optional::OMITTED_NAMED_ARG,
+            {"index_name", RPCArg::Type::STR, RPCArg::Optional::OMITTED,
              "Filter results for an index with a specific name."},
         },
         RPCResult{
@@ -921,6 +906,39 @@ static RPCHelpMan gettime() {
     };
 }
 
+static RPCHelpMan getinfo() {
+    return RPCHelpMan{
+        "getinfo",
+        "Returns basic information about the node\n",
+        {},
+        RPCResult{
+            RPCResult::Type::OBJ,
+            "info",
+            "",
+            {
+                {RPCResult::Type::STR_HEX, "version_number",
+                 "The version number"},
+                {RPCResult::Type::STR, "version_full",
+                 "The full version as a string"},
+                {RPCResult::Type::BOOL, "avalanche",
+                 "Wether avalanche is enabled"},
+            },
+        },
+        RPCExamples{HelpExampleCli("getinfo", "") +
+                    HelpExampleRpc("getinfo", "")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            NodeContext &node = EnsureAnyNodeContext(request.context);
+
+            UniValue infoObj(UniValue::VOBJ);
+            infoObj.pushKV("version_number", CLIENT_VERSION);
+            infoObj.pushKV("version_full", FormatFullVersion());
+            infoObj.pushKV("avalanche", !!node.avalanche);
+            return infoObj;
+        },
+    };
+}
+
 void RegisterMiscRPCCommands(CRPCTable &t) {
     // clang-format off
     static const CRPCCommand commands[] = {
@@ -937,6 +955,7 @@ void RegisterMiscRPCCommands(CRPCTable &t) {
         { "util",               getcurrencyinfo,         },
         { "util",               getindexinfo,            },
         { "util",               gettime,                 },
+        { "util",               getinfo,                 },
 
         /* Not shown in help */
         { "hidden",             setmocktime,             },

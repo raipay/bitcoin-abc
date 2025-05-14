@@ -76,7 +76,7 @@ uint32_t compute_next_target(gbt) {
     return gbt.bits;
 `;
 
-function Mining(props) {
+function Mining() {
     return (
         <Layout>
             <SubPageHero
@@ -181,12 +181,17 @@ function Mining(props) {
                     </li>
                     <li>
                         <ExternalLink href="https://zpool.ca/">
-                            Zpool
+                            zpool
                         </ExternalLink>
                     </li>
                     <li>
                         <ExternalLink href="https://pool.minemine.online/">
                             MineMine
+                        </ExternalLink>
+                    </li>
+                    <li>
+                        <ExternalLink href="https://pool.kryptex.com/xec">
+                            Kryptex
                         </ExternalLink>
                     </li>
                 </ul>

@@ -13,11 +13,9 @@ import {
 } from 'chronik-client';
 import {
     alpSend,
-    Amount,
     Bytes,
-    DEFAULT_DUST_LIMIT,
-    DEFAULT_FEE_PER_KB,
-    Ecc,
+    DEFAULT_DUST_SATS,
+    DEFAULT_FEE_SATS_PER_KB,
     EccDummy,
     emppScript,
     fromHex,
@@ -76,6 +74,18 @@ export type AgoraOfferVariant =
 /** Status of the offer, i.e. if it open/taken/canceled */
 export type AgoraOfferStatus = 'OPEN' | 'TAKEN' | 'CANCELED';
 
+/** If an offer is TAKEN */
+export interface TakenInfo {
+    /** satoshis paid in taking an offer */
+    sats: bigint;
+    /**
+     * amount of token purchased in atoms aka base tokens
+     */
+    atoms: bigint;
+    /** taker outputScript as a hex string*/
+    takerScriptHex: string;
+}
+
 /**
  * Individual token offer on the Agora, i.e. one UTXO offering tokens.
  *
@@ -87,6 +97,7 @@ export class AgoraOffer {
     public txBuilderInput: TxInput;
     public token: Token;
     public status: AgoraOfferStatus;
+    public takenInfo?: TakenInfo;
 
     public constructor(params: {
         variant: AgoraOfferVariant;
@@ -94,12 +105,16 @@ export class AgoraOffer {
         txBuilderInput: TxInput;
         token: Token;
         status: AgoraOfferStatus;
+        takenInfo?: TakenInfo;
     }) {
         this.variant = params.variant;
         this.outpoint = params.outpoint;
         this.txBuilderInput = params.txBuilderInput;
         this.token = params.token;
         this.status = params.status;
+        if (typeof this.takenInfo !== 'undefined') {
+            this.takenInfo = params.takenInfo;
+        }
     }
 
     /**
@@ -111,8 +126,6 @@ export class AgoraOffer {
      * `fuelInputs` has to provide enough sats for this offer to cover ask + tx fee.
      * */
     public acceptTx(params: {
-        /** ECC object to sign signatures. */
-        ecc: Ecc;
         /**
          * Arbitrary secret key to sign the accept tx with. Recommended to set
          * this to a random key. Must be paired with covenantSk.
@@ -134,17 +147,17 @@ export class AgoraOffer {
         fuelInputs: TxBuilderInput[];
         /** Script to send the tokens and the leftover sats (if any) to. */
         recipientScript: Script;
-        /** For partial offers: Number of accepted tokens */
-        acceptedTokens?: bigint;
+        /** For partial offers: Number of accepted atoms (base tokens) */
+        acceptedAtoms?: bigint;
         /** Dust amount to use for the token output. */
-        dustAmount?: number;
+        dustSats?: bigint;
         /** Fee per kB to use when building the tx. */
-        feePerKb?: number;
-        /**  Allow accepting an offer such that the remaining quantity is unacceptable */
+        feePerKb?: bigint;
+        /** Allow accepting an offer such that the remaining quantity is unacceptable */
         allowUnspendable?: boolean;
     }): Tx {
-        const dustAmount = params.dustAmount ?? DEFAULT_DUST_LIMIT;
-        const feePerKb = params.feePerKb ?? DEFAULT_FEE_PER_KB;
+        const dustSats = params.dustSats ?? DEFAULT_DUST_SATS;
+        const feePerKb = params.feePerKb ?? DEFAULT_FEE_SATS_PER_KB;
         const allowUnspendable = params.allowUnspendable ?? false;
         const txBuild = this._acceptTxBuilder({
             covenantSk: params.covenantSk,
@@ -152,15 +165,15 @@ export class AgoraOffer {
             fuelInputs: params.fuelInputs,
             extraOutputs: [
                 {
-                    value: dustAmount,
+                    sats: dustSats,
                     script: params.recipientScript,
                 },
                 params.recipientScript,
             ],
-            acceptedTokens: params.acceptedTokens,
+            acceptedAtoms: params.acceptedAtoms,
             allowUnspendable,
         });
-        return txBuild.sign(params.ecc, feePerKb, dustAmount);
+        return txBuild.sign({ feePerKb, dustSats });
     }
 
     /**
@@ -175,24 +188,28 @@ export class AgoraOffer {
         /** Extra inputs */
         extraInputs?: TxBuilderInput[];
         /** Fee per kB to use when building the tx. */
-        feePerKb?: number;
-        acceptedTokens?: bigint;
+        feePerKb?: bigint;
+        acceptedAtoms?: bigint;
     }): bigint {
-        const feePerKb = params.feePerKb ?? DEFAULT_FEE_PER_KB;
+        const feePerKb = params.feePerKb ?? DEFAULT_FEE_SATS_PER_KB;
         const txBuild = this._acceptTxBuilder({
             covenantSk: new Uint8Array(32),
             covenantPk: new Uint8Array(33),
             fuelInputs: params.extraInputs ?? [],
             extraOutputs: [
                 {
-                    value: 0,
+                    sats: 0n,
                     script: params.recipientScript,
                 },
             ],
-            acceptedTokens: params.acceptedTokens,
+            acceptedAtoms: params.acceptedAtoms,
+            /** We do not need to validate for this condition when we get the fee */
+            allowUnspendable: true,
         });
-        const measureTx = txBuild.sign(new EccDummy());
-        return BigInt(Math.ceil((measureTx.serSize() * feePerKb) / 1000));
+        const measureTx = txBuild.sign({ ecc: new EccDummy() });
+        return BigInt(
+            Math.ceil((measureTx.serSize() * Number(feePerKb)) / 1000),
+        );
     }
 
     private _acceptTxBuilder(params: {
@@ -200,7 +217,7 @@ export class AgoraOffer {
         covenantPk: Uint8Array;
         fuelInputs: TxBuilderInput[];
         extraOutputs: TxBuilderOutput[];
-        acceptedTokens?: bigint;
+        acceptedAtoms?: bigint;
         allowUnspendable?: boolean;
     }): TxBuilder {
         switch (this.variant.type) {
@@ -223,18 +240,18 @@ export class AgoraOffer {
                     ],
                 });
             case 'PARTIAL': {
-                if (params.acceptedTokens === undefined) {
+                if (params.acceptedAtoms === undefined) {
                     throw new Error(
-                        'Must set acceptedTokens for partial offers',
+                        'Must set acceptedAtoms for partial offers',
                     );
                 }
                 const txBuild = new TxBuilder();
                 const agoraPartial = this.variant.params;
                 const truncFactor =
-                    1n << BigInt(8 * agoraPartial.numTokenTruncBytes);
-                if (params.acceptedTokens % truncFactor != 0n) {
+                    1n << BigInt(8 * agoraPartial.numAtomsTruncBytes);
+                if (params.acceptedAtoms % truncFactor != 0n) {
                     throw new Error(
-                        `Must acceptedTokens must be a multiple of ${truncFactor}`,
+                        `Must acceptedAtoms must be a multiple of ${truncFactor}`,
                     );
                 }
 
@@ -244,7 +261,7 @@ export class AgoraOffer {
                 ) {
                     // Prevent creation of unacceptable offer
                     agoraPartial.preventUnacceptableRemainder(
-                        params.acceptedTokens,
+                        params.acceptedAtoms,
                     );
                 }
 
@@ -252,36 +269,36 @@ export class AgoraOffer {
                     input: this.txBuilderInput,
                     signatory: AgoraPartialSignatory(
                         agoraPartial,
-                        params.acceptedTokens / truncFactor,
+                        params.acceptedAtoms / truncFactor,
                         params.covenantSk,
                         params.covenantPk,
                     ),
                 });
                 txBuild.inputs.push(...params.fuelInputs);
-                const sendAmounts: Amount[] = [0];
-                const offeredTokens = BigInt(this.token.amount);
-                if (offeredTokens > params.acceptedTokens) {
-                    sendAmounts.push(offeredTokens - params.acceptedTokens);
+                const sendAtomsArray: bigint[] = [0n];
+                const offeredAtoms = this.token.atoms;
+                if (offeredAtoms > params.acceptedAtoms) {
+                    sendAtomsArray.push(offeredAtoms - params.acceptedAtoms);
                 }
-                sendAmounts.push(params.acceptedTokens);
+                sendAtomsArray.push(params.acceptedAtoms);
                 if (agoraPartial.tokenProtocol === 'SLP') {
                     txBuild.outputs.push({
-                        value: 0,
+                        sats: 0n,
                         script: slpSend(
                             this.token.tokenId,
                             this.token.tokenType.number,
-                            sendAmounts,
+                            sendAtomsArray,
                         ),
                     });
                 } else if (agoraPartial.tokenProtocol === 'ALP') {
                     txBuild.outputs.push({
-                        value: 0,
+                        sats: 0n,
                         script: emppScript([
                             agoraPartial.adPushdata(),
                             alpSend(
                                 this.token.tokenId,
                                 this.token.tokenType.number,
-                                sendAmounts,
+                                sendAtomsArray,
                             ),
                         ]),
                     });
@@ -289,18 +306,17 @@ export class AgoraOffer {
                     throw new Error('Not implemented');
                 }
                 txBuild.outputs.push({
-                    value: agoraPartial.askedSats(params.acceptedTokens),
+                    sats: agoraPartial.askedSats(params.acceptedAtoms),
                     script: Script.p2pkh(shaRmd160(agoraPartial.makerPk)),
                 });
-                if (offeredTokens > params.acceptedTokens) {
+                if (offeredAtoms > params.acceptedAtoms) {
                     const newAgoraPartial = new AgoraPartial({
                         ...agoraPartial,
-                        truncTokens:
-                            (offeredTokens - params.acceptedTokens) /
-                            truncFactor,
+                        truncAtoms:
+                            (offeredAtoms - params.acceptedAtoms) / truncFactor,
                     });
                     txBuild.outputs.push({
-                        value: agoraPartial.dustAmount,
+                        sats: agoraPartial.dustSats,
                         script: Script.p2sh(
                             shaRmd160(newAgoraPartial.script().bytecode),
                         ),
@@ -323,8 +339,6 @@ export class AgoraOffer {
      * `fuelInputs` must cover the tx fee, you can calculate it with cancelFeeSats.
      **/
     public cancelTx(params: {
-        /** ECC object to sign signatures. */
-        ecc: Ecc;
         /**
          * Cancel secret key of the offer, must be paired with the cancelPk of
          * the offer.
@@ -341,24 +355,24 @@ export class AgoraOffer {
         /** Script to send canceled tokens and the leftover sats (if any) to. */
         recipientScript: Script;
         /** Dust amount to use for the token output. */
-        dustAmount?: number;
+        dustSats?: bigint;
         /** Fee per kB to use when building the tx. */
-        feePerKb?: number;
+        feePerKb?: bigint;
     }): Tx {
-        const dustAmount = params.dustAmount ?? DEFAULT_DUST_LIMIT;
-        const feePerKb = params.feePerKb ?? DEFAULT_FEE_PER_KB;
+        const dustSats = params.dustSats ?? DEFAULT_DUST_SATS;
+        const feePerKb = params.feePerKb ?? DEFAULT_FEE_SATS_PER_KB;
         const txBuild = this._cancelTxBuilder({
             cancelSk: params.cancelSk,
             fuelInputs: params.fuelInputs,
             extraOutputs: [
                 {
-                    value: dustAmount,
+                    sats: dustSats,
                     script: params.recipientScript,
                 },
                 params.recipientScript,
             ],
         });
-        return txBuild.sign(params.ecc, feePerKb, dustAmount);
+        return txBuild.sign({ feePerKb, dustSats });
     }
 
     /**
@@ -378,21 +392,23 @@ export class AgoraOffer {
         /** Extra inputs */
         extraInputs?: TxBuilderInput[];
         /** Fee per kB to use when building the tx. */
-        feePerKb?: number;
+        feePerKb?: bigint;
     }): bigint {
-        const feePerKb = params.feePerKb ?? DEFAULT_FEE_PER_KB;
+        const feePerKb = params.feePerKb ?? DEFAULT_FEE_SATS_PER_KB;
         const txBuild = this._cancelTxBuilder({
             cancelSk: new Uint8Array(32),
             fuelInputs: params.extraInputs ?? [],
             extraOutputs: [
                 {
-                    value: 0,
+                    sats: 0n,
                     script: params.recipientScript,
                 },
             ],
         });
-        const measureTx = txBuild.sign(new EccDummy());
-        return BigInt(Math.ceil((measureTx.serSize() * feePerKb) / 1000));
+        const measureTx = txBuild.sign({ ecc: new EccDummy() });
+        return BigInt(
+            Math.ceil((measureTx.serSize() * Number(feePerKb)) / 1000),
+        );
     }
 
     private _cancelTxBuilder(params: {
@@ -421,22 +437,22 @@ export class AgoraOffer {
         switch (tokenProtocol) {
             case 'SLP':
                 outputs.push({
-                    value: 0,
+                    sats: 0n,
                     script: slpSend(
                         this.token.tokenId,
                         this.token.tokenType.number,
-                        [BigInt(this.token.amount)],
+                        [this.token.atoms],
                     ),
                 });
                 break;
             case 'ALP':
                 outputs.push({
-                    value: 0,
+                    sats: 0n,
                     script: emppScript([
                         alpSend(
                             this.token.tokenId,
                             this.token.tokenType.number,
-                            [BigInt(this.token.amount)],
+                            [this.token.atoms],
                         ),
                     ]),
                 });
@@ -459,17 +475,17 @@ export class AgoraOffer {
      * How many satoshis are asked to accept this offer, excluding tx fees.
      * This is what should be displayed to the user as the price.
      **/
-    public askedSats(acceptedTokens?: bigint): bigint {
+    public askedSats(acceptedAtoms?: bigint): bigint {
         switch (this.variant.type) {
             case 'ONESHOT':
                 return this.variant.params.askedSats();
             case 'PARTIAL':
-                if (acceptedTokens === undefined) {
+                if (acceptedAtoms === undefined) {
                     throw new Error(
-                        'Must provide acceptedTokens for PARTIAL offers',
+                        'Must provide acceptedAtoms for PARTIAL offers',
                     );
                 }
-                return this.variant.params.askedSats(acceptedTokens);
+                return this.variant.params.askedSats(acceptedAtoms);
             default:
                 throw new Error('Not implemented');
         }
@@ -516,16 +532,16 @@ export interface AgoraHistoryResult {
 export class Agora {
     private chronik: ChronikClient;
     private plugin: PluginEndpoint;
-    private dustAmount: number;
+    private dustSats: bigint;
 
     /**
      * Create an Agora instance. The provided Chronik instance must have the
      * "agora" plugin loaded.
      **/
-    public constructor(chronik: ChronikClient, dustAmount?: number) {
+    public constructor(chronik: ChronikClient, dustSats?: bigint) {
         this.chronik = chronik;
         this.plugin = chronik.plugin(PLUGIN_NAME);
-        this.dustAmount = dustAmount ?? DEFAULT_DUST_LIMIT;
+        this.dustSats = dustSats ?? DEFAULT_DUST_SATS;
     }
 
     /**
@@ -619,13 +635,79 @@ export class Agora {
                 // isCanceled is always the last pushop (before redeemScript)
                 const opIsCanceled = ops[ops.length - 2];
                 const isCanceled = opIsCanceled === OP_0;
+                // If isCanceled, then offer.token.atoms is the canceled amount
+                let takenInfo: undefined | TakenInfo;
+                if (!isCanceled) {
+                    // If this tx is not canceling an agora offer
+                    if (
+                        typeof tx.outputs[1].plugins !== 'undefined' &&
+                        'agora' in tx.outputs[1].plugins
+                    ) {
+                        // If this tx creates a new agora offer at index 1 of outputs
+                        // then it is NOT creating the "change" offer from a partial accept
+                        // It is creating a new offer and just happens to have a spent agora utxo
+                        // from a full accept in its inputs
+
+                        // So, we do not parse in historicOffers; we parse this offer in the tx that
+                        // accepts or cancels it
+
+                        // If this is an offer tx with a TAKEN inputScript
+                        // but it was not created by a buy or cancel
+                        //
+                        // We can get an offer with a buy or cancel as an input even tho
+                        // that particular input does not mean this tx is the buy or cancel
+                        // just the way utxos have worked out
+                        // Examples
+                        // a156d668965294aee6d8ebbe2b7b6e2c574bdf006b19842b3836b4e580825aca
+                        // ec73d56ba0b5acf9f3023124a227a19e0794c2da6e4860fb76181b2737e62c61
+                        // fbd288aad796753c672c9bbce9badbf02ff62f12f023163bbc034608b249d21a
+
+                        // Do not include this in historicOffers, we will pick it up by its buy or cancel
+                        return [];
+                    }
+                    // If this is TAKEN, provide useful parsed info from the tx
+                    // The taken qty is the token amount in the outputs that is not rolled into another agora offer
+                    // i.e. the token amount that goes to a p2pkh address
+                    // The price paid is the XEC that goes to the offer creator
+
+                    // In practice, we can get these amounts by following the rules below
+                    // Note we may see AgoraOffer change in the future and need to update this parsing
+
+                    // The purchase price is satoshis that go to the offer creator
+                    // Index 1 output
+                    const sats = tx.outputs[1].sats;
+
+                    // The taker receives the purchased tokens at a p2pkh address
+                    // This is at index 2 for a buy of the full offer and index 3 for a partial buy
+                    // If tx.outputs[2].outputScript is p2sh, that means partialbuy and takerBuyIndex is 3
+                    const takerBuyIndex = tx.outputs[2].outputScript.startsWith(
+                        '76a914',
+                    )
+                        ? 2
+                        : 3;
+
+                    const takerScriptHex =
+                        tx.outputs[takerBuyIndex].outputScript;
+
+                    const atoms = tx.outputs[takerBuyIndex].token?.atoms;
+                    if (typeof atoms === 'bigint') {
+                        // Should always be true but we may have different kinds of agora
+                        // offers in the future
+                        // So, we only set if we have the info we expect
+                        takenInfo = {
+                            sats,
+                            atoms,
+                            takerScriptHex,
+                        };
+                    }
+                }
                 delete input.token?.entryIdx; // UTXO token has no entryIdx
                 const offer = this._parseOfferUtxo(
                     {
                         outpoint: input.prevOut,
                         blockHeight: tx.block?.height ?? -1,
                         isCoinbase: tx.isCoinbase,
-                        value: input.value,
+                        sats: input.sats,
                         script: input.outputScript!,
                         isFinal: false,
                         plugins: input.plugins,
@@ -635,6 +717,10 @@ export class Agora {
                 );
                 if (offer === undefined) {
                     return [];
+                }
+                if (typeof takenInfo !== 'undefined') {
+                    // Add takenInfo for taken offers
+                    offer.takenInfo = takenInfo;
                 }
                 return [offer];
             });
@@ -777,11 +863,11 @@ export class Agora {
         const outputsSerBytes = new Bytes(fromHex(outputsSerHex));
         const enforcedOutputs: TxOutput[] = [
             {
-                value: BigInt(0),
+                sats: 0n,
                 script: slpSend(
                     utxo.token.tokenId,
                     utxo.token.tokenType.number,
-                    [0, BigInt(utxo.token.amount)],
+                    [0n, utxo.token.atoms],
                 ),
             },
         ];
@@ -810,7 +896,7 @@ export class Agora {
             txBuilderInput: {
                 prevOut: utxo.outpoint,
                 signData: {
-                    value: utxo.value,
+                    sats: utxo.sats,
                     redeemScript: agoraOneshot.script(),
                 },
             },
@@ -831,11 +917,11 @@ export class Agora {
         // Plugin gives us the offer data in this form
         const [
             _,
-            numTokenTruncBytesHex,
+            numAtomsTruncBytesHex,
             numSatsTruncBytesHex,
-            tokenScaleFactorHex,
-            scaledTruncTokensPerTruncSatHex,
-            minAcceptedScaledTruncTokensHex,
+            atomsScaleFactorHex,
+            scaledTruncAtomsPerTruncSatHex,
+            minAcceptedScaledTruncAtomsHex,
             enforcedLockTimeHex,
         ] = plugin.data;
 
@@ -843,16 +929,16 @@ export class Agora {
             throw new Error('Outdated plugin');
         }
 
-        const numTokenTruncBytes = fromHex(numTokenTruncBytesHex)[0];
+        const numAtomsTruncBytes = fromHex(numAtomsTruncBytesHex)[0];
         const numSatsTruncBytes = fromHex(numSatsTruncBytesHex)[0];
-        const tokenScaleFactor = new Bytes(
-            fromHex(tokenScaleFactorHex),
+        const atomsScaleFactor = new Bytes(
+            fromHex(atomsScaleFactorHex),
         ).readU64();
-        const scaledTruncTokensPerTruncSat = new Bytes(
-            fromHex(scaledTruncTokensPerTruncSatHex),
+        const scaledTruncAtomsPerTruncSat = new Bytes(
+            fromHex(scaledTruncAtomsPerTruncSatHex),
         ).readU64();
-        const minAcceptedScaledTruncTokens = new Bytes(
-            fromHex(minAcceptedScaledTruncTokensHex),
+        const minAcceptedScaledTruncAtoms = new Bytes(
+            fromHex(minAcceptedScaledTruncAtomsHex),
         ).readU64();
         const enforcedLockTime = new Bytes(
             fromHex(enforcedLockTimeHex),
@@ -869,20 +955,19 @@ export class Agora {
         );
 
         const agoraPartial = new AgoraPartial({
-            truncTokens:
-                BigInt(utxo.token.amount) >> (8n * BigInt(numTokenTruncBytes)),
-            numTokenTruncBytes,
-            tokenScaleFactor,
-            scaledTruncTokensPerTruncSat,
+            truncAtoms: utxo.token.atoms >> (8n * BigInt(numAtomsTruncBytes)),
+            numAtomsTruncBytes,
+            atomsScaleFactor,
+            scaledTruncAtomsPerTruncSat,
             numSatsTruncBytes,
             makerPk,
-            minAcceptedScaledTruncTokens,
+            minAcceptedScaledTruncAtoms,
             tokenId: utxo.token.tokenId,
             tokenType: utxo.token.tokenType.number,
             tokenProtocol: utxo.token.tokenType.protocol,
             scriptLen: 0x7f,
             enforcedLockTime,
-            dustAmount: this.dustAmount,
+            dustSats: this.dustSats,
         });
         agoraPartial.updateScriptLen();
         return new AgoraOffer({
@@ -894,7 +979,7 @@ export class Agora {
             txBuilderInput: {
                 prevOut: utxo.outpoint,
                 signData: {
-                    value: utxo.value,
+                    sats: utxo.sats,
                     redeemScript: agoraPartial.script(),
                 },
             },

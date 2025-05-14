@@ -135,6 +135,13 @@ To build with Qt 5 you need the following:
 
     sudo apt-get install libqt5gui5 libqt5core5a libqt5dbus5 qttools5-dev qttools5-dev-tools libprotobuf-dev protobuf-compiler
 
+To build with chronik and chronik plugins (`-DBUILD_BITCOIN_CHRONIK=ON -DBUILD_BITCOIN_CHRONIK_PLUGINS=ON`) you need the following:
+
+    sudo apt-get install protobuf-compiler libprotobuf-dev clang libclang-dev python3-dev
+    # Install rust
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s
+    source ~/.cargo/env
+
 libqrencode dependencies (can be disabled by passing `-DENABLE_QRCODE=OFF` on the cmake command line):
 
     sudo apt-get install libqrencode-dev
@@ -284,7 +291,7 @@ To build executables for AArch64:
     cd ..
     mkdir build
     cd build
-    cmake -GNinja .. -DCMAKE_TOOLCHAIN_FILE=../cmake/platforms/LinuxAArch64.cmake -DENABLE_GLIBC_BACK_COMPAT=ON -DENABLE_STATIC_LIBSTDCXX=ON
+    cmake -GNinja .. -DCMAKE_TOOLCHAIN_FILE=../cmake/platforms/LinuxAArch64.cmake -DENABLE_STATIC_LIBSTDCXX=ON
     ninja
 
 

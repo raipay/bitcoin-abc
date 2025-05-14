@@ -4,6 +4,7 @@
 
 #include <chainparams.h>
 #include <common/system.h>
+#include <util/chaintype.h>
 
 static CCheckpointData mainNetCheckpointData = {
     .mapCheckpoints = {
@@ -82,6 +83,9 @@ static CCheckpointData mainNetCheckpointData = {
         // Lee Kuan Yew activation.
         {844743, BlockHash::fromHex("0000000000000000053b80210677e6821a2ac0ed73"
                                     "b949a78667e1bfb3dfa6eb")},
+        // Augusto activation.
+        {871168, BlockHash::fromHex("0000000000000000232d2ec92c9a2dd3a6e887dabc"
+                                    "254c85f10e804239ff7274")},
     }};
 
 static CCheckpointData testNetCheckpointData = {
@@ -132,6 +136,9 @@ static CCheckpointData testNetCheckpointData = {
         // Lee Kuan Yew activation.
         {1608805, BlockHash::fromHex("00000000000ad004602681a2458bc6304196ec483"
                                      "f336cce7d031309e4d3592d")},
+        // Augusto activation.
+        {1635241, BlockHash::fromHex("00000000082c7e223785dffb1f62db4ec737b8fd1"
+                                     "4faaf4dfb7c5a8bbf22bd2d")},
     }};
 
 static CCheckpointData regTestCheckpointData = {
@@ -140,17 +147,15 @@ static CCheckpointData regTestCheckpointData = {
                                "36012afca590b1a11466e2206")},
     }};
 
-const CCheckpointData &CheckpointData(const std::string &chain) {
-    if (chain == CBaseChainParams::MAIN) {
-        return mainNetCheckpointData;
+const CCheckpointData &CheckpointData(const ChainType chain) {
+    switch (chain) {
+        case ChainType::MAIN:
+            return mainNetCheckpointData;
+        case ChainType::TESTNET:
+            return testNetCheckpointData;
+        case ChainType::REGTEST:
+            return regTestCheckpointData;
     }
-    if (chain == CBaseChainParams::TESTNET) {
-        return testNetCheckpointData;
-    }
-    if (chain == CBaseChainParams::REGTEST) {
-        return regTestCheckpointData;
-    }
-
-    throw std::runtime_error(
-        strprintf("%s: Unknown chain %s.", __func__, chain));
+    throw std::invalid_argument(
+        strprintf("%s: Invalid ChainType value", __func__));
 }

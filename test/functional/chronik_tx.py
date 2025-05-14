@@ -103,13 +103,13 @@ class ChronikTxTest(BitcoinTestFramework):
                     prev_out=pb.OutPoint(txid=bytes.fromhex(cointx)[::-1], out_idx=0),
                     input_script=bytes(tx.vin[0].scriptSig),
                     output_script=bytes(P2SH_OP_TRUE),
-                    value=coinvalue,
+                    sats=coinvalue,
                     sequence_no=0xFFFFFFFE,
                 )
             ],
             outputs=[
                 pb.TxOutput(
-                    value=value,
+                    sats=value,
                     output_script=bytes(script),
                 )
                 for value, script in zip(send_values, send_scripts)
@@ -161,14 +161,14 @@ class ChronikTxTest(BitcoinTestFramework):
                     prev_out=pb.OutPoint(txid=bytes.fromhex(txid)[::-1], out_idx=i),
                     input_script=bytes(tx2.vin[i].scriptSig),
                     output_script=bytes(script),
-                    value=value,
+                    sats=value,
                     sequence_no=0xFFFFFFF0 + i,
                 )
                 for i, (value, script) in enumerate(zip(send_values, send_scripts))
             ],
             outputs=[
                 pb.TxOutput(
-                    value=tx2.vout[0].nValue,
+                    sats=tx2.vout[0].nValue,
                     output_script=bytes(tx2.vout[0].scriptPubKey),
                 )
             ],
@@ -193,12 +193,14 @@ class ChronikTxTest(BitcoinTestFramework):
         conflict_tx = CTransaction(tx2)
         conflict_tx.nLockTime = 13
         block = create_block(
-            int(txblockhash, 16), create_coinbase(103, b"\x03" * 33), 1333333500
+            int(txblockhash, 16),
+            create_coinbase(103, b"\x03" * 33),
+            1333333500,
+            txlist=[conflict_tx],
         )
-        block.vtx += [conflict_tx]
-        block.hashMerkleRoot = block.calc_merkle_root()
         block.solve()
         peer.send_blocks_and_test([block], node)
+        node.syncwithvalidationinterfacequeue()
 
         assert_equal(
             chronik.tx(txid2).err(404).msg,

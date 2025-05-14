@@ -6,7 +6,7 @@ use bitcoinsuite_core::{error::DataError, script::opcode::Opcode};
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::structs::Amount;
+use crate::structs::Atoms;
 
 /// Errors when parsing a SLP tx.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -95,7 +95,7 @@ pub enum ParseError {
     #[error(
         "Invalid NFT1 Child GENESIS initial quantity, expected 1 but got {0}"
     )]
-    Nft1ChildInvalidInitialQuantity(Amount),
+    Nft1ChildInvalidInitialQuantity(Atoms),
 
     /// NFT1 Child GENESIS must have 0 decimals
     #[error("Invalid NFT1 Child GENESIS decimals, expected 0 but got {0}")]
@@ -137,7 +137,10 @@ pub enum ParseError {
     },
 
     /// Invalid token type length
-    #[error("Token type must be 1 byte long, got {}: {0:?}", .0.len())]
+    #[error(
+        "Token type must be 1 byte long, got {byte_len}: {byte_len:?}",
+        byte_len = .0.len(),
+    )]
     InvalidTokenType(Bytes),
 
     /// Invalid tx type

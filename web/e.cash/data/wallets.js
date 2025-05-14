@@ -42,14 +42,6 @@ export const wallets = [
         availableOn: ['iOS', 'Android'],
     },
     {
-        name: 'AbcPay',
-        text: "AbcPay is an advanced multi-currency crypto wallet for mobile devices, supporting eCash (XEC) and eTokens. AbcPay provides cutting edge features such as multi-signature wallet, 2FA and biometric authentication. It's available for both Android & iOS devices.",
-        image: '/images/abc-pay.png',
-        link: 'https://abcpay.cash/',
-        availableOn: ['iOS', 'Android'],
-        features: ['eTokens', 'Message Signing', 'Multi-sig wallets'],
-    },
-    {
         name: 'Arctic Wallet',
         text: 'Arctic Wallet is a non-custodial crypto wallet built on the principles of decentralization and privacy supporting eCash (XEC). With Arctic Wallet, you can send, receive and store XEC safely and securely. Arctic wallet is available for desktop and mobile platforms.',
         image: '/images/artic-wallet.png',
@@ -76,6 +68,14 @@ export const wallets = [
         image: '/images/guarda-wallet.png',
         link: 'https://guarda.com/coins/ecash-wallet/',
         availableOn: ['iOS', 'Android', 'Desktop', 'Web App'],
+    },
+    {
+        name: 'Trezor',
+        text: 'Trezor is a leading multi-crypto hardware wallet that supports eCash (XEC) in combination with Electrum ABC on Trezor Safe 3, Safe 5, and Model T. Users can also sign Avalanche stake-proofs using custom firmware provided by Bitcoin ABC.',
+        image: '/images/trezor-logo-white.png',
+        link: 'https://trezor.io',
+        availableOn: ['Hardware Wallet'],
+        features: ['Message Signing', 'Multi-sig wallets', 'Bip-70'],
     },
     {
         name: 'Satochip',

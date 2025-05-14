@@ -9,7 +9,8 @@ import { CopyPasteIcon } from 'components/Common/CustomIcons';
 import { toast } from 'react-toastify';
 
 const BaseButtonOrLinkCss = css<{ disabled?: boolean }>`
-    font-size: 24px;
+    font-size: var(--text-xl);
+    line-height: var(--text-xl--line-height);
     padding: 20px 12px;
     border-radius: 9px;
     transition: all 0.5s ease;
@@ -23,7 +24,8 @@ const BaseButtonOrLinkCss = css<{ disabled?: boolean }>`
         box-shadow: ${props => props.theme.buttons.primary.hoverShadow};
     }
     @media (max-width: 768px) {
-        font-size: 16px;
+        font-size: var(--text-base);
+        line-height: var(--text-base--line-height);
         padding: 15px 0;
     }
     display: flex;
@@ -42,8 +44,8 @@ const PrimaryButtonOrLinkCss = css<{ disabled?: boolean }>`
         props.disabled
             ? props.theme.buttons.disabled.color
             : props.theme.buttons.primary.color};
-    border: 1px solid
-        ${props => (props.disabled ? 'none' : props.theme.eCashBlue)};
+    border: ${props =>
+        props.disabled ? 'none' : `1px solid ${props.theme.accent}`};
     ${props =>
         props.disabled
             ? `background: ${props.theme.buttons.disabled.background};`
@@ -74,8 +76,8 @@ const SecondaryButtonOrLinkCss = css<{ disabled?: boolean }>`
         props.disabled
             ? props.theme.buttons.disabled.color
             : props.theme.buttons.primary.color};
-    border: 1px solid
-        ${props => (props.disabled ? 'none' : props.theme.eCashPurple)};
+    border: ${props =>
+        props.disabled ? 'none' : `1px solid ${props.theme.secondaryAccent}`};
     ${props =>
         props.disabled
             ? `background: ${props.theme.buttons.disabled.background};`
@@ -107,20 +109,48 @@ const SvgButtonOrLinkCss = css`
     svg {
         height: 24px;
         width: 24px;
-        fill: ${props => props.theme.eCashBlue};
+        fill: ${props => props.theme.accent};
     }
     &:hover {
         svg {
-            fill: ${props => props.theme.eCashPurple};
-            stroke: ${props => props.theme.eCashPurple};
+            fill: ${props => props.theme.secondaryAccent};
+            stroke: ${props => props.theme.secondaryAccent};
             path {
-                fill: ${props => props.theme.eCashPurple};
+                fill: ${props => props.theme.secondaryAccent};
             }
         }
     }
 `;
-const SvgButton = styled.button`
-    ${SvgButtonOrLinkCss}
+const HeaderCopyButtonCss = css`
+    border: none;
+    background: ${props => props.theme.secondaryBackground};
+    width: 38px;
+    flex-shrink: 0;
+    height: 100%;
+    border-radius: 5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    svg {
+        height: 18px;
+        width: 18px;
+        path {
+            fill: ${props => props.theme.secondaryText};
+        }
+    }
+    &:hover {
+        background: ${props => props.theme.accent};
+        svg {
+            path {
+                fill: ${props => props.theme.primaryText};
+            }
+        }
+    }
+`;
+
+const SvgButton = styled.button<{ isHeader?: boolean }>`
+    ${({ isHeader }) => (isHeader ? HeaderCopyButtonCss : SvgButtonOrLinkCss)}
 `;
 
 interface IconButtonProps {
@@ -157,17 +187,20 @@ interface CopyIconButtonProps {
     name: string;
     data: string;
     customMsg?: string;
-    showToast: boolean;
+    showToast?: boolean;
+    isHeader?: boolean;
 }
 const CopyIconButton: React.FC<CopyIconButtonProps> = ({
     name,
     data,
     customMsg,
     showToast = false,
+    isHeader = false,
 }) => {
     return (
         <SvgButton
             aria-label={name}
+            isHeader={isHeader}
             onClick={() => {
                 if (navigator.clipboard) {
                     navigator.clipboard.writeText(data);

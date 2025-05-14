@@ -49,18 +49,55 @@ export const validWalletPre_2_1_0 = {
         nonSlpUtxos: [],
         slpUtxos: [],
         tokens: [],
+        parsedTxHistory: [],
     },
 };
 
 export const validWalletJson = {
     mnemonic: 'one two three four five six seven eight nine ten eleven twelve',
     name: 'test',
-    paths: [[1899, { address: 'string', hash: 'string', wif: 'string' }]],
+    paths: [
+        [
+            1899,
+            {
+                address: 'string',
+                hash: 'string',
+                wif: 'string',
+                sk: new Uint8Array(),
+                pk: new Uint8Array(),
+            },
+        ],
+    ],
     state: {
         balanceSats: 0,
         nonSlpUtxos: [],
         slpUtxos: [],
         tokens: [],
+        parsedTxHistory: [],
+    },
+};
+
+export const invalidWalletBadSkType = {
+    mnemonic: 'one two three four five six seven eight nine ten eleven twelve',
+    name: 'test',
+    paths: new Map([
+        [
+            1899,
+            {
+                address: 'string',
+                hash: 'string',
+                wif: 'string',
+                sk: 'string',
+                pk: new Uint8Array(),
+            },
+        ],
+    ]),
+    state: {
+        balanceSats: 0,
+        nonSlpUtxos: [],
+        slpUtxos: [],
+        parsedTxHistory: [],
+        tokens: new Map(),
     },
 };
 
@@ -68,13 +105,32 @@ export const validWalletJsonMultiPath = {
     mnemonic: 'one two three four five six seven eight nine ten eleven twelve',
     name: 'test',
     paths: [
-        [1899, { address: 'string', hash: 'string', wif: 'string' }],
-        [145, { address: 'string', hash: 'string', wif: 'string' }],
+        [
+            1899,
+            {
+                address: 'string',
+                hash: 'string',
+                wif: 'string',
+                sk: new Uint8Array(),
+                pk: new Uint8Array(),
+            },
+        ],
+        [
+            145,
+            {
+                address: 'string',
+                hash: 'string',
+                wif: 'string',
+                sk: new Uint8Array(),
+                pk: new Uint8Array(),
+            },
+        ],
     ],
     state: {
         balanceSats: 1000,
         nonSlpUtxos: [],
         slpUtxos: [],
         tokens: [],
+        parsedTxHistory: [],
     },
 };

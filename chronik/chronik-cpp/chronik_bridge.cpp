@@ -35,7 +35,7 @@ chronik_bridge::OutPoint BridgeOutPoint(const COutPoint &outpoint) {
 
 chronik_bridge::TxOutput BridgeTxOutput(const CTxOut &output) {
     return {
-        .value = output.nValue / Amount::satoshi(),
+        .sats = output.nValue / Amount::satoshi(),
         .script = chronik::util::ToRustVec<uint8_t>(output.scriptPubKey),
     };
 }
@@ -161,7 +161,8 @@ namespace chronik_bridge {
 void log_print(const rust::Str logging_function, const rust::Str source_file,
                const uint32_t source_line, const rust::Str msg) {
     LogInstance().LogPrintStr(std::string(msg), std::string(logging_function),
-                              std::string(source_file), source_line);
+                              std::string(source_file), source_line,
+                              BCLog::LogFlags::NONE, BCLog::Level::None);
 }
 
 void log_print_chronik(const rust::Str logging_function,
@@ -203,8 +204,9 @@ const CBlockIndex &
 ChronikBridge::lookup_block_index_by_height(int height) const {
     // The boundary check is performed in the CChain::operator[](int nHeight)
     // method, a nullptr is returned if height is out of bounds.
-    const CBlockIndex *pindex =
-        WITH_LOCK(cs_main, return m_node.chainman->ActiveChain()[height]);
+    const CBlockIndex *pindex = WITH_LOCK(
+        cs_main,
+        return m_node.chainman->GetChainstateForIndexing().m_chain[height]);
     if (!pindex) {
         throw block_index_not_found();
     }
@@ -219,7 +221,8 @@ ChronikBridge::get_block_headers_by_range(int start, int end) const {
     LOCK(cs_main);
     std::vector<RawBlockHeader> headers;
     for (int height = start; height <= end; height++) {
-        const CBlockIndex *pindex = m_node.chainman->ActiveChain()[height];
+        const CBlockIndex *pindex =
+            m_node.chainman->GetChainstateForIndexing().m_chain[height];
         if (!pindex) {
             // We allow partial results or empty result.
             // We can assume that if a block height does not exist the following
@@ -239,7 +242,8 @@ ChronikBridge::get_block_hashes_by_range(int start, int end) const {
     LOCK(cs_main);
     std::vector<WrappedBlockHash> block_hashes;
     for (int height = start; height <= end; height++) {
-        const CBlockIndex *pindex = m_node.chainman->ActiveChain()[height];
+        const CBlockIndex *pindex =
+            m_node.chainman->GetChainstateForIndexing().m_chain[height];
         if (!pindex) {
             throw block_index_not_found();
         }
@@ -307,7 +311,8 @@ Tx bridge_tx(const CTransaction &tx, const std::vector<::Coin> &spent_coins) {
 const CBlockIndex &ChronikBridge::find_fork(const CBlockIndex &index) const {
     const CBlockIndex *fork = WITH_LOCK(
         cs_main,
-        return m_node.chainman->ActiveChainstate().m_chain.FindFork(&index));
+        return m_node.chainman->GetChainstateForIndexing().m_chain.FindFork(
+            &index));
     if (!fork) {
         throw block_index_not_found();
     }
@@ -321,7 +326,7 @@ void ChronikBridge::lookup_spent_coins(
     coins_to_uncache.clear();
     LOCK(cs_main);
     CCoinsViewCache &coins_cache =
-        m_node.chainman->ActiveChainstate().CoinsTip();
+        m_node.chainman->GetChainstateForIndexing().CoinsTip();
     CCoinsViewMemPool coin_view(&coins_cache, *m_node.mempool);
     for (TxInput &input : tx.inputs) {
         TxId txid = TxId(chronik::util::ArrayToHash(input.prev_out.txid));
@@ -351,7 +356,7 @@ void ChronikBridge::uncache_coins(
     rust::Slice<const OutPoint> coins_to_uncache) const {
     LOCK(cs_main);
     CCoinsViewCache &coins_cache =
-        m_node.chainman->ActiveChainstate().CoinsTip();
+        m_node.chainman->GetChainstateForIndexing().CoinsTip();
     for (const OutPoint &outpoint : coins_to_uncache) {
         TxId txid = TxId(chronik::util::ArrayToHash(outpoint.txid));
         coins_cache.Uncache(COutPoint(txid, outpoint.out_idx));

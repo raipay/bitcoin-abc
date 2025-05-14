@@ -4,7 +4,10 @@
 
 #include <avalanche/stakecontendercache.h>
 
-#include <avalanche/peermanager.h>
+#include <avalanche/rewardrankcomparator.h>
+#include <blockindex.h>
+#include <logging.h>
+#include <util/strencodings.h>
 
 #include <algorithm>
 
@@ -47,25 +50,40 @@ bool StakeContenderCache::add(const CBlockIndex *pindex, const ProofRef &proof,
         .second;
 }
 
-void StakeContenderCache::promoteToBlock(const CBlockIndex *activeTip,
-                                         PeerManager &pm) {
+void StakeContenderCache::promoteToBlock(
+    const CBlockIndex *activeTip,
+    std::function<bool(const ProofId &proofid)> const &shouldPromote) {
     // "Promote" past contenders to activeTip and check that those contenders
-    // are still valid proofs to be stake winners. This is done because new
-    // stake contenders are only added when a new proof is seen for the first
-    // time. We need to persist the cached payout scripts and proof scores since
-    // they are not guaranteed to be stored by peerManager.
+    // are still valid proofs to be stake winners. This is done because stake
+    // contenders are only added when a proof is registered in the peerManager.
+    // We need to persist the cached payout scripts and proof scores since they
+    // are not guaranteed to be stored in the event they become remote proofs.
     const BlockHash &blockhash = activeTip->GetBlockHash();
     const int height = activeTip->nHeight;
     lastPromotedHeight = height;
+
+    // Gather entries to promote and then insert them afterwards so we don't
+    // iterate over newly inserted entries.
+    std::vector<StakeContenderCacheEntry> promotedEntries;
+    promotedEntries.reserve(contenders.size());
     for (auto &contender : contenders) {
         const ProofId &proofid = contender.proofid;
-        if (pm.isRemoteProof(proofid) &&
-            (pm.isBoundToPeer(proofid) || pm.isDangling(proofid))) {
-            contenders.emplace(blockhash, height, proofid,
-                               StakeContenderStatus::UNKNOWN,
-                               contender.payoutScriptPubkey, contender.score);
+        bool promoted = false;
+        if (shouldPromote(proofid)) {
+            promotedEntries.push_back(StakeContenderCacheEntry(
+                blockhash, height, proofid, StakeContenderStatus::UNKNOWN,
+                contender.payoutScriptPubkey, contender.score));
+            promoted = true;
         }
+        LogPrintLevel(BCLog::AVALANCHE, BCLog::Level::Debug,
+                      "Contender with proofid %s, payout %s was%s promoted to "
+                      "block %s (height %d) (old id %s, next id %s)\n",
+                      proofid.ToString(), HexStr(contender.payoutScriptPubkey),
+                      promoted ? "" : " NOT", blockhash.ToString(), height,
+                      contender.getStakeContenderId().ToString(),
+                      StakeContenderId(blockhash, proofid).ToString());
     }
+    contenders.insert(promotedEntries.begin(), promotedEntries.end());
 }
 
 bool StakeContenderCache::setWinners(
@@ -119,26 +137,15 @@ bool StakeContenderCache::reject(const StakeContenderId &contenderId) {
     });
 }
 
-bool StakeContenderCache::invalidate(const StakeContenderId &contenderId) {
-    auto &view = contenders.get<by_stakecontenderid>();
-    auto it = view.find(contenderId);
-    if (it == view.end()) {
-        return false;
-    }
-
-    return contenders.modify(it, [&](StakeContenderCacheEntry &entry) {
-        entry.status &= ~(StakeContenderStatus::ACCEPTED |
-                          StakeContenderStatus::IN_WINNER_SET);
-    });
-}
-
-int StakeContenderCache::getVoteStatus(
-    const StakeContenderId &contenderId) const {
+int StakeContenderCache::getVoteStatus(const StakeContenderId &contenderId,
+                                       BlockHash &prevblockhashout) const {
     auto &view = contenders.get<by_stakecontenderid>();
     auto it = view.find(contenderId);
     if (it == view.end()) {
         return -1;
     }
+
+    prevblockhashout = it->prevblockhash;
 
     // Contender is accepted
     if (it->isAccepted()) {
@@ -160,8 +167,67 @@ int StakeContenderCache::getVoteStatus(
     return 1;
 }
 
-bool StakeContenderCache::getWinners(const BlockHash &prevblockhash,
-                                     std::vector<CScript> &payouts) const {
+size_t StakeContenderCache::getPollableContenders(
+    const BlockHash &prevblockhash, size_t maxPollable,
+    std::vector<StakeContenderId> &pollableContenders) const {
+    std::vector<const StakeContenderCacheEntry *> rankedContenders;
+    auto &view = contenders.get<by_prevblockhash>();
+    auto [begin, end] = view.equal_range(prevblockhash);
+    for (auto it = begin; it != end; it++) {
+        rankedContenders.push_back(&(*it));
+    }
+
+    // First sort all contenders with accepted contenders first
+    std::sort(rankedContenders.begin(), rankedContenders.end(),
+              [](const StakeContenderCacheEntry *left,
+                 const StakeContenderCacheEntry *right) {
+                  if (left->isAccepted() != right->isAccepted()) {
+                      // Accepted contenders sort first
+                      return left->isAccepted();
+                  }
+
+                  double leftRank = left->computeRewardRank();
+                  double rightRank = right->computeRewardRank();
+                  const StakeContenderId &leftContenderId =
+                      left->getStakeContenderId();
+                  const StakeContenderId &rightContenderId =
+                      right->getStakeContenderId();
+                  return RewardRankComparator()(leftContenderId, leftRank,
+                                                left->proofid, rightContenderId,
+                                                rightRank, right->proofid);
+              });
+
+    // Sort again, only by reward rank, and only up to the max number of
+    // pollable contenders.
+    size_t numPollable = std::min(rankedContenders.size(), maxPollable);
+    std::sort(rankedContenders.begin(), rankedContenders.begin() + numPollable,
+              [](const StakeContenderCacheEntry *left,
+                 const StakeContenderCacheEntry *right) {
+                  double leftRank = left->computeRewardRank();
+                  double rightRank = right->computeRewardRank();
+                  const StakeContenderId &leftContenderId =
+                      left->getStakeContenderId();
+                  const StakeContenderId &rightContenderId =
+                      right->getStakeContenderId();
+                  return RewardRankComparator()(leftContenderId, leftRank,
+                                                left->proofid, rightContenderId,
+                                                rightRank, right->proofid);
+              });
+
+    // Only return up to the maximum number of contenders
+    pollableContenders.clear();
+    pollableContenders.reserve(numPollable);
+    for (size_t i = 0; i < numPollable; i++) {
+        pollableContenders.push_back(
+            rankedContenders[i]->getStakeContenderId());
+    }
+
+    return pollableContenders.size();
+}
+
+bool StakeContenderCache::getWinners(
+    const BlockHash &prevblockhash,
+    std::vector<std::pair<ProofId, CScript>> &winners) const {
     // Winners determined by avalanche are sorted by reward rank
     std::vector<const StakeContenderCacheEntry *> rankedWinners;
     auto &view = contenders.get<by_prevblockhash>();
@@ -175,30 +241,45 @@ bool StakeContenderCache::getWinners(const BlockHash &prevblockhash,
     std::sort(rankedWinners.begin(), rankedWinners.end(),
               [](const StakeContenderCacheEntry *left,
                  const StakeContenderCacheEntry *right) {
-                  return left->computeRewardRank() < right->computeRewardRank();
+                  if (left->isAccepted() != right->isAccepted()) {
+                      // Accepted contenders sort first
+                      return left->isAccepted();
+                  }
+
+                  double leftRank = left->computeRewardRank();
+                  double rightRank = right->computeRewardRank();
+                  const StakeContenderId &leftContenderId =
+                      left->getStakeContenderId();
+                  const StakeContenderId &rightContenderId =
+                      right->getStakeContenderId();
+                  return RewardRankComparator()(leftContenderId, leftRank,
+                                                left->proofid, rightContenderId,
+                                                rightRank, right->proofid);
               });
 
-    payouts.clear();
+    winners.clear();
 
     // Add manual winners first, preserving order
     auto &manualWinnersView = manualWinners.get<by_prevblockhash>();
     auto manualWinnerIt = manualWinnersView.find(prevblockhash);
     if (manualWinnerIt != manualWinners.end()) {
-        payouts.reserve(manualWinnerIt->payoutScripts.size() +
+        winners.reserve(manualWinnerIt->payoutScripts.size() +
                         rankedWinners.size());
 
-        payouts.insert(payouts.begin(), manualWinnerIt->payoutScripts.begin(),
-                       manualWinnerIt->payoutScripts.end());
+        for (auto &payoutScript : manualWinnerIt->payoutScripts) {
+            winners.push_back({ProofId(), payoutScript});
+        }
     } else {
-        payouts.reserve(rankedWinners.size());
+        winners.reserve(rankedWinners.size());
     }
 
     // Add ranked winners, preserving reward rank order
     for (const auto &rankedWinner : rankedWinners) {
-        payouts.push_back(rankedWinner->payoutScriptPubkey);
+        winners.push_back(
+            {rankedWinner->proofid, rankedWinner->payoutScriptPubkey});
     }
 
-    return payouts.size() > 0;
+    return winners.size() > 0;
 }
 
 } // namespace avalanche

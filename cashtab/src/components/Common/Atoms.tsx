@@ -4,26 +4,22 @@
 
 import React from 'react';
 import styled, { css } from 'styled-components';
-import { Link } from 'react-router-dom';
 import { CopyIconButton } from 'components/Common/Buttons';
 import { explorer } from 'config/explorer';
 
 export const CashtabScroll = css`
     &::-webkit-scrollbar {
-        width: 12px;
+        width: 4px;
     }
 
     &::-webkit-scrollbar-track {
-        -webkit-box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.3);
-        background-color: ${props => props.theme.eCashBlue};
-        border-radius: 10px;
-        height: 80%;
+        -webkit-box-shadow: inset 0 0 0 rgba(0, 0, 0, 0);
+        background-color: ${props => props.theme.secondaryBackground};
     }
 
     &::-webkit-scrollbar-thumb {
         border-radius: 10px;
-        color: ${props => props.theme.eCashBlue};
-        -webkit-box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.5);
+        background-color: ${props => props.theme.accent};
     }
 `;
 
@@ -42,7 +38,7 @@ export const LoadingCtn = styled.div`
     svg {
         width: 50px;
         height: 50px;
-        fill: ${props => props.theme.eCashBlue};
+        fill: ${props => props.theme.accent};
     }
 `;
 
@@ -55,47 +51,42 @@ export const TokenParamLabel = styled.span`
 `;
 
 export const AlertMsg = styled.p`
-    color: ${props => props.theme.forms.error} !important;
+    color: ${props => props.theme.formError} !important;
 `;
 
 export const ConvertAmount = styled.div`
-    color: ${props => props.theme.contrast};
+    color: ${props => props.theme.primaryText};
     width: 100%;
-    font-size: 14px;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
     margin-bottom: 10px;
     @media (max-width: 768px) {
-        font-size: 12px;
+        font-size: var(--text-sm);
+        line-height: var(--text-sm--line-height);
     }
-`;
-
-export const StyledLink = styled(Link)`
-    color: ${props => props.theme.buttons.styledLink};
-    text-decoration: none;
-    padding: 8px;
-    position: relative;
-    border: solid 1px silver;
-    border-radius: 10px;
 `;
 
 export const SwitchLabel = styled.div`
     text-align: left;
-    color: ${props => props.theme.contrast};
-    font-size: 18px;
+    color: ${props => props.theme.primaryText};
+    font-size: var(--text-lg);
+    line-height: var(--text-lg--line-height);
     word-break: break-all;
 `;
 
-export const Alert = styled.div`
+export const Alert = styled.div<{ noWordBreak?: boolean }>`
     background-color: #fff2f0;
     border-radius: 12px;
     color: red;
     padding: 12px;
     margin: 12px 0;
-    word-break: break-all;
+    ${props =>
+        typeof props.noWordBreak === 'undefined' && `word-break: break-all`};
 `;
 export const Info = styled.div`
     background-color: #fff2f0;
     border-radius: 12px;
-    color: ${props => props.theme.eCashBlue};
+    color: ${props => props.theme.accent};
     padding: 12px;
     margin: 12px 0;
 `;
@@ -107,7 +98,6 @@ export const BlockNotificationLink = styled.a`
     display: flex;
     justify-content: flex-start;
     width: 100%;
-    color: ${props => props.theme.walletBackground};
     text-decoration: none;
 `;
 export const BlockNotificationDesc = styled.div`
@@ -125,9 +115,9 @@ export const TokenIdAndCopyIcon = styled.div`
         height: 18px;
         :hover {
             g {
-                fill: ${props => props.theme.eCashPurple};
+                fill: ${props => props.theme.secondaryAccent};
             }
-            fill: ${props => props.theme.eCashPurple};
+            fill: ${props => props.theme.secondaryAccent};
         }
     }
 `;
@@ -154,5 +144,64 @@ export const TokenIdPreview: React.FC<TokenIdPreviewProps> = ({ tokenId }) => {
                 customMsg={`Token ID "${tokenId}" copied to clipboard`}
             />
         </TokenIdAndCopyIcon>
+    );
+};
+
+export const PageHeader = styled.h2`
+    margin: 0;
+    margin-top: 20px;
+    color: ${props => props.theme.primaryText};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    svg {
+        height: 30px;
+        width: 30px;
+        margin-left: 10px;
+    }
+    svg path {
+        fill: #fff !important;
+    }
+`;
+
+const CopyTokenIdWrapper = styled.div`
+    display: flex;
+    align-items: center;
+    color: ${props => props.theme.secondaryText};
+    svg {
+        width: 16px;
+        height: 16px;
+        g {
+            fill: ${props => props.theme.secondaryText};
+        }
+        fill: ${props => props.theme.secondaryText};
+        :hover {
+            g {
+                fill: ${props => props.theme.secondaryAccent};
+            }
+            fill: ${props => props.theme.secondaryAccent};
+        }
+    }
+    button {
+        display: flex;
+        align-items: center;
+    }
+`;
+interface CopyTokenIdProps {
+    tokenId: string;
+}
+export const CopyTokenId: React.FC<CopyTokenIdProps> = ({ tokenId }) => {
+    return (
+        <CopyTokenIdWrapper>
+            {tokenId.slice(0, 3)}
+            ...
+            {tokenId.slice(-3)}
+            <CopyIconButton
+                name={`Copy Token ID`}
+                data={tokenId}
+                showToast
+                customMsg={`Token ID "${tokenId}" copied to clipboard`}
+            />
+        </CopyTokenIdWrapper>
     );
 };

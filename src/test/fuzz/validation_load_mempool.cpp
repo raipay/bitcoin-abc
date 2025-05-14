@@ -4,7 +4,6 @@
 
 #include <kernel/mempool_persist.h>
 
-#include <chainparamsbase.h>
 #include <mempool_args.h>
 #include <node/mempool_persist_args.h>
 #include <test/fuzz/FuzzedDataProvider.h>
@@ -38,7 +37,7 @@ FUZZ_TARGET_INIT(validation_load_mempool, initialize_validation_load_mempool) {
     SetMockTime(ConsumeTime(fuzzed_data_provider));
     FuzzedFileProvider fuzzed_file_provider = ConsumeFile(fuzzed_data_provider);
 
-    CTxMemPool pool{MemPoolOptionsForTest(g_setup->m_node)};
+    CTxMemPool pool{GetConfig(), MemPoolOptionsForTest(g_setup->m_node)};
 
     auto &chainstate{static_cast<DummyChainState &>(
         g_setup->m_node.chainman->ActiveChainstate())};

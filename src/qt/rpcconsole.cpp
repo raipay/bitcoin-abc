@@ -796,7 +796,7 @@ void RPCConsole::setClientModel(ClientModel *model, int bestblock_height,
         ui->blocksDir->setText(model->blocksDir());
         ui->startupTime->setText(model->formatClientStartupTime());
         ui->networkName->setText(
-            QString::fromStdString(Params().NetworkIDString()));
+            QString::fromStdString(Params().GetChainTypeString()));
 
         // Setup autocomplete and attach it
         QStringList wordList;
@@ -991,6 +991,10 @@ void RPCConsole::message(int category, const QString &message, bool html) {
 }
 
 void RPCConsole::updateNetworkState() {
+    if (!clientModel) {
+        return;
+    }
+
     QString connections =
         QString::number(clientModel->getNumConnections()) + " (";
     connections += tr("In:") + " " +

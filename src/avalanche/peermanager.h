@@ -9,11 +9,13 @@
 #include <avalanche/proof.h>
 #include <avalanche/proofpool.h>
 #include <avalanche/proofradixtreeadapter.h>
+#include <avalanche/stakecontendercache.h>
 #include <coins.h>
 #include <common/bloom.h>
 #include <consensus/validation.h>
 #include <pubkey.h>
 #include <radix.h>
+#include <util/fs.h>
 #include <util/hasher.h>
 #include <util/time.h>
 
@@ -92,8 +94,6 @@ struct Peer {
     // The network stack uses timestamp in seconds, so we oblige.
     std::chrono::seconds registration_time;
     std::chrono::seconds nextPossibleConflictTime;
-
-    double availabilityScore = 0.0;
 
     /**
      * Consider dropping the peer if no node is attached after this timeout
@@ -242,6 +242,8 @@ class PeerManager {
 
     ChainstateManager &chainman;
 
+    const bool m_stakingPreConsensus{false};
+
     ProofRef localProof;
 
     struct by_lastUpdate;
@@ -296,14 +298,17 @@ class PeerManager {
 
     std::unordered_set<ProofId, SaltedProofIdHasher> manualFlakyProofids;
 
+    StakeContenderCache stakeContenderCache;
+
 public:
     static constexpr size_t MAX_REMOTE_PROOFS{100};
 
     PeerManager(const Amount &stakeUtxoDustThresholdIn,
-                ChainstateManager &chainmanIn,
+                ChainstateManager &chainmanIn, bool stakingPreConsensus = false,
                 const ProofRef &localProofIn = ProofRef())
         : stakeUtxoDustThreshold(stakeUtxoDustThresholdIn),
-          chainman(chainmanIn), localProof(localProofIn){};
+          chainman(chainmanIn), m_stakingPreConsensus(stakingPreConsensus),
+          localProof(localProofIn){};
 
     /**
      * Node API.
@@ -444,7 +449,8 @@ public:
     bool saveRemoteProof(const ProofId &proofid, const NodeId nodeid,
                          const bool present);
     std::vector<RemoteProof> getRemoteProofs(const NodeId nodeid) const;
-    bool isRemoteProof(const ProofId &proofid) const;
+    bool hasRemoteProofStatus(const ProofId &proofid) const;
+    bool isRemotelyPresentProof(const ProofId &proofid) const;
 
     bool setFlaky(const ProofId &proofid);
     bool unsetFlaky(const ProofId &proofid);
@@ -454,24 +460,23 @@ public:
         }
     }
 
-    template <typename Callable>
-    void updateAvailabilityScores(const double decayFactor,
-                                  Callable &&getNodeAvailabilityScore) {
-        for (auto it = peers.begin(); it != peers.end(); it++) {
-            peers.modify(it, [&](Peer &peer) {
-                // Calculate average of current node scores
-                double peerScore{0.0};
-                forEachNode(peer, [&](const avalanche::Node &node) {
-                    peerScore += getNodeAvailabilityScore(node.nodeid);
-                });
-
-                // Calculate exponential moving average of averaged node scores
-                peer.availabilityScore =
-                    decayFactor * peerScore +
-                    (1. - decayFactor) * peer.availabilityScore;
-            });
-        }
-    }
+    /** Make some of the contender cache API available */
+    void cleanupStakeContenders(const int requestedMinHeight);
+    void addStakeContender(const ProofRef &proof);
+    int getStakeContenderStatus(const StakeContenderId &contenderId,
+                                BlockHash &prevblockhashout) const;
+    void acceptStakeContender(const StakeContenderId &contenderId);
+    void finalizeStakeContender(
+        const StakeContenderId &contenderId, BlockHash &prevblockhash,
+        std::vector<std::pair<ProofId, CScript>> &newWinners);
+    void rejectStakeContender(const StakeContenderId &contenderId);
+    void promoteStakeContendersToBlock(const CBlockIndex *pindex);
+    bool setContenderStatusForLocalWinners(
+        const CBlockIndex *prevblock,
+        const std::vector<std::pair<ProofId, CScript>> winners,
+        size_t maxPollable, std::vector<StakeContenderId> &pollableContenders);
+    bool setStakeContenderWinners(const CBlockIndex *pindex,
+                                  const std::vector<CScript> &payoutScripts);
 
     /****************************************************
      * Functions which are public for testing purposes. *

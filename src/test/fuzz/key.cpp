@@ -3,7 +3,6 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <chainparams.h>
-#include <chainparamsbase.h>
 #include <config.h>
 #include <key.h>
 #include <key_io.h>
@@ -17,6 +16,7 @@
 #include <script/signingprovider.h>
 #include <script/standard.h>
 #include <streams.h>
+#include <util/chaintype.h>
 #include <util/strencodings.h>
 
 #include <test/fuzz/fuzz.h>
@@ -30,7 +30,7 @@
 void initialize_key() {
     static const ECCVerifyHandle ecc_verify_handle;
     ECC_Start();
-    SelectParams(CBaseChainParams::REGTEST);
+    SelectParams(ChainType::REGTEST);
 }
 
 FUZZ_TARGET_INIT(key, initialize_key) {

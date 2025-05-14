@@ -1,7 +1,8 @@
 import json
 import unittest
 
-from .. import address, slp
+from .. import address
+from ..tokens import slp
 
 script_tests_json = r"""
 [

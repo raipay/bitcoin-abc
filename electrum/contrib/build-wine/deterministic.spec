@@ -1,6 +1,6 @@
 # -*- mode: python3 -*-
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs, copy_metadata
 
 import sys, os
 
@@ -51,6 +51,7 @@ datas = [
     (home+'electrumabc/servers_testnet.json', 'electrumabc'),
     (home+'electrumabc/servers_regtest.json', 'electrumabc'),
     (home+'electrumabc/wordlist/english.txt', 'electrumabc/wordlist'),
+    (home+'electrumabc/wordlist/slip39.txt', 'electrumabc/wordlist'),
     (home+'electrumabc/locale', 'electrumabc/locale'),
     (home+'electrumabc_gui/qt/data/ecsupplemental_win.ttf', 'electrumabc_gui/qt/data'),
     (home+'electrumabc_plugins', 'electrumabc_plugins'),
@@ -60,6 +61,8 @@ datas += collect_data_files('btchip')
 datas += collect_data_files('keepkeylib')
 # wordlists used by keepkeylib from lib mnemonic
 datas += collect_data_files('mnemonic')
+
+datas += copy_metadata('slip10')
 
 # We don't put these files in to actually include them in the script but to make the Analysis method scan them for imports
 a = Analysis([home+'electrum-abc',

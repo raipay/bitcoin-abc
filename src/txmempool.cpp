@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 bool CTxMemPool::CalculateAncestors(
     setEntries &setAncestors,
@@ -114,8 +115,9 @@ void CTxMemPool::UpdateForRemoveFromMempool(const setEntries &entriesToRemove) {
     }
 }
 
-CTxMemPool::CTxMemPool(const Options &opts)
+CTxMemPool::CTxMemPool(const Config &config, const Options &opts)
     : m_check_ratio(opts.check_ratio),
+      m_finalizedTxsFitter(node::BlockFitter(config)),
       m_orphanage(std::make_unique<TxOrphanage>()),
       m_conflicting(std::make_unique<TxConflicting>()),
       m_max_size_bytes{opts.max_size_bytes}, m_expiry{opts.expiry},
@@ -206,7 +208,11 @@ void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason) {
         GetMainSignals().TransactionRemovedFromMempool(
             (*it)->GetSharedTx(), reason, mempool_sequence);
 
-        finalizedTxs.remove(txid);
+        if (auto removed_tx = finalizedTxs.remove(txid)) {
+            m_finalizedTxsFitter.removeTxUnchecked(removed_tx->GetTxSize(),
+                                                   removed_tx->GetSigChecks(),
+                                                   removed_tx->GetFee());
+        }
     }
 
     for (const CTxIn &txin : (*it)->GetTx().vin) {
@@ -324,7 +330,11 @@ void CTxMemPool::removeForFinalizedBlock(
         // is invalid. If the tx has a child, it can remain in the tree for the
         // next block. So we can simply remove the txs from the block with no
         // further check.
-        finalizedTxs.remove(tx->GetId());
+        if (auto removed_tx = finalizedTxs.remove(tx->GetId())) {
+            m_finalizedTxsFitter.removeTxUnchecked(removed_tx->GetTxSize(),
+                                                   removed_tx->GetSigChecks(),
+                                                   removed_tx->GetFee());
+        }
     }
 }
 
@@ -503,6 +513,106 @@ std::vector<TxMempoolInfo> CTxMemPool::infoAll() const {
     }
 
     return ret;
+}
+
+bool CTxMemPool::setAvalancheFinalized(const CTxMemPoolEntryRef &tx,
+                                       std::vector<TxId> &finalizedTxIds) {
+    AssertLockHeld(cs);
+
+    auto it = mapTx.find(tx->GetTx().GetId());
+    if (it == mapTx.end()) {
+        // Trying to finalize a tx that is not in the mempool !
+        return false;
+    }
+
+    setEntries setAncestors;
+    setAncestors.insert(it);
+    if (!CalculateMemPoolAncestors(tx, setAncestors,
+                                   /*fSearchForParents=*/false)) {
+        // Failed to get a list of parents for this tx. If we finalize it we
+        // might be missing a parent and generate an invalid block.
+        return false;
+    }
+
+    // Make sure the tx chain would fit the block before adding them.
+    uint64_t sumOfTxSize{0};
+    uint64_t sumOfTxSigChecks{0};
+    for (auto iter_it = setAncestors.begin(); iter_it != setAncestors.end();) {
+        // iter_it is an iterator of mapTx iterator (aka txiter)
+        CTxMemPoolEntryRef entry = **iter_it;
+
+        if (m_finalizedTxsFitter.isBelowBlockMinFeeRate(
+                entry->GetModifiedFeeRate())) {
+            LogPrint(BCLog::AVALANCHE,
+                     "Delay storing finalized tx %s due to fee rate below the "
+                     "block mininmum%s (see -blockmintxfee)\n",
+                     tx->GetTx().GetId().ToString(),
+                     entry->GetSharedTx()->GetId() == tx->GetSharedTx()->GetId()
+                         ? ""
+                         : strprintf(" for parent %s",
+                                     entry->GetSharedTx()->GetId().ToString()));
+            return false;
+        }
+
+        // It is possible (and normal) that an ancestor is already finalized.
+        // Beware to not account for it in this case.
+        if (isAvalancheFinalized(entry->GetTx().GetId())) {
+            iter_it = setAncestors.erase(iter_it);
+            continue;
+        }
+
+        sumOfTxSize += entry->GetTxSize();
+        sumOfTxSigChecks += entry->GetSigChecks();
+        ++iter_it;
+    }
+
+    if (!m_finalizedTxsFitter.testTxFits(sumOfTxSize, sumOfTxSigChecks)) {
+        LogPrint(
+            BCLog::AVALANCHE,
+            "Delay storing finalized tx %s as it won't fit in the next block\n",
+            tx->GetTx().GetId().ToString());
+        return false;
+    }
+
+    finalizedTxIds.clear();
+
+    // Now let's add the txs !
+    // At this stage the set of ancestors is free if already finalized txs
+    for (txiter ancestor_it : setAncestors) {
+        if (finalizedTxs.insert(*ancestor_it)) {
+            m_finalizedTxsFitter.addTx((*ancestor_it)->GetTxSize(),
+                                       (*ancestor_it)->GetSigChecks(),
+                                       (*ancestor_it)->GetFee());
+
+            finalizedTxIds.push_back((*ancestor_it)->GetTx().GetId());
+        }
+    }
+
+    return true;
+}
+
+bool CTxMemPool::isWorthPolling(const CTransactionRef &tx) const {
+    AssertLockHeld(cs);
+    AssertLockNotHeld(cs_conflicting);
+
+    const TxId &txid = tx->GetId();
+    if (auto it = GetIter(txid)) {
+        CTxMemPoolEntryRef entry = **it;
+
+        // The tx is in the mempool, check it would fit the next block or if
+        // it's already full of finalized txs.
+        return !m_finalizedTxsFitter.isBelowBlockMinFeeRate(
+                   entry->GetModifiedFeeRate()) &&
+               m_finalizedTxsFitter.testTxFits(entry->GetTxSize(),
+                                               entry->GetSigChecks());
+    }
+
+    // Otherwise check if it's in the conflicting pool. If we reach this point
+    // this means that the transaction has been rejected so no need to check if
+    // it fits the block, however we don't want to discard it either so the vote
+    // continue until the tx is invalidated.
+    return WITH_LOCK(cs_conflicting,
+                     return m_conflicting && m_conflicting->HaveTx(txid));
 }
 
 CTransactionRef CTxMemPool::get(const TxId &txid) const {
@@ -818,8 +928,7 @@ void CTxMemPool::SetLoadTried(bool load_tried) {
     m_load_tried = load_tried;
 }
 
-const std::string
-RemovalReasonToString(const MemPoolRemovalReason &r) noexcept {
+std::string RemovalReasonToString(const MemPoolRemovalReason &r) noexcept {
     switch (r) {
         case MemPoolRemovalReason::EXPIRY:
             return "expiry";

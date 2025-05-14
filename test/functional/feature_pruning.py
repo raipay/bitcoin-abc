@@ -10,14 +10,15 @@ This test takes 30 mins or more (up to 2 hours)
 
 import os
 
-from test_framework.blocktools import create_coinbase
-from test_framework.messages import CBlock, ToHex
+from test_framework.blocktools import MIN_BLOCKS_TO_KEEP, create_block, create_coinbase
+from test_framework.messages import ToHex
 from test_framework.script import OP_NOP, OP_RETURN, CScript
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_greater_than,
     assert_raises_rpc_error,
+    try_rpc,
 )
 
 # Rescans start at the earliest block up to 2 hours before a key timestamp, so
@@ -48,21 +49,12 @@ def mine_large_blocks(node, n):
     previousblockhash = int(best_block["hash"], 16)
 
     for _ in range(n):
-        # Build the coinbase transaction (with large scriptPubKey)
-        coinbase_tx = create_coinbase(height)
-        coinbase_tx.vin[0].nSequence = 2**32 - 1
-        coinbase_tx.vout[0].scriptPubKey = big_script
-        coinbase_tx.rehash()
-
-        # Build the block
-        block = CBlock()
-        block.nVersion = best_block["version"]
-        block.hashPrevBlock = previousblockhash
-        block.nTime = mine_large_blocks.nTime
-        block.nBits = int("207fffff", 16)
-        block.nNonce = 0
-        block.vtx = [coinbase_tx]
-        block.hashMerkleRoot = block.calc_merkle_root()
+        block = create_block(
+            hashprev=previousblockhash,
+            ntime=mine_large_blocks.nTime,
+            coinbase=create_coinbase(height, script_pubkey=big_script),
+            version=best_block["version"],
+        )
         block.solve()
 
         # Submit to the node
@@ -107,9 +99,6 @@ class PruneTest(BitcoinTestFramework):
         ]
         self.rpc_timeout = 120
 
-    def skip_test_if_missing_module(self):
-        self.skip_if_no_wallet()
-
     def setup_network(self):
         self.setup_nodes()
 
@@ -125,7 +114,8 @@ class PruneTest(BitcoinTestFramework):
     def setup_nodes(self):
         self.add_nodes(self.num_nodes, self.extra_args)
         self.start_nodes()
-        self.import_deterministic_coinbase_privkeys()
+        if self.is_wallet_compiled():
+            self.import_deterministic_coinbase_privkeys()
 
     def create_big_chain(self):
         # Start by creating some coinbases we can spend later
@@ -138,6 +128,33 @@ class PruneTest(BitcoinTestFramework):
         mine_large_blocks(self.nodes[0], 645)
 
         self.sync_blocks(self.nodes[0:5])
+
+    def test_invalid_command_line_options(self):
+        self.stop_node(0)
+        self.nodes[0].assert_start_raises_init_error(
+            expected_msg="Error: Prune cannot be configured with a negative value.",
+            extra_args=["-prune=-1"],
+        )
+        self.nodes[0].assert_start_raises_init_error(
+            expected_msg="Error: Prune configured below the minimum of 550 MiB.  Please use a higher number.",
+            extra_args=["-prune=549"],
+        )
+        self.nodes[0].assert_start_raises_init_error(
+            expected_msg="Error: Prune mode is incompatible with -txindex.",
+            extra_args=["-prune=550", "-txindex"],
+        )
+        self.nodes[0].assert_start_raises_init_error(
+            expected_msg="Error: Prune mode is incompatible with -reindex-chainstate. Use full -reindex instead.",
+            extra_args=["-prune=550", "-reindex-chainstate"],
+        )
+
+    def test_rescan_blockchain(self):
+        self.restart_node(0, ["-prune=550"])
+        assert_raises_rpc_error(
+            -1,
+            "Can't rescan beyond pruned data. Use RPC call getblockchaininfo to determine your pruned height.",
+            self.nodes[0].rescanblockchain,
+        )
 
     def test_height_min(self):
         assert os.path.isfile(
@@ -336,7 +353,7 @@ class PruneTest(BitcoinTestFramework):
 
         def prune(index):
             ret = node.pruneblockchain(height=height(index))
-            assert_equal(ret, node.getblockchaininfo()["pruneheight"])
+            assert_equal(ret + 1, node.getblockchaininfo()["pruneheight"])
 
         def has_block(index):
             return os.path.isfile(
@@ -394,7 +411,7 @@ class PruneTest(BitcoinTestFramework):
 
         # advance the tip so blk00002.dat and blk00003.dat can be pruned (the
         # last 288 blocks should now be in blk00004.dat)
-        self.generate(node, 288, sync_fun=self.no_op)
+        self.generate(node, MIN_BLOCKS_TO_KEEP, sync_fun=self.no_op)
         prune(1000)
         assert not has_block(2), "blk00002.dat is still there, should be pruned by now"
         assert not has_block(3), "blk00003.dat is still there, should be pruned by now"
@@ -535,10 +552,38 @@ class PruneTest(BitcoinTestFramework):
         self.log.info("Test manual pruning with timestamps")
         self.manual_test(4, use_timestamp=True)
 
-        self.log.info("Test wallet re-scan")
-        self.wallet_test()
+        if self.is_wallet_compiled():
+            self.log.info("Test wallet re-scan")
+            self.wallet_test()
+
+            self.log.info("Test it's not possible to rescan beyond pruned data")
+            self.test_rescan_blockchain()
+
+        self.log.info("Test invalid pruning command line options")
+        self.test_invalid_command_line_options()
+
+        self.log.info("Test pruneheight reflects the presence of block and undo data")
+        self.test_pruneheight_undo_presence()
 
         self.log.info("Done")
+
+    def test_pruneheight_undo_presence(self):
+        node = self.nodes[2]
+        pruneheight = node.getblockchaininfo()["pruneheight"]
+        fetch_block = node.getblockhash(pruneheight - 1)
+
+        self.connect_nodes(1, 2)
+        peers = node.getpeerinfo()
+        node.getblockfrompeer(fetch_block, peers[0]["id"])
+        self.wait_until(
+            lambda: not try_rpc(
+                -1, "Block not available (pruned data)", node.getblock, fetch_block
+            ),
+            timeout=5,
+        )
+
+        new_pruneheight = node.getblockchaininfo()["pruneheight"]
+        assert_equal(pruneheight, new_pruneheight)
 
 
 if __name__ == "__main__":

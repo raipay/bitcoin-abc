@@ -20,22 +20,18 @@
 //! and as a value. See BIP 32 for more details.
 const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 
-bool LegacyScriptPubKeyMan::GetNewDestination(const OutputType type,
-                                              CTxDestination &dest,
-                                              std::string &error) {
+util::Result<CTxDestination>
+LegacyScriptPubKeyMan::GetNewDestination(const OutputType type) {
     LOCK(cs_KeyStore);
-    error.clear();
 
     // Generate a new key that is added to wallet
     CPubKey new_key;
     if (!GetKeyFromPool(new_key, type)) {
-        error = _("Error: Keypool ran out, please call keypoolrefill first")
-                    .translated;
-        return false;
+        return util::Error{
+            _("Error: Keypool ran out, please call keypoolrefill first")};
     }
     LearnRelatedScripts(new_key, type);
-    dest = GetDestinationForKey(new_key, type);
-    return true;
+    return GetDestinationForKey(new_key, type);
 }
 
 typedef std::vector<uint8_t> valtype;
@@ -363,7 +359,7 @@ void LegacyScriptPubKeyMan::UpgradeKeyMetadata() {
             CKey key;
             GetKey(meta.hd_seed_id, key);
             CExtKey masterKey;
-            masterKey.SetSeed(key.begin(), key.size());
+            masterKey.SetSeed(key);
             // Add to map
             CKeyID master_id = masterKey.key.GetPubKey().GetID();
             std::copy(master_id.begin(), master_id.begin() + 4,
@@ -1052,7 +1048,7 @@ void LegacyScriptPubKeyMan::DeriveNewChildKey(WalletBatch &batch,
         throw std::runtime_error(std::string(__func__) + ": seed not found");
     }
 
-    masterKey.SetSeed(seed.begin(), seed.size());
+    masterKey.SetSeed(seed);
 
     // derive m/0'
     // use hardened derivation (child keys >= 0x80000000 are hardened after
@@ -1459,6 +1455,7 @@ std::vector<CKeyID> GetAffectedKeys(const CScript &spk,
     InferDescriptor(spk, provider)
         ->Expand(0, DUMMY_SIGNING_PROVIDER, dummy, out);
     std::vector<CKeyID> ret;
+    ret.reserve(out.pubkeys.size());
     for (const auto &entry : out.pubkeys) {
         ret.push_back(entry.first);
     }
@@ -1629,15 +1626,13 @@ std::set<CKeyID> LegacyScriptPubKeyMan::GetKeys() const {
 
 void LegacyScriptPubKeyMan::SetInternal(bool internal) {}
 
-bool DescriptorScriptPubKeyMan::GetNewDestination(const OutputType type,
-                                                  CTxDestination &dest,
-                                                  std::string &error) {
+util::Result<CTxDestination>
+DescriptorScriptPubKeyMan::GetNewDestination(const OutputType type) {
     // Returns true if this descriptor supports getting new addresses.
     // Conditions where we may be unable to fetch them (e.g. locked) are caught
     // later
     if (!CanGetAddresses(m_internal)) {
-        error = "No addresses available";
-        return false;
+        return util::Error{_("No addresses available")};
     }
     {
         LOCK(cs_desc_man);
@@ -1658,17 +1653,18 @@ bool DescriptorScriptPubKeyMan::GetNewDestination(const OutputType type,
         std::vector<CScript> scripts_temp;
         if (m_wallet_descriptor.range_end <= m_max_cached_index && !TopUp(1)) {
             // We can't generate anymore keys
-            error = "Error: Keypool ran out, please call keypoolrefill first";
-            return false;
+            return util::Error{
+                _("Error: Keypool ran out, please call keypoolrefill first")};
         }
         if (!m_wallet_descriptor.descriptor->ExpandFromCache(
                 m_wallet_descriptor.next_index, m_wallet_descriptor.cache,
                 scripts_temp, out_keys)) {
             // We can't generate anymore keys
-            error = "Error: Keypool ran out, please call keypoolrefill first";
-            return false;
+            return util::Error{
+                _("Error: Keypool ran out, please call keypoolrefill first")};
         }
 
+        CTxDestination dest;
         std::optional<OutputType> out_script_type =
             m_wallet_descriptor.descriptor->GetOutputType();
         if (out_script_type && out_script_type == type) {
@@ -1682,7 +1678,7 @@ bool DescriptorScriptPubKeyMan::GetNewDestination(const OutputType type,
         m_wallet_descriptor.next_index++;
         WalletBatch(m_storage.GetDatabase())
             .WriteDescriptor(GetID(), m_wallet_descriptor);
-        return true;
+        return dest;
     }
 }
 
@@ -1760,10 +1756,12 @@ bool DescriptorScriptPubKeyMan::GetReservedDestination(const OutputType type,
                                                        int64_t &index,
                                                        CKeyPool &keypool) {
     LOCK(cs_desc_man);
-    std::string error;
-    bool result = GetNewDestination(type, address, error);
+    auto op_dest = GetNewDestination(type);
     index = m_wallet_descriptor.next_index - 1;
-    return result;
+    if (op_dest) {
+        address = *op_dest;
+    }
+    return bool{op_dest};
 }
 
 void DescriptorScriptPubKeyMan::ReturnDestination(int64_t index, bool internal,
@@ -1782,7 +1780,7 @@ std::map<CKeyID, CKey> DescriptorScriptPubKeyMan::GetKeys() const {
     AssertLockHeld(cs_desc_man);
     if (m_storage.HasEncryptionKeys() && !m_storage.IsLocked()) {
         KeyMap keys;
-        for (auto key_pair : m_map_crypted_keys) {
+        for (const auto &key_pair : m_map_crypted_keys) {
             const CPubKey &pubkey = key_pair.second.first;
             const std::vector<uint8_t> &crypted_secret = key_pair.second.second;
             CKey key;
@@ -2357,11 +2355,11 @@ void DescriptorScriptPubKeyMan::WriteDescriptor() {
     }
 }
 
-const WalletDescriptor DescriptorScriptPubKeyMan::GetWalletDescriptor() const {
+WalletDescriptor DescriptorScriptPubKeyMan::GetWalletDescriptor() const {
     return m_wallet_descriptor;
 }
 
-const std::vector<CScript> DescriptorScriptPubKeyMan::GetScriptPubKeys() const {
+std::vector<CScript> DescriptorScriptPubKeyMan::GetScriptPubKeys() const {
     LOCK(cs_desc_man);
     std::vector<CScript> script_pub_keys;
     script_pub_keys.reserve(m_map_script_pub_keys.size());

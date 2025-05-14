@@ -57,8 +57,9 @@ from typing import (
 )
 from weakref import ref
 
-from . import bitcoin, coinchooser, keystore, mnemo, paymentrequest, slp
+from . import avalanche, bitcoin, coinchooser, keystore, mnemo, paymentrequest
 from .address import Address, PublicKey, Script
+from .avalanche.proof import StakeAndSigningData
 from .bip32 import xpub_type
 from .bitcoin import ScriptType
 from .constants import XEC
@@ -93,6 +94,7 @@ from .storage import (
     WalletStorage,
 )
 from .synchronizer import Synchronizer
+from .tokens import alp, slp
 from .transaction import (
     DUST_THRESHOLD,
     InputValueMissing,
@@ -274,8 +276,10 @@ class AbstractWallet(PrintError, SPVDelegate):
         # Some of the GUI classes, such as the Qt ElectrumWindow, use this to refer
         # back to themselves.  This should always be a weakref.ref (Weak.ref), or None
         self.weak_window: Optional[ref[ElectrumWindow]] = None
+
         self.slp = slp.WalletData(self)
         finalization_print_error(self.slp)  # debug object lifecycle
+        self.alp = alp.WalletData(self)
 
         # Removes defunct entries from self.pruned_txo asynchronously
         self.pruned_txo_cleaner_thread = None
@@ -375,6 +379,11 @@ class AbstractWallet(PrintError, SPVDelegate):
             self.slp.rebuild()
             self.slp.save()  # commit changes to self.storage
 
+        if self.alp.needs_rebuild:
+            # First time this wallet scans for ALP tokens
+            self.alp.rebuild()
+            self.alp.save()
+
         # Print debug message on finalization
         finalization_print_error(
             self,
@@ -445,6 +454,7 @@ class AbstractWallet(PrintError, SPVDelegate):
                 self.print_error("removing unreferenced tx", tx_hash)
                 self.transactions.pop(tx_hash)
                 self.slp.rm_tx(tx_hash)
+                self.alp.rm_tx(tx_hash)
 
     @profiler
     def save_transactions(self, write=False):
@@ -472,6 +482,7 @@ class AbstractWallet(PrintError, SPVDelegate):
             history = self.from_Address_dict(self._history)
             self.storage.put("addr_history", history)
             self.slp.save()
+            self.alp.save()
             if write:
                 self.storage.write()
 
@@ -503,6 +514,7 @@ class AbstractWallet(PrintError, SPVDelegate):
             self.pruned_txo = {}
             self.pruned_txo_values = set()
             self.slp.clear()
+            self.alp.clear()
             self.save_transactions()
             self._addr_bal_cache = {}
             self._history = {}
@@ -980,9 +992,10 @@ class AbstractWallet(PrintError, SPVDelegate):
                 "is_frozen_coin": (
                     txo in self.frozen_coins or txo in self.frozen_coins_tmp
                 ),
-                "slp_token": self.slp.token_info_for_txo(
-                    txo
-                ),  # (token_id_hex, qty) tuple or None
+                # (token_id_hex, qty) tuple or None
+                "slp_token": self.slp.token_info_for_txo(txo),
+                # for now just a boolean flag
+                "is_alp_token": self.alp.has_txo(txo),
             }
             out[txo] = x
         return out
@@ -1069,8 +1082,12 @@ class AbstractWallet(PrintError, SPVDelegate):
             exclude_frozen=True,
             mature=True,
             confirmed_only=confirmed_only,
-            exclude_slp=True,
+            exclude_tokens=True,
         )
+
+    @staticmethod
+    def has_tokens(coin: dict[str, Any]) -> bool:
+        return coin["slp_token"] is not None or coin["is_alp_token"]
 
     def get_utxos(
         self,
@@ -1080,7 +1097,7 @@ class AbstractWallet(PrintError, SPVDelegate):
         confirmed_only=False,
         *,
         addr_set_out=None,
-        exclude_slp=True,
+        exclude_tokens=True,
     ):
         """Note that exclude_frozen = True checks for BOTH address-level and
         coin-level frozen status.
@@ -1101,7 +1118,7 @@ class AbstractWallet(PrintError, SPVDelegate):
                 utxos = self.get_addr_utxo(addr)
                 len_before = len(coins)
                 for x in utxos.values():
-                    if exclude_slp and x["slp_token"]:
+                    if exclude_tokens and self.has_tokens(x):
                         continue
                     if exclude_frozen and x["is_frozen_coin"]:
                         continue
@@ -1502,9 +1519,10 @@ class AbstractWallet(PrintError, SPVDelegate):
             # save
             self.transactions[tx_hash] = tx
 
-            # Unconditionally invoke the SLP handler. Note that it is a fast &
+            # Unconditionally invoke the token handlers. Note that it is a fast &
             # cheap no-op if this tx's outputs[0] is not an SLP script.
             self.slp.add_tx(tx_hash, tx)
+            self.alp.add_tx(tx_hash, tx)
 
     def remove_transaction(self, tx_hash):
         with self.lock:
@@ -1555,8 +1573,9 @@ class AbstractWallet(PrintError, SPVDelegate):
             except KeyError:
                 self.print_error("tx was not in output history", tx_hash)
 
-            # inform slp subsystem as well
+            # inform token subsystems as well
             self.slp.rm_tx(tx_hash)
+            self.alp.rm_tx(tx_hash)
 
     def receive_tx_callback(self, tx_hash, tx, tx_height):
         self.add_transaction(tx_hash, tx)
@@ -2579,6 +2598,27 @@ class AbstractWallet(PrintError, SPVDelegate):
             except UserCancelled:
                 continue
 
+    def sign_stake(
+        self,
+        stake: StakeAndSigningData,
+        expiration_time: int,
+        master_pubkey: avalanche.primitives.PublicKey,
+        password: Optional[str],
+    ):
+        """Sign an avalanche stake. Might not be supported by all wallets."""
+        index = self.get_address_index(stake.address)
+        signature = None
+        for k in self.get_keystores():
+            try:
+                if k.supports_stake_signature():
+                    signature = k.sign_stake(
+                        stake.stake, index, expiration_time, master_pubkey, password
+                    )
+            except UserCancelled:
+                continue
+
+        return signature
+
     def get_unused_addresses(self, *, for_change=False, frozen_ok=True):
         # fixme: use slots from expired requests
         with self.lock:
@@ -3009,6 +3049,20 @@ class AbstractWallet(PrintError, SPVDelegate):
         if not ok and reason is not None:
             reason.insert(0, _("Schnorr signatures are disabled for this wallet type."))
         return ok
+
+    def is_stake_signature_possible(self) -> bool:
+        if self.is_watching_only():
+            return False
+
+        if not self.is_hardware() and not self.is_schnorr_possible():
+            return False
+
+        if self.is_hardware() and not any(
+            k.supports_stake_signature() for k in self.get_keystores()
+        ):
+            return False
+
+        return True
 
     def is_schnorr_enabled(self) -> bool:
         """Returns whether schnorr is enabled AND possible for this wallet.

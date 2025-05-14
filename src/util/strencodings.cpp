@@ -8,10 +8,10 @@
 
 #include <tinyformat.h>
 
-#include <cerrno>
+#include <array>
 #include <cstdlib>
 #include <cstring>
-#include <limits>
+#include <optional>
 
 static const std::string CHARS_ALPHA_NUM =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -27,14 +27,14 @@ static const std::string SAFE_CHARS[] = {
     CHARS_ALPHA_NUM + "!*'();:@&=+$,/?#[]-_.~%",
 };
 
-std::string SanitizeString(const std::string &str, int rule) {
-    std::string strResult;
-    for (std::string::size_type i = 0; i < str.size(); i++) {
-        if (SAFE_CHARS[rule].find(str[i]) != std::string::npos) {
-            strResult.push_back(str[i]);
+std::string SanitizeString(std::string_view str, int rule) {
+    std::string result;
+    for (char c : str) {
+        if (SAFE_CHARS[rule].find(c) != std::string::npos) {
+            result.push_back(c);
         }
     }
-    return strResult;
+    return result;
 }
 
 const signed char p_util_hexdigit[256] = {
@@ -60,56 +60,54 @@ signed char HexDigit(char c) {
     return p_util_hexdigit[(uint8_t)c];
 }
 
-bool IsHex(const std::string &str) {
-    for (std::string::const_iterator it(str.begin()); it != str.end(); ++it) {
-        if (HexDigit(*it) < 0) {
+bool IsHex(std::string_view str) {
+    for (char c : str) {
+        if (HexDigit(c) < 0) {
             return false;
         }
     }
     return (str.size() > 0) && (str.size() % 2 == 0);
 }
 
-bool IsHexNumber(const std::string &str) {
-    size_t starting_location = 0;
-    if (str.size() > 2 && *str.begin() == '0' && *(str.begin() + 1) == 'x') {
-        starting_location = 2;
+bool IsHexNumber(std::string_view str) {
+    if (str.substr(0, 2) == "0x") {
+        str.remove_prefix(2);
     }
-    for (auto c : str.substr(starting_location)) {
+    for (char c : str) {
         if (HexDigit(c) < 0) {
             return false;
         }
     }
     // Return false for empty string or "0x".
-    return (str.size() > starting_location);
+    return str.size() > 0;
 }
 
-std::vector<uint8_t> ParseHex(const char *psz) {
-    // convert hex dump to vector
-    std::vector<uint8_t> vch;
-    while (true) {
-        while (IsSpace(*psz)) {
-            psz++;
+template <typename Byte>
+std::optional<std::vector<Byte>> TryParseHex(std::string_view str) {
+    std::vector<Byte> vch;
+    auto it = str.begin();
+    while (it != str.end()) {
+        if (IsSpace(*it)) {
+            ++it;
+            continue;
         }
-        signed char c = HexDigit(*psz++);
-        if (c == (signed char)-1) {
-            break;
+        auto c1 = HexDigit(*(it++));
+        if (it == str.end()) {
+            return std::nullopt;
         }
-        auto n{uint8_t(c << 4)};
-        c = HexDigit(*psz++);
-        if (c == (signed char)-1) {
-            break;
+        auto c2 = HexDigit(*(it++));
+        if (c1 < 0 || c2 < 0) {
+            return std::nullopt;
         }
-        n |= c;
-        vch.push_back(n);
+        vch.push_back(Byte(c1 << 4) | Byte(c2));
     }
     return vch;
 }
+template std::vector<std::byte> ParseHex(std::string_view);
+template std::vector<uint8_t> ParseHex(std::string_view);
 
-std::vector<uint8_t> ParseHex(const std::string &str) {
-    return ParseHex(str.c_str());
-}
-
-void SplitHostPort(std::string in, uint16_t &portOut, std::string &hostOut) {
+void SplitHostPort(std::string_view in, uint16_t &portOut,
+                   std::string &hostOut) {
     size_t colon = in.find_last_of(':');
     // if a : is found, and it either follows a [...], or no other : is in the
     // string, treat it as port separator
@@ -147,7 +145,7 @@ std::string EncodeBase64(Span<const uint8_t> input) {
     return str;
 }
 
-std::vector<uint8_t> DecodeBase64(const char *p, bool *pf_invalid) {
+std::optional<std::vector<uint8_t>> DecodeBase64(std::string_view str) {
     static const int8_t decode64_table[256] = {
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -165,48 +163,27 @@ std::vector<uint8_t> DecodeBase64(const char *p, bool *pf_invalid) {
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
         -1, -1, -1, -1};
 
-    const char *e = p;
-    std::vector<uint8_t> val;
-    val.reserve(strlen(p));
-    while (*p != 0) {
-        int x = decode64_table[(uint8_t)*p];
-        if (x == -1) {
-            break;
-        }
-        val.push_back(uint8_t(x));
-        ++p;
+    if (str.size() % 4 != 0) {
+        return {};
+    }
+    /* One or two = characters at the end are permitted. */
+    if (str.size() >= 1 && str.back() == '=') {
+        str.remove_suffix(1);
+    }
+    if (str.size() >= 1 && str.back() == '=') {
+        str.remove_suffix(1);
     }
 
     std::vector<uint8_t> ret;
-    ret.reserve((val.size() * 3) / 4);
-    bool valid = ConvertBits<6, 8, false>([&](uint8_t c) { ret.push_back(c); },
-                                          val.begin(), val.end());
-
-    const char *q = p;
-    while (valid && *p != 0) {
-        if (*p != '=') {
-            valid = false;
-            break;
-        }
-        ++p;
-    }
-    valid = valid && (p - e) % 4 == 0 && p - q < 4;
-    if (pf_invalid) {
-        *pf_invalid = !valid;
+    ret.reserve((str.size() * 3) / 4);
+    bool valid = ConvertBits<6, 8, false>(
+        [&](uint8_t c) { ret.push_back(c); }, str.begin(), str.end(),
+        [](char c) { return decode64_table[uint8_t(c)]; });
+    if (!valid) {
+        return {};
     }
 
     return ret;
-}
-
-std::string DecodeBase64(const std::string &str, bool *pf_invalid) {
-    if (!ValidAsCString(str)) {
-        if (pf_invalid) {
-            *pf_invalid = true;
-        }
-        return {};
-    }
-    std::vector<uint8_t> vchRet = DecodeBase64(str.c_str(), pf_invalid);
-    return std::string((const char *)vchRet.data(), vchRet.size());
 }
 
 std::string EncodeBase32(Span<const uint8_t> input, bool pad) {
@@ -224,11 +201,11 @@ std::string EncodeBase32(Span<const uint8_t> input, bool pad) {
     return str;
 }
 
-std::string EncodeBase32(const std::string &str, bool pad) {
+std::string EncodeBase32(std::string_view str, bool pad) {
     return EncodeBase32(MakeUCharSpan(str), pad);
 }
 
-std::vector<uint8_t> DecodeBase32(const char *p, bool *pf_invalid) {
+std::optional<std::vector<uint8_t>> DecodeBase32(std::string_view str) {
     static const int8_t decode32_table[256] = {
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -246,194 +223,81 @@ std::vector<uint8_t> DecodeBase32(const char *p, bool *pf_invalid) {
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
         -1, -1, -1, -1};
 
-    const char *e = p;
-    std::vector<uint8_t> val;
-    val.reserve(strlen(p));
-    while (*p != 0) {
-        int x = decode32_table[(uint8_t)*p];
-        if (x == -1) {
-            break;
-        }
-        val.push_back(uint8_t(x));
-        ++p;
+    if (str.size() % 8 != 0) {
+        return {};
+    }
+    /* 1, 3, 4, or 6 padding '=' suffix characters are permitted. */
+    if (str.size() >= 1 && str.back() == '=') {
+        str.remove_suffix(1);
+    }
+    if (str.size() >= 2 && str.substr(str.size() - 2) == "==") {
+        str.remove_suffix(2);
+    }
+    if (str.size() >= 1 && str.back() == '=') {
+        str.remove_suffix(1);
+    }
+    if (str.size() >= 2 && str.substr(str.size() - 2) == "==") {
+        str.remove_suffix(2);
     }
 
     std::vector<uint8_t> ret;
-    ret.reserve((val.size() * 5) / 8);
-    bool valid = ConvertBits<5, 8, false>([&](uint8_t c) { ret.push_back(c); },
-                                          val.begin(), val.end());
+    ret.reserve((str.size() * 5) / 8);
+    bool valid = ConvertBits<5, 8, false>(
+        [&](uint8_t c) { ret.push_back(c); }, str.begin(), str.end(),
+        [](char c) { return decode32_table[uint8_t(c)]; });
 
-    const char *q = p;
-    while (valid && *p != 0) {
-        if (*p != '=') {
-            valid = false;
-            break;
-        }
-        ++p;
-    }
-    valid = valid && (p - e) % 8 == 0 && p - q < 8;
-    if (pf_invalid) {
-        *pf_invalid = !valid;
+    if (!valid) {
+        return {};
     }
 
     return ret;
 }
 
-std::string DecodeBase32(const std::string &str, bool *pf_invalid) {
-    if (!ValidAsCString(str)) {
-        if (pf_invalid) {
-            *pf_invalid = true;
-        }
-        return {};
-    }
-    std::vector<uint8_t> vchRet = DecodeBase32(str.c_str(), pf_invalid);
-    return std::string((const char *)vchRet.data(), vchRet.size());
-}
-
-[[nodiscard]] static bool ParsePrechecks(const std::string &str) {
-    // No empty string allowed
-    if (str.empty()) {
+namespace {
+template <typename T> bool ParseIntegral(std::string_view str, T *out) {
+    static_assert(std::is_integral<T>::value);
+    // Replicate the exact behavior of strtol/strtoll/strtoul/strtoull when
+    // handling leading +/- for backwards compatibility.
+    if (str.length() >= 2 && str[0] == '+' && str[1] == '-') {
         return false;
     }
-    // No padding allowed
-    if (str.size() >= 1 && (IsSpace(str[0]) || IsSpace(str[str.size() - 1]))) {
-        return false;
-    }
-    // No embedded NUL characters allowed
-    if (!ValidAsCString(str)) {
-        return false;
-    }
-    return true;
-}
-
-bool ParseInt32(const std::string &str, int32_t *out) {
-    if (!ParsePrechecks(str)) {
-        return false;
-    }
-    char *endp = nullptr;
-    // strtol will not set errno if valid
-    errno = 0;
-    long int n = strtol(str.c_str(), &endp, 10);
-    if (out) {
-        *out = (int32_t)n;
-    }
-    // Note that strtol returns a *long int*, so even if strtol doesn't report
-    // an over/underflow we still have to check that the returned value is
-    // within the range of an *int32_t*. On 64-bit platforms the size of these
-    // types may be different.
-    return endp && *endp == 0 && !errno &&
-           n >= std::numeric_limits<int32_t>::min() &&
-           n <= std::numeric_limits<int32_t>::max();
-}
-
-bool ParseInt64(const std::string &str, int64_t *out) {
-    if (!ParsePrechecks(str)) {
-        return false;
-    }
-    char *endp = nullptr;
-    // strtoll will not set errno if valid
-    errno = 0;
-    long long int n = strtoll(str.c_str(), &endp, 10);
-    if (out) {
-        *out = (int64_t)n;
-    }
-    // Note that strtoll returns a *long long int*, so even if strtol doesn't
-    // report an over/underflow we still have to check that the returned value
-    // is within the range of an *int64_t*.
-    return endp && *endp == 0 && !errno &&
-           n >= std::numeric_limits<int64_t>::min() &&
-           n <= std::numeric_limits<int64_t>::max();
-}
-
-bool ParseUInt8(const std::string &str, uint8_t *out) {
-    uint32_t u32;
-    if (!ParseUInt32(str, &u32) || u32 > std::numeric_limits<uint8_t>::max()) {
+    const std::optional<T> opt_int =
+        ToIntegral<T>((!str.empty() && str[0] == '+') ? str.substr(1) : str);
+    if (!opt_int) {
         return false;
     }
     if (out != nullptr) {
-        *out = static_cast<uint8_t>(u32);
+        *out = *opt_int;
     }
     return true;
 }
+}; // namespace
 
-bool ParseUInt16(const std::string &str, uint16_t *out) {
-    uint32_t u32;
-    if (!ParseUInt32(str, &u32) || u32 > std::numeric_limits<uint16_t>::max()) {
-        return false;
-    }
-    if (out != nullptr) {
-        *out = static_cast<uint16_t>(u32);
-    }
-    return true;
+bool ParseInt32(std::string_view str, int32_t *out) {
+    return ParseIntegral<int32_t>(str, out);
 }
 
-bool ParseUInt32(const std::string &str, uint32_t *out) {
-    if (!ParsePrechecks(str)) {
-        return false;
-    }
-    // Reject negative values, unfortunately strtoul accepts these by default if
-    // they fit in the range
-    if (str.size() >= 1 && str[0] == '-') {
-        return false;
-    }
-    char *endp = nullptr;
-    // strtoul will not set errno if valid
-    errno = 0;
-    unsigned long int n = strtoul(str.c_str(), &endp, 10);
-    if (out) {
-        *out = (uint32_t)n;
-    }
-    // Note that strtoul returns a *unsigned long int*, so even if it doesn't
-    // report an over/underflow we still have to check that the returned value
-    // is within the range of an *uint32_t*. On 64-bit platforms the size of
-    // these types may be different.
-    return endp && *endp == 0 && !errno &&
-           n <= std::numeric_limits<uint32_t>::max();
+bool ParseInt64(std::string_view str, int64_t *out) {
+    return ParseIntegral<int64_t>(str, out);
 }
 
-bool ParseUInt64(const std::string &str, uint64_t *out) {
-    if (!ParsePrechecks(str)) {
-        return false;
-    }
-    // Reject negative values, unfortunately strtoull accepts these by default
-    // if they fit in the range
-    if (str.size() >= 1 && str[0] == '-') {
-        return false;
-    }
-    char *endp = nullptr;
-    // strtoull will not set errno if valid
-    errno = 0;
-    unsigned long long int n = strtoull(str.c_str(), &endp, 10);
-    if (out) {
-        *out = (uint64_t)n;
-    }
-    // Note that strtoull returns a *unsigned long long int*, so even if it
-    // doesn't report an over/underflow we still have to check that the returned
-    // value is within the range of an *uint64_t*.
-    return endp && *endp == 0 && !errno &&
-           n <= std::numeric_limits<uint64_t>::max();
+bool ParseUInt8(std::string_view str, uint8_t *out) {
+    return ParseIntegral<uint8_t>(str, out);
 }
 
-bool ParseDouble(const std::string &str, double *out) {
-    if (!ParsePrechecks(str)) {
-        return false;
-    }
-    // No hexadecimal floats allowed
-    if (str.size() >= 2 && str[0] == '0' && str[1] == 'x') {
-        return false;
-    }
-    std::istringstream text(str);
-    text.imbue(std::locale::classic());
-    double result;
-    text >> result;
-    if (out) {
-        *out = result;
-    }
-    return text.eof() && !text.fail();
+bool ParseUInt16(std::string_view str, uint16_t *out) {
+    return ParseIntegral<uint16_t>(str, out);
 }
 
-std::string FormatParagraph(const std::string &in, size_t width,
-                            size_t indent) {
+bool ParseUInt32(std::string_view str, uint32_t *out) {
+    return ParseIntegral<uint32_t>(str, out);
+}
+
+bool ParseUInt64(std::string_view str, uint64_t *out) {
+    return ParseIntegral<uint64_t>(str, out);
+}
+
+std::string FormatParagraph(std::string_view in, size_t width, size_t indent) {
     std::stringstream out;
     size_t ptr = 0;
     size_t indented = 0;
@@ -514,8 +378,7 @@ static inline bool ProcessMantissaDigit(char ch, int64_t &mantissa,
     return true;
 }
 
-bool ParseFixedPoint(const std::string &val, int decimals,
-                     int64_t *amount_out) {
+bool ParseFixedPoint(std::string_view val, int decimals, int64_t *amount_out) {
     int64_t mantissa = 0;
     int64_t exponent = 0;
     int mantissa_tzeros = 0;
@@ -635,7 +498,7 @@ bool ParseFixedPoint(const std::string &val, int decimals,
     return true;
 }
 
-std::string ToLower(const std::string &str) {
+std::string ToLower(std::string_view str) {
     std::string r;
     for (auto ch : str) {
         r += ToLower(ch);
@@ -643,7 +506,7 @@ std::string ToLower(const std::string &str) {
     return r;
 }
 
-std::string ToUpper(const std::string &str) {
+std::string ToUpper(std::string_view str) {
     std::string r;
     for (auto ch : str) {
         r += ToUpper(ch);
@@ -659,15 +522,35 @@ std::string Capitalize(std::string str) {
     return str;
 }
 
+namespace {
+
+using ByteAsHex = std::array<char, 2>;
+
+constexpr std::array<ByteAsHex, 256> CreateByteToHexMap() {
+    constexpr char hexmap[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                                 '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+
+    std::array<ByteAsHex, 256> byte_to_hex{};
+    for (size_t i = 0; i < byte_to_hex.size(); ++i) {
+        byte_to_hex[i][0] = hexmap[i >> 4];
+        byte_to_hex[i][1] = hexmap[i & 15];
+    }
+    return byte_to_hex;
+}
+
+} // namespace
+
 std::string HexStr(const Span<const uint8_t> s) {
     std::string rv(s.size() * 2, '\0');
-    static constexpr char hexmap[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
-                                        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-    auto it = rv.begin();
+    static constexpr auto byte_to_hex = CreateByteToHexMap();
+    static_assert(sizeof(byte_to_hex) == 512);
+
+    char *it = rv.data();
     for (uint8_t v : s) {
-        *it++ = hexmap[v >> 4];
-        *it++ = hexmap[v & 15];
+        std::memcpy(it, byte_to_hex[v].data(), 2);
+        it += 2;
     }
-    assert(it == rv.end());
+
+    assert(it == rv.data() + rv.size());
     return rv;
 }

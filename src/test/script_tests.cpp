@@ -132,8 +132,8 @@ static void DoTest(const CScript &scriptPubKey, const CScript &scriptSig,
     ScriptError err;
     const CTransaction txCredit{
         BuildCreditingTransaction(scriptPubKey, nValue)};
-    CMutableTransaction tx = BuildSpendingTransaction(scriptSig, txCredit);
-    CMutableTransaction tx2 = tx;
+    const CMutableTransaction tx =
+        BuildSpendingTransaction(scriptSig, txCredit);
     BOOST_CHECK_MESSAGE(VerifyScript(scriptSig, scriptPubKey, flags,
                                      MutableTransactionSignatureChecker(
                                          &tx, 0, txCredit.vout[0].nValue),
@@ -171,7 +171,7 @@ static void DoTest(const CScript &scriptPubKey, const CScript &scriptSig,
 
 #if defined(HAVE_CONSENSUS_LIB)
     CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
-    stream << tx2;
+    stream << tx;
     uint32_t libconsensus_flags =
         flags & bitcoinconsensus_SCRIPT_FLAGS_VERIFY_ALL;
     if (libconsensus_flags == flags) {
@@ -2404,7 +2404,7 @@ BOOST_AUTO_TEST_CASE(script_json_test) {
     UniValue tests = read_json(json_tests::script_tests);
 
     for (unsigned int idx = 0; idx < tests.size(); idx++) {
-        UniValue test = tests[idx];
+        const UniValue &test = tests[idx];
         std::string strTest = test.write();
         Amount nValue = Amount::zero();
         unsigned int pos = 0;

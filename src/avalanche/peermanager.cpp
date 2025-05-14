@@ -6,6 +6,7 @@
 
 #include <avalanche/avalanche.h>
 #include <avalanche/delegation.h>
+#include <avalanche/rewardrankcomparator.h>
 #include <avalanche/stakecontender.h>
 #include <avalanche/validation.h>
 #include <cashaddrenc.h>
@@ -18,6 +19,7 @@
 #include <uint256.h>
 #include <util/fastrange.h>
 #include <util/fs_helpers.h>
+#include <util/strencodings.h>
 #include <util/time.h>
 #include <validation.h> // For ChainstateManager
 
@@ -413,6 +415,10 @@ bool PeerManager::registerProof(const ProofRef &proof,
         addOrUpdateNode(inserted.first, nodeid);
     }
 
+    if (m_stakingPreConsensus) {
+        addStakeContender(proof);
+    }
+
     return true;
 }
 
@@ -656,6 +662,19 @@ void PeerManager::clearAllInvalid() {
 
 bool PeerManager::saveRemoteProof(const ProofId &proofid, const NodeId nodeid,
                                   const bool present) {
+    if (present && m_stakingPreConsensus && isBoundToPeer(proofid) &&
+        !isRemotelyPresentProof(proofid)) {
+        // If this is the first time this peer's proof becomes a remote proof of
+        // any node, ensure it is included in the contender cache. There is a
+        // special case where the contender cache can lose track of a proof if
+        // it is not saved as a remote proof before the next finalized block
+        // (triggering promotion, where non-remote cache entries are dropped).
+        // This does not happen in the hot path since receiving a proof
+        // immediately saves it as a remote, however it becomes more likely if
+        // the proof was loaded from a file (-persistavapeers) or added via RPC.
+        addStakeContender(getProof(proofid));
+    }
+
     // Get how many proofs this node has announced
     auto &remoteProofsByLastUpdate = remoteProofs.get<by_lastUpdate>();
     auto [begin, end] = remoteProofsByLastUpdate.equal_range(nodeid);
@@ -696,9 +715,17 @@ PeerManager::getRemoteProofs(const NodeId nodeid) const {
     return nodeRemoteProofs;
 }
 
-bool PeerManager::isRemoteProof(const ProofId &proofid) const {
+bool PeerManager::hasRemoteProofStatus(const ProofId &proofid) const {
     auto &view = remoteProofs.get<by_proofid>();
     return view.count(proofid) > 0;
+}
+
+bool PeerManager::isRemotelyPresentProof(const ProofId &proofid) const {
+    auto &view = remoteProofs.get<by_proofid>();
+    auto [begin, end] = view.equal_range(proofid);
+    return std::any_of(begin, end, [](const auto &remoteProof) {
+        return remoteProof.present;
+    });
 }
 
 bool PeerManager::removePeer(const PeerId peerid) {
@@ -1028,7 +1055,7 @@ bool PeerManager::selectStakingRewardWinner(
         double bestRewardRank = std::numeric_limits<double>::max();
         ProofRef selectedProof = ProofRef();
         int64_t selectedProofRegistrationTime{0};
-        uint256 bestRewardHash;
+        StakeContenderId bestRewardHash;
 
         for (const Peer &peer : peers) {
             if (!peer.proof) {
@@ -1060,22 +1087,17 @@ bool PeerManager::selectStakingRewardWinner(
                 continue;
             }
 
-            // The best ranking is the lowest ranking value
             double proofRewardRank =
                 proofRewardHash.ComputeProofRewardRank(peer.getScore());
-            if (proofRewardRank < bestRewardRank) {
+            // If selectedProof is nullptr, this means that bestRewardRank is
+            // MAX_DOUBLE so the comparison will always select this proof as the
+            // preferred one. As a consequence it is safe to use 0 as a proofid.
+            if (RewardRankComparator()(
+                    proofRewardHash, proofRewardRank, peer.getProofId(),
+                    bestRewardHash, bestRewardRank,
+                    selectedProof ? selectedProof->getId()
+                                  : ProofId(uint256::ZERO))) {
                 bestRewardRank = proofRewardRank;
-                selectedProof = peer.proof;
-                selectedProofRegistrationTime = peer.registration_time.count();
-                bestRewardHash = proofRewardHash;
-            }
-
-            // Select the lowest reward hash then proofid in the unlikely case
-            // of a collision.
-            if (proofRewardRank == bestRewardRank &&
-                (proofRewardHash < bestRewardHash ||
-                 (proofRewardHash == bestRewardHash &&
-                  peer.getProofId() < selectedProof->getId()))) {
                 selectedProof = peer.proof;
                 selectedProofRegistrationTime = peer.registration_time.count();
                 bestRewardHash = proofRewardHash;
@@ -1392,6 +1414,103 @@ bool PeerManager::loadPeersFromFile(
     }
 
     return true;
+}
+
+void PeerManager::cleanupStakeContenders(const int requestedMinHeight) {
+    stakeContenderCache.cleanup(requestedMinHeight);
+}
+
+void PeerManager::addStakeContender(const ProofRef &proof) {
+    const CBlockIndex *tip = WITH_LOCK(cs_main, return chainman.ActiveTip());
+    stakeContenderCache.add(tip, proof);
+
+    const BlockHash blockhash = tip->GetBlockHash();
+    const ProofId &proofid = proof->getId();
+    LogPrintLevel(BCLog::AVALANCHE, BCLog::Level::Debug,
+                  "Cached stake contender with proofid %s, payout %s at block "
+                  "%s (height %d) with id %s\n",
+                  proofid.ToString(), HexStr(proof->getPayoutScript()),
+                  blockhash.ToString(), tip->nHeight,
+                  StakeContenderId(blockhash, proofid).ToString());
+}
+
+int PeerManager::getStakeContenderStatus(const StakeContenderId &contenderId,
+                                         BlockHash &prevblockhashout) const {
+    return stakeContenderCache.getVoteStatus(contenderId, prevblockhashout);
+}
+
+void PeerManager::acceptStakeContender(const StakeContenderId &contenderId) {
+    stakeContenderCache.accept(contenderId);
+}
+
+void PeerManager::finalizeStakeContender(
+    const StakeContenderId &contenderId, BlockHash &prevblockhash,
+    std::vector<std::pair<ProofId, CScript>> &newWinners) {
+    stakeContenderCache.finalize(contenderId);
+
+    // Get block hash related to this contender. We should not assume the
+    // current chain tip is the block this contender is a winner for.
+    getStakeContenderStatus(contenderId, prevblockhash);
+
+    // Calculate the new winners for this block
+    stakeContenderCache.getWinners(prevblockhash, newWinners);
+}
+
+void PeerManager::rejectStakeContender(const StakeContenderId &contenderId) {
+    stakeContenderCache.reject(contenderId);
+}
+
+void PeerManager::promoteStakeContendersToBlock(const CBlockIndex *pindex) {
+    stakeContenderCache.promoteToBlock(pindex, [&](const ProofId &proofid) {
+        return isBoundToPeer(proofid) ||
+               // isDangling check appears redundant, but remote proofs are not
+               // guaranteed to be cleaned up when one of our peers is removed
+               // for dangling too long. Whether or not a proof is dangling is
+               // gated by remote presence status, so only proofs that are very
+               // poorly connected to the network will stop being promoted.
+               (isRemotelyPresentProof(proofid) && isDangling(proofid));
+    });
+}
+
+bool PeerManager::setContenderStatusForLocalWinners(
+    const CBlockIndex *prevblock,
+    const std::vector<std::pair<ProofId, CScript>> winners, size_t maxPollable,
+    std::vector<StakeContenderId> &pollableContenders) {
+    const BlockHash prevblockhash = prevblock->GetBlockHash();
+    // Set status for local winners
+    for (const auto &winner : winners) {
+        const StakeContenderId contenderId(prevblockhash, winner.first);
+        stakeContenderCache.finalize(contenderId);
+        LogPrintLevel(BCLog::AVALANCHE, BCLog::Level::Debug,
+                      "Stake contender set as local winner: proofid %s, payout "
+                      "%s at block %s (height %d) with id %s\n",
+                      winner.first.ToString(), HexStr(winner.second),
+                      prevblockhash.ToString(), prevblock->nHeight,
+                      contenderId.ToString());
+    }
+
+    // Treat the highest ranking contender similarly to local winners except
+    // that it is not automatically included in the winner set (unless it
+    // happens to be selected as a local winner).
+    if (stakeContenderCache.getPollableContenders(prevblockhash, maxPollable,
+                                                  pollableContenders) > 0) {
+        // Accept the highest ranking contender. This is a no-op if the highest
+        // ranking contender is already the local winner.
+        stakeContenderCache.accept(pollableContenders[0]);
+        LogPrintLevel(BCLog::AVALANCHE, BCLog::Level::Debug,
+                      "Stake contender set as best contender: id %s at block "
+                      "%s (height %d)\n",
+                      pollableContenders[0].ToString(),
+                      prevblockhash.ToString(), prevblock->nHeight);
+        return true;
+    }
+
+    return false;
+}
+
+bool PeerManager::setStakeContenderWinners(
+    const CBlockIndex *pindex, const std::vector<CScript> &payoutScripts) {
+    return stakeContenderCache.setWinners(pindex, payoutScripts);
 }
 
 } // namespace avalanche

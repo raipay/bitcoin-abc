@@ -95,7 +95,7 @@ class ChronikScriptUtxosTest(BitcoinTestFramework):
                         ),
                         block_height=0,
                         is_coinbase=True,
-                        value=coinvalue,
+                        sats=coinvalue,
                         is_final=False,
                     )
                 ],
@@ -122,7 +122,7 @@ class ChronikScriptUtxosTest(BitcoinTestFramework):
                         ),
                         block_height=1,
                         is_coinbase=True,
-                        value=coinvalue,
+                        sats=coinvalue,
                         is_final=False,
                     )
                 ],
@@ -148,7 +148,7 @@ class ChronikScriptUtxosTest(BitcoinTestFramework):
                 ),
                 block_height=-1,
                 is_coinbase=False,
-                value=value,
+                sats=value,
                 is_final=False,
             )
             for i, value in enumerate(send_values)
@@ -187,7 +187,7 @@ class ChronikScriptUtxosTest(BitcoinTestFramework):
                 ),
                 block_height=-1,
                 is_coinbase=False,
-                value=2500,
+                sats=2500,
                 is_final=False,
             )
         )
@@ -225,12 +225,14 @@ class ChronikScriptUtxosTest(BitcoinTestFramework):
 
         # Mining conflicting tx returns the mempool UTXO spent by tx3 to the mempool
         block = create_block(
-            int(tip, 16), create_coinbase(103, b"\x03" * 33), 1300000500
+            int(tip, 16),
+            create_coinbase(103, b"\x03" * 33),
+            1300000500,
+            txlist=[tx3_conflict],
         )
-        block.vtx += [tx3_conflict]
-        block.hashMerkleRoot = block.calc_merkle_root()
         block.solve()
         peer.send_blocks_and_test([block], node)
+        node.syncwithvalidationinterfacequeue()
 
         del expected_utxos[2]
         assert_equal(

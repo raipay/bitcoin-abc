@@ -61,6 +61,7 @@ from electrumabc.constants import CURRENCY, PROJECT_NAME, REPOSITORY_URL, SCRIPT
 from electrumabc.contacts import Contact
 from electrumabc.ecc import ECPubkey
 from electrumabc.i18n import _, ngettext
+from electrumabc.invoice import ExchangeRateApiError
 from electrumabc.paymentrequest import PR_PAID
 from electrumabc.plugins import run_hook
 from electrumabc.printerror import is_verbose
@@ -952,12 +953,17 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
         tools_menu.addAction(
             "Build Avalanche Delegation", self.build_avalanche_delegation
         )
-        if self.wallet.is_watching_only() or not self.wallet.is_schnorr_possible():
-            avaproof_action.setEnabled(False)
-            avaproof_action.setToolTip(
-                "Cannot build avalanche proof or delegation for hardware, multisig "
-                "or watch-only wallet (Schnorr signature is required)."
-            )
+
+        def enable_disable_avatools():
+            if not self.wallet.is_stake_signature_possible():
+                avaproof_action.setEnabled(False)
+                avaproof_action.setToolTip(
+                    "Cannot build avalanche proof or delegation for some hardware, "
+                    "multisig or watch-only wallet (Schnorr signature is required)."
+                )
+
+        tools_menu.aboutToShow.connect(enable_disable_avatools)
+
         run_hook("init_menubar_tools", self, tools_menu)
 
         help_menu = menubar.addMenu(_("&Help"))
@@ -1850,7 +1856,7 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
 
         completer = QtWidgets.QCompleter(self.payto_e)
         completer.setCaseSensitivity(False)
-        self.payto_e.setCompleter(completer)
+        self.payto_e.set_completer(completer)
         completer.setModel(self.completions)
 
         msg = (
@@ -3922,7 +3928,17 @@ class ElectrumWindow(QtWidgets.QMainWindow, MessageBoxMixin, PrintError):
             return
 
         invoice = load_invoice_from_file_and_show_error_message(filename, self)
-        xec_amount = invoice.get_xec_amount()
+        try:
+            xec_amount = invoice.get_xec_amount()
+        except ExchangeRateApiError as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                _("Exchange rate API error"),
+                _("An error was raised while trying to fetch the exchange rate:")
+                + f"\n\n{e.reason}",
+            )
+            return
+
         amount_str = format_satoshis_plain(
             int(xec_amount * 100), self.get_decimal_point()
         )

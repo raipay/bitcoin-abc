@@ -15,8 +15,10 @@ import {
     clearLocalForage,
 } from 'components/App/fixtures/helpers';
 import CashtabTestWrapper from 'components/App/fixtures/CashtabTestWrapper';
+import { Ecc } from 'ecash-lib';
 
 describe('<OnBoarding />', () => {
+    const ecc = new Ecc();
     beforeEach(() => {
         // Mock the fetch call for Cashtab's price API
         global.fetch = jest.fn();
@@ -49,7 +51,7 @@ describe('<OnBoarding />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>
@@ -84,7 +86,7 @@ describe('<OnBoarding />', () => {
             localforage,
         );
 
-        render(<CashtabTestWrapper chronik={mockedChronik} />);
+        render(<CashtabTestWrapper ecc={ecc} chronik={mockedChronik} />);
 
         // Wait for the app to load
         await waitFor(() =>
@@ -119,7 +121,9 @@ describe('<OnBoarding />', () => {
 
         // The validation msg is in the document
         expect(
-            screen.getByText('Invalid 12-word mnemonic'),
+            screen.getByText(
+                'Invalid 12-word mnemonic. Note: all letters must be lowercase.',
+            ),
         ).toBeInTheDocument();
 
         // Type in the rest
@@ -130,7 +134,9 @@ describe('<OnBoarding />', () => {
 
         // The validation msg is not in the document
         expect(
-            screen.queryByText('Invalid 12-word mnemonic'),
+            screen.queryByText(
+                'Invalid 12-word mnemonic. Note: all letters must be lowercase.',
+            ),
         ).not.toBeInTheDocument();
 
         // The button is not disabled

@@ -64,6 +64,7 @@ PACKAGES=(
   libzmq3-dev
   lld
   make
+  nasm
   ninja-build
   nsis
   pandoc
@@ -87,6 +88,7 @@ PACKAGES=(
   xorriso
   xvfb
   yamllint
+  zip
 )
 
 function join_by() {
@@ -183,7 +185,7 @@ RUST_NIGHTLY_DATE=2023-12-29
                                  "wasm32-unknown-unknown"
 
 # Install wasm-bindgen to extract type info from .wasm files
-"${RUST_HOME}/cargo" install -f wasm-bindgen-cli@0.2.92
+"${RUST_HOME}/cargo" install -f --locked wasm-bindgen-cli@0.2.92
 
 # Installation instructions are from https://wiki.winehq.org/Debian
 mkdir -p /etc/apt/keyrings

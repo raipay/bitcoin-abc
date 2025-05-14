@@ -455,10 +455,26 @@ void BitcoinApplication::requestShutdown(Config &config) {
     // Request node shutdown, which can interrupt long operations, like
     // rescanning a wallet.
     node().startShutdown();
+    // Prior to unsetting the client model, stop listening backend signals
+    if (clientModel) {
+        clientModel->stop();
+    }
+
     // Unsetting the client model can cause the current thread to wait for node
     // to complete an operation, like wait for a RPC execution to complete.
     window->setClientModel(nullptr);
     pollShutdownTimer->stop();
+
+#ifdef ENABLE_WALLET
+    // Delete wallet controller here manually, instead of relying on Qt object
+    // tracking (https://doc.qt.io/qt-5/objecttrees.html). This makes sure
+    // walletmodel m_handle_* notification handlers are deleted before wallets
+    // are unloaded, which can simplify wallet implementations. It also avoids
+    // these notifications having to be handled while GUI objects are being
+    // destroyed, making GUI code less fragile as well.
+    delete m_wallet_controller;
+    m_wallet_controller = nullptr;
+#endif // ENABLE_WALLET
 
     delete clientModel;
     clientModel = nullptr;
@@ -720,7 +736,7 @@ int GuiMain(int argc, char *argv[]) {
     // Check for -chain, -testnet or -regtest parameter (Params() calls are only
     // valid after this clause)
     try {
-        SelectParams(gArgs.GetChainName());
+        SelectParams(gArgs.GetChainType());
     } catch (std::exception &e) {
         InitError(Untranslated(strprintf("%s\n", e.what())));
         QMessageBox::critical(nullptr, PACKAGE_NAME,
@@ -736,7 +752,7 @@ int GuiMain(int argc, char *argv[]) {
     }
 
     QScopedPointer<const NetworkStyle> networkStyle(
-        NetworkStyle::instantiate(Params().NetworkIDString()));
+        NetworkStyle::instantiate(Params().GetChainType()));
     assert(!networkStyle.isNull());
     // Allow for separate UI settings for testnets
     QApplication::setApplicationName(networkStyle->getAppName());

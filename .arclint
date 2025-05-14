@@ -97,7 +97,8 @@
                 "(^test/lint/dictionary/)",
                 "(^web/e.cash/public/animations/)",
                 "(package-lock.json)",
-                "(^electrum/electrumabc/wordlist/)"
+                "(^electrum/electrumabc/wordlist/)",
+                "(^doc/standards/)"
             ],
             "spelling.dictionaries": [
                 "test/lint/dictionary/english.json"
@@ -189,8 +190,7 @@
             "include": "(^(src|chronik)/.*\\.(h|cpp)$)",
             "exclude": [
                 "(^src/(crypto/ctaes|secp256k1|leveldb)/)",
-                "(^src/bench/nanobench.h$)",
-                "(^src/compat/glibc_compat.cpp$)"
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "lint-logs": {
@@ -217,7 +217,8 @@
             "include": "(\\.(ac|am|cmake|conf|in|include|json|m4|md|openrc|php|pl|rs|sh|txt|yml)$)",
             "exclude": [
                 "(^src/(secp256k1|leveldb)/)",
-                "(^src/bench/nanobench.h$)"
+                "(^src/bench/nanobench.h$)",
+                "(^doc/standards/)"
             ]
         },
         "yamllint": {
@@ -239,7 +240,8 @@
                 "(\\.md$)"
             ],
             "exclude": [
-                "(^web/chronik.e.cash/)"
+                "(^web/chronik.e.cash/)",
+                "(^doc/standards/)"
             ]
         },
         "lint-python-mypy": {
@@ -269,7 +271,7 @@
             "version": ">=2.6.0",
             "include": [
                 "(^apps/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
-                "(^doc/standards/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
+                "(^doc/standards/.*\\.(css|html|js|json|jsx|scss|ts|tsx)$)",
                 "(^cashtab/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
                 "(^modules/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
                 "(^web/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)"
@@ -305,14 +307,13 @@
         },
         "eslint": {
             "type": "eslint",
-            "version": ">=8.0.0",
+            "version": ">=9.0.0",
             "include": [
-                "(cashtab/.*\\.js$)",
-                "(apps/alias-server/.*\\.js$)",
-                "(modules/ecashaddrjs/.*\\.js$)",
-                "(apps/ecash-herald/.*\\.js$)",
-                "(modules/chronik-client/.*\\.(js|jsx|ts|tsx)$)",
-                "(^web/e.cash/.*\\.js$)"
+                "(.*\\.(js|jsx|ts|tsx|cjs|mjs)$)"
+            ],
+            "exclude": [
+                "(^web/explorer/)",
+                "(^src/)"
             ]
         },
         "lint-python-flynt": {

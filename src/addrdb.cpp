@@ -32,10 +32,9 @@ bool SerializeDB(const CChainParams &chainParams, Stream &stream,
                  const Data &data) {
     // Write and commit header, data
     try {
-        CHashWriter hasher(stream.GetType(), stream.GetVersion());
-        stream << chainParams.DiskMagic() << data;
-        hasher << chainParams.DiskMagic() << data;
-        stream << hasher.GetHash();
+        HashedSourceWriter hashwriter{stream};
+        hashwriter << chainParams.DiskMagic() << data;
+        stream << hashwriter.GetHash();
     } catch (const std::exception &e) {
         return error("%s: Serialize or I/O error - %s", __func__, e.what());
     }
@@ -167,8 +166,9 @@ LoadAddrman(const CChainParams &chainparams, const std::vector<bool> &asmap,
     auto check_addrman = std::clamp<int32_t>(
         args.GetIntArg("-checkaddrman", DEFAULT_ADDRMAN_CONSISTENCY_CHECKS), 0,
         1000000);
-    auto addrman{std::make_unique<AddrMan>(
-        asmap, /* consistency_check_ratio= */ check_addrman)};
+    auto addrman{
+        std::make_unique<AddrMan>(asmap, /*deterministic=*/false,
+                                  /*consistency_check_ratio=*/check_addrman)};
 
     int64_t nStart = GetTimeMillis();
     const auto path_addr{args.GetDataDirNet() / "peers.dat"};
@@ -179,7 +179,8 @@ LoadAddrman(const CChainParams &chainparams, const std::vector<bool> &asmap,
     } catch (const DbNotFoundError &) {
         // Addrman can be in an inconsistent state after failure, reset it
         addrman = std::make_unique<AddrMan>(
-            asmap, /* consistency_check_ratio= */ check_addrman);
+            asmap, /*deterministic=*/false,
+            /*consistency_check_ratio=*/check_addrman);
         LogPrintf("Creating peers.dat because the file was not found (%s)\n",
                   fs::quoted(fs::PathToString(path_addr)));
         DumpPeerAddresses(chainparams, args, *addrman);
@@ -191,7 +192,8 @@ LoadAddrman(const CChainParams &chainparams, const std::vector<bool> &asmap,
         }
         // Addrman can be in an inconsistent state after failure, reset it
         addrman = std::make_unique<AddrMan>(
-            asmap, /* consistency_check_ratio= */ check_addrman);
+            asmap, /*deterministic=*/false,
+            /*consistency_check_ratio=*/check_addrman);
         LogPrintf("Creating new peers.dat because the file version was not "
                   "compatible (%s). Original backed up to peers.dat.bak\n",
                   fs::quoted(fs::PathToString(path_addr)));

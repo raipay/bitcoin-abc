@@ -3,7 +3,9 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blockindex.h>
+#include <logging.h>
 #include <tinyformat.h>
+#include <util/check.h>
 
 /**
  * Turn the lowest '1' bit in the binary representation of a number into a '0'.
@@ -29,24 +31,6 @@ std::string CBlockIndex::ToString() const {
     return strprintf(
         "CBlockIndex(pprev=%p, nHeight=%d, merkle=%s, hashBlock=%s)", pprev,
         nHeight, hashMerkleRoot.ToString(), GetBlockHash().ToString());
-}
-
-bool CBlockIndex::UpdateChainStats() {
-    if (pprev == nullptr) {
-        nChainTx = nTx;
-        nChainSize = nSize;
-        return true;
-    }
-
-    if (pprev->nChainTx > 0) {
-        nChainTx = pprev->nChainTx + nTx;
-        nChainSize = pprev->nChainSize + nSize;
-        return true;
-    }
-
-    nChainTx = 0;
-    nChainSize = 0;
-    return false;
 }
 
 const CBlockIndex *CBlockIndex::GetAncestor(int height) const {

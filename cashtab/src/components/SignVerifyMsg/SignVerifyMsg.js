@@ -9,19 +9,22 @@ import Switch from 'components/Common/Switch';
 import { WalletContext } from 'wallet/context';
 import CopyToClipboard from 'components/Common/CopyToClipboard';
 import PrimaryButton, { SecondaryButton } from 'components/Common/Buttons';
-import xecMessage from 'bitcoinjs-message';
-import * as utxolib from '@bitgo/utxo-lib';
-import cashaddr from 'ecashaddrjs';
+import { isValidCashAddress } from 'ecashaddrjs';
 import { toast } from 'react-toastify';
 import { theme } from 'assets/styles/theme';
 import appConfig from 'config/app';
+import { PageHeader } from 'components/Common/Atoms';
+import { ThemedSignAndVerifyMsg } from 'components/Common/CustomIcons';
+import { signMsg, verifyMsg } from 'ecash-lib';
 
 const SignVerifyForm = styled.div`
-    margin-top: 24px;
     display: flex;
     flex-direction: column;
     gap: 12px;
     width: 100%;
+    h2 {
+        margin-bottom: 20px;
+    }
 `;
 const Row = styled.div`
     width: 100%;
@@ -32,15 +35,16 @@ const Row = styled.div`
     gap: 12px;
 `;
 const SignatureLabel = styled.div`
-    font-size: 18px;
-    color: ${props => props.theme.contrast};
+    font-size: var(--text-lg);
+    line-height: var(--text-lg--line-height);
+    color: ${props => props.theme.primaryText};
     text-align: left;
     font-weight: bold;
     width: 100%;
 `;
 const SignatureHolder = styled.code`
     width: 100%;
-    color: ${props => props.theme.contrast};
+    color: ${props => props.theme.primaryText};
     word-break: break-all;
 `;
 
@@ -71,29 +75,17 @@ const SignVerifyMsg = () => {
     const [signMsgMode, setSignMsgMode] = useState(true);
     const [messageSignature, setMessageSignature] = useState('');
 
-    const signMsg = () => {
+    const handleUserSignature = () => {
         // We get the msgToSign from formData in state
         const { msgToSign } = formData;
 
         // Wrap signing in try...catch to handle any errors
         try {
-            // First, get required params
-            const keyPair = utxolib.ECPair.fromWIF(
-                wallet.paths.get(1899).wif,
-                utxolib.networks.ecash,
-            );
+            // sign with path 1899 sk
+            const sk = wallet.paths.get(1899).sk;
+            const signature = signMsg(msgToSign, sk);
 
-            // Now you can get the local signature
-            const messageSignature = xecMessage
-                .sign(
-                    msgToSign,
-                    keyPair.__D,
-                    keyPair.compressed,
-                    utxolib.networks.ecash.messagePrefix,
-                )
-                .toString('base64');
-
-            setMessageSignature(messageSignature);
+            setMessageSignature(signature);
             toast.success('Message Signed');
         } catch (err) {
             toast.error(`${err}`);
@@ -121,10 +113,7 @@ const SignVerifyMsg = () => {
             }));
         } else if (name === 'addressToVerify') {
             // Validate addressToVerify
-            const isValidAddr = cashaddr.isValidCashAddress(
-                value,
-                appConfig.prefix,
-            );
+            const isValidAddr = isValidCashAddress(value, appConfig.prefix);
             setFormDataError(previous => ({
                 ...previous,
                 [name]: isValidAddr ? false : 'Invalid cash address',
@@ -148,11 +137,10 @@ const SignVerifyMsg = () => {
     const verifyMessage = () => {
         let verification;
         try {
-            verification = xecMessage.verify(
+            verification = verifyMsg(
                 formData.msgToVerify,
-                cashaddr.toLegacy(formData.addressToVerify),
                 formData.signatureToVerify,
-                utxolib.networks.ecash.messagePrefix,
+                formData.addressToVerify,
             );
         } catch (err) {
             toast.error(`${err}`);
@@ -169,6 +157,10 @@ const SignVerifyMsg = () => {
 
     return (
         <SignVerifyForm title="Sign & Verify">
+            <PageHeader>
+                Sign & Verify Msg
+                <ThemedSignAndVerifyMsg />
+            </PageHeader>
             <Row>
                 <Switch
                     name="Toggle Sign Verify"
@@ -196,7 +188,7 @@ const SignVerifyMsg = () => {
                     </Row>
                     <Row>
                         <PrimaryButton
-                            onClick={signMsg}
+                            onClick={handleUserSignature}
                             disabled={formData.msgToSign === ''}
                         >
                             Sign
