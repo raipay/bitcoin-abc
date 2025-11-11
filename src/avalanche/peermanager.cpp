@@ -415,7 +415,7 @@ bool PeerManager::registerProof(const ProofRef &proof,
         addOrUpdateNode(inserted.first, nodeid);
     }
 
-    if (m_stakingPreConsensus) {
+    if (isStakingPreconsensusActivated()) {
         addStakeContender(proof);
     }
 
@@ -662,7 +662,7 @@ void PeerManager::clearAllInvalid() {
 
 bool PeerManager::saveRemoteProof(const ProofId &proofid, const NodeId nodeid,
                                   const bool present) {
-    if (present && m_stakingPreConsensus && isBoundToPeer(proofid) &&
+    if (present && isStakingPreconsensusActivated() && isBoundToPeer(proofid) &&
         !isRemotelyPresentProof(proofid)) {
         // If this is the first time this peer's proof becomes a remote proof of
         // any node, ensure it is included in the contender cache. There is a
@@ -1426,12 +1426,12 @@ void PeerManager::addStakeContender(const ProofRef &proof) {
 
     const BlockHash blockhash = tip->GetBlockHash();
     const ProofId &proofid = proof->getId();
-    LogPrintLevel(BCLog::AVALANCHE, BCLog::Level::Debug,
-                  "Cached stake contender with proofid %s, payout %s at block "
-                  "%s (height %d) with id %s\n",
-                  proofid.ToString(), HexStr(proof->getPayoutScript()),
-                  blockhash.ToString(), tip->nHeight,
-                  StakeContenderId(blockhash, proofid).ToString());
+    LogTrace(BCLog::AVALANCHE,
+             "Cached stake contender with proofid %s, payout %s at block "
+             "%s (height %d) with id %s\n",
+             proofid.ToString(), HexStr(proof->getPayoutScript()),
+             blockhash.ToString(), tip->nHeight,
+             StakeContenderId(blockhash, proofid).ToString());
 }
 
 int PeerManager::getStakeContenderStatus(const StakeContenderId &contenderId,
@@ -1481,12 +1481,12 @@ bool PeerManager::setContenderStatusForLocalWinners(
     for (const auto &winner : winners) {
         const StakeContenderId contenderId(prevblockhash, winner.first);
         stakeContenderCache.finalize(contenderId);
-        LogPrintLevel(BCLog::AVALANCHE, BCLog::Level::Debug,
-                      "Stake contender set as local winner: proofid %s, payout "
-                      "%s at block %s (height %d) with id %s\n",
-                      winner.first.ToString(), HexStr(winner.second),
-                      prevblockhash.ToString(), prevblock->nHeight,
-                      contenderId.ToString());
+        LogTrace(BCLog::AVALANCHE,
+                 "Stake contender set as local winner: proofid %s, payout "
+                 "%s at block %s (height %d) with id %s\n",
+                 winner.first.ToString(), HexStr(winner.second),
+                 prevblockhash.ToString(), prevblock->nHeight,
+                 contenderId.ToString());
     }
 
     // Treat the highest ranking contender similarly to local winners except
@@ -1497,11 +1497,11 @@ bool PeerManager::setContenderStatusForLocalWinners(
         // Accept the highest ranking contender. This is a no-op if the highest
         // ranking contender is already the local winner.
         stakeContenderCache.accept(pollableContenders[0]);
-        LogPrintLevel(BCLog::AVALANCHE, BCLog::Level::Debug,
-                      "Stake contender set as best contender: id %s at block "
-                      "%s (height %d)\n",
-                      pollableContenders[0].ToString(),
-                      prevblockhash.ToString(), prevblock->nHeight);
+        LogTrace(BCLog::AVALANCHE,
+                 "Stake contender set as best contender: id %s at block "
+                 "%s (height %d)\n",
+                 pollableContenders[0].ToString(), prevblockhash.ToString(),
+                 prevblock->nHeight);
         return true;
     }
 

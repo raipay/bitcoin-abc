@@ -40,6 +40,7 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
 #include <QDoubleValidator>
 #include <QFileDialog>
 #include <QFont>
@@ -47,16 +48,19 @@
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QList>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QProcess>
 #include <QProgressDialog>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QSettings>
 #include <QShortcut>
 #include <QSize>
+#include <QStandardPaths>
 #include <QString>
 #include <QTextDocument> // for Qt::mightBeRichText
 #include <QThread>
@@ -82,7 +86,7 @@ QString dateTimeStr(const QDateTime &date) {
 }
 
 QString dateTimeStr(qint64 nTime) {
-    return dateTimeStr(QDateTime::fromTime_t((qint32)nTime));
+    return dateTimeStr(QDateTime::fromSecsSinceEpoch(nTime));
 }
 
 QFont fixedPitchFont() {
@@ -292,6 +296,17 @@ QString getDefaultDataDirectory() {
     return boostPathToQString(GetDefaultDataDir());
 }
 
+QString ExtractFirstSuffixFromFilter(const QString &filter) {
+    QRegularExpression filter_re(QStringLiteral(".* \\(\\*\\.(.*)[ \\)]"),
+                                 QRegularExpression::InvertedGreedinessOption);
+    QString suffix;
+    QRegularExpressionMatch m = filter_re.match(filter);
+    if (m.hasMatch()) {
+        suffix = m.captured(1);
+    }
+    return suffix;
+}
+
 QString getSaveFileName(QWidget *parent, const QString &caption,
                         const QString &dir, const QString &filter,
                         QString *selectedSuffixOut) {
@@ -308,13 +323,7 @@ QString getSaveFileName(QWidget *parent, const QString &caption,
     QString result = QDir::toNativeSeparators(QFileDialog::getSaveFileName(
         parent, caption, myDir, filter, &selectedFilter));
 
-    /* Extract first suffix from filter pattern "Description (*.foo)" or
-     * "Description (*.foo *.bar ...) */
-    QRegExp filter_re(".* \\(\\*\\.(.*)[ \\)]");
-    QString selectedSuffix;
-    if (filter_re.exactMatch(selectedFilter)) {
-        selectedSuffix = filter_re.cap(1);
-    }
+    QString selectedSuffix = ExtractFirstSuffixFromFilter(selectedFilter);
 
     /* Add suffix if needed */
     QFileInfo info(result);
@@ -352,14 +361,7 @@ QString getOpenFileName(QWidget *parent, const QString &caption,
         parent, caption, myDir, filter, &selectedFilter));
 
     if (selectedSuffixOut) {
-        /* Extract first suffix from filter pattern "Description (*.foo)" or
-         * "Description (*.foo *.bar ...) */
-        QRegExp filter_re(".* \\(\\*\\.(.*)[ \\)]");
-        QString selectedSuffix;
-        if (filter_re.exactMatch(selectedFilter)) {
-            selectedSuffix = filter_re.cap(1);
-        }
-        *selectedSuffixOut = selectedSuffix;
+        *selectedSuffixOut = ExtractFirstSuffixFromFilter(selectedFilter);
     }
     return result;
 }
@@ -406,7 +408,7 @@ void bringToFront(QWidget *w) {
 }
 
 void handleCloseWindowShortcut(QWidget *w) {
-    QObject::connect(new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_W), w),
+    QObject::connect(new QShortcut(QKeySequence(QObject::tr("Ctrl+W")), w),
                      &QShortcut::activated, w, &QWidget::close);
 }
 
@@ -993,6 +995,12 @@ void PopupMenu(QMenu *menu, const QPoint &point, QAction *at_action) {
         return;
     }
     menu->popup(point, at_action);
+}
+
+void ShowModalDialogAsynchronously(QDialog *dialog) {
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowModality(Qt::ApplicationModal);
+    dialog->show();
 }
 
 } // namespace GUIUtil

@@ -17,7 +17,9 @@
 #include <qt/clientmodel.h>
 #include <qt/forms/ui_debugwindow.h>
 #include <qt/platformstyle.h>
+#ifdef ENABLE_WALLET
 #include <qt/walletmodel.h>
+#endif // ENABLE_WALLET
 #include <rpc/client.h>
 #include <rpc/server.h>
 #include <util/strencodings.h>
@@ -33,6 +35,7 @@
 
 #include <QFont>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QMenu>
 #include <QMessageBox>
 #include <QScreen>
@@ -98,7 +101,7 @@ public:
         connect(&timer, &QTimer::timeout, [this] { func(); });
         timer.start(millis);
     }
-    ~QtRPCTimerBase() {}
+    ~QtRPCTimerBase() = default;
 
 private:
     QTimer timer;
@@ -107,7 +110,7 @@ private:
 
 class QtRPCTimerInterface : public RPCTimerInterface {
 public:
-    ~QtRPCTimerInterface() {}
+    ~QtRPCTimerInterface() = default;
     const char *Name() override { return "Qt"; }
     RPCTimerBase *NewTimer(std::function<void()> &func,
                            int64_t millis) override {
@@ -231,7 +234,8 @@ bool RPCConsole::RPCParseCommandLine(interfaces::Node *node,
                                         }
                                     }
                                     subelement =
-                                        lastResult[atoi(curarg.c_str())];
+                                        lastResult[LocaleIndependentAtoi<int>(
+                                            curarg.c_str())];
                                 } else if (lastResult.isObject()) {
                                     subelement = lastResult.find_value(curarg);
                                 } else {
@@ -617,8 +621,7 @@ bool RPCConsole::eventFilter(QObject *obj, QEvent *event) {
             case Qt::Key_PageUp: /* pass paging keys to messages widget */
             case Qt::Key_PageDown:
                 if (obj == ui->lineEdit) {
-                    QApplication::postEvent(ui->messagesWidget,
-                                            new QKeyEvent(*keyevt));
+                    QApplication::sendEvent(ui->messagesWidget, keyevt);
                     return true;
                 }
                 break;
@@ -626,8 +629,7 @@ bool RPCConsole::eventFilter(QObject *obj, QEvent *event) {
             case Qt::Key_Enter:
                 // forward these events to lineEdit
                 if (obj == autoCompleter->popup()) {
-                    QApplication::postEvent(ui->lineEdit,
-                                            new QKeyEvent(*keyevt));
+                    QApplication::sendEvent(ui->lineEdit, keyevt);
                     return true;
                 }
                 break;
@@ -641,8 +643,7 @@ bool RPCConsole::eventFilter(QObject *obj, QEvent *event) {
                      ((mod & Qt::ControlModifier) && key == Qt::Key_V) ||
                      ((mod & Qt::ShiftModifier) && key == Qt::Key_Insert))) {
                     ui->lineEdit->setFocus();
-                    QApplication::postEvent(ui->lineEdit,
-                                            new QKeyEvent(*keyevt));
+                    QApplication::sendEvent(ui->lineEdit, keyevt);
                     return true;
                 }
         }
@@ -674,7 +675,8 @@ void RPCConsole::setClientModel(ClientModel *model, int bestblock_height,
         connect(model, &ClientModel::numConnectionsChanged, this,
                 &RPCConsole::setNumConnections);
 
-        setNumBlocks(bestblock_height, QDateTime::fromTime_t(bestblock_date),
+        setNumBlocks(bestblock_height,
+                     QDateTime::fromSecsSinceEpoch(bestblock_date),
                      verification_progress, SyncType::BLOCK_SYNC);
         connect(model, &ClientModel::numBlocksChanged, this,
                 &RPCConsole::setNumBlocks);
@@ -1069,9 +1071,9 @@ void RPCConsole::on_lineEdit_returnPressed() {
 
         cmdBeforeBrowsing = QString();
 
+        WalletModel *wallet_model{nullptr};
 #ifdef ENABLE_WALLET
-        WalletModel *wallet_model =
-            ui->WalletSelector->currentData().value<WalletModel *>();
+        wallet_model = ui->WalletSelector->currentData().value<WalletModel *>();
 
         if (m_last_wallet_model != wallet_model) {
             if (wallet_model) {
@@ -1086,7 +1088,11 @@ void RPCConsole::on_lineEdit_returnPressed() {
 #endif
 
         message(CMD_REQUEST, QString::fromStdString(strFilteredCmd));
-        Q_EMIT cmdRequest(cmd, m_last_wallet_model);
+
+        assert(m_executor);
+        QMetaObject::invokeMethod(m_executor, [this, cmd, wallet_model] {
+            m_executor->request(cmd, wallet_model);
+        });
 
         cmd = QString::fromStdString(strFilteredCmd);
 
@@ -1129,24 +1135,21 @@ void RPCConsole::browseHistory(int offset) {
 }
 
 void RPCConsole::startExecutor() {
-    RPCExecutor *executor = new RPCExecutor(m_node);
-    executor->moveToThread(&thread);
+    m_executor = new RPCExecutor(m_node);
+    m_executor->moveToThread(&thread);
 
     // Replies from executor object must go to this object
-    connect(executor, &RPCExecutor::reply, this,
+    connect(m_executor, &RPCExecutor::reply, this,
             static_cast<void (RPCConsole::*)(int, const QString &)>(
                 &RPCConsole::message));
 
-    // Requests from this object must go to executor
-    connect(this, &RPCConsole::cmdRequest, executor, &RPCExecutor::request);
-
     // Make sure executor object is deleted in its own thread
-    connect(&thread, &QThread::finished, executor, &RPCExecutor::deleteLater);
+    connect(&thread, &QThread::finished, m_executor, &RPCExecutor::deleteLater);
 
     // Default implementation of QThread::run() simply spins up an event loop in
     // the thread, which is what we want.
     thread.start();
-    QTimer::singleShot(0, executor,
+    QTimer::singleShot(0, m_executor,
                        []() { util::ThreadRename("qt-rpcconsole"); });
 }
 
@@ -1491,13 +1494,13 @@ QString RPCConsole::tabTitle(TabTypes tab_type) const {
 QKeySequence RPCConsole::tabShortcut(TabTypes tab_type) const {
     switch (tab_type) {
         case TabTypes::INFO:
-            return QKeySequence(Qt::CTRL + Qt::Key_I);
+            return QKeySequence(tr("Ctrl+I"));
         case TabTypes::CONSOLE:
-            return QKeySequence(Qt::CTRL + Qt::Key_T);
+            return QKeySequence(tr("Ctrl+T"));
         case TabTypes::GRAPH:
-            return QKeySequence(Qt::CTRL + Qt::Key_N);
+            return QKeySequence(tr("Ctrl+N"));
         case TabTypes::PEERS:
-            return QKeySequence(Qt::CTRL + Qt::Key_P);
+            return QKeySequence(tr("Ctrl+P"));
     } // no default case, so the compiler can warn about missing cases
 
     assert(false);

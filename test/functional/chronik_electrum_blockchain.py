@@ -4,13 +4,23 @@
 """
 Test Chronik's electrum interface: blockchain.* methods
 """
-from test_framework.address import ADDRESS_ECREG_UNSPENDABLE
+
+import time
+
+from test_framework.address import (
+    ADDRESS_ECREG_P2SH_OP_TRUE,
+    ADDRESS_ECREG_UNSPENDABLE,
+    SCRIPT_UNSPENDABLE,
+)
 from test_framework.blocktools import (
     GENESIS_BLOCK_HASH,
+    GENESIS_BLOCK_HEADER,
     GENESIS_CB_SCRIPT_PUBKEY,
     GENESIS_CB_SCRIPT_SIG,
     GENESIS_CB_TXID,
     TIME_GENESIS_BLOCK,
+    create_block,
+    create_coinbase,
 )
 from test_framework.hash import hex_be_sha256
 from test_framework.merkle import merkle_root_and_branch
@@ -23,10 +33,16 @@ from test_framework.messages import (
     FromHex,
     ToHex,
 )
+from test_framework.p2p import P2PDataStore
 from test_framework.script import OP_RETURN, OP_TRUE, CScript
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, chronikelectrum_port, hex_to_be_bytes
-from test_framework.wallet import MiniWallet
+from test_framework.util import (
+    assert_equal,
+    assert_greater_than,
+    chronikelectrum_port,
+    hex_to_be_bytes,
+)
+from test_framework.wallet import SCRIPTSIG_OP_TRUE, MiniWallet
 
 COINBASE_TX_HEX = (
     "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d"
@@ -46,8 +62,7 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         self.extra_args = [
             [
                 "-chronik",
-                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}",
-                "-chronikscripthashindex=1",
+                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}:t",
             ]
         ]
 
@@ -55,18 +70,27 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         self.skip_if_no_chronik()
 
     def run_test(self):
-        self.client = self.nodes[0].get_chronik_electrum_client()
+        self.client = self.nodes[0].get_chronik_electrum_client(name="client")
         self.node = self.nodes[0]
         self.wallet = MiniWallet(self.node)
 
         self.test_invalid_params()
         self.test_transaction_get()
+        self.test_transaction_get_confirmed_blockhash()
         self.test_transaction_get_height()
         self.test_transaction_broadcast()
         self.test_transaction_get_merkle()
-        self.test_block_header()
+        self.test_transaction_id_from_pos()
         self.test_scripthash()
         self.test_headers_subscribe()
+        self.test_scripthash_subscribe()
+        self.test_address_get_scripthash()
+        self.test_estimate_fee()
+        self.test_relay_fee()
+        self.test_transaction_subscribe()
+        self.test_utxo_get_info()
+        self.test_mempool_get_fee_histogram()
+        self.test_block_header()
 
     def test_invalid_params(self):
         # Invalid params type
@@ -89,7 +113,7 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         # Too many params
         for response in (
             self.client.blockchain.transaction.get(1, 2, 3),
-            self.client.blockchain.transaction.get(txid=1, verbose=2, blockhash=3),
+            self.client.blockchain.transaction.get(tx_hash=1, verbose=2, blockhash=3),
         ):
             assert_equal(
                 response.error,
@@ -112,12 +136,12 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         ):
             assert_equal(
                 response.error,
-                {"code": -32602, "message": "Missing mandatory 'txid' parameter"},
+                {"code": -32602, "message": "Missing mandatory 'tx_hash' parameter"},
             )
 
         # Non-string json type for txid
         assert_equal(
-            self.client.blockchain.transaction.get(txid=int(32 * "ff", 16)).error,
+            self.client.blockchain.transaction.get(tx_hash=int(32 * "ff", 16)).error,
             {"code": 1, "message": "Invalid tx hash"},
         )
 
@@ -137,7 +161,7 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         # Invalid type for boolean argument
         assert_equal(
             self.client.blockchain.transaction.get(
-                txid=32 * "ff", verbose="true"
+                tx_hash=32 * "ff", verbose="true"
             ).error,
             {
                 "code": 1,
@@ -147,7 +171,7 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
 
         # Valid txid, but no such transaction was found
         assert_equal(
-            self.client.blockchain.transaction.get(txid=32 * "ff").error,
+            self.client.blockchain.transaction.get(tx_hash=32 * "ff").error,
             {
                 "code": 1,
                 "message": "No transaction matching the requested hash was found",
@@ -158,23 +182,46 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         for response in (
             self.client.blockchain.transaction.get(GENESIS_CB_TXID),
             self.client.blockchain.transaction.get(GENESIS_CB_TXID, False),
-            self.client.blockchain.transaction.get(txid=GENESIS_CB_TXID),
-            self.client.blockchain.transaction.get(txid=GENESIS_CB_TXID, verbose=False),
+            self.client.blockchain.transaction.get(tx_hash=GENESIS_CB_TXID),
+            self.client.blockchain.transaction.get(
+                tx_hash=GENESIS_CB_TXID, verbose=False
+            ),
         ):
             assert_equal(response.result, COINBASE_TX_HEX)
 
         for response in (
             self.client.blockchain.transaction.get(GENESIS_CB_TXID, True),
-            self.client.blockchain.transaction.get(txid=GENESIS_CB_TXID, verbose=True),
+            self.client.blockchain.transaction.get(
+                tx_hash=GENESIS_CB_TXID, verbose=True
+            ),
         ):
             assert_equal(
                 response.result,
                 {
-                    "blockhash": GENESIS_BLOCK_HASH,
-                    "blocktime": TIME_GENESIS_BLOCK,
-                    "confirmations": 201,
-                    "hash": GENESIS_CB_TXID,
                     "hex": COINBASE_TX_HEX,
+                    "txid": GENESIS_CB_TXID,
+                    "hash": GENESIS_CB_TXID,
+                    "size": len(COINBASE_TX_HEX) // 2,
+                    "version": 1,
+                    "locktime": 0,
+                    "vin": [
+                        {
+                            "coinbase": GENESIS_CB_SCRIPT_SIG.hex(),
+                            "sequence": 0xFFFFFFFF,
+                        }
+                    ],
+                    "vout": [
+                        {
+                            "n": 0,
+                            "scriptPubKey": {
+                                "hex": GENESIS_CB_SCRIPT_PUBKEY.hex(),
+                            },
+                            "value": 50_000_000.00,
+                        }
+                    ],
+                    "blockhash": GENESIS_BLOCK_HASH,
+                    "confirmations": 201,
+                    "blocktime": TIME_GENESIS_BLOCK,
                     "time": 0,
                 },
             )
@@ -182,9 +229,188 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         self.generate(self.wallet, 2)
         assert_equal(
             self.client.blockchain.transaction.get(
-                txid=GENESIS_CB_TXID, verbose=True
+                tx_hash=GENESIS_CB_TXID, verbose=True
             ).result["confirmations"],
             203,
+        )
+
+        now = int(time.time())
+        self.node.setmocktime(now)
+
+        # Create a mempool transaction
+        utxo = self.wallet.get_utxo()
+        tx = self.wallet.send_self_transfer_multi(
+            from_node=self.node,
+            utxos_to_spend=[utxo],
+            num_outputs=2,
+            fee_per_output=100 * XEC,
+        )
+        assert_equal(
+            self.client.blockchain.transaction.get(
+                tx_hash=tx["txid"], verbose=True
+            ).result,
+            {
+                "hex": tx["hex"],
+                "txid": tx["txid"],
+                "hash": tx["txid"],
+                "size": len(tx["hex"]) // 2,
+                "version": 1,
+                "locktime": 0,
+                "vin": [
+                    {
+                        "txid": utxo["txid"],
+                        "vout": utxo["vout"],
+                        "scriptSig": {
+                            "hex": SCRIPTSIG_OP_TRUE.hex(),
+                        },
+                        "sequence": 0,
+                    }
+                ],
+                "vout": [
+                    {
+                        "n": 0,
+                        "scriptPubKey": {
+                            "hex": self.wallet.get_scriptPubKey().hex(),
+                        },
+                        "value": utxo["value"] / 2 - 100,
+                    },
+                    {
+                        "n": 1,
+                        "scriptPubKey": {
+                            "hex": self.wallet.get_scriptPubKey().hex(),
+                        },
+                        "value": utxo["value"] / 2 - 100,
+                    },
+                ],
+                "confirmations": 0,
+                "time": now,
+            },
+        )
+
+        # Mine the transaction
+        tip = self.generate(self.wallet, 1)[0]
+        assert_equal(
+            self.client.blockchain.transaction.get(
+                tx_hash=tx["txid"], verbose=True
+            ).result,
+            {
+                "hex": tx["hex"],
+                "txid": tx["txid"],
+                "hash": tx["txid"],
+                "size": len(tx["hex"]) // 2,
+                "version": 1,
+                "locktime": 0,
+                "vin": [
+                    {
+                        "txid": utxo["txid"],
+                        "vout": utxo["vout"],
+                        "scriptSig": {
+                            "hex": SCRIPTSIG_OP_TRUE.hex(),
+                        },
+                        "sequence": 0,
+                    }
+                ],
+                "vout": [
+                    {
+                        "n": 0,
+                        "scriptPubKey": {
+                            "hex": self.wallet.get_scriptPubKey().hex(),
+                        },
+                        "value": utxo["value"] / 2 - 100,
+                    },
+                    {
+                        "n": 1,
+                        "scriptPubKey": {
+                            "hex": self.wallet.get_scriptPubKey().hex(),
+                        },
+                        "value": utxo["value"] / 2 - 100,
+                    },
+                ],
+                "blockhash": tip,
+                "confirmations": 1,
+                "blocktime": now,
+                "time": now,
+            },
+        )
+
+    def test_transaction_get_confirmed_blockhash(self):
+        for response in (
+            self.client.blockchain.transaction.get_confirmed_blockhash(GENESIS_CB_TXID),
+            self.client.blockchain.transaction.get_confirmed_blockhash(
+                GENESIS_CB_TXID, False
+            ),
+            self.client.blockchain.transaction.get_confirmed_blockhash(
+                tx_hash=GENESIS_CB_TXID
+            ),
+            self.client.blockchain.transaction.get_confirmed_blockhash(
+                tx_hash=GENESIS_CB_TXID, include_header=False
+            ),
+        ):
+            assert_equal(
+                response.result,
+                {
+                    "block_hash": GENESIS_BLOCK_HASH,
+                    "block_height": 0,
+                },
+            )
+
+        for response in (
+            self.client.blockchain.transaction.get_confirmed_blockhash(
+                GENESIS_CB_TXID, True
+            ),
+            self.client.blockchain.transaction.get_confirmed_blockhash(
+                tx_hash=GENESIS_CB_TXID, include_header=True
+            ),
+        ):
+            assert_equal(
+                response.result,
+                {
+                    "block_hash": GENESIS_BLOCK_HASH,
+                    "block_header": GENESIS_BLOCK_HEADER,
+                    "block_height": 0,
+                },
+            )
+
+        assert_equal(
+            self.client.blockchain.transaction.get_confirmed_blockhash("0" * 64).error,
+            {
+                "code": 1,
+                "message": "No confirmed transaction matching the requested hash was found",
+            },
+        )
+
+        assert_equal(
+            self.client.blockchain.transaction.get_confirmed_blockhash(
+                GENESIS_CB_TXID, "foo"
+            ).error,
+            {
+                "code": 1,
+                "message": "Invalid second argument; expected boolean",
+            },
+        )
+
+        mempool_txid = self.wallet.send_self_transfer(from_node=self.node)["txid"]
+        assert mempool_txid in self.node.getrawmempool()
+
+        assert_equal(
+            self.client.blockchain.transaction.get_confirmed_blockhash(
+                mempool_txid
+            ).error,
+            {
+                "code": 1,
+                "message": "No confirmed transaction matching the requested hash was found",
+            },
+        )
+
+        tip = self.generate(self.wallet, 1)[0]
+        assert_equal(
+            self.client.blockchain.transaction.get_confirmed_blockhash(
+                mempool_txid
+            ).result,
+            {
+                "block_hash": tip,
+                "block_height": self.node.getblockcount(),
+            },
         )
 
     def test_transaction_get_height(self):
@@ -208,10 +434,10 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         # Mine the tx
         self.generate(self.wallet, 1)
         response = self.client.blockchain.transaction.get_height(tx["txid"])
-        assert_equal(response.result, 203)
+        assert_equal(response.result, self.node.getblockcount())
 
         response = self.client.blockchain.transaction.get_height(32 * "ff")
-        assert_equal(response.error, {"code": -32600, "message": "Unknown txid"})
+        assert_equal(response.error, {"code": -32600, "message": "Unknown tx_hash"})
 
     def test_transaction_broadcast(self):
         tx_reference = self.wallet.create_self_transfer(target_size=100)
@@ -421,7 +647,7 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         # We can optionally specify the correct block height as 2nd argument
         assert_equal(
             self.client.blockchain.transaction.get_merkle(
-                txid=txids_hex[-1], height=height
+                tx_hash=txids_hex[-1], height=height
             ).result,
             {
                 "block_height": height,
@@ -460,30 +686,166 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
                 },
             )
 
+    def test_transaction_id_from_pos(self):
+        for _ in range(42):
+            self.wallet.send_self_transfer(from_node=self.node)
+        block_hash = self.generate(self.node, 1)[0]
+        block_info = self.node.getblock(block_hash)
+        height = block_info["height"]
+        txids_hex = block_info["tx"]
+        txids = [hex_to_be_bytes(txid) for txid in txids_hex]
+
+        for i in range(len(txids)):
+            _root, branch = merkle_root_and_branch(txids, i)
+            assert_equal(
+                self.client.blockchain.transaction.id_from_pos(height, i, False).result,
+                txids_hex[i],
+            )
+            assert_equal(
+                self.client.blockchain.transaction.id_from_pos(height, i, True).result,
+                {
+                    "tx_hash": txids_hex[i],
+                    "merkle": [h[::-1].hex() for h in branch],
+                },
+            )
+
+        # The block at height of tip + 1 doesn't exist
+        assert_equal(
+            self.client.blockchain.transaction.id_from_pos(height + 1, 0).error,
+            {
+                "code": 1,
+                "message": f"No transaction at position 0 for height {height + 1}",
+            },
+        )
+        # The transaction at index numtx doesn't exist (because it's indexed
+        # from 0).
+        assert_equal(
+            self.client.blockchain.transaction.id_from_pos(height, len(txids)).error,
+            {
+                "code": 1,
+                "message": f"No transaction at position {len(txids)} for height {height}",
+            },
+        )
+
+        for bad_height in ["", "0", -1, "foo"]:
+            assert_equal(
+                self.client.blockchain.transaction.id_from_pos(bad_height, 0).error,
+                {
+                    "code": 1,
+                    "message": "Invalid height argument; expected non-negative numeric value",
+                },
+            )
+            assert_equal(
+                self.client.blockchain.transaction.id_from_pos(
+                    height=bad_height, tx_pos=0
+                ).error,
+                {
+                    "code": 1,
+                    "message": "Invalid height argument; expected non-negative numeric value",
+                },
+            )
+
+        for bad_tx_pos in ["", "0", -1, "foo"]:
+            assert_equal(
+                self.client.blockchain.transaction.id_from_pos(0, bad_tx_pos).error,
+                {
+                    "code": 1,
+                    "message": "Invalid tx_pos argument; expected non-negative numeric value",
+                },
+            )
+            assert_equal(
+                self.client.blockchain.transaction.id_from_pos(
+                    height=0, tx_pos=bad_tx_pos
+                ).error,
+                {
+                    "code": 1,
+                    "message": "Invalid tx_pos argument; expected non-negative numeric value",
+                },
+            )
+
+        for bad_merkle in ["", "false", 1, "foo"]:
+            assert_equal(
+                self.client.blockchain.transaction.id_from_pos(0, 0, bad_merkle).error,
+                {
+                    "code": 1,
+                    "message": "Invalid merkle argument; expected boolean",
+                },
+            )
+            assert_equal(
+                self.client.blockchain.transaction.id_from_pos(
+                    height=0, tx_pos=0, merkle=bad_merkle
+                ).error,
+                {
+                    "code": 1,
+                    "message": "Invalid merkle argument; expected boolean",
+                },
+            )
+
     def test_block_header(self):
         block_hashes = [
             self.node.getblockhash(i) for i in range(self.node.getblockcount() + 1)
         ]
         block_hashes_bytes = [hex_to_be_bytes(bh) for bh in block_hashes]
         headers = [self.node.getblockheader(bh, False) for bh in block_hashes]
-        tip_height = len(headers) - 1
 
-        self.log.info("Testing the blockchain.block.header RPC")
+        self.log.info("Testing the blockchain.headers.get_tip RPC")
+
+        tip_height = len(headers) - 1
+        tip_hash = block_hashes[-1]
+        tip_header = headers[-1]
+
+        assert_equal(
+            self.client.blockchain.headers.get_tip(tip_height).error,
+            {
+                "code": -32602,
+                "message": "Expected at most 0 parameters",
+            },
+        )
+        assert_equal(
+            self.client.blockchain.headers.get_tip(tip_hash).error,
+            {
+                "code": -32602,
+                "message": "Expected at most 0 parameters",
+            },
+        )
+
+        assert_equal(
+            self.client.blockchain.headers.get_tip().result,
+            {
+                "height": tip_height,
+                "hex": tip_header,
+            },
+        )
+
+        self.log.info(
+            "Testing the blockchain.block.header and blockchain.header.get RPCs"
+        )
         response = self.client.blockchain.block.header(0)
         assert_equal(response.result, headers[0])
+        assert_equal(
+            self.client.blockchain.header.get(0).result,
+            {
+                "height": 0,
+                "hex": headers[0],
+            },
+        )
 
-        response = self.client.blockchain.block.header(
-            len(block_hashes) // 2, tip_height
-        )
-        root, branch = merkle_root_and_branch(
-            block_hashes_bytes, len(block_hashes) // 2
-        )
+        height = len(block_hashes) // 2
+        response = self.client.blockchain.block.header(height, tip_height)
+        root, branch = merkle_root_and_branch(block_hashes_bytes, height)
         assert_equal(
             response.result,
             {
                 "branch": [h[::-1].hex() for h in branch],
-                "header": headers[len(block_hashes) // 2],
+                "header": headers[height],
                 "root": root[::-1].hex(),
+            },
+        )
+        assert_equal(
+            self.client.blockchain.header.get(height).result,
+            {
+                "height": height,
+                "hex": headers[height],
             },
         )
 
@@ -500,6 +862,23 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
                     },
                 )
 
+        for bh in (-1, max_int32 + 1, max_int64, max_int64 + 1):
+            assert_equal(
+                self.client.blockchain.header.get(bh).error,
+                {
+                    "code": 1,
+                    "message": "Invalid height",
+                },
+            )
+        for bh in ("toto", "00", "0" * 65):
+            assert_equal(
+                self.client.blockchain.header.get(bh).error,
+                {
+                    "code": 1,
+                    "message": "Invalid block hash",
+                },
+            )
+
         for cp_height in ("toto", -1, max_int32 + 1, max_int64, max_int64 + 1):
             for rpc_call in (
                 lambda h: self.client.blockchain.block.header(0, h),
@@ -514,13 +893,17 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
                 )
 
         for bh in (max_int32, tip_height + 1):
-            assert_equal(
-                self.client.blockchain.block.header(bh).error,
-                {
-                    "code": 1,
-                    "message": f"Height {bh} is out of range",
-                },
-            )
+            for rpc_call in (
+                lambda h: self.client.blockchain.block.header(h),
+                lambda h: self.client.blockchain.header.get(h),
+            ):
+                assert_equal(
+                    rpc_call(bh).error,
+                    {
+                        "code": 1,
+                        "message": f"Height {bh} is out of range",
+                    },
+                )
 
         assert_equal(
             self.client.blockchain.block.header(2, 1).error,
@@ -612,6 +995,22 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
                 },
             )
 
+        self.generate(self.node, 2016)
+
+        hex_header_len = 160
+        for num in [1, 10, 100, 500, 501, 2015]:
+            headers_reply = self.client.blockchain.block.headers(1, num)
+            assert headers_reply.error is None, f"got an error for {num} headers"
+            assert_equal(len(headers_reply.result["hex"]) / hex_header_len, num)
+
+        headers_2016 = self.client.blockchain.block.headers(1, 2016).result["hex"]
+        assert_equal(len(headers_2016) / hex_header_len, 2016)
+
+        # above 2016, we just silently return the max
+        for num in [2017, 1000000]:
+            headers = self.client.blockchain.block.headers(1, num).result["hex"]
+            assert_equal(headers, headers_2016)
+
     def test_scripthash(self):
         for invalid_scripthash in (31 * "ff", 31 * "ff" + "f", 42, False, "spam"):
             assert_equal(
@@ -635,6 +1034,64 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
                     "message": "Invalid scripthash",
                 },
             )
+            assert_equal(
+                self.client.blockchain.scripthash.get_first_use(
+                    invalid_scripthash
+                ).error,
+                {
+                    "code": 1,
+                    "message": "Invalid scripthash",
+                },
+            )
+            assert_equal(
+                self.client.blockchain.scripthash.get_mempool(invalid_scripthash).error,
+                {
+                    "code": 1,
+                    "message": "Invalid scripthash",
+                },
+            )
+
+        for invalid_address in (
+            "",
+            "foobar",
+            "ecregtest:",
+            "ecregtest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcrl5mqkk",
+        ):
+            assert_equal(
+                self.client.blockchain.address.get_balance(invalid_address).error,
+                {
+                    "code": 1,
+                    "message": f"Invalid address: {invalid_address}",
+                },
+            )
+            assert_equal(
+                self.client.blockchain.address.get_history(invalid_address).error,
+                {
+                    "code": 1,
+                    "message": f"Invalid address: {invalid_address}",
+                },
+            )
+            assert_equal(
+                self.client.blockchain.address.listunspent(invalid_address).error,
+                {
+                    "code": 1,
+                    "message": f"Invalid address: {invalid_address}",
+                },
+            )
+            assert_equal(
+                self.client.blockchain.address.get_first_use(invalid_address).error,
+                {
+                    "code": 1,
+                    "message": f"Invalid address: {invalid_address}",
+                },
+            )
+            assert_equal(
+                self.client.blockchain.address.get_mempool(invalid_address).error,
+                {
+                    "code": 1,
+                    "message": f"Invalid address: {invalid_address}",
+                },
+            )
 
         # valid hash, but not associated with any known script
         assert_equal(
@@ -652,6 +1109,44 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
             self.client.blockchain.scripthash.listunspent(32 * "ff").result,
             [],
         )
+        assert_equal(
+            self.client.blockchain.scripthash.get_first_use(32 * "ff").result,
+            None,
+        )
+        assert_equal(
+            self.client.blockchain.scripthash.get_mempool(32 * "ff").result,
+            [],
+        )
+
+        # Valid address, but not associated with any known coin. With or without
+        # prefix
+        for address in (
+            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpuvt7ljzqy",
+            "ecregtest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpuvt7ljzqy",
+        ):
+            assert_equal(
+                self.client.blockchain.scripthash.get_balance(32 * "ff").result,
+                {
+                    "confirmed": 0,
+                    "unconfirmed": 0,
+                },
+            )
+            assert_equal(
+                self.client.blockchain.scripthash.get_history(32 * "ff").result,
+                [],
+            )
+            assert_equal(
+                self.client.blockchain.scripthash.listunspent(32 * "ff").result,
+                [],
+            )
+            assert_equal(
+                self.client.blockchain.scripthash.get_first_use(32 * "ff").result,
+                None,
+            )
+            assert_equal(
+                self.client.blockchain.scripthash.get_mempool(32 * "ff").result,
+                [],
+            )
 
         # Mine a block just to be sure all the utxos are confirmed
         self.generate(self.wallet, 1)
@@ -664,30 +1159,47 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
             ]
         )
         scripthash = hex_be_sha256(self.wallet.get_scriptPubKey())
+        address = ADDRESS_ECREG_P2SH_OP_TRUE
+        balance = self.client.blockchain.scripthash.get_balance(scripthash).result
         assert_equal(
-            self.client.blockchain.scripthash.get_balance(scripthash).result,
+            balance,
             {
                 "confirmed": value * XEC,
                 "unconfirmed": 0,
             },
         )
+        assert_equal(
+            self.client.blockchain.address.get_balance(address).result,
+            balance,
+        )
 
         tx = self.wallet.send_self_transfer(from_node=self.node)
+        balance = self.client.blockchain.scripthash.get_balance(scripthash).result
         assert_equal(
-            self.client.blockchain.scripthash.get_balance(scripthash).result,
+            balance,
             {"confirmed": value * XEC, "unconfirmed": -tx["fee"] * XEC},
+        )
+        assert_equal(
+            self.client.blockchain.address.get_balance(address).result,
+            balance,
         )
 
         self.generatetoaddress(self.node, 1, ADDRESS_ECREG_UNSPENDABLE)
+        balance = self.client.blockchain.scripthash.get_balance(scripthash).result
         assert_equal(
-            self.client.blockchain.scripthash.get_balance(scripthash).result,
+            balance,
             {
                 "confirmed": (value - tx["fee"]) * XEC,
                 "unconfirmed": 0,
             },
         )
+        assert_equal(
+            self.client.blockchain.address.get_balance(address).result,
+            balance,
+        )
 
         # Send transactions to a previously unused script
+        address = "ecregtest:qp3wjpa3tjlj042z2wv7hahsldgwhwy0rq5qvvema7"
         script = CScript(
             bytes.fromhex("76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac")
         )
@@ -695,40 +1207,88 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         confirmed = 0
         unconfirmed = 0
         history = []
+        mempool = []
         utxos = []
+
+        assert_equal(
+            self.client.blockchain.scripthash.get_first_use(scripthash).result,
+            None,
+        )
+        assert_equal(
+            self.client.blockchain.address.get_first_use(address).result,
+            None,
+        )
 
         def utxo_sorting_key(utxo):
             return utxo["tx_hash"], utxo["tx_pos"]
 
-        def assert_scripthash_balance_and_history(check_sorting=True):
+        def assert_scripthash_balance_and_history():
+            balance = self.client.blockchain.scripthash.get_balance(scripthash).result
             assert_equal(
-                self.client.blockchain.scripthash.get_balance(scripthash).result,
+                balance,
                 {
                     "confirmed": confirmed,
                     "unconfirmed": unconfirmed,
                 },
             )
+            assert_equal(
+                self.client.blockchain.address.get_balance(address).result,
+                balance,
+            )
             actual_history = self.client.blockchain.scripthash.get_history(
                 scripthash
             ).result
+            assert_equal(
+                self.client.blockchain.address.get_history(address).result,
+                actual_history,
+            )
             expected_history = history
             actual_utxos = self.client.blockchain.scripthash.listunspent(
                 scripthash
             ).result
+            assert_equal(
+                self.client.blockchain.address.listunspent(address).result,
+                actual_utxos,
+            )
             expected_utxos = utxos
-            if not check_sorting:
-                # Enforce any unique arbitrary sorting so we can compare equality
-                # between the two lists.
-                def sorting_key(hist_item):
-                    return hist_item["tx_hash"]
 
-                actual_history = sorted(actual_history, key=sorting_key)
-                expected_history = sorted(expected_history, key=sorting_key)
+            actual_mempool = self.client.blockchain.scripthash.get_mempool(
+                scripthash
+            ).result
+            assert_equal(
+                self.client.blockchain.address.get_mempool(address).result,
+                actual_mempool,
+            )
+            expected_mempool = mempool
 
-                actual_utxos = sorted(actual_utxos, key=utxo_sorting_key)
-                expected_utxos = sorted(expected_utxos, key=utxo_sorting_key)
+            def electrum_history_sort(hist):
+                # Extract confirmed txs and sort by ascending height then
+                # txid
+                conf_hist = [tx for tx in hist if tx["height"] > 0]
+                # We use no coinbase tx in this test, otherwise this should be
+                # accounted for (a coinbase tx should remain at first position)
+                conf_hist.sort(key=lambda tx: tx["tx_hash"])
+                conf_hist.sort(key=lambda tx: tx["height"])
+
+                # Extract unconfirmed txs and sort by descending height then
+                # txid
+                unconf_hist = [tx for tx in hist if tx["height"] <= 0]
+                unconf_hist.sort(key=lambda tx: tx["tx_hash"])
+                unconf_hist.sort(key=lambda tx: tx["height"], reverse=True)
+
+                # The full history is made of confirmed txs first then
+                # unconfirmed txs
+                return conf_hist + unconf_hist
+
+            expected_history = electrum_history_sort(expected_history)
+            # Actually the same sort except all mempool txs have a block
+            # height of 0
+            expected_utxos = electrum_history_sort(expected_utxos)
+            expected_mempool = electrum_history_sort(expected_mempool)
+
             assert_equal(actual_history, expected_history)
             assert_equal(actual_utxos, expected_utxos)
+            assert_equal(actual_mempool, expected_mempool)
 
         assert_scripthash_balance_and_history()
 
@@ -736,17 +1296,82 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
             nonlocal unconfirmed
             nonlocal history
             nonlocal utxos
+            nonlocal mempool
             txid, n = self.wallet.send_to(
                 from_node=self.node, scriptPubKey=script, amount=amount, fee=fee
             )
             unconfirmed += amount
-            history.append({"fee": fee, "height": 0, "tx_hash": txid})
+
+            unconfirmed_parents = len(self.node.getmempoolentry(txid)["depends"]) > 0
+            history_entry = {
+                "fee": fee,
+                "height": -1 if unconfirmed_parents else 0,
+                "tx_hash": txid,
+            }
+            history.append(history_entry)
+            mempool.append(history_entry)
+
+            # Note that unlike history, mempool utxos are always returned with a
+            # height of 0 independently of the presence of unconfirmed parents.
             utxos.append({"height": 0, "tx_hash": txid, "tx_pos": n, "value": amount})
+
             return txid, n
 
-        for _ in range(4):
+        txid, n = add_unconfirmed_transaction(amount=1337, fee=1000)
+        assert_scripthash_balance_and_history()
+
+        first_use = self.client.blockchain.scripthash.get_first_use(scripthash).result
+        assert_equal(
+            first_use,
+            {
+                "block_hash": "00" * 32,
+                "height": 0,
+                "tx_hash": txid,
+            },
+        )
+        assert_equal(
+            self.client.blockchain.address.get_first_use(address).result,
+            first_use,
+        )
+
+        # Confirm the transaction
+        self.generatetoaddress(self.node, 1, ADDRESS_ECREG_UNSPENDABLE)
+        confirmed += 1337
+        unconfirmed -= 1337
+        h = self.node.getblockcount()
+        history.pop()
+        history.append({"height": h, "tx_hash": txid})
+        utxos.pop()
+        utxos.append({"height": h, "tx_hash": txid, "tx_pos": n, "value": 1337})
+        mempool.clear()
+        assert_scripthash_balance_and_history()
+
+        first_use = self.client.blockchain.scripthash.get_first_use(scripthash).result
+        assert_equal(
+            first_use,
+            {
+                "block_hash": self.node.getblockhash(h),
+                "height": h,
+                "tx_hash": txid,
+            },
+        )
+        assert_equal(
+            self.client.blockchain.address.get_first_use(address).result,
+            first_use,
+        )
+
+        for _ in range(3):
             txid, n = add_unconfirmed_transaction(amount=1337, fee=1000)
             assert_scripthash_balance_and_history()
+
+            assert_equal(
+                self.client.blockchain.scripthash.get_first_use(scripthash).result,
+                first_use,
+            )
+            assert_equal(
+                self.client.blockchain.address.get_first_use(address).result,
+                first_use,
+            )
 
             # Confirm the transaction
             self.generatetoaddress(self.node, 1, ADDRESS_ECREG_UNSPENDABLE)
@@ -757,13 +1382,22 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
             history.append({"height": h, "tx_hash": txid})
             utxos.pop()
             utxos.append({"height": h, "tx_hash": txid, "tx_pos": n, "value": 1337})
+            mempool.clear()
             assert_scripthash_balance_and_history()
+
+            assert_equal(
+                self.client.blockchain.scripthash.get_first_use(scripthash).result,
+                first_use,
+            )
+            assert_equal(
+                self.client.blockchain.address.get_first_use(address).result,
+                first_use,
+            )
 
         # History with multiple unconfirmed transactions
         for _ in range(3):
             add_unconfirmed_transaction(amount=888, fee=999)
-            # We cannot guarantee the sorting of unconfirmed transactions
-            assert_scripthash_balance_and_history(check_sorting=False)
+            assert_scripthash_balance_and_history()
 
         # Test an excessive transaction history
         history_len = len(
@@ -774,17 +1408,17 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
 
         self.nodes[0].assert_start_raises_init_error(
             extra_args=self.extra_args[0] + ["-chronikelectrummaxhistory=-1"],
-            expected_msg="Error: The -chronikelectrummaxhistory value should be withing the range [1, 4294967295].",
+            expected_msg="Error: The -chronikelectrummaxhistory value should be within the range [1, 4294967295].",
         )
 
         self.nodes[0].assert_start_raises_init_error(
             extra_args=self.extra_args[0] + ["-chronikelectrummaxhistory=0"],
-            expected_msg="Error: The -chronikelectrummaxhistory value should be withing the range [1, 4294967295].",
+            expected_msg="Error: The -chronikelectrummaxhistory value should be within the range [1, 4294967295].",
         )
 
         self.nodes[0].assert_start_raises_init_error(
             extra_args=self.extra_args[0] + ["-chronikelectrummaxhistory=4294967296"],
-            expected_msg="Error: The -chronikelectrummaxhistory value should be withing the range [1, 4294967295].",
+            expected_msg="Error: The -chronikelectrummaxhistory value should be within the range [1, 4294967295].",
         )
 
         self.start_node(
@@ -792,10 +1426,10 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
             extra_args=self.extra_args[0]
             + [f"-chronikelectrummaxhistory={history_len + 1}"],
         )
-        self.client = self.nodes[0].get_chronik_electrum_client()
+        self.client = self.nodes[0].get_chronik_electrum_client(name="client")
         # We can add one more transaction
         add_unconfirmed_transaction(amount=777, fee=998)
-        assert_scripthash_balance_and_history(check_sorting=False)
+        assert_scripthash_balance_and_history()
 
         # The next transaction makes the tx history too long.
         add_unconfirmed_transaction(amount=777, fee=998)
@@ -825,6 +1459,11 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
             sorted(utxos, key=utxo_sorting_key),
         )
 
+        # Remove the history limit for the next tests
+        self.restart_node(0)
+        self.client = self.node.get_chronik_electrum_client(name="client")
+        self.wallet.rescan_utxos()
+
     def test_headers_subscribe(self):
         self.log.info("Test the blockchain.headers.subscribe endpoint")
 
@@ -845,11 +1484,22 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
             },
         )
 
+        # Subscribing again is a no-op and returns the same result
+        for _ in range(3):
+            sub_message = self.client.blockchain.headers.subscribe()
+            assert_equal(
+                sub_message.result,
+                {
+                    "height": height,
+                    "hex": header_hex,
+                },
+            )
+
         def check_notification(clients, height, header_hex):
             for client in clients:
                 notification = client.wait_for_notification(
                     "blockchain.headers.subscribe"
-                )
+                )[0]
                 assert_equal(notification["height"], height)
                 assert_equal(notification["hex"], header_hex)
 
@@ -858,7 +1508,7 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         check_notification([self.client], height, header_hex)
 
         # Let's add more clients
-        client2 = self.node.get_chronik_electrum_client()
+        client2 = self.node.get_chronik_electrum_client(name="client2")
         sub_message = client2.blockchain.headers.subscribe()
         assert_equal(
             sub_message.result,
@@ -873,7 +1523,7 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
         (height, header_hex) = new_header()
         check_notification([self.client, client2], height, header_hex)
 
-        client3 = self.node.get_chronik_electrum_client()
+        client3 = self.node.get_chronik_electrum_client(name="client3")
         sub_message = client3.blockchain.headers.subscribe()
         assert_equal(
             sub_message.result,
@@ -882,11 +1532,736 @@ class ChronikElectrumBlockchain(BitcoinTestFramework):
                 "hex": header_hex,
             },
         )
+        (prev_height, prev_header_hex) = (height, header_hex)
 
         # At this stage self.client, client2 and client3 will receive header
         # notifications
         (height, header_hex) = new_header()
         check_notification([self.client, client2, client3], height, header_hex)
+
+        # Clients also get headers upon block disconnect
+        tip = self.node.getbestblockhash()
+        self.node.parkblock(tip)
+        check_notification(
+            [self.client, client2, client3], prev_height, prev_header_hex
+        )
+
+        self.node.unparkblock(tip)
+        check_notification([self.client, client2, client3], height, header_hex)
+
+        headers = [(height, header_hex)]
+        for _ in range(3):
+            (height, header_hex) = new_header()
+            headers.append((height, header_hex))
+            check_notification([self.client, client2, client3], height, header_hex)
+
+        # Upon deep reorgs, we still get notified for the tip change (but only
+        # once)
+        self.node.parkblock(tip)
+        check_notification(
+            [self.client, client2, client3], prev_height, prev_header_hex
+        )
+
+        self.node.unparkblock(tip)
+        for _ in range(4):
+            (height, header_hex) = headers.pop(0)
+            check_notification([self.client, client2, client3], height, header_hex)
+
+        # Unsubscribe client2
+        unsub_message = client2.blockchain.headers.unsubscribe()
+        assert_equal(unsub_message.result, True)
+
+        # From now on client2 won't receive the header notifications anymore
+        (height, header_hex) = new_header()
+        check_notification([self.client, client3], height, header_hex)
+
+        try:
+            client2.wait_for_notification("blockchain.headers.subscribe", timeout=1)
+            assert False, "Received an unexpected header notification"
+        except TimeoutError:
+            pass
+
+        # Unsubscribing more is a no-op and returns False
+        for _ in range(3):
+            unsub_message = client2.blockchain.headers.unsubscribe()
+            assert_equal(unsub_message.result, False)
+
+        # Unsubscribe all the clients so we don't mess with other tests
+        unsub_message = self.client.blockchain.headers.unsubscribe()
+        assert_equal(unsub_message.result, True)
+        unsub_message = client3.blockchain.headers.unsubscribe()
+        assert_equal(unsub_message.result, True)
+
+    def test_scripthash_subscribe(self):
+        self.log.info("Test the blockchain.scripthash.subscribe endpoint")
+
+        self.generate(self.wallet, 10)
+
+        # Subscribing to an address with no history returns null as a status
+        sub_message = self.client.blockchain.scripthash.subscribe("0" * 64)
+        result_no_history = sub_message.result
+        assert_equal(result_no_history, None)
+        assert_equal(
+            self.client.blockchain.address.subscribe(
+                "ecregtest:prllllllllllllllllllllllllllllllluj3tvnrr9"
+            ).result,
+            result_no_history,
+        )
+
+        # Subscribing to an address with some history returns a hash as a status
+        # Note that this scriptpubkey corresponds to ADDRESS_ECREG_P2SH_OP_TRUE
+        scripthash = hex_be_sha256(self.wallet.get_scriptPubKey())
+        assert_greater_than(
+            len(self.client.blockchain.scripthash.get_history(scripthash).result), 0
+        )
+        sub_message = self.client.blockchain.scripthash.subscribe(scripthash)
+        result_history = sub_message.result
+        assert result_history is not None
+        assert_equal(len(result_history), 64)
+        assert_equal(
+            self.client.blockchain.address.subscribe(ADDRESS_ECREG_P2SH_OP_TRUE).result,
+            result_history,
+        )
+
+        # Subscribing again is a no-op and returns the same result, even if we
+        # use the address instead of script hash
+        for _ in range(3):
+            assert_equal(
+                self.client.blockchain.scripthash.subscribe("0" * 64).result,
+                result_no_history,
+            )
+            assert_equal(
+                self.client.blockchain.address.subscribe(
+                    "ecregtest:prllllllllllllllllllllllllllllllluj3tvnrr9"
+                ).result,
+                result_no_history,
+            )
+
+            assert_equal(
+                self.client.blockchain.scripthash.subscribe(scripthash).result,
+                result_history,
+            )
+            assert_equal(
+                self.client.blockchain.address.subscribe(
+                    ADDRESS_ECREG_P2SH_OP_TRUE
+                ).result,
+                result_history,
+            )
+
+        # Generate a few wallet transactions so we get notifications
+        chain = self.wallet.create_self_transfer_chain(chain_length=3)
+
+        def check_notification(
+            clients,
+            scripthash_or_address,
+            last_status=None,
+            method="blockchain.scripthash.subscribe",
+        ):
+            ret_status = None
+            for client in clients:
+                notification = client.wait_for_notification(method)
+                # We should have exactly 2 items, the scripthash (or address)
+                # and the status
+                assert_equal(len(notification), 2)
+                (ret_scripthash_or_address, status) = notification
+                assert_equal(ret_scripthash_or_address, scripthash_or_address)
+                # Status is some hash
+                assert_equal(len(status), 64)
+
+                # The status should be the same for all clients
+                if ret_status:
+                    assert_equal(status, ret_status)
+                ret_status = status
+
+            assert ret_status != last_status
+            return ret_status
+
+        # We should get a notification of each tx in the chain. Each tx causes
+        # the status to change so the status should be different for each
+        # notification.
+        last_status = None
+        for tx in chain:
+            self.node.sendrawtransaction(tx["hex"])
+            last_status = check_notification([self.client], scripthash, last_status)
+
+        # Mine a block: the 3 previously unconfirmed txs are confirmed. We get 2
+        # notification: 1 for the confirmation of the 3 mempool txs, and 1 for
+        # the new coinbase tx
+        assert_equal(len(self.node.getrawmempool()), 3)
+        self.generate(self.wallet, 1)
+        assert_equal(len(self.node.getrawmempool()), 0)
+
+        # Here the confirmation happens for all the txs at the same time, so the
+        # status is the same across all the notifications (there is no such
+        # thing as one tx enters the block, then another one etc.).
+        # But this will differ from the previously saved status because the txs
+        # now have a non zero block height (and there is a new coinbase tx).
+        last_status = check_notification([self.client], scripthash, last_status)
+
+        # Let's add some clients
+        client2 = self.node.get_chronik_electrum_client(name="client2")
+        assert_equal(
+            client2.blockchain.scripthash.subscribe(scripthash).result, last_status
+        )
+        client3 = self.node.get_chronik_electrum_client(name="client3")
+        assert_equal(
+            client3.blockchain.scripthash.subscribe(scripthash).result, last_status
+        )
+
+        # Add a few more txs: all clients get notified. The status changes
+        # everytime, see the above rationale
+        chain = self.wallet.create_self_transfer_chain(chain_length=3)
+        for tx in chain:
+            self.node.sendrawtransaction(tx["hex"])
+            last_status = check_notification(
+                [self.client, client2, client3], scripthash, last_status
+            )
+
+        # Mine the block to confirm the transactions
+        assert_equal(len(self.node.getrawmempool()), 3)
+        self.generate(self.wallet, 1)
+        assert_equal(len(self.node.getrawmempool()), 0)
+        last_status = check_notification(
+            [self.client, client2, client3], scripthash, last_status
+        )
+
+        # Unsubscribe client 2, the other clients are still notified
+        assert_equal(client2.blockchain.scripthash.unsubscribe(scripthash).result, True)
+
+        self.generate(self.wallet, 1)
+        last_status = check_notification(
+            [self.client, client3], scripthash, last_status
+        )
+
+        try:
+            client2.wait_for_notification("blockchain.scripthash.subscribe", timeout=1)
+            assert False, "Received an unexpected scripthash notification"
+        except TimeoutError:
+            pass
+
+        # Unsubscribing again is a no-op
+        for _ in range(3):
+            assert_equal(
+                client2.blockchain.scripthash.unsubscribe(scripthash).result, False
+            )
+
+        # Subscribe the first client to another hash
+        scriptpubkey = CScript(
+            bytes.fromhex("76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac")
+        )
+        other_scripthash = hex_be_sha256(scriptpubkey)
+        # This script has some history from the previous tests
+        sub_message = self.client.blockchain.scripthash.subscribe(other_scripthash)
+        assert_equal(len(sub_message.result), 64)
+
+        # We're sending from the originally subscribed address to the newly
+        # subscribed one so we also get the change output
+        self.wallet.send_to(
+            from_node=self.node,
+            scriptPubKey=scriptpubkey,
+            amount=1000,
+        )
+        check_notification([self.client], other_scripthash)
+        last_status = check_notification(
+            [self.client, client3], scripthash, last_status
+        )
+
+        # Unsubscribe the first client from the first scripthash
+        assert_equal(
+            self.client.blockchain.scripthash.unsubscribe(scripthash).result, True
+        )
+
+        # Now only client3 gets notified for the original scripthash
+        self.generate(self.wallet, 1)
+        check_notification([client3], scripthash, last_status)
+
+        # The other tx get confirmed
+        check_notification([self.client], other_scripthash)
+        # But that's the only notification
+        try:
+            self.client.wait_for_notification(
+                "blockchain.scripthash.subscribe", timeout=1
+            )
+            assert False, "Received an unexpected scripthash notification"
+        except TimeoutError:
+            pass
+
+        # Unsubscribe to everything
+        assert_equal(
+            self.client.blockchain.scripthash.unsubscribe(other_scripthash).result, True
+        )
+        # We can also unsubscribe using the equivalent address despite we
+        # subscribed to the script hash
+        assert_equal(
+            client3.blockchain.address.unsubscribe(ADDRESS_ECREG_P2SH_OP_TRUE).result,
+            True,
+        )
+        # Unsubscribing from script hash is now a no-op
+        assert_equal(
+            client3.blockchain.scripthash.unsubscribe(scripthash).result, False
+        )
+
+        # Subscribe to an address first so we get notified using the address as
+        # well. Let's use a new address.
+        address = "ecregtest:qr8kjf29cdqg03qfhrszleksaf36ue7yqc44rcgt3z"
+        scriptpubkey = CScript.fromhex(
+            "76a914cf692545c34087c409b8e02fe6d0ea63ae67c40688ac"
+        )
+        scripthash = hex_be_sha256(scriptpubkey)
+        assert_equal(
+            self.client.blockchain.address.subscribe(address).result,
+            None,
+        )
+        assert_equal(
+            client2.blockchain.address.subscribe(address).result,
+            None,
+        )
+        assert_equal(
+            client3.blockchain.address.subscribe(address).result,
+            None,
+        )
+
+        last_status = None
+        for _ in range(3):
+            self.wallet.send_to(
+                from_node=self.node,
+                scriptPubKey=scriptpubkey,
+                amount=1000,
+            )
+            last_status = check_notification(
+                [self.client, client2, client3],
+                address,
+                last_status,
+                method="blockchain.address.subscribe",
+            )
+
+        # Unsubscribe clients 2 and 3, mixing script_hash and address
+        assert_equal(client2.blockchain.address.unsubscribe(address).result, True)
+        assert_equal(
+            client2.blockchain.scripthash.unsubscribe(scripthash).result, False
+        )
+        assert_equal(client3.blockchain.scripthash.unsubscribe(scripthash).result, True)
+        assert_equal(client3.blockchain.address.unsubscribe(address).result, False)
+
+        # Only the first client gets notified
+        self.wallet.send_to(
+            from_node=self.node,
+            scriptPubKey=scriptpubkey,
+            amount=1000,
+        )
+        last_status = check_notification(
+            [self.client], address, last_status, method="blockchain.address.subscribe"
+        )
+        for client in [client2, client3]:
+            try:
+                client.wait_for_notification("blockchain.address.subscribe", timeout=1)
+                assert False, "Received an unexpected scripthash notification"
+            except TimeoutError:
+                pass
+
+        assert_equal(self.client.blockchain.address.unsubscribe(address).result, True)
+
+    def test_address_get_scripthash(self):
+        self.log.info("Test the blockchain.address.get_scripthash endpoint")
+
+        for address in [
+            # Empty
+            "",
+            # Dummy
+            "foobar",
+            # Script
+            "76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac",
+            # Script hash
+            "8b01df4e368ea28f8dc0423bcf7a4923e3a12d307c875e47a0cfbf90b5c39161",
+            # Invalid eCash address (wrong checksum)
+            "ecregtest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcrl5mqkk",
+            # Missing prefix and the prefix ("electrum" here) is not in the
+            # supported list
+            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqdxqwk8ju",
+        ]:
+            assert_equal(
+                self.client.blockchain.address.get_scripthash(address).error,
+                {
+                    "code": 1,
+                    "message": f"Invalid address: {address}",
+                },
+            )
+
+        assert_equal(
+            self.client.blockchain.address.get_scripthash(
+                ADDRESS_ECREG_UNSPENDABLE
+            ).result,
+            hex_be_sha256(SCRIPT_UNSPENDABLE),
+        )
+
+        # Works for any prefix
+        assert_equal(
+            self.client.blockchain.address.get_scripthash(
+                "electrum:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqdxqwk8ju"
+            ).result,
+            hex_be_sha256(SCRIPT_UNSPENDABLE),
+        )
+
+        # Or without a prefix as long as it's in the supported list.
+        for prefixless in [
+            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqs7ratqfx",  # ecash:
+            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqk4aavd2h",  # ectest:
+            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcrl5mqkt",  # ecregtest:
+            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq7q2la8d3",  # etoken:
+        ]:
+            assert_equal(
+                self.client.blockchain.address.get_scripthash(prefixless).result,
+                hex_be_sha256(SCRIPT_UNSPENDABLE),
+            )
+
+    def test_estimate_fee(self):
+        self.log.info("Test the blockchain.estimatefee endpoint")
+
+        assert_equal(
+            self.client.blockchain.estimatefee("foo").error,
+            {
+                "code": 1,
+                "message": "blockchain.estimatefee parameter should be a single non-negative integer",
+            },
+        )
+        assert_equal(
+            self.client.blockchain.estimatefee(-1).error,
+            {
+                "code": 1,
+                "message": "blockchain.estimatefee parameter should be a single non-negative integer",
+            },
+        )
+
+        # The fee doesn't change depending on the number of confirmations
+        assert_equal(
+            self.client.blockchain.estimatefee(0).result,
+            10,
+        )
+        assert_equal(
+            self.client.blockchain.estimatefee(1).result,
+            10,
+        )
+        assert_equal(
+            self.client.blockchain.estimatefee(42).result,
+            10,
+        )
+
+    def test_relay_fee(self):
+        self.log.info("Test the blockchain.relayfee endpoint")
+
+        # This endpoint accepts no parameter
+        assert_equal(
+            self.client.blockchain.relayfee(42).error,
+            {
+                "code": -32602,
+                "message": "Expected at most 0 parameters",
+            },
+        )
+
+        # Default min relay fee is 10 XEC/kB
+        assert_equal(
+            self.client.blockchain.relayfee().result,
+            10,
+        )
+
+        self.restart_node(0, extra_args=self.extra_args[0] + ["-minrelaytxfee=42"])
+        self.client = self.node.get_chronik_electrum_client(name="client")
+        self.wallet.rescan_utxos()
+
+        assert_equal(
+            self.client.blockchain.relayfee().result,
+            42,
+        )
+
+        # Restart to restore the default min relay fee
+        self.restart_node(0)
+        self.client = self.node.get_chronik_electrum_client(name="client")
+        self.wallet.rescan_utxos()
+
+    def test_transaction_subscribe(self):
+        self.log.info(
+            "Test the blockchain.transaction.subscribe and unsubscribe endpoints"
+        )
+
+        utxo = self.wallet.get_utxo()
+        tx = self.wallet.create_self_transfer(utxo_to_spend=utxo)
+        txid = tx["txid"]
+
+        # At this point the txid is unknown
+        assert_equal(
+            self.client.blockchain.transaction.subscribe(txid).result,
+            None,
+        )
+
+        def check_notification(clients, txid, height):
+            for client in clients:
+                ret_txid, ret_height = client.wait_for_notification(
+                    "blockchain.transaction.subscribe"
+                )
+                assert_equal(ret_txid, txid)
+                assert_equal(ret_height, height)
+
+        # Tx added to the mempool
+        self.wallet.sendrawtransaction(from_node=self.node, tx_hex=tx["hex"])
+        check_notification([self.client], txid, 0)
+
+        # Tx confirmed
+        tip = self.generate(self.wallet, 1)[0]
+        height = self.node.getblockcount()
+        check_notification([self.client], txid, height)
+
+        # Tx added back to the mempool
+        self.node.parkblock(tip)
+        check_notification([self.client], txid, 0)
+
+        # Tx removed from mempool
+        conflicting_tx = self.wallet.create_self_transfer(
+            utxo_to_spend=utxo, fee_rate=1000
+        )
+        block = create_block(
+            int(self.node.getbestblockhash(), 16),
+            create_coinbase(height),
+            txlist=[FromHex(CTransaction(), conflicting_tx["hex"])],
+        )
+        block.solve()
+
+        peer = self.node.add_p2p_connection(P2PDataStore())
+        peer.send_blocks_and_test([block], self.node)
+
+        check_notification([self.client], txid, None)
+
+        # Bring back the previous block, tx is confirmed again
+        self.node.parkblock(block.hash_hex)
+        self.node.unparkblock(tip)
+
+        check_notification([self.client], txid, height)
+
+        # Unsubscribe
+        assert_equal(
+            self.client.blockchain.transaction.unsubscribe(txid).result,
+            True,
+        )
+        # Unsubscribing again is a no-op
+        for _ in range(3):
+            assert_equal(
+                self.client.blockchain.transaction.unsubscribe(txid).result,
+                False,
+            )
+
+        # Build another tx to check the unsubscription
+        tx = self.wallet.send_self_transfer(from_node=self.node)
+        txid = tx["txid"]
+
+        # This time the tx is in the mempool
+        assert_equal(
+            self.client.blockchain.transaction.subscribe(txid).result,
+            0,
+        )
+
+        # Add more clients and subscribe as well
+        client2 = self.node.get_chronik_electrum_client(name="client2")
+        assert_equal(
+            client2.blockchain.transaction.subscribe(txid).result,
+            0,
+        )
+        client3 = self.node.get_chronik_electrum_client(name="client3")
+        assert_equal(
+            client3.blockchain.transaction.subscribe(txid).result,
+            0,
+        )
+
+        # Unsubscribe client 1
+        assert_equal(
+            self.client.blockchain.transaction.unsubscribe(txid).result,
+            True,
+        )
+
+        # Tx confirmed
+        tip = self.generate(self.wallet, 1)[0]
+        assert_equal(len(self.node.getrawmempool()), 0)
+
+        # Clients 2 and 3 get the notification...
+        check_notification([client2, client3], txid, height + 1)
+
+        # ...but not client 1
+        try:
+            self.client.wait_for_notification(
+                "blockchain.transaction.subscribe", timeout=1
+            )
+            assert False, "Received an unexpected transaction notification"
+        except TimeoutError:
+            pass
+
+        # Unsubscribe clients 2 and 3
+        assert_equal(
+            client2.blockchain.transaction.unsubscribe(txid).result,
+            True,
+        )
+        assert_equal(
+            client3.blockchain.transaction.unsubscribe(txid).result,
+            True,
+        )
+
+    def test_utxo_get_info(self):
+        self.log.info("Test the blockchain.utxo.get_info endpoint")
+
+        # This endpoint expects exactly 2 parameters
+        assert_equal(
+            self.client.blockchain.utxo.get_info().error,
+            {
+                "code": -32602,
+                "message": "Missing required params",
+            },
+        )
+        assert_equal(
+            self.client.blockchain.utxo.get_info("00" * 32, 0, 42).error,
+            {
+                "code": -32602,
+                "message": "Expected at most 2 parameters",
+            },
+        )
+
+        assert_equal(
+            self.client.blockchain.utxo.get_info(42, 0).error,
+            {
+                "code": 1,
+                "message": "Invalid tx hash",
+            },
+        )
+        for out_n in ["", "foo", -1, 4294967296]:
+            assert_equal(
+                self.client.blockchain.utxo.get_info("00" * 32, out_n).error,
+                {
+                    "code": 1,
+                    "message": "Invalid tx out number: expected a value >= 0 and <= 4294967295",
+                },
+            )
+
+        # Unknown tx returns null
+        assert_equal(
+            self.client.blockchain.utxo.get_info("00" * 32, 0).result,
+            None,
+        )
+
+        # Known tx but unknown index returns null
+        self.generate(self.wallet, 1)
+        tx = self.wallet.send_self_transfer_multi(from_node=self.node, num_outputs=10)
+        assert_equal(
+            self.client.blockchain.utxo.get_info(tx["txid"], 11).result,
+            None,
+        )
+
+        # Spent output returns null
+        self.wallet.send_self_transfer(
+            from_node=self.node, utxo_to_spend=tx["new_utxos"][0]
+        )
+        assert_equal(
+            self.client.blockchain.utxo.get_info(tx["txid"], 0).result,
+            None,
+        )
+
+        scripthash = hex_be_sha256(self.wallet.get_scriptPubKey())
+        # All the other outputs are in the mempool
+        for utxo in tx["new_utxos"][1:]:
+            assert_equal(
+                self.client.blockchain.utxo.get_info(tx["txid"], utxo["vout"]).result,
+                {
+                    "scripthash": scripthash,
+                    "value": int(utxo["value"] * XEC),
+                },
+            )
+
+        self.generate(self.wallet, 1)
+        assert_equal(len(self.node.getrawmempool()), 0)
+
+        # The last output is still spent
+        assert_equal(
+            self.client.blockchain.utxo.get_info(tx["txid"], 0).result,
+            None,
+        )
+
+        height = self.node.getblockcount()
+        # And all the other outputs are now confirmed
+        for utxo in tx["new_utxos"][1:]:
+            assert_equal(
+                self.client.blockchain.utxo.get_info(tx["txid"], utxo["vout"]).result,
+                {
+                    "confirmed_height": height,
+                    "scripthash": scripthash,
+                    "value": int(utxo["value"] * XEC),
+                },
+            )
+
+    def test_mempool_get_fee_histogram(self):
+        self.log.info("Test the mempool.get_fee_histogram endpoint")
+
+        # This endpoint takes no parameters
+        assert_equal(
+            self.client.mempool.get_fee_histogram(42).error,
+            {
+                "code": -32602,
+                "message": "Expected at most 0 parameters",
+            },
+        )
+
+        self.generate(self.wallet, 1)
+        assert_equal(len(self.node.getrawmempool()), 0)
+
+        # No mempool tx
+        assert_equal(
+            self.client.mempool.get_fee_histogram().result,
+            [],
+        )
+
+        self.generate(self.wallet, 15)
+        assert_equal(len(self.node.getrawmempool()), 0)
+
+        # Create a bunch of transactions with various feerates, all sized 100
+        # bytes. Since there is no sigcheck the vsize is 100 for each.
+        txs = []
+        for i in range(5):
+            for _ in range(3):
+                # fee_rate is in XEC/kB
+                tx = self.wallet.send_self_transfer(
+                    from_node=self.node, fee_rate=10 * (i + 1), target_size=100
+                )
+                assert tx["txid"] in self.node.getrawmempool()
+                txs.append(tx)
+
+        assert_equal(
+            self.client.mempool.get_fee_histogram().result,
+            [
+                [8, 300],  # 3 txs in the range (4..8] sat/vB
+                [4, 600],  # 6 txs in the range (2..4] sat/vB
+                [2, 300],  # 3 txs in the range (1..2] sat/vB
+                [1, 300],  # 3 txs in the range [0..1] sat/vB
+            ],
+        )
+
+        self.generate(self.wallet, 15)
+        assert_equal(len(self.node.getrawmempool()), 0)
+
+        # One more time but with a hole in the intervals
+        txs.clear()
+        for i in range(5):
+            for _ in range(3):
+                # fee_rate is in XEC/kB
+                tx = self.wallet.send_self_transfer(
+                    from_node=self.node, fee_rate=10 * (3 * i + 1), target_size=100
+                )
+                assert tx["txid"] in self.node.getrawmempool()
+                txs.append(tx)
+
+        assert_equal(
+            self.client.mempool.get_fee_histogram().result,
+            [
+                [16, 600],  # 6 txs in the range (8..16] sat/vB
+                [8, 300],  # 3 txs in the range (4..8] sat/vB
+                [4, 300],  # 3 txs in the range (1..4] sat/vB
+                # [2, 0], no txs in the range (1..2] sat/vB, the interval is skipped
+                [1, 300],  # 3 txs in the range [0..1] sat/vB
+            ],
+        )
 
 
 if __name__ == "__main__":

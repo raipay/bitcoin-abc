@@ -40,6 +40,7 @@ import {
     MessageLabel,
     AirdropHeader,
     AirdropIconCtn,
+    TxInfoModalParagraph,
 } from 'components/Home/Tx/styled';
 import {
     SendIcon,
@@ -72,22 +73,17 @@ import {
     TokenSendIcon,
     XecxIcon,
     FirmaIcon,
+    SolIcon,
+    TetherIcon,
+    QuestionIcon,
+    NFToaIcon,
 } from 'components/Common/CustomIcons';
-import CashtabSettings, {
-    supportedFiatCurrencies,
-} from 'config/CashtabSettings';
+import { supportedFiatCurrencies } from 'config/CashtabSettings';
 import CopyToClipboard from 'components/Common/CopyToClipboard';
 import { explorer } from 'config/explorer';
-import { ParsedTokenTxType, XecxAction } from 'chronik';
+import { ParsedTokenTxType, XecxAction, SolAddrAction } from 'chronik';
 import { toFormattedXec, decimalizedTokenQtyToLocaleFormat } from 'formatting';
-import {
-    toXec,
-    decimalizeTokenAmount,
-    CashtabTx,
-    SlpDecimals,
-    CashtabWallet,
-    LegacyCashtabWallet,
-} from 'wallet';
+import { toXec, decimalizeTokenAmount, CashtabTx, SlpDecimals } from 'wallet';
 import { opReturn } from 'config/opreturn';
 import TokenIcon from 'components/Etokens/TokenIcon';
 import Modal from 'components/Common/Modal';
@@ -95,9 +91,12 @@ import { ModalInput } from 'components/Common/Inputs';
 import { toast } from 'react-toastify';
 import { getContactNameError } from 'validation';
 import AvalancheFinalized from 'components/Common/AvalancheFinalized';
-import CashtabState, { CashtabContact } from 'config/CashtabState';
-import CashtabCache from 'config/CashtabCache';
-import { CashtabCacheJson, StoredCashtabWallet } from 'helpers';
+import CashtabState from 'config/CashtabState';
+import { previewAddress, previewTokenId, previewSolAddr } from 'helpers';
+import { CopyIconButton, IconButton } from 'components/Common/Buttons';
+import { FIRMA_REDEEM_ADDRESS } from 'constants/tokens';
+import { Alert } from 'components/Common/Atoms';
+import { UpdateCashtabState } from 'wallet/useWallet';
 
 interface TxProps {
     tx: CashtabTx;
@@ -105,18 +104,7 @@ interface TxProps {
     fiatPrice: null | number;
     fiatCurrency: string;
     cashtabState: CashtabState;
-    updateCashtabState: (
-        key: string,
-        value:
-            | CashtabWallet[]
-            | CashtabCache
-            | CashtabContact[]
-            | CashtabSettings
-            | CashtabCacheJson
-            | StoredCashtabWallet[]
-            | (LegacyCashtabWallet | StoredCashtabWallet)[],
-    ) => Promise<boolean>;
-    chaintipBlockheight: number;
+    updateCashtabState: UpdateCashtabState;
     userLocale: string;
 }
 const Tx: React.FC<TxProps> = ({
@@ -125,7 +113,6 @@ const Tx: React.FC<TxProps> = ({
     fiatCurrency,
     cashtabState,
     updateCashtabState,
-    chaintipBlockheight,
     userLocale = 'en-US',
 }) => {
     const { txid, timeFirstSeen, block, parsed } = tx;
@@ -141,7 +128,7 @@ const Tx: React.FC<TxProps> = ({
 
     const replyAddressPreview =
         typeof replyAddress !== 'undefined'
-            ? `${replyAddress.slice(6, 9)}...${replyAddress.slice(-3)}`
+            ? previewAddress(replyAddress)
             : undefined;
 
     const knownSender = contactList.find(
@@ -150,10 +137,7 @@ const Tx: React.FC<TxProps> = ({
 
     let knownRecipient, renderedRecipient, renderedOtherRecipients;
     if (xecTxType === 'Sent' && typeof recipients[0] !== 'undefined') {
-        const recipientPreview = `${recipients[0].slice(
-            6,
-            9,
-        )}...${recipients[0].slice(-3)}`;
+        const recipientPreview = previewAddress(recipients[0]);
         knownRecipient = contactList.find(
             contact => contact.address === recipients[0],
         );
@@ -187,11 +171,31 @@ const Tx: React.FC<TxProps> = ({
         typeof parsed.parsedTokenEntries[0] !== 'undefined' &&
         parsed.parsedTokenEntries[0].tokenId ===
             '0387947fd575db4fb19a3e322f635dec37fd192b5941625b66bc4b2c3008cbf0';
+
+    const isFirmaRedeem =
+        recipients.length === 1 &&
+        recipients[0] === FIRMA_REDEEM_ADDRESS &&
+        typeof parsed.parsedTokenEntries[0] !== 'undefined' &&
+        parsed.parsedTokenEntries[0].tokenId ===
+            '0387947fd575db4fb19a3e322f635dec37fd192b5941625b66bc4b2c3008cbf0' &&
+        appActions.length === 1 &&
+        appActions[0].isValid &&
+        appActions[0].lokadId === opReturn.appPrefixesHex.solAddr;
+
     if (isFirmaYield) {
         renderedAppActions.push(
             <IconAndLabel>
                 <FirmaIcon />
                 <AppDescLabel noWordBreak>Firma yield payment</AppDescLabel>
+            </IconAndLabel>,
+        );
+    }
+    if (isFirmaRedeem) {
+        renderedAppActions.push(
+            <IconAndLabel>
+                <FirmaIcon />
+                <TetherIcon />
+                <AppDescLabel noWordBreak>Firma USDT conversion</AppDescLabel>
             </IconAndLabel>,
         );
     }
@@ -214,10 +218,7 @@ const Tx: React.FC<TxProps> = ({
                         // Type guard, we know that all valid aliases will have this action
                         // from the parseTx function
                         const { alias, address } = action;
-                        const aliasAddrPreview = `${address.slice(
-                            6,
-                            9,
-                        )}...${address.slice(-3)}`;
+                        const aliasAddrPreview = previewAddress(address);
                         renderedAppActions.push(
                             <>
                                 <IconAndLabel>
@@ -286,7 +287,14 @@ const Tx: React.FC<TxProps> = ({
                                         <>
                                             <MessageLabel>
                                                 <CashtabMsgIcon />
-                                                Airdrop Msg
+                                                Airdrop Msg{' '}
+                                                <IconButton
+                                                    name={`Airdrop Msg Info`}
+                                                    icon={<QuestionIcon />}
+                                                    onClick={() =>
+                                                        setShowAirdropInfo(true)
+                                                    }
+                                                />
                                             </MessageLabel>
                                             <AppDescMsg>{msg}</AppDescMsg>
                                         </>
@@ -310,10 +318,7 @@ const Tx: React.FC<TxProps> = ({
                                                 target="_blank"
                                                 rel="noreferrer"
                                             >
-                                                {`${tokenId.slice(
-                                                    0,
-                                                    3,
-                                                )}...${tokenId.slice(-3)}`}
+                                                {previewTokenId(tokenId)}
                                             </ActionLink>
                                         </AppDescLabel>
                                     </IconAndLabel>
@@ -371,6 +376,33 @@ const Tx: React.FC<TxProps> = ({
                             <>
                                 <IconAndLabel>
                                     <PayButtonIcon />
+                                </IconAndLabel>
+                                {data !== '' && <AppDescMsg>{data}</AppDescMsg>}
+                                {nonce !== '' && (
+                                    <AppDescMsg>{nonce}</AppDescMsg>
+                                )}
+                            </>,
+                        );
+                    }
+                }
+                break;
+            }
+            case opReturn.appPrefixesHex.nftoa: {
+                if (!isValid) {
+                    renderedAppActions.push(
+                        <IconAndLabel>
+                            <NFToaIcon />
+                            <AppDescLabel>Invalid {app}</AppDescLabel>
+                        </IconAndLabel>,
+                    );
+                } else {
+                    if (typeof action !== 'undefined' && 'data' in action) {
+                        const { data, nonce } = action;
+                        // Valid NFToa Tx
+                        renderedAppActions.push(
+                            <>
+                                <IconAndLabel>
+                                    <NFToaIcon />
                                 </IconAndLabel>
                                 {data !== '' && <AppDescMsg>{data}</AppDescMsg>}
                                 {nonce !== '' && (
@@ -569,6 +601,26 @@ const Tx: React.FC<TxProps> = ({
 
                 break;
             }
+            case opReturn.appPrefixesHex.solAddr: {
+                const solAddr = (action as SolAddrAction).solAddr;
+                const renderedAddr = isValid
+                    ? previewSolAddr(solAddr)
+                    : solAddr;
+                renderedAppActions.push(
+                    <IconAndLabel>
+                        <SolIcon />
+                        <AppDescMsg>{renderedAddr}</AppDescMsg>
+                        {isValid && (
+                            <CopyIconButton
+                                name="Sol Addr"
+                                data={(action as SolAddrAction).solAddr}
+                                showToast
+                            />
+                        )}
+                    </IconAndLabel>,
+                );
+                break;
+            }
             case 'unknown': {
                 if (typeof action !== 'undefined' && 'decoded' in action) {
                     const { stack, decoded } = action;
@@ -703,7 +755,7 @@ const Tx: React.FC<TxProps> = ({
         let tokenName: string;
         let decimals: undefined | number;
         if (typeof cachedTokenInfo === 'undefined') {
-            tokenName = `${tokenId.slice(0, 3)}...${tokenId.slice(-3)}`;
+            tokenName = previewTokenId(tokenId);
             tokenTicker = '';
             // Leave decimals as undefined, we will not use it if we do not have it
         } else {
@@ -819,6 +871,7 @@ const Tx: React.FC<TxProps> = ({
 
     const [showPanel, setShowPanel] = useState(false);
     const [showAddNewContactModal, setShowAddNewContactModal] = useState(false);
+    const [showAirdropInfo, setShowAirdropInfo] = useState(false);
     interface TxFormData {
         newContactName: string;
     }
@@ -852,7 +905,7 @@ const Tx: React.FC<TxProps> = ({
                 address: addressToAdd,
             });
             // update localforage and state
-            await updateCashtabState('contactList', contactList);
+            await updateCashtabState({ contactList: contactList });
             toast.success(
                 `${formData.newContactName} (${addressToAdd}) added to Contact List`,
             );
@@ -955,6 +1008,23 @@ const Tx: React.FC<TxProps> = ({
                     />
                 </Modal>
             )}
+            {showAirdropInfo && (
+                <Modal
+                    title="Airdrop Message"
+                    handleOk={() => setShowAirdropInfo(false)}
+                    handleCancel={() => setShowAirdropInfo(false)}
+                    height={400}
+                >
+                    <Alert>Beware of scams in links!</Alert>
+                    <TxInfoModalParagraph>
+                        An Airdrop was sent to holders of this token.
+                    </TxInfoModalParagraph>
+                    <TxInfoModalParagraph>
+                        Anyone can send an airdrop (with any msg) to holders of
+                        any token.
+                    </TxInfoModalParagraph>
+                </Modal>
+            )}
             <TxWrapper>
                 <Collapse onClick={() => setShowPanel(!showPanel)}>
                     <MainRow type={xecTxType}>
@@ -1025,15 +1095,8 @@ const Tx: React.FC<TxProps> = ({
                                 <Timestamp>
                                     {renderedTimestamp}
                                     <TimestampSeperator>|</TimestampSeperator>
-                                    {typeof block !== 'undefined' &&
-                                    block.height <= chaintipBlockheight ? (
-                                        <AvalancheFinalized
-                                            displayed={
-                                                typeof block !== 'undefined' &&
-                                                block.height <=
-                                                    chaintipBlockheight
-                                            }
-                                        />
+                                    {tx.isFinal ? (
+                                        <AvalancheFinalized />
                                     ) : (
                                         <Ellipsis title="Loading">
                                             Finalizing<span>.</span>

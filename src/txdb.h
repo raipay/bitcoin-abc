@@ -32,25 +32,8 @@ namespace Consensus {
 struct Params;
 };
 
-//! min. -dbcache (MiB)
-static constexpr int64_t MIN_DB_CACHE_MB = 4;
-//! max. -dbcache (MiB)
-static constexpr int64_t MAX_DB_CACHE_MB = sizeof(void *) > 4 ? 16384 : 1024;
-//! -dbcache default (MiB)
-static constexpr int64_t DEFAULT_DB_CACHE_MB = 1024;
 //! -dbbatchsize default (bytes)
 static constexpr int64_t DEFAULT_DB_BATCH_SIZE = 16 << 20;
-//! Max memory allocated to block tree DB specific cache, if no -txindex (MiB)
-static constexpr int64_t MAX_BLOCK_DB_CACHE_MB = 2;
-//! Max memory allocated to block tree DB specific cache, if -txindex (MiB)
-// Unlike for the UTXO database, for the txindex scenario the leveldb cache make
-// a meaningful difference:
-// https://github.com/bitcoin/bitcoin/pull/8273#issuecomment-229601991
-static constexpr int64_t MAX_TX_INDEX_CACHE_MB = 1024;
-//! Max memory allocated to all block filter index caches combined in MiB.
-static constexpr int64_t MAX_FILTER_INDEX_CACHE_MB = 1024;
-//! Max memory allocated to coin DB specific cache (MiB)
-static constexpr int64_t MAX_COINS_DB_CACHE_MB = 8;
 
 //! User-controlled performance and debug options.
 struct CoinsViewOptions {
@@ -75,8 +58,8 @@ public:
     bool HaveCoin(const COutPoint &outpoint) const override;
     BlockHash GetBestBlock() const override;
     std::vector<BlockHash> GetHeadBlocks() const override;
-    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
-                    bool erase = true) override;
+    bool BatchWrite(CoinsViewCacheCursor &cursor,
+                    const BlockHash &hashBlock) override;
     CCoinsViewCursor *Cursor() const override;
 
     //! Attempt to update from an older database format.
@@ -95,7 +78,7 @@ public:
 /** Specialization of CCoinsViewCursor to iterate over a CCoinsViewDB */
 class CCoinsViewDBCursor : public CCoinsViewCursor {
 public:
-    ~CCoinsViewDBCursor() {}
+    ~CCoinsViewDBCursor() = default;
 
     bool GetKey(COutPoint &key) const override;
     bool GetValue(Coin &coin) const override;

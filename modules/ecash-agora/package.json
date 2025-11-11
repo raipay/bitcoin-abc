@@ -1,6 +1,6 @@
 {
     "name": "ecash-agora",
-    "version": "2.0.1",
+    "version": "2.6.3",
     "description": "Library for interacting with the eCash Agora protocol",
     "main": "./dist/index.js",
     "scripts": {
@@ -44,6 +44,7 @@
     },
     "dependencies": {
         "chronik-client": "file:../chronik-client",
-        "ecash-lib": "file:../ecash-lib"
+        "ecash-lib": "file:../ecash-lib",
+        "ecash-wallet": "file:../ecash-wallet"
     }
 }

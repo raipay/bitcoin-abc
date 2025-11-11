@@ -15,12 +15,14 @@ import CashtabTestWrapper from 'components/App/fixtures/CashtabTestWrapper';
 import appConfig from 'config/app';
 import 'fake-indexeddb/auto';
 import localforage from 'localforage';
+import { FEE_SATS_PER_KB_CASHTAB_LEGACY } from 'constants/transactions';
 import {
     tokenTestWallet,
     supportedTokens,
     slp1FixedMocks,
     slp1VarMocks,
     alpMocks,
+    slpMintVaultMocks,
     slp1NftParentMocks,
     slp1NftParentWithChildrenMocks,
     slp1NftChildMocks,
@@ -31,7 +33,6 @@ import {
     heismanNftOneCache,
     heismanCollectionCacheMocks,
     tokenMockXecx,
-    mockFirmaOffer,
 } from 'components/Agora/fixtures/mocks';
 import CashtabCache from 'config/CashtabCache';
 import { cashtabCacheToJSON } from 'helpers';
@@ -40,7 +41,11 @@ import { MockAgora } from '../../../../../modules/mock-chronik-client';
 import { Agora } from 'ecash-agora';
 import { token as tokenConfig } from 'config/token';
 import { explorer } from 'config/explorer';
-import { FIRMA, XECX_SWEEPER_ADDRESS } from 'constants/tokens';
+import {
+    FIRMA,
+    FIRMA_REDEEM_ADDRESS,
+    XECX_SWEEPER_ADDRESS,
+} from 'constants/tokens';
 
 describe('<Token /> available actions rendered', () => {
     const ecc = new Ecc();
@@ -58,6 +63,16 @@ describe('<Token /> available actions rendered', () => {
             tokenTestWallet,
             localforage,
         );
+
+        // Mock settings to use higher fee rate (2010) for this test
+        await localforage.setItem('settings', {
+            fiatCurrency: 'usd',
+            sendModal: false,
+            autoCameraOn: false,
+            hideMessagesFromUnknownSenders: false,
+            balanceVisible: true,
+            satsPerKb: FEE_SATS_PER_KB_CASHTAB_LEGACY, // Use legacy fee rate for this test
+        });
 
         // Build chronik mocks that Cashtab would use to add token info to cache
         for (const tokenMock of supportedTokens) {
@@ -298,7 +313,7 @@ describe('<Token /> available actions rendered', () => {
 
         // The min qty input updates automatically when price is set to reflect the actual min qty
         // i.e. what qty would sell for dust
-        expect(minQtyInput).toHaveValue('5460');
+        expect(minQtyInput).toHaveValue(5460);
 
         // But this is higher than our balance, so we get an error
         expect(
@@ -312,7 +327,7 @@ describe('<Token /> available actions rendered', () => {
         await userEvent.type(priceInput, '0.5');
 
         // Note that the min qty does not auto-update when price changes after the initial change
-        expect(minQtyInput).toHaveValue('5460');
+        expect(minQtyInput).toHaveValue(5460);
 
         // The buy button is disabled with invalid qty
         expect(listButton).toBeDisabled();
@@ -548,7 +563,6 @@ describe('<Token /> available actions rendered', () => {
                                 atoms: 1n,
                                 isMintBaton: false,
                             },
-                            path: 1899,
                         },
                     ],
                 },
@@ -838,10 +852,7 @@ describe('<Token /> available actions rendered', () => {
 
         // activeOffersByPubKey
         // The test wallet is selling the Saturn V NFT
-        mockedAgora.setActiveOffersByPubKey(
-            tokenTestWallet.paths.get(appConfig.derivationPath).pk,
-            [],
-        );
+        mockedAgora.setActiveOffersByPubKey(tokenTestWallet.pk, []);
 
         // activeOffersByGroupTokenId does not need to be mocked since there are no offers here
 
@@ -1631,7 +1642,6 @@ describe('<Token /> available actions rendered', () => {
                             atoms: 0n,
                             isMintBaton: true,
                         },
-                        path: 1899,
                     },
                 ],
             },
@@ -1798,7 +1808,7 @@ describe('<Token /> available actions rendered', () => {
         const minQtyInput = screen.getByPlaceholderText('Min qty');
 
         // The quantity updates automatically
-        expect(minQtyInput).toHaveValue('5460');
+        expect(minQtyInput).toHaveValue(5460);
 
         // But because this price is so low, now the min qty is actually higher than our token balance
         // So we see an error
@@ -2018,7 +2028,7 @@ describe('<Token /> available actions rendered', () => {
             '10000',
         );
 
-        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue('10000');
+        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue(10000);
 
         // The redeem button is now enabled
         expect(redeemButton).toBeEnabled();
@@ -2123,7 +2133,7 @@ describe('<Token /> available actions rendered', () => {
             '10000',
         );
 
-        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue('10000');
+        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue(10000);
 
         // The redeem button is now enabled
         expect(redeemButton).toBeEnabled();
@@ -2213,7 +2223,7 @@ describe('<Token /> available actions rendered', () => {
             '10000',
         );
 
-        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue('10000');
+        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue(10000);
 
         // The redeem button is now enabled
         expect(redeemButton).toBeEnabled();
@@ -2248,6 +2258,11 @@ describe('<Token /> available actions rendered', () => {
             .mockResolvedValue({
                 json: () => Promise.resolve({ bid: 40000.0 }),
             });
+
+        // Mock a hot wallet balance for FIRMA_REDEEM_WALLET
+        mockedChronik.setUtxosByAddress(FIRMA_REDEEM_ADDRESS, [
+            { sats: 1_000_000_00n },
+        ]);
 
         // FIRMA offer tx
         const offerHex =
@@ -2342,7 +2357,7 @@ describe('<Token /> available actions rendered', () => {
 
         await userEvent.type(screen.getByPlaceholderText('Offered qty'), '10');
 
-        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue('10');
+        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue(10);
 
         // The redeem button is now enabled
         expect(redeemButton).toBeEnabled();
@@ -2351,15 +2366,16 @@ describe('<Token /> available actions rendered', () => {
         await userEvent.click(redeemButton);
 
         // Async as we must wait for multiple partials
-        expect(await screen.findByText('List FIRMA?')).toBeInTheDocument();
         expect(
-            screen.getByText('Create the following sell offer?'),
+            await screen.findByText('Redeem $FIRMA for XEC?'),
         ).toBeInTheDocument();
 
         // Offered qty (actual, calculated from AgoraOffer)
         const actualOfferedQty = '10.0000';
-        // We see this two times bc it is also behind the modal
-        expect(screen.getAllByText(actualOfferedQty)).toHaveLength(2);
+
+        expect(
+            screen.getByText(`${actualOfferedQty} $FIRMA`),
+        ).toBeInTheDocument();
         // Actual price calculated from AgoraOffer
         const actualPricePerTokenForMinBuy = '39,766.67 XEC';
         // We see the price once; it is not previewed as we need to calculate it before we
@@ -2375,12 +2391,16 @@ describe('<Token /> available actions rendered', () => {
         await userEvent.click(screen.getByText('Cancel'));
 
         // The confirmation modal is gone
-        expect(screen.queryByText('List FIRMA?')).not.toBeInTheDocument();
+        expect(
+            screen.queryByText('Redeem $FIRMA for XEC?'),
+        ).not.toBeInTheDocument();
 
         // We change our mind and list it
         await userEvent.click(redeemButton);
 
-        expect(await screen.findByText('List FIRMA?')).toBeInTheDocument();
+        expect(
+            await screen.findByText('Redeem $FIRMA for XEC?'),
+        ).toBeInTheDocument();
         await userEvent.click(screen.getByText('OK'));
 
         // We see the expected toast notification for the successful listing tx
@@ -2389,6 +2409,133 @@ describe('<Token /> available actions rendered', () => {
                 `${actualOfferedQty} Firma listed for ${actualPricePerTokenForMinBuy} per token`,
             ),
         ).toBeInTheDocument();
+    });
+    it('FIRMA redeem is disabled if the hot wallet cannot cover redeem amount', async () => {
+        // Mock Math.random()
+        jest.spyOn(global.Math, 'random').mockReturnValue(0.5); // set a fixed value
+
+        // Mock a bid price
+        when(fetch)
+            .calledWith(`https://firma.cash/api/bid`)
+            .mockResolvedValue({
+                json: () => Promise.resolve({ bid: 40000.0 }),
+            });
+
+        // Mock a hot wallet balance for FIRMA_REDEEM_WALLET
+        mockedChronik.setUtxosByAddress(FIRMA_REDEEM_ADDRESS, [
+            { sats: 1_000_00n },
+        ]);
+
+        // Make sure FIRMA is cached
+        mockedChronik.setTx(FIRMA.tx.txid, FIRMA.tx);
+        mockedChronik.setToken(FIRMA.tokenId, FIRMA.token);
+
+        // Mock response for agora select params check
+        // Note
+        // We obtain EXPECTED_OFFER_P2SH by adding
+        // console.log(toHex(shaRmd160(agoraScript.bytecode)));
+        // to ecash-agora lib and running this test
+        // Note that Date() and Math.random() must be mocked to keep this deterministic
+        const EXPECTED_OFFER_P2SH = '28967de39bdb1af326e5cb2ffecf1f320dedfb04';
+        // Note we have to create a second partial to get an acceptable price
+        const EXPECTED_SECOND_P2SH = 'd269ef0be66e9b689bee7a071d08cc0a7151b32a';
+
+        // We mock no existing utxos
+        mockedChronik.setUtxosByScript('p2sh', EXPECTED_OFFER_P2SH, []);
+        mockedChronik.setUtxosByScript('p2sh', EXPECTED_SECOND_P2SH, []);
+
+        // Note that we cannot use mockedAgora to avoid agoraQueryErrors, as we need a proper
+        // agora object to build the partial
+        // This means we cannot mock firma offers in the OrderBook for this test
+        const agora = new Agora(mockedChronik);
+
+        render(
+            <CashtabTestWrapper
+                chronik={mockedChronik}
+                ecc={ecc}
+                agora={agora}
+                route={`/send-token/${FIRMA.tokenId}`}
+            />,
+        );
+
+        const { tokenName } = FIRMA.token.genesisInfo;
+
+        // Wait for element to get token info and load
+        expect(
+            (await screen.findAllByText(new RegExp(tokenName)))[0],
+        ).toBeInTheDocument();
+
+        // XECX token icon is rendered
+        expect(
+            await screen.findByAltText(`icon for ${FIRMA.tokenId}`),
+        ).toBeInTheDocument();
+
+        // Token actions are available
+        expect(screen.getByTitle('Token Actions')).toBeInTheDocument();
+
+        // On load, default action for FIRMA is to redeem it
+        expect(screen.getByTitle('Toggle Redeem FIRMA')).toBeEnabled();
+
+        // The redeem button is disabled on load
+        const redeemButton = await screen.findByRole('button', {
+            name: /Redeem FIRMA for XEC/,
+        });
+
+        await waitFor(() => expect(redeemButton).toBeDisabled());
+
+        // We do not see a price input
+        expect(
+            screen.queryByPlaceholderText('Enter list price (per token)'),
+        ).not.toBeInTheDocument();
+
+        // We do not see a min qty input
+        expect(
+            screen.queryByPlaceholderText('Min qty'),
+        ).not.toBeInTheDocument();
+
+        // Enter amount to redeem
+        await userEvent.type(screen.getByPlaceholderText('Offered qty'), '10');
+
+        // The redeem button is now enabled
+        expect(redeemButton).toBeEnabled();
+
+        // Redeem
+        await userEvent.click(redeemButton);
+
+        // Async as we must wait for multiple partials
+        expect(
+            await screen.findByText('Redeem $FIRMA for XEC?'),
+        ).toBeInTheDocument();
+
+        // Offered qty (actual, calculated from AgoraOffer)
+        const actualOfferedQty = '10.0000';
+
+        expect(
+            screen.getByText(`${actualOfferedQty} $FIRMA`),
+        ).toBeInTheDocument();
+        // Actual price calculated from AgoraOffer
+        const actualPricePerTokenForMinBuy = '39,766.67 XEC';
+        // We see the price once; it is not previewed as we need to calculate it before we
+        // show the modal
+        expect(
+            screen.getByText(actualPricePerTokenForMinBuy),
+        ).toBeInTheDocument();
+        // We see the full receive XEC amount
+        expect(screen.getByText('You receive:')).toBeInTheDocument();
+        expect(screen.getByText('397,666.67 XEC')).toBeInTheDocument();
+
+        // We see an alert as the hot wallet cannot cover this redemption
+        expect(
+            screen.getByText(
+                'Cannot redeem more than 1,000.00 XEC worth of $FIRMA. Visit firma.cash to redeem for $USDT.',
+            ),
+        ).toBeInTheDocument();
+
+        // Redeem is disabled
+        const redeemBtnModal = screen.getByRole('button', {
+            name: /OK/,
+        });
+        expect(redeemBtnModal).toBeDisabled();
     });
     it('We show expected error if we are unable to get FIRMA bid price from API', async () => {
         // Mock Math.random()
@@ -2469,7 +2616,7 @@ describe('<Token /> available actions rendered', () => {
 
         await userEvent.type(screen.getByPlaceholderText('Offered qty'), '10');
 
-        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue('10');
+        expect(screen.getByPlaceholderText('Offered qty')).toHaveValue(10);
 
         // The redeem button is now enabled
         expect(redeemButton).toBeEnabled();
@@ -2487,33 +2634,257 @@ describe('<Token /> available actions rendered', () => {
             screen.queryByText('Create the following sell offer?'),
         ).not.toBeInTheDocument();
     });
-    it('The FIRMA OrderBook loads with price in USD', async () => {
-        // Make sure FIRMA is cached
-        mockedChronik.setTx(FIRMA.tx.txid, FIRMA.tx);
-        mockedChronik.setToken(FIRMA.tokenId, FIRMA.token);
+    it('We can SEND or BURN an SLP MINT VAULT token', async () => {
         const mockedAgora = new MockAgora();
-        mockedAgora.setActiveOffersByTokenId(FIRMA.tokenId, [mockFirmaOffer]);
+
+        mockedAgora.setOfferedGroupTokenIds([]);
+
+        // It's not listed yet
+        mockedAgora.setActiveOffersByTokenId(slpMintVaultMocks.tokenId, []);
+
+        // MINT VAULT send
+        const hex =
+            '0200000002e227ad0b23242a4678fc79104cdf1c80914862a3c808066aebc65ef35b52b56f01000000644149cb2fe7f9043b8071807ed49eefb923df27bc6884577491294dc5b58200d55e8cfe98e32b8de404761aa90a801c3dfd49ae5f37104fb89f9cfbe50d6508f9174121031d4603bdc23aca9432f903e3cf5975a3f655cc3fa5057c61d00dfc1ca5dfd02dffffffffef76d01776229a95c45696cf68f2f98c8332d0c53e3f24e73fd9c6deaf79261803000000644120d97a60e4d2f7fff034ff23b798d88cec03ad9101397acfa985c0ce11732d2d5aff6c984b47c6db159e8b54f509e20725e8b29b4a8cb6a7012c8d5fa1b4a8e64121031d4603bdc23aca9432f903e3cf5975a3f655cc3fa5057c61d00dfc1ca5dfd02dffffffff040000000000000000406a04534c500001020453454e44208ecb9c25978f429472f3e9f9c048222f6ac9977e7d1313781f0e9ac1bdba325108000000000000000108000000000001869f22020000000000001976a91495e79f51d4260bc0dc3ba7fb77c7be92d0fbdd1d88ac22020000000000001976a91400549451e5c22b18686cacdf34dce649e5ec3be288ac0c310f00000000001976a91400549451e5c22b18686cacdf34dce649e5ec3be288ac00000000';
+        const txid =
+            'e2c0ccca81ee9879a6d084457dfb5a8342f07683fe18b26af71f869ea56b85c8';
+        mockedChronik.setBroadcastTx(hex, txid);
+
+        // MINT VAULT burn
+        const burnHex =
+            '0200000002e227ad0b23242a4678fc79104cdf1c80914862a3c808066aebc65ef35b52b56f01000000644130fda25f9cdca0a091d18abb0fe56bb693c6d168424c92e688a4a237389bf8e02409e2c339616e7506aa289b371f1cd35685a8c35f7076f7cf793841ceab7dbe4121031d4603bdc23aca9432f903e3cf5975a3f655cc3fa5057c61d00dfc1ca5dfd02dffffffffef76d01776229a95c45696cf68f2f98c8332d0c53e3f24e73fd9c6deaf79261803000000644134ea64b465369fb89dc561cf8e2076fce1156caaafa9e0d11ec16caf040cf5b703bceab7c5c4f221890de6bb85cba010b29796ce62d3944633783e29f019e43f4121031d4603bdc23aca9432f903e3cf5975a3f655cc3fa5057c61d00dfc1ca5dfd02dffffffff030000000000000000376a04534c500001020453454e44208ecb9c25978f429472f3e9f9c048222f6ac9977e7d1313781f0e9ac1bdba325108000000000001869f22020000000000001976a91400549451e5c22b18686cacdf34dce649e5ec3be288ac84330f00000000001976a91400549451e5c22b18686cacdf34dce649e5ec3be288ac00000000';
+        const burnTxid =
+            '4988233995f88af52086f7a5775591159ee3d808b47260c4f5b1ffa9ab25f352';
+        mockedChronik.setBroadcastTx(burnHex, burnTxid);
+
+        // Mock NOT blacklisted
+        when(fetch)
+            .calledWith(
+                `${tokenConfig.blacklistServerUrl}/blacklist/${slpMintVaultMocks.tokenId}`,
+            )
+            .mockResolvedValue({
+                json: () => Promise.resolve({ isBlacklisted: false }),
+            });
+
+        render(
+            <CashtabTestWrapper
+                chronik={mockedChronik}
+                agora={mockedAgora}
+                ecc={ecc}
+                route={`/send-token/${slpMintVaultMocks.tokenId}`}
+            />,
+        );
+
+        const { tokenName } = slpMintVaultMocks.token.genesisInfo;
+
+        // Wait for element to get token info and load
+        expect(
+            (await screen.findAllByText(new RegExp(tokenName)))[0],
+        ).toBeInTheDocument();
+
+        // Wait for supply and actions to load
+        // The supply is correctly rendered and is variable for a MINT VAULT token even though
+        // we have no mint batons
+        expect(
+            await screen.findByText('10,000,000 (var.)'),
+        ).toBeInTheDocument();
+
+        // Token actions are available
+        expect(screen.getByTitle('Token Actions')).toBeInTheDocument();
+
+        // On load, default action for SLP MINT is to list it
+        expect(screen.getByTitle('Toggle Sell Token')).toBeChecked();
+
+        // Click Send
+        const sendActionSwitch = screen.getByTitle('Toggle Send');
+        await userEvent.click(sendActionSwitch);
+        await waitFor(() => expect(sendActionSwitch).toBeChecked());
+
+        // Wait for address input to render
+        expect(
+            await screen.findByPlaceholderText('Address'),
+        ).toBeInTheDocument();
+
+        // We see an Address input
+        const addrInput = screen.getByPlaceholderText('Address');
+        expect(addrInput).toBeInTheDocument();
+
+        // Send button is disabled before address and amount entry
+        const sendButton = screen.getByRole('button', {
+            name: /Send MVTT β/,
+        });
+        expect(sendButton).toBeDisabled();
+
+        // We can enter an address
+        await userEvent.type(
+            addrInput,
+            'ecash:qz2708636snqhsxu8wnlka78h6fdp77ar59jrf5035',
+        );
+        const amountInputEl = screen.getByPlaceholderText('Amount');
+        const amountInput = '1';
+        await userEvent.type(amountInputEl, amountInput);
+
+        // Now the button is enabled
+        expect(sendButton).toBeEnabled();
+
+        // We can send an SLP MINT VAULT token
+        await userEvent.click(sendButton);
+
+        const sendTokenSuccessNotification = await screen.findByText(
+            'eToken sent',
+        );
+        expect(sendTokenSuccessNotification).toHaveAttribute(
+            'href',
+            `${explorer.blockExplorerUrl}/tx/${txid}`,
+        );
+
+        // We can also burn an SLP MINT VAULT token
+
+        // Select burn
+        await userEvent.click(screen.getByTitle('Toggle Burn'));
+
+        await userEvent.type(screen.getByPlaceholderText('Burn Amount'), '1');
+
+        // Click the Burn button
+        // Note we button title is the token ticker
+        await userEvent.click(
+            await screen.findByRole('button', { name: /Burn MVTT β/ }),
+        );
+
+        // We see a modal and enter the correct confirmation msg
+        await userEvent.type(
+            screen.getByPlaceholderText(`Type "burn MVTT β" to confirm`),
+            'burn MVTT β',
+        );
+
+        // Click the Confirm button
+        await userEvent.click(screen.getByRole('button', { name: /OK/ }));
+
+        const burnTokenSuccessNotification = await screen.findByText(
+            '🔥 Burn successful',
+        );
+        await waitFor(() =>
+            expect(burnTokenSuccessNotification).toHaveAttribute(
+                'href',
+                `${explorer.blockExplorerUrl}/tx/${burnTxid}`,
+            ),
+        );
+    });
+    it('We can list a MINT VAULT fungible token', async () => {
+        // Mock Math.random()
+        jest.spyOn(global.Math, 'random').mockReturnValue(0.5); // set a fixed value
+
+        // MINT VAULT offer tx
+        // NB SLP listings require 2 txs
+        const adPrepHex =
+            '0200000002e227ad0b23242a4678fc79104cdf1c80914862a3c808066aebc65ef35b52b56f01000000644174065d671f0e08e90fb978b679a069cd3e49d842a5254dd6c0533008827da5a4c48f0cb1af8dcd68729a27f1e5c3a775f15b8e74dc0c88ff58db18b5f8e41efd4121031d4603bdc23aca9432f903e3cf5975a3f655cc3fa5057c61d00dfc1ca5dfd02dffffffffef76d01776229a95c45696cf68f2f98c8332d0c53e3f24e73fd9c6deaf7926180300000064417a064abf440e3286975e8bf3d9be65e362a223d5d41610a041c899b1ed7e360a4cf88aee6a3f23c23a33326d9ee47f3a36f12421a76cba3085f3f129c0bc7bc04121031d4603bdc23aca9432f903e3cf5975a3f655cc3fa5057c61d00dfc1ca5dfd02dffffffff040000000000000000406a04534c500001020453454e44208ecb9c25978f429472f3e9f9c048222f6ac9977e7d1313781f0e9ac1bdba325108000000000000006408000000000001863c060500000000000017a914b3d9292d4facf172a31ba4a75b73fd56a58d50ad8722020000000000001976a91400549451e5c22b18686cacdf34dce649e5ec3be288ac2c2e0f00000000001976a91400549451e5c22b18686cacdf34dce649e5ec3be288ac00000000';
+        const adPrepTxid =
+            '53fcd26eb28a1cd5cf5be80ba5d6c950d838bc6592b496ab61faf0e03c55562f';
+        mockedChronik.setBroadcastTx(adPrepHex, adPrepTxid);
+
+        const offerHex =
+            '02000000012f56553ce0f0fa61ab96b49265bc38d850c9d6a50be85bcfd51c8ab26ed2fc5301000000dd0441475230075041525449414c410e110dc50dbd3c468db5a244e43386b92fdeadc53817d2ba90c23378ffa9e10a9285834144f71861940694e8d356f64833b2a84d396e3b16a4347a4a198e54c0414c8c4c766a04534c500001020453454e44208ecb9c25978f429472f3e9f9c048222f6ac9977e7d1313781f0e9ac1bdba32510800000000000000000000b1a5470100000000c64603000000000026e2ad07000000002099c53f031d4603bdc23aca9432f903e3cf5975a3f655cc3fa5057c61d00dfc1ca5dfd02d01557f77ad075041525449414c88044147523087ffffffff020000000000000000376a04534c500001020453454e44208ecb9c25978f429472f3e9f9c048222f6ac9977e7d1313781f0e9ac1bdba3251080000000000000064220200000000000017a9142c4d4e40520269461cfac4764915ffb1d1de71628700000000';
+        const offerTxid =
+            'ad34ebf9e04be21e447b08d04e5578e57a6e41db84913d53b9d853ff5ea845e5';
+        mockedChronik.setBroadcastTx(offerHex, offerTxid);
+
+        // Mock response for agora select params check
+        // Note
+        // We obtain EXPECTED_OFFER_P2SH by adding
+        // console.log(toHex(shaRmd160(agoraScript.bytecode)));
+        // to ecash-agora lib and running this test
+        // Note that Date() and Math.random() must be mocked to keep this deterministic
+        const EXPECTED_OFFER_P2SH = '2c4d4e40520269461cfac4764915ffb1d1de7162';
+
+        // We mock no existing utxos
+        mockedChronik.setUtxosByScript('p2sh', EXPECTED_OFFER_P2SH, []);
+
+        // Note that we cannot use mockedAgora to avoid agoraQueryErrors, as we need a proper
+        // agora object to build the partial
+        const agora = new Agora(mockedChronik);
+
         render(
             <CashtabTestWrapper
                 chronik={mockedChronik}
                 ecc={ecc}
-                agora={mockedAgora}
-                route={`/send-token/${FIRMA.tokenId}`}
+                agora={agora}
+                route={`/send-token/${slpMintVaultMocks.tokenId}`}
             />,
         );
 
-        const { tokenName } = FIRMA.token.genesisInfo;
+        const { tokenName } = slpMintVaultMocks.token.genesisInfo;
 
         // Wait for element to get token info and load
-        expect(await screen.findAllByText(new RegExp(tokenName))).toHaveLength(
-            4,
-        );
+        expect(
+            (await screen.findAllByText(new RegExp(tokenName)))[0],
+        ).toBeInTheDocument();
 
-        const priceSwitch = await screen.findByTitle(
-            `Toggle price for ${FIRMA.tokenId}`,
-        );
+        // Token image is rendered
+        expect(
+            screen.getByAltText(`icon for ${slpMintVaultMocks.tokenId}`),
+        ).toBeInTheDocument();
 
-        // FIRMA orderbook loads with fiat price by default
-        expect(priceSwitch).toBeChecked();
+        // Token actions are available
+        expect(screen.getByTitle('Token Actions')).toBeInTheDocument();
+
+        // On load, default action for MINT vault is to list it
+        expect(screen.getByTitle('Toggle Sell Token')).toBeEnabled();
+
+        // The list button is disabled on load
+        const listButton = screen.getByRole('button', {
+            name: /List Mint Vault Test Token Beta/,
+        });
+        expect(listButton).toBeDisabled();
+
+        // The price input is disabled until qty values are entered
+        const priceInput = screen.getByPlaceholderText(
+            'Enter list price (per token)',
+        );
+        expect(priceInput).toBeDisabled();
+
+        // Enter token balance as offered qty
+        await userEvent.type(screen.getByPlaceholderText('Offered qty'), '100');
+
+        // The price input is no longer disabled
+        expect(priceInput).toBeEnabled();
+
+        // Enter a price
+        await userEvent.type(priceInput, '1');
+
+        const minQtyInput = screen.getByPlaceholderText('Min qty');
+
+        // The quantity updates automatically
+        expect(minQtyInput).toHaveValue(6);
+
+        // The list button is no longer disabled
+        expect(listButton).toBeEnabled();
+
+        // Click the now-enabled list button
+        await userEvent.click(listButton);
+
+        // We see expected confirmation modal to list the Token
+        expect(screen.getByText('List MVTT β?')).toBeInTheDocument();
+        expect(
+            screen.getByText('Create the following sell offer?'),
+        ).toBeInTheDocument();
+        // Offered qty (actual, calculated from AgoraOffer)
+        const actualOfferedQty = '100';
+        expect(screen.getByText(actualOfferedQty)).toBeInTheDocument();
+        // Min buy (actual, calculated from AgoraOffer)
+        expect(screen.getByText('6')).toBeInTheDocument();
+        // Actual price calculated from AgoraOffer
+        const actualPricePerTokenForMinBuy = '1.0017 XEC';
+        expect(
+            screen.getAllByText(actualPricePerTokenForMinBuy)[0],
+        ).toBeInTheDocument();
+
+        // We pull the trigger
+        await userEvent.click(screen.getByText('OK'));
+
+        // We see the expected toast notification for the successful listing tx
+        expect(
+            await screen.findByText(
+                `${actualOfferedQty} Mint Vault Test Token Beta listed for ${actualPricePerTokenForMinBuy} per token`,
+            ),
+        ).toBeInTheDocument();
     });
 });

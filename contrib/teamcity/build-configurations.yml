@@ -206,7 +206,7 @@ builds:
       - '-DENABLE_SANITIZERS=address'
     templates:
       - check+secp256k1
-    timeout: 2400
+    timeout: 3600
     env:
       ASAN_OPTIONS: log_path=stdout
       LSAN_OPTIONS: log_path=stdout
@@ -232,8 +232,8 @@ builds:
     runOnDiffRegex:
       - modules/bitcoinsuite-chronik-client/
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
-      - '-DBUILD_BITCOIN_CHRONIK_PLUGINS=ON'
+      - '-DBUILD_CHRONIK=ON'
+      - '-DBUILD_CHRONIK_PLUGINS=ON'
     targets:
       - - all
     post_build: |
@@ -250,7 +250,7 @@ builds:
       - Cargo.toml
       - Cargo.lock
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
+      - '-DBUILD_CHRONIK=ON'
     targets:
       - - check-crates
       - - all
@@ -264,8 +264,8 @@ builds:
       - Cargo.toml
       - Cargo.lock
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
-      - '-DBUILD_BITCOIN_CHRONIK_PLUGINS=ON'
+      - '-DBUILD_CHRONIK=ON'
+      - '-DBUILD_CHRONIK_PLUGINS=ON'
     targets:
       - - check-crates
       - - all
@@ -289,10 +289,12 @@ builds:
   build-clang-tidy:
     clang: true
     cmake_flags:
+      - '-DBUILD_CHRONIK=ON'
       - '-DENABLE_CLANG_TIDY=ON'
     targets:
       - - all
       - - check
+      - - bitcoin-fuzzers
     templates:
       - diff-node
     timeout: 1800
@@ -377,8 +379,8 @@ builds:
       static_depends: linux64
       toolchain: Linux64
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
-      - '-DBUILD_BITCOIN_CHAINSTATE=ON'
+      - '-DBUILD_CHRONIK=ON'
+      - '-DBUILD_CHAINSTATE=ON'
     templates:
       - check+secp256k1
     timeout: 3600
@@ -389,15 +391,15 @@ builds:
       toolchain: LinuxAArch64
       emulator: qemu-aarch64-static
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
-      - '-DBUILD_BITCOIN_CHAINSTATE=ON'
+      - '-DBUILD_CHRONIK=ON'
+      - '-DBUILD_CHAINSTATE=ON'
       # The ZMQ functional test will fail with qemu (due to a qemu limitation),
       # so disable it to avoid the failure.
       # Extracted from stderr:
       #   Unknown host QEMU_IFLA type: 50
       #   Unknown host QEMU_IFLA type: 51
       #   Unknown QEMU_IFLA_BRPORT type 33
-      - "-DBUILD_BITCOIN_ZMQ=OFF"
+      - "-DBUILD_ZMQ=OFF"
       # This is an horrible hack to workaround a qemu bug:
       # https://bugs.launchpad.net/qemu/+bug/1748612
       # Qemu emits a message for unsupported features called by the guest.
@@ -427,7 +429,9 @@ builds:
 
   build-master:
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHAINSTATE=ON'
+      - '-DBUILD_CHAINSTATE=ON'
+      - '-DBUILD_CHRONIK=ON'
+      - '-DBUILD_CHRONIK_PLUGINS=ON'
     Werror: true
     targets:
       - - all
@@ -448,9 +452,9 @@ builds:
       static_depends: osx
       toolchain: OSX
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHAINSTATE=ON'
+      - '-DBUILD_CHAINSTATE=ON'
     # Uncomment to build Chronik once the cxx crate is working for OSX
-    #  - '-DBUILD_BITCOIN_CHRONIK=ON'
+    #  - '-DBUILD_CHRONIK=ON'
     targets:
       - - all
         - install
@@ -513,7 +517,7 @@ builds:
       - - all
         - install
       - - check
-        - check-functional
+      - - check-functional
     timeout: 2400
     env:
       TSAN_OPTIONS: log_path=stdout
@@ -535,9 +539,9 @@ builds:
       static_depends: win64
       toolchain: Win64
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
-      - '-DBUILD_BITCOIN_CHAINSTATE=ON'
-      - "-DBUILD_BITCOIN_SEEDER=OFF"
+      - '-DBUILD_CHRONIK=ON'
+      - '-DBUILD_CHAINSTATE=ON'
+      - "-DBUILD_SEEDER=OFF"
       - "-DCPACK_STRIP_FILES=ON"
       - "-DUSE_JEMALLOC=OFF"
     targets:
@@ -575,7 +579,7 @@ builds:
   build-without-cli:
     Werror: true
     cmake_flags:
-      - '-DBUILD_BITCOIN_CLI=OFF'
+      - '-DBUILD_CLI=OFF'
     targets:
       - - all
         - install
@@ -585,7 +589,7 @@ builds:
   build-without-qt:
     Werror: true
     cmake_flags:
-      - '-DBUILD_BITCOIN_QT=OFF'
+      - '-DBUILD_QT=OFF'
     targets:
       - - all
         - install
@@ -595,8 +599,8 @@ builds:
   build-without-wallet:
     Werror: true
     cmake_flags:
-      - '-DBUILD_BITCOIN_WALLET=OFF'
-      - '-DBUILD_BITCOIN_CHAINSTATE=ON'
+      - '-DBUILD_WALLET=OFF'
+      - '-DBUILD_CHAINSTATE=ON'
     targets:
       - - all
         - install
@@ -609,7 +613,7 @@ builds:
   build-without-zmq:
     Werror: true
     cmake_flags:
-      - '-DBUILD_BITCOIN_ZMQ=OFF'
+      - '-DBUILD_ZMQ=OFF'
     targets:
       - - all
         - install
@@ -674,6 +678,12 @@ builds:
       npm ci
       npm run build
 
+  cashtab-connect:
+    script: |
+      pushd "${TOPLEVEL}/modules/cashtab-connect"
+      npm ci
+      npm run build
+
   ecashaddrjs:
     script: |
       pushd "${TOPLEVEL}/modules/ecashaddrjs"
@@ -726,15 +736,29 @@ builds:
     depends:
       - chronik-client
       - ecash-lib
+      - ecash-wallet
     script: |
       pushd "${TOPLEVEL}/modules/ecash-agora"
       npm ci
       npm run build
 
-  ecash-script:
+  avalanche-lib-wasm:
+    runOnDiffRegex:
+      - modules/avalanche-lib-wasm/
     script: |
-      pushd "${TOPLEVEL}/modules/ecash-script"
-      npm ci
+      pushd "${TOPLEVEL}/modules/avalanche-lib-wasm"
+      ./build-wasm.sh
+      cargo build
+      cargo test
+
+  proof-manager-cli:
+    runOnDiffRegex:
+      - modules/avalanche-lib-wasm/
+      - apps/proof-manager-cli/
+    script: |
+      pushd "${TOPLEVEL}/apps/proof-manager-cli"
+      cargo build
+      cargo test
 
   cashtab-tests:
     runOnDiffRegex:
@@ -744,6 +768,7 @@ builds:
       - modules/ecash-agora/
       - modules/ecash-lib/
       - modules/ecash-lib-wasm/
+      - modules/b58-ts
       - src/secp256k1/
     artifacts:
       coverage.tar.gz: coverage.tar.gz
@@ -755,10 +780,10 @@ builds:
       JEST_JUNIT_OUTPUT_DIR: "test/junit"
       JEST_JUNIT_OUTPUT_NAME: "junit_results_cashtab.xml"
     depends:
+      - b58-ts
       - ecashaddrjs
       - chronik-client
       - mock-chronik-client
-      - ecash-script
       - ecash-lib
       - ecash-agora
     script: |
@@ -806,25 +831,48 @@ builds:
       - chronik-client
       - ecash-lib
       - ecash-agora
-      - ecash-script
       - mock-chronik-client
     templates:
       - js-mocha
 
-  token-server-tests:
+  metachronik-tests:
     runOnDiffRegex:
-      - apps/token-server/
+      - apps/metachronik/
+      - modules/chronik-client/
+    env:
+      JS_PROJECT_ROOT: apps/metachronik
+      RUN_NPM_BUILD: "true"
+    depends:
+      - chronik-client
+    templates:
+      - js-mocha
+
+  cashtab-faucet-tests:
+    runOnDiffRegex:
+      - apps/cashtab-faucet/
+      - modules/ecash-wallet/
       - modules/mock-chronik-client/
       - modules/ecashaddrjs/
       - modules/chronik-client/
+      - modules/ecash-lib/
     env:
-      JS_PROJECT_ROOT: apps/token-server
+      JS_PROJECT_ROOT: apps/cashtab-faucet
       RUN_NPM_BUILD: "true"
     depends:
       - ecashaddrjs
       - chronik-client
       - mock-chronik-client
       - ecash-lib
+      - ecash-wallet
+    templates:
+      - js-mocha
+
+  token-server-tests:
+    runOnDiffRegex:
+      - apps/token-server/
+    env:
+      JS_PROJECT_ROOT: apps/token-server
+      RUN_NPM_BUILD: "true"
     templates:
       - js-mocha
 
@@ -888,13 +936,14 @@ builds:
       - ecashaddrjs
       - chronik-client
       - ecash-lib
+      - ecash-wallet
     templates:
       - js-mocha
 
   ecash-agora-integration-tests:
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
-      - '-DBUILD_BITCOIN_CHRONIK_PLUGINS=ON'
+      - '-DBUILD_CHRONIK=ON'
+      - '-DBUILD_CHRONIK_PLUGINS=ON'
     targets:
       - - all
     runOnDiffRegex:
@@ -904,6 +953,7 @@ builds:
       - modules/ecash-lib/
       - modules/ecash-lib-wasm/
       - modules/ecashaddrjs/
+      - modules/ecash-wallet/
       - src/secp256k1/
       - Cargo.toml
       - Cargo.lock
@@ -913,12 +963,13 @@ builds:
       - ecashaddrjs
       - chronik-client
       - ecash-lib
+      - ecash-wallet
     templates:
       - js-mocha-integration-tests
 
   ecash-lib-integration-tests:
     cmake_flags:
-      - '-DBUILD_BITCOIN_CHRONIK=ON'
+      - '-DBUILD_CHRONIK=ON'
     targets:
       - - all
     runOnDiffRegex:
@@ -954,10 +1005,31 @@ builds:
     templates:
       - js-mocha
 
-  chronik-client-integration-tests:
+  ecash-wallet-integration-tests:
     cmake_flags:
       - '-DBUILD_BITCOIN_CHRONIK=ON'
       - '-DBUILD_BITCOIN_CHRONIK_PLUGINS=ON'
+    targets:
+      - - all
+    runOnDiffRegex:
+      - modules/ecash-wallet/
+      - modules/ecash-lib/
+      - modules/ecash-lib-wasm/
+      - src/secp256k1/
+      - Cargo.toml
+      - Cargo.lock
+    env:
+      JS_PROJECT_ROOT: modules/ecash-wallet
+    depends:
+      - chronik-client
+      - ecash-lib
+    templates:
+      - js-mocha-integration-tests
+
+  chronik-client-integration-tests:
+    cmake_flags:
+      - '-DBUILD_CHRONIK=ON'
+      - '-DBUILD_CHRONIK_PLUGINS=ON'
     targets:
       - - all
     runOnDiffRegex:
@@ -981,14 +1053,6 @@ builds:
     templates:
       - js-mocha
 
-  ecash-script-tests:
-    runOnDiffRegex:
-      - modules/ecash-script/
-    env:
-      JS_PROJECT_ROOT: modules/ecash-script
-    templates:
-      - js-mocha
-
   electrum-tests:
     runOnDiffRegex:
       - electrum/
@@ -996,18 +1060,20 @@ builds:
       - - check-electrum
 
   electrum-functional-tests:
-    script: |
-      "${TOPLEVEL}"/electrum/contrib/make_secp
-      pip3 install -r "${TOPLEVEL}/electrum/contrib/requirements/requirements.txt"
-      pip3 install -r "${TOPLEVEL}/electrum/contrib/requirements/requirements-regtest.txt"
-      pytest "${TOPLEVEL}/electrum/electrumabc/tests/regtest"
+    cmake_flags:
+      - '-DBUILD_CHRONIK=ON'
+    targets:
+      - - check-electrum-functional
+    runOnDiffRegex:
+      - electrum/
+      - chronik/chronik-http/
 
   preview-e.cash:
     docker:
       context: web/e.cash
       port: 3000
       build_args:
-        - "PREVIEW_BUILD=next.preview.js"
+        - "PREVIEW_BUILD=next.preview.ts"
 
   preview-chronik.e.cash:
     docker:
@@ -1025,3 +1091,11 @@ builds:
       dockerfile: cashtab.Dockerfile
       build_args:
         - "NGINX_CONF=nginx-preview.conf"
+
+  cashtab-connect-tests:
+    runOnDiffRegex:
+      - modules/cashtab-connect/
+    env:
+      JS_PROJECT_ROOT: modules/cashtab-connect
+    templates:
+      - js-mocha

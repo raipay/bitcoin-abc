@@ -7,17 +7,12 @@
 #include <qt/transactionrecord.h>
 #include <qt/transactiontablemodel.h>
 
+#include <algorithm>
 #include <cstdlib>
-
-// Earliest date that can be represented (far in the past)
-const QDateTime TransactionFilterProxy::MIN_DATE = QDateTime::fromTime_t(0);
-// Last date that can be represented (far in the future)
-const QDateTime TransactionFilterProxy::MAX_DATE =
-    QDateTime::fromTime_t(0xFFFFFFFF);
+#include <optional>
 
 TransactionFilterProxy::TransactionFilterProxy(QObject *parent)
-    : QSortFilterProxyModel(parent), dateFrom(MIN_DATE), dateTo(MAX_DATE),
-      m_search_string(), typeFilter(ALL_TYPES),
+    : QSortFilterProxyModel(parent), m_search_string(), typeFilter(ALL_TYPES),
       watchOnlyFilter(WatchOnlyFilter_All), minAmount(), limitRows(-1),
       showInactive(true) {}
 
@@ -46,7 +41,10 @@ bool TransactionFilterProxy::filterAcceptsRow(
 
     QDateTime datetime =
         index.data(TransactionTableModel::DateRole).toDateTime();
-    if (datetime < dateFrom || datetime > dateTo) {
+    if (dateFrom && datetime < *dateFrom) {
+        return false;
+    }
+    if (dateTo && datetime > *dateTo) {
         return false;
     }
 
@@ -70,10 +68,10 @@ bool TransactionFilterProxy::filterAcceptsRow(
     return true;
 }
 
-void TransactionFilterProxy::setDateRange(const QDateTime &from,
-                                          const QDateTime &to) {
-    this->dateFrom = from;
-    this->dateTo = to;
+void TransactionFilterProxy::setDateRange(const std::optional<QDateTime> &from,
+                                          const std::optional<QDateTime> &to) {
+    dateFrom = from;
+    dateTo = to;
     invalidateFilter();
 }
 

@@ -53,7 +53,7 @@ struct TxLessThan {
 // queue notifications to show a non freezing progress dialog e.g. for rescan
 struct TransactionNotification {
 public:
-    TransactionNotification() {}
+    TransactionNotification() = default;
     TransactionNotification(TxId _txid, ChangeType _status,
                             bool _showTransaction)
         : txid(_txid), status(_status), showTransaction(_showTransaction) {}
@@ -591,7 +591,7 @@ QVariant TransactionTableModel::data(const QModelIndex &index, int role) const {
         case TypeRole:
             return rec->type;
         case DateRole:
-            return QDateTime::fromTime_t(static_cast<uint>(rec->time));
+            return QDateTime::fromSecsSinceEpoch(rec->time);
         case WatchonlyRole:
             return rec->involvesWatchAddress;
         case WatchonlyDecorationRole:
@@ -615,8 +615,7 @@ QVariant TransactionTableModel::data(const QModelIndex &index, int role) const {
             return priv->getTxHex(walletModel->wallet(), rec);
         case TxPlainTextRole: {
             QString details;
-            QDateTime date =
-                QDateTime::fromTime_t(static_cast<uint>(rec->time));
+            QDateTime date = QDateTime::fromSecsSinceEpoch(rec->time);
             QString txLabel =
                 walletModel->getAddressTableModel()->labelForAddress(
                     QString::fromStdString(rec->address));

@@ -3,7 +3,7 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 # Stage 1 - rust machine for building ecash-lib-wasm
-FROM rust:1.76.0 AS wasmbuilder
+FROM rust:1.87.0 AS wasmbuilder
 
 RUN apt-get update \
   && apt-get install clang binaryen -y \
@@ -27,6 +27,14 @@ COPY web/explorer/ .
 WORKDIR /app/modules/bitcoinsuite-chronik-client
 COPY modules/bitcoinsuite-chronik-client/ .
 
+# avalanche-lib-wasm must be in place to to run ./build-wasm as it is a workspace member
+WORKDIR /app/modules/avalanche-lib-wasm
+COPY modules/avalanche-lib-wasm/ .
+
+# proof-manager-cli must be in place to to run ./build-wasm as it is a workspace member
+WORKDIR /app/apps/proof-manager-cli
+COPY apps/proof-manager-cli/ .
+
 # Copy secp256k1 to same directory structure as monorepo
 WORKDIR /app/src/secp256k1
 COPY src/secp256k1/ .
@@ -43,7 +51,7 @@ COPY modules/ecash-lib-wasm .
 RUN CC=clang ./build-wasm.sh
 
 # Stage 2 - Node image for running npm publish
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # Copy static assets from wasmbuilder stage (ecash-lib-wasm and ecash-lib, with wasm built in place)
 WORKDIR /app/modules

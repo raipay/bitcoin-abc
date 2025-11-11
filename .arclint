@@ -16,9 +16,9 @@
                 "(^src/bench/nanobench.h$)"
             ]
         },
-        "black": {
-            "type": "black",
-            "version": ">=24.0.0",
+        "ruff-format": {
+            "type": "ruff-format",
+            "version": ">=0.14.0",
             "include": [
                 "(\\.py$)",
                 "(^electrum/electrum-abc$)"
@@ -29,9 +29,9 @@
                 "(\\_pb2.py$)"
             ]
         },
-        "flake8": {
-            "type": "flake8",
-            "version": ">=5.0",
+        "ruff-check": {
+            "type": "ruff-check",
+            "version": ">=0.14.0",
             "include": [
                 "(\\.py$)",
                 "(^electrum/electrum-abc$)"
@@ -40,10 +40,6 @@
                 "(^contrib/apple-sdk-tools/)",
                 "(^electrum/electrumabc_gui/qt/icons.py)",
                 "(\\_pb2.py$)"
-            ],
-            "flags": [
-                "--ignore=A003,E203,E303,E305,E501,E704,W503,W504",
-                "--require-plugins=flake8-comprehensions,flake8-builtins"
             ]
         },
         "lint-format-strings": {
@@ -259,13 +255,6 @@
                 "--non-interactive"
             ]
         },
-        "lint-python-mutable-default": {
-            "type": "lint-python-mutable-default",
-            "include": "(\\.py$)",
-            "exclude": [
-                "(^contrib/apple-sdk-tools/)"
-            ]
-        },
         "prettier": {
             "type": "prettier",
             "version": ">=2.6.0",
@@ -280,19 +269,6 @@
                 "(^web/.*/translations/.*\\.json$)",
                 "(^web/e.cash/public/animations/)",
                 "(^web/explorer/explorer-server/templates/)"
-            ]
-        },
-        "lint-python-isort": {
-            "type": "lint-python-isort",
-            "version": ">=5.6.4",
-            "include": [
-                "(\\.py$)",
-                "(^electrum/electrum-abc$)"
-            ],
-            "exclude": [
-                "(^contrib/apple-sdk-tools/)",
-                "(^electrum/electrumabc_gui/qt/icons.py)",
-                "(\\_pb2.py$)"
             ]
         },
         "rustfmt": {
@@ -313,16 +289,8 @@
             ],
             "exclude": [
                 "(^web/explorer/)",
-                "(^src/)"
-            ]
-        },
-        "lint-python-flynt": {
-            "type": "lint-python-flynt",
-            "version": ">=0.78",
-            "include": "(\\.py$)",
-            "exclude": [
-                "(^contrib/apple-sdk-tools/)",
-                "(^electrum/)"
+                "(^src/)",
+                "(next-env.d.ts)"
             ]
         }
     }

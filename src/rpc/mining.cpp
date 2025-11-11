@@ -542,7 +542,8 @@ static RPCHelpMan getmininginfo() {
                 obj.pushKV("currentblocktx",
                            *BlockAssembler::m_last_block_num_txs);
             }
-            obj.pushKV("difficulty", double(GetDifficulty(active_chain.Tip())));
+            obj.pushKV("difficulty",
+                       GetDifficulty(*CHECK_NONFATAL(active_chain.Tip())));
             obj.pushKV("networkhashps",
                        getnetworkhashps().HandleRequest(config, request));
             obj.pushKV("pooledtx", uint64_t(mempool.size()));
@@ -980,7 +981,8 @@ static RPCHelpMan getblocktemplate() {
 
                     hashWatchedChain =
                         ParseHashV(lpstr.substr(0, 64), "longpollid");
-                    nTransactionsUpdatedLastLP = atoi64(lpstr.substr(64));
+                    nTransactionsUpdatedLastLP =
+                        LocaleIndependentAtoi<int64_t>(lpstr.substr(64));
                 } else {
                     // NOTE: Spec does not specify behaviour for non-string
                     // longpollid, but this makes testing easier
@@ -1040,11 +1042,11 @@ static RPCHelpMan getblocktemplate() {
 
             // Update block
             static CBlockIndex *pindexPrev;
-            static int64_t nStart;
+            static int64_t time_start;
             static std::unique_ptr<CBlockTemplate> pblocktemplate;
             if (pindexPrev != active_chain.Tip() ||
                 (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast &&
-                 GetTime() - nStart > 5)) {
+                 GetTime() - time_start > 5)) {
                 // Clear pindexPrev so future calls make a new block, despite
                 // any failures from here on
                 pindexPrev = nullptr;
@@ -1053,7 +1055,7 @@ static RPCHelpMan getblocktemplate() {
                 // races
                 nTransactionsUpdatedLast = mempool.GetTransactionsUpdated();
                 CBlockIndex *pindexPrevNew = active_chain.Tip();
-                nStart = GetTime();
+                time_start = GetTime();
 
                 // Create new block
                 CScript scriptDummy = CScript() << OP_TRUE;
@@ -1255,7 +1257,8 @@ static RPCHelpMan getblocktemplate() {
                 UniValue rtt(UniValue::VOBJ);
 
                 UniValue prevHeaderTimes(UniValue::VARR);
-                for (size_t i : {2, 5, 11, 17}) {
+                for (size_t i :
+                     GetRTTFactorIndices(consensusParams, pindexPrev)) {
                     prevHeaderTimes.push_back(prevHeaderReceivedTime[i]);
                 }
 
@@ -1275,11 +1278,10 @@ static RPCHelpMan getblocktemplate() {
 class submitblock_StateCatcher final : public CValidationInterface {
 public:
     uint256 hash;
-    bool found;
-    BlockValidationState state;
+    bool found{false};
+    BlockValidationState state{};
 
-    explicit submitblock_StateCatcher(const uint256 &hashIn)
-        : hash(hashIn), found(false), state() {}
+    explicit submitblock_StateCatcher(const uint256 &hashIn) : hash(hashIn) {}
 
 protected:
     void BlockChecked(const CBlock &block,

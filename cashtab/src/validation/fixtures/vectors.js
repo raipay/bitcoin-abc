@@ -5,6 +5,10 @@
 // Test vectors for validation functions
 import appConfig from 'config/app';
 import CashtabSettings from 'config/CashtabSettings';
+import {
+    FEE_SATS_PER_KB_XEC_MINIMUM,
+    FEE_SATS_PER_KB_XEC_MAXIMUM,
+} from 'constants/transactions';
 import CashtabCache from 'config/CashtabCache';
 import {
     mockCashtabCache,
@@ -21,7 +25,6 @@ import {
     walletWithXecAndTokens_pre_2_55_0,
 } from 'components/App/fixtures/mocks';
 import { toXec } from 'wallet';
-import { cashtabWalletFromJSON } from 'helpers';
 import { tokenTestWallet } from 'components/Etokens/fixtures/mocks';
 import {
     agoraPartialAlphaWallet,
@@ -889,7 +892,7 @@ export default {
             },
             {
                 description:
-                    'bip21 token: token_decimalized_qty specified but token_id unspecified',
+                    'bip21 token: token_id specified, token_decimalized_qty specified, and amount specified (not supported for bip21 token)',
                 addressInput:
                     'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123&amount=100',
                 balanceSats: 50000000,
@@ -901,7 +904,7 @@ export default {
                     },
                     queryString: {
                         value: 'token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123&amount=100',
-                        error: `Invalid bip21 token tx: bip21 token txs may only include the params token_id and token_decimalized_qty`,
+                        error: `Invalid bip21 token tx: bip21 token txs may only include the params token_id, token_decimalized_qty, and (optionally) firma`,
                     },
                 },
             },
@@ -956,7 +959,7 @@ export default {
             },
             {
                 description:
-                    'bip21 token: valid bip21 token tx with valid params',
+                    'bip21 token: valid bip21 token tx with valid params, no firma',
                 addressInput:
                     'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123',
                 balanceSats: 50000000,
@@ -1002,6 +1005,66 @@ export default {
                     },
                     queryString: {
                         value: 'token_decimalized_qty=100.123&token_id=1111111111111111111111111111111111111111111111111111111111111111',
+                        error: false,
+                    },
+                },
+            },
+            {
+                description:
+                    'bip21 token: valid bip21 token tx with valid params including firma',
+                addressInput:
+                    'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123&firma=deadbeef',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+                        error: false,
+                    },
+                    token_id: {
+                        value: '1111111111111111111111111111111111111111111111111111111111111111',
+                        error: false,
+                    },
+                    token_decimalized_qty: {
+                        value: '100.123',
+                        error: false,
+                    },
+                    firma: {
+                        error: false,
+                        value: 'deadbeef',
+                    },
+                    queryString: {
+                        value: 'token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123&firma=deadbeef',
+                        error: false,
+                    },
+                },
+            },
+            {
+                description:
+                    'bip21 token: valid bip21 token tx with valid params but invalid firma',
+                addressInput:
+                    'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx?token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123&firma=deadbee',
+                balanceSats: 50000000,
+                userLocale: appConfig.defaultLocale,
+                parsedAddressInput: {
+                    address: {
+                        value: 'ecash:qq9h6d0a5q65fgywv4ry64x04ep906mdku8f0gxfgx',
+                        error: false,
+                    },
+                    token_id: {
+                        value: '1111111111111111111111111111111111111111111111111111111111111111',
+                        error: false,
+                    },
+                    token_decimalized_qty: {
+                        value: '100.123',
+                        error: false,
+                    },
+                    firma: {
+                        error: 'firma input must be in hex bytes. Length of firma push must be divisible by two.',
+                        value: 'deadbee',
+                    },
+                    queryString: {
+                        value: 'token_id=1111111111111111111111111111111111111111111111111111111111111111&token_decimalized_qty=100.123&firma=deadbee',
                         error: false,
                     },
                 },
@@ -1145,6 +1208,7 @@ export default {
                     autoCameraOn: true,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM,
                 },
                 migratedSettings: {
                     fiatCurrency: 'usd',
@@ -1152,7 +1216,7 @@ export default {
                     autoCameraOn: true,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
-                    minFeeSends: false,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM,
                 },
             },
             {
@@ -1166,7 +1230,7 @@ export default {
                     autoCameraOn: false,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
-                    minFeeSends: false,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM,
                 },
             },
             {
@@ -1183,7 +1247,7 @@ export default {
                     autoCameraOn: true,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
-                    minFeeSends: false,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM,
                 },
                 migratedSettings: {
                     fiatCurrency: 'brl',
@@ -1191,7 +1255,7 @@ export default {
                     autoCameraOn: true,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
-                    minFeeSends: false,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM,
                 },
             },
         ],
@@ -1217,7 +1281,7 @@ export default {
                     autoCameraOn: true,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
-                    minFeeSends: false,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM,
                 },
                 isValid: true,
             },
@@ -1230,7 +1294,7 @@ export default {
                     autoCameraOn: true,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
-                    minFeeSends: false,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM,
                 },
                 isValid: false,
             },
@@ -1243,7 +1307,7 @@ export default {
                     autoCameraOn: true,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
-                    minFeeSends: false,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM,
                 },
                 isValid: false,
             },
@@ -1255,6 +1319,33 @@ export default {
                     autoCameraOn: true,
                     hideMessagesFromUnknownSenders: false,
                     balanceVisible: true,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM,
+                },
+                isValid: false,
+            },
+            {
+                description:
+                    'Rejects settings object with satsPerKb below minimum fee',
+                settings: {
+                    fiatCurrency: 'usd',
+                    sendModal: false,
+                    autoCameraOn: true,
+                    hideMessagesFromUnknownSenders: false,
+                    balanceVisible: true,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MINIMUM - 1,
+                },
+                isValid: false,
+            },
+            {
+                description:
+                    'Rejects settings object with satsPerKb above maximum fee',
+                settings: {
+                    fiatCurrency: 'usd',
+                    sendModal: false,
+                    autoCameraOn: true,
+                    hideMessagesFromUnknownSenders: false,
+                    balanceVisible: true,
+                    satsPerKb: FEE_SATS_PER_KB_XEC_MAXIMUM + 1,
                 },
                 isValid: false,
             },
@@ -1302,25 +1393,24 @@ export default {
             },
         ],
     },
-    isValidCashtabWallet: {
+    isValidStoredCashtabWallet: {
         expectedReturns: [
             {
-                description: 'Returns true for a valid Cashtab wallet',
-                wallet: cashtabWalletFromJSON(validWalletJson),
+                description: 'Returns true for a valid stored Cashtab wallet',
+                wallet: validWalletJson,
                 returned: true,
             },
             {
                 description:
                     'Returns false for a JSON-loaded pre-2.9.0 Cashtab wallet',
-                wallet: cashtabWalletFromJSON(walletWithXecAndTokens_pre_2_9_0),
+                wallet: walletWithXecAndTokens_pre_2_9_0,
                 returned: false,
             },
             {
                 description:
                     'Returns false for a JSON-loaded pre-2.55.0 Cashtab wallet',
-                wallet: cashtabWalletFromJSON(
-                    walletWithXecAndTokens_pre_2_55_0,
-                ),
+                wallet: walletWithXecAndTokens_pre_2_55_0,
+
                 returned: false,
             },
             {
@@ -1346,225 +1436,44 @@ export default {
                 returned: false,
             },
             {
-                description: 'Returns false if wallet is missing state',
-                wallet: cloneObjectWithDeletedKey(
-                    cashtabWalletFromJSON(validWalletJson),
-                    'state',
-                ),
-                returned: false,
+                description:
+                    'Missing state is ok, stored wallets do not have it',
+                wallet: cloneObjectWithDeletedKey(validWalletJson, 'state'),
+                returned: true,
             },
             {
                 description: 'Returns false if wallet is missing mnemonic',
-                wallet: cloneObjectWithDeletedKey(
-                    cashtabWalletFromJSON(validWalletJson),
-                    'mnemonic',
-                ),
+                wallet: cloneObjectWithDeletedKey(validWalletJson, 'mnemonic'),
                 returned: false,
             },
             {
                 description: 'Returns false if wallet is missing name',
-                wallet: cloneObjectWithDeletedKey(
-                    cashtabWalletFromJSON(validWalletJson),
-                    'name',
-                ),
+                wallet: cloneObjectWithDeletedKey(validWalletJson, 'name'),
                 returned: false,
             },
             {
-                description: 'Returns false if wallet is missing paths',
-                wallet: cloneObjectWithDeletedKey(
-                    cashtabWalletFromJSON(validWalletJson),
-                    'paths',
-                ),
+                description: 'Returns false if wallet is missing hash ',
+                wallet: cloneObjectWithDeletedKey(validWalletJson, 'hash'),
                 returned: false,
             },
             {
-                description:
-                    'Returns false if wallet is missing hash in path1899 path object',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    paths: new Map([
-                        [
-                            1899,
-                            {
-                                address: 'string',
-                                wif: 'string',
-                            },
-                        ],
-                    ]),
-                },
+                description: 'Returns false if wallet is missing address ',
+                wallet: cloneObjectWithDeletedKey(validWalletJson, 'address'),
                 returned: false,
             },
             {
-                description:
-                    'Returns false if wallet is missing address in path1899 path object',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    paths: new Map([
-                        [
-                            1899,
-                            {
-                                hash: 'string',
-                                wif: 'string',
-                            },
-                        ],
-                    ]),
-                },
+                description: 'Returns false if wallet is missing sk ',
+                wallet: cloneObjectWithDeletedKey(validWalletJson, 'sk'),
                 returned: false,
             },
             {
-                description:
-                    'Returns false if wallet is missing address in path1899 path object',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    paths: new Map([
-                        [
-                            1899,
-                            {
-                                address: 'string',
-                                hash: 'string',
-                            },
-                        ],
-                    ]),
-                },
+                description: 'Returns false if wallet is missing pk ',
+                wallet: cloneObjectWithDeletedKey(validWalletJson, 'pk'),
                 returned: false,
             },
             {
-                description: 'Returns true for a multi-path wallet',
-                wallet: cashtabWalletFromJSON(validWalletJsonMultiPath),
-                returned: true,
-            },
-            {
-                description:
-                    'Returns false if wallet is missing wif in a secondary path object',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    paths: new Map([
-                        [
-                            1899,
-                            {
-                                hash: 'string',
-                                address: 'string',
-                                wif: 'string',
-                            },
-                        ],
-                        [
-                            145,
-                            {
-                                hash: 'string',
-                                address: 'string',
-                            },
-                        ],
-                    ]),
-                },
-                returned: false,
-            },
-            {
-                description: 'Returns false if wallet has no path info objects',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    paths: new Map(),
-                },
-                returned: false,
-            },
-            {
-                description: 'Returns false if wallet.state is not an object',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    state: 'string',
-                },
-                returned: false,
-            },
-            {
-                description: 'Returns false if no balanceSats in wallet.state',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    state: {
-                        ...cloneObjectWithDeletedKey(
-                            cashtabWalletFromJSON(validWalletJson).state,
-                            'balanceSats',
-                        ),
-                    },
-                },
-                returned: false,
-            },
-            {
-                description: 'Returns false if balances in wallet.state',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    state: {
-                        ...cashtabWalletFromJSON(validWalletJson).state,
-                        balances: {},
-                    },
-                },
-                returned: false,
-            },
-            {
-                description: 'Returns false if balanceSats is not a number',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    state: {
-                        ...validWalletJson.state,
-                        balanceSats: '100',
-                        tokens: new Map(),
-                    },
-                },
-                returned: false,
-            },
-            {
-                description: 'Returns false if no slpUtxos in wallet.state',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    state: cloneObjectWithDeletedKey(
-                        cashtabWalletFromJSON(validWalletJson).state,
-                        'slpUtxos',
-                    ),
-                },
-                returned: false,
-            },
-            {
-                description: 'Returns false if no nonSlpUtxos in wallet.state',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    state: cloneObjectWithDeletedKey(
-                        cashtabWalletFromJSON(validWalletJson).state,
-                        'nonSlpUtxos',
-                    ),
-                },
-                returned: false,
-            },
-            {
-                description: 'Returns false if no tokens in wallet.state',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    state: cloneObjectWithDeletedKey(
-                        cashtabWalletFromJSON(validWalletJson).state,
-                        'tokens',
-                    ),
-                },
-                returned: false,
-            },
-            {
-                description:
-                    'Returns false if hydratedUtxoDetails is in wallet.state',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    state: {
-                        ...cashtabWalletFromJSON(validWalletJson).state,
-                        hydratedUtxoDetails: [],
-                    },
-                },
-                returned: false,
-            },
-            {
-                description:
-                    'Returns false if slpBalancesAndUtxos is in wallet.state',
-                wallet: {
-                    ...cashtabWalletFromJSON(validWalletJson),
-                    state: {
-                        ...cashtabWalletFromJSON(validWalletJson).state,
-                        slpBalancesAndUtxos: [],
-                    },
-                },
+                description: 'Returns false for a pathed wallet',
+                wallet: validWalletJsonMultiPath,
                 returned: false,
             },
             // Wallets used for various tests in Cashtab are valid
@@ -1619,7 +1528,7 @@ export default {
                 userLocale: appConfig.defaultLocale,
                 selectedCurrency: appConfig.ticker,
                 fiatPrice: 0.000003,
-                returned: `Amount must be greater than 0`,
+                returned: `Amount must be > 0`,
             },
             {
                 description:
@@ -1892,7 +1801,7 @@ export default {
                 tokenBalance: '100',
                 decimals: 0,
                 tokenProtocol: 'SLP',
-                returned: 'Amount must be greater than 0',
+                returned: 'Amount must be > 0',
             },
             {
                 description: 'Blank input is rejected',
@@ -1917,8 +1826,7 @@ export default {
                 tokenBalance: '100',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'Rejects input multiple decimal points',
@@ -1926,8 +1834,7 @@ export default {
                 tokenBalance: '100',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description:
@@ -1936,8 +1843,7 @@ export default {
                 tokenBalance: '100',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'Rejects input containing non-decimal characters',
@@ -1945,8 +1851,7 @@ export default {
                 tokenBalance: '100',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description:
@@ -1964,7 +1869,7 @@ export default {
                 tokenBalance: '100',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned: 'This token supports no more than 1 decimal place',
+                returned: 'Max 1 decimal place',
             },
             {
                 description:
@@ -1973,7 +1878,7 @@ export default {
                 tokenBalance: '100',
                 decimals: 2,
                 tokenProtocol: 'SLP',
-                returned: 'This token supports no more than 2 decimal places',
+                returned: 'Max 2 decimal places',
             },
             {
                 description:
@@ -2113,7 +2018,7 @@ export default {
                 amount: '0',
                 decimals: 0,
                 tokenProtocol: 'SLP',
-                returned: 'Amount must be greater than 0',
+                returned: 'Amount must be > 0',
             },
             {
                 description: 'Blank input is rejected',
@@ -2135,16 +2040,14 @@ export default {
                 amount: '95,1',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'Rejects input with multiple decimal points',
                 amount: '95.1.23',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description:
@@ -2152,16 +2055,14 @@ export default {
                 amount: '95..23',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'Rejects input containing non-decimal characters',
                 amount: '100.a',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description:
@@ -2169,7 +2070,7 @@ export default {
                 amount: '99.12',
                 decimals: 1,
                 tokenProtocol: 'SLP',
-                returned: 'This token supports no more than 1 decimal place',
+                returned: 'Max 1 decimal place',
             },
             {
                 description:
@@ -2177,7 +2078,7 @@ export default {
                 amount: '99.123',
                 decimals: 2,
                 tokenProtocol: 'SLP',
-                returned: 'This token supports no more than 2 decimal places',
+                returned: 'Max 2 decimal places',
             },
             {
                 description:
@@ -2308,6 +2209,60 @@ export default {
                 description: 'String of even spaces is rejected',
                 opReturnRaw: '  ',
                 returned: 'Input must be lowercase hex a-f 0-9.',
+            },
+        ],
+    },
+    getFirmaPushError: {
+        expectedReturns: [
+            {
+                description: 'Valid lowercase hex of max length is good',
+                firmaPush: Array(164).fill('01').join(''),
+                returned: false,
+            },
+            {
+                description:
+                    'Valid lowercase hex of 1 more than max length is rejected',
+                firmaPush: Array(223).fill('01').join(''),
+                returned: 'firma is 223 bytes; exceeds max 164 bytes',
+            },
+            {
+                description:
+                    'Valid lowercase hex of max length that starts with "6a" is rejected',
+                firmaPush: '6adeadbeef',
+                returned: `firma push cannot start with OP_RETURN ('6a')`,
+            },
+            {
+                description: 'Valid hex of odd length below max is rejected',
+                firmaPush: Array(12).fill('01').join('') + '1',
+                returned:
+                    'firma input must be in hex bytes. Length of firma push must be divisible by two.',
+            },
+            {
+                description: 'Uppercase hex is rejected',
+                firmaPush: Array(12).fill('FF').join(''),
+                returned: 'firma push must be lowercase hex a-f 0-9.',
+            },
+            {
+                description:
+                    'Even-length string containing non-hex characters is rejected',
+                firmaPush: 'livebeef',
+                returned: 'firma push must be lowercase hex a-f 0-9.',
+            },
+            {
+                description:
+                    'Even-length string containing a space is rejected',
+                firmaPush: 'dead beef',
+                returned: 'firma push must be lowercase hex a-f 0-9.',
+            },
+            {
+                description: 'Empty string is rejected',
+                firmaPush: '',
+                returned: 'firma push cannot be empty',
+            },
+            {
+                description: 'String of even spaces is rejected',
+                firmaPush: '  ',
+                returned: 'firma push must be lowercase hex a-f 0-9.',
             },
         ],
     },
@@ -2809,8 +2764,7 @@ export default {
                 decimalizedTokenQtyMax: '100',
                 decimals: 0,
                 userLocale: 'en-US',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'Rejects multiple non-consecutive decimal points',
@@ -2819,8 +2773,7 @@ export default {
                 decimalizedTokenQtyMax: '100',
                 decimals: 0,
                 userLocale: 'en-US',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'Rejects multiple consecutive decimal points',
@@ -2829,8 +2782,7 @@ export default {
                 decimalizedTokenQtyMax: '100',
                 decimals: 0,
                 userLocale: 'en-US',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'Rejects input containing a non-decimal character',
@@ -2839,8 +2791,7 @@ export default {
                 decimalizedTokenQtyMax: '100',
                 decimals: 0,
                 userLocale: 'en-US',
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description:
@@ -2920,7 +2871,7 @@ export default {
                 tokenProtocol: 'ALP',
                 tokenBalance: '100',
                 userLocale: 'en-US',
-                returned: 'Amount must be greater than 0',
+                returned: 'Amount must be > 0',
             },
             {
                 description: 'We give the required min qty if input is too low',
@@ -2979,21 +2930,21 @@ export default {
                 amount: '0',
                 decimals: 2,
                 isXec: true,
-                returned: 'Amount must be greater than 0',
+                returned: 'Amount must be > 0',
             },
             {
                 description: 'Token: 0 is rejected',
                 amount: '0',
                 decimals: 4,
                 isXec: false,
-                returned: 'Amount must be greater than 0',
+                returned: 'Amount must be > 0',
             },
             {
                 description: 'Token: blank input is rejected',
                 amount: '',
                 decimals: 0,
                 isXec: false,
-                returned: 'Amount is required for bip21 token sends',
+                returned: 'Amount required',
             },
             {
                 description: 'XEC: Rejects non-string input',
@@ -3013,8 +2964,7 @@ export default {
                 amount: '95,1',
                 decimals: 1,
                 isXec: true,
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description:
@@ -3022,16 +2972,14 @@ export default {
                 amount: '95,1',
                 decimals: 1,
                 isXec: false,
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'Rejects input multiple decimal points',
                 amount: '95.1.23',
                 decimals: 1,
                 isXec: false,
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description:
@@ -3039,31 +2987,28 @@ export default {
                 amount: '95..23',
                 decimals: 1,
                 isXec: false,
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'Rejects input containing non-decimal characters',
                 amount: '100.a',
                 decimals: 1,
                 isXec: false,
-                returned:
-                    'Amount must be a non-empty string containing only decimal numbers and optionally one decimal point "."',
+                returned: 'Invalid amount format',
             },
             {
                 description: 'We get an error for too many XEC decimals',
                 amount: '99.123',
                 decimals: 2,
                 isXec: true,
-                returned: 'XEC supports up to 2 decimal places',
+                returned: 'Max 2 decimal places',
             },
             {
                 description: 'We get an error for XEC amounts below dust',
                 amount: '5.45',
                 decimals: 2,
                 isXec: true,
-                returned:
-                    'XEC send amounts cannot be less than dust (5.46 XEC)',
+                returned: 'Minimum 5.46 XEC',
             },
             {
                 description: 'We accept 5.46 XEC',
@@ -3085,7 +3030,7 @@ export default {
                 amount: '99.12',
                 decimals: 1,
                 isXec: false,
-                returned: 'This token supports no more than 1 decimal place',
+                returned: 'Max 1 decimal place',
             },
             {
                 description:
@@ -3093,7 +3038,7 @@ export default {
                 amount: '99.123',
                 decimals: 2,
                 isXec: false,
-                returned: 'This token supports no more than 2 decimal places',
+                returned: 'Max 2 decimal places',
             },
             {
                 description:

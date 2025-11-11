@@ -71,7 +71,7 @@ class BitcoinGUI : public QMainWindow {
 public:
     static const std::string DEFAULT_UIPLATFORM;
 
-    explicit BitcoinGUI(interfaces::Node &node, const Config *,
+    explicit BitcoinGUI(interfaces::Node &node, const Config &,
                         const PlatformStyle *platformStyle,
                         const NetworkStyle *networkStyle,
                         QWidget *parent = nullptr);
@@ -144,7 +144,6 @@ private:
     QAction *historyAction = nullptr;
     QAction *quitAction = nullptr;
     QAction *sendCoinsAction = nullptr;
-    QAction *sendCoinsMenuAction = nullptr;
     QAction *usedSendingAddressesAction = nullptr;
     QAction *usedReceivingAddressesAction = nullptr;
     QAction *signMessageAction = nullptr;
@@ -152,9 +151,7 @@ private:
     QAction *m_load_psbt_action = nullptr;
     QAction *aboutAction = nullptr;
     QAction *receiveCoinsAction = nullptr;
-    QAction *receiveCoinsMenuAction = nullptr;
     QAction *optionsAction = nullptr;
-    QAction *toggleHideAction = nullptr;
     QAction *encryptWalletAction = nullptr;
     QAction *backupWalletAction = nullptr;
     QAction *changePassphraseAction = nullptr;
@@ -189,7 +186,7 @@ private:
     int prevBlocks = 0;
     int spinnerFrame = 0;
 
-    const Config *config;
+    const Config &config;
     const PlatformStyle *platformStyle;
     const NetworkStyle *const m_network_style;
 
@@ -221,6 +218,7 @@ private:
     void openOptionsDialogWithTab(OptionsDialog::Tab tab);
 
 Q_SIGNALS:
+    void quitRequested();
     /** Signal raised when a URI was entered or dragged to the GUI */
     void receivedURI(const QString &uri);
     /** Signal raised when RPC console shown */
@@ -318,13 +316,6 @@ public Q_SLOTS:
     void showDebugWindowActivateConsole();
     /** Show help message dialog */
     void showHelpMessageClicked();
-#ifndef Q_OS_MAC
-    /** Handle tray icon clicked */
-    void trayIconActivated(QSystemTrayIcon::ActivationReason reason);
-#else
-    /** Handle macOS Dock icon clicked */
-    void macosDockIconActivated();
-#endif
 
     /** Show window if hidden, unminimize when minimized, rise when obscured or
      * show if hidden and fToggleHidden is true */

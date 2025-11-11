@@ -59,7 +59,8 @@ static ScriptErrorDesc script_errors[] = {
     {ScriptError::PUBKEY_COUNT, "PUBKEY_COUNT"},
     {ScriptError::INPUT_SIGCHECKS, "INPUT_SIGCHECKS"},
     {ScriptError::INVALID_OPERAND_SIZE, "OPERAND_SIZE"},
-    {ScriptError::INVALID_NUMBER_RANGE, "INVALID_NUMBER_RANGE"},
+    {ScriptError::INTEGER_OVERFLOW, "INTEGER_OVERFLOW"},
+    {ScriptError::BAD_INTEGER_ENCODING, "BAD_INTEGER_ENCODING"},
     {ScriptError::IMPOSSIBLE_ENCODING, "IMPOSSIBLE_ENCODING"},
     {ScriptError::INVALID_SPLIT_RANGE, "SPLIT_RANGE"},
     {ScriptError::INVALID_BIT_COUNT, "INVALID_BIT_COUNT"},
@@ -151,7 +152,7 @@ static void DoTest(const CScript &scriptPubKey, const CScript &scriptSig,
         // anything about what happens when they are flipped. Keep them as-is.
         extra_flags &=
             ~(SCRIPT_ENABLE_SIGHASH_FORKID | SCRIPT_ENABLE_REPLAY_PROTECTION |
-              SCRIPT_ENABLE_SCHNORR_MULTISIG);
+              SCRIPT_ENABLE_SCHNORR_MULTISIG | SCRIPT_ENABLE_63_BIT_INTS);
         uint32_t combined_flags =
             expect ? (flags & ~extra_flags) : (flags | extra_flags);
         // Weed out invalid flag combinations.
@@ -240,11 +241,11 @@ private:
     CScript redeemscript;
     CTransactionRef creditTx;
     CMutableTransaction spendTx;
-    bool havePush;
+    bool havePush{false};
     std::vector<uint8_t> push;
     std::string comment;
     uint32_t flags;
-    ScriptError scriptError;
+    ScriptError scriptError{ScriptError::OK};
     Amount nValue;
 
     void DoPush() {
@@ -295,8 +296,7 @@ public:
     TestBuilder(const CScript &script_, const std::string &comment_,
                 uint32_t flags_, bool P2SH = false,
                 Amount nValue_ = Amount::zero())
-        : script(script_), havePush(false), comment(comment_), flags(flags_),
-          scriptError(ScriptError::OK), nValue(nValue_) {
+        : script(script_), comment(comment_), flags(flags_), nValue(nValue_) {
         CScript scriptPubKey = script;
         if (P2SH) {
             redeemscript = scriptPubKey;
@@ -3014,6 +3014,28 @@ BOOST_AUTO_TEST_CASE(script_GetScriptAsm) {
                       ScriptToAsmStr(CScript()
                                      << ToByteVector(ParseHex(derSig + "83"))
                                      << vchPubKey));
+
+    // Only render as decimal number if minimally encoded, otherwise plain hex
+    BOOST_CHECK_EQUAL("4779", ScriptToAsmStr(CScript() << ParseHex("ab12")));
+    BOOST_CHECK_EQUAL("ab1200",
+                      ScriptToAsmStr(CScript() << ParseHex("ab1200")));
+    BOOST_CHECK_EQUAL("ab1200000000",
+                      ScriptToAsmStr(CScript() << ParseHex("ab1200000000")));
+    BOOST_CHECK_EQUAL("9223372036854775807",
+                      ScriptToAsmStr(CScript() << 0x7fffffffffffffff));
+    BOOST_CHECK_EQUAL("-9223372036854775807",
+                      ScriptToAsmStr(CScript() << -0x7fffffffffffffff));
+    BOOST_CHECK_EQUAL("000000000000008080",
+                      ScriptToAsmStr(CScript() << -0x8000000000000000));
+    BOOST_CHECK_EQUAL(
+        "-9223372036854775807",
+        ScriptToAsmStr(CScript() << ParseHex("ffffffffffffffff")));
+    BOOST_CHECK_EQUAL(
+        "ffffffffffffff7f00",
+        ScriptToAsmStr(CScript() << ParseHex("ffffffffffffff7f00")));
+    BOOST_CHECK_EQUAL(
+        "ffffffffffffffff00",
+        ScriptToAsmStr(CScript() << ParseHex("ffffffffffffffff00")));
 }
 
 static CScript ScriptFromHex(const char *hex) {

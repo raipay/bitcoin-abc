@@ -6,13 +6,14 @@ import { decodeCashAddress } from 'ecashaddrjs';
 import WebSocket from 'isomorphic-ws';
 import * as ws from 'ws';
 import * as proto from '../proto/chronik';
-import { FailoverProxy, appendWsUrls } from './failoverProxy';
+import { appendWsUrls, FailoverProxy } from './failoverProxy';
 import { fromHex, toHex, toHexRev } from './hex';
 import {
     isValidWsSubscription,
     verifyLokadId,
     verifyPluginSubscription,
     verifyTokenId,
+    verifyTxid,
 } from './validation';
 
 type MessageEvent = ws.MessageEvent | { data: Blob };
@@ -761,6 +762,7 @@ export class WsEndpoint {
         this.subs = {
             scripts: [],
             tokens: [],
+            txids: [],
             lokadIds: [],
             plugins: [],
             blocks: false,
@@ -980,6 +982,40 @@ export class WsEndpoint {
         }
     }
 
+    /** Subscribe to a txid */
+    public subscribeToTxid(txid: string) {
+        verifyTxid(txid);
+
+        // Update ws.subs to include this txid
+        this.subs.txids.push(txid);
+
+        if (this.ws?.readyState === WebSocket.OPEN) {
+            // Send subscribe msg to chronik server
+            this._subUnsubTxid(false, txid);
+        }
+    }
+
+    /** Unsubscribe from the given txid */
+    public unsubscribeFromTxid(txid: string) {
+        // Find the requested unsub txid and remove it
+        const unsubIndex = this.subs.txids.findIndex(
+            thisTxid => thisTxid === txid,
+        );
+        if (unsubIndex === -1) {
+            // If we cannot find this subscription in this.subs.txids, throw an error
+            // We do not want an app developer thinking they have unsubscribed from something if no action happened
+            throw new Error(`No existing sub to txid "${txid}"`);
+        }
+
+        // Remove the requested txid subscription from this.subs.txids
+        this.subs.txids.splice(unsubIndex, 1);
+
+        if (this.ws?.readyState === WebSocket.OPEN) {
+            // Send unsubscribe msg to chronik server
+            this._subUnsubTxid(true, txid);
+        }
+    }
+
     /**
      * Close the WebSocket connection and prevent any future reconnection
      * attempts.
@@ -1051,6 +1087,21 @@ export class WsEndpoint {
         this.ws.send(encodedSubscription);
     }
 
+    private _subUnsubTxid(isUnsub: boolean, txid: string) {
+        const encodedSubscription = proto.WsSub.encode({
+            isUnsub,
+            txid: {
+                txid: txid,
+            },
+        }).finish();
+
+        if (this.ws === undefined) {
+            throw new Error('Invalid state; _ws is undefined');
+        }
+
+        this.ws.send(encodedSubscription);
+    }
+
     private _subUnsubPlugin(isUnsub: boolean, plugin: WsSubPluginClient) {
         const encodedSubscription = proto.WsSub.encode({
             isUnsub,
@@ -1097,11 +1148,18 @@ export class WsEndpoint {
             }
             this.onMessage(msgBlock);
         } else if (typeof msg.tx !== 'undefined') {
-            this.onMessage({
+            const txMsg: MsgTxClient = {
                 type: 'Tx',
                 msgType: convertToTxMsgType(msg.tx.msgType),
                 txid: toHexRev(msg.tx.txid),
-            });
+            };
+            if (typeof msg.tx.finalizationReason !== 'undefined') {
+                txMsg.finalizationReasonType =
+                    convertToTxFinalizationReasonType(
+                        msg.tx.finalizationReason.finalizationType,
+                    );
+            }
+            this.onMessage(txMsg);
         } else {
             console.log('Silently ignored unknown Chronik message:', msg);
         }
@@ -1384,8 +1442,12 @@ function convertToTokenType(tokenType: proto.TokenType): TokenType {
             number: tokenType.slp,
         };
     }
-    // Should never happen
-    throw new Error('chronik did not return a token protocol for this token');
+    // In case the Chronik instance supports a protocol this client doesn't
+    return {
+        protocol: 'UNKNOWN',
+        type: 'UNKNOWN',
+        number: 0,
+    };
 }
 
 function convertToSlpTokenType(msgType: proto.SlpTokenType): SlpTokenType_Type {
@@ -1479,6 +1541,27 @@ function convertToTxMsgType(msgType: proto.TxMsgType): TxMsgType {
     return 'UNRECOGNIZED';
 }
 
+function isTxMsgType(msgType: any): msgType is TxMsgType {
+    return TX_MSG_TYPES.includes(msgType);
+}
+
+// Add converter and type guards for tx finalization reason
+function convertToTxFinalizationReasonType(
+    reason: proto.TxFinalizationReasonType,
+): TxFinalizationReasonType {
+    const reasonStr = proto.txFinalizationReasonTypeToJSON(reason);
+    if (isTxFinalizationReasonType(reasonStr)) {
+        return reasonStr;
+    }
+    return 'UNRECOGNIZED';
+}
+
+function isTxFinalizationReasonType(
+    reason: any,
+): reason is TxFinalizationReasonType {
+    return TX_FINALIZATION_REASON_TYPES.includes(reason);
+}
+
 function convertToTokenInfo(tokenInfo: proto.TokenInfo): TokenInfo {
     if (typeof tokenInfo.tokenType === 'undefined') {
         // Not expected to ever happen
@@ -1542,10 +1625,6 @@ function convertToGenesisInfo(
     }
 
     return returnedGenesisInfo;
-}
-
-function isTxMsgType(msgType: any): msgType is TxMsgType {
-    return TX_MSG_TYPES.includes(msgType);
 }
 
 function convertToCoinbaseData(coinbaseData: proto.CoinbaseData): CoinbaseData {
@@ -1768,7 +1847,7 @@ export interface TokenEntry {
 /**
  * SLP/ALP token type
  */
-export type TokenType = SlpTokenType | AlpTokenType;
+export type TokenType = SlpTokenType | AlpTokenType | UnknownTokenType;
 
 export interface SlpTokenType {
     protocol: 'SLP';
@@ -1780,6 +1859,12 @@ export interface AlpTokenType {
     protocol: 'ALP';
     type: AlpTokenType_Type;
     number: number;
+}
+
+export interface UnknownTokenType {
+    protocol: 'UNKNOWN';
+    type: 'UNKNOWN';
+    number: 0;
 }
 
 /** Possible ALP token types returned by chronik */
@@ -2022,6 +2107,8 @@ export interface MsgTxClient {
     msgType: TxMsgType;
     /** Txid of the tx (human-readable big-endian) */
     txid: string;
+    /** If the tx is finalized, why it was finalized */
+    finalizationReasonType?: TxFinalizationReasonType;
 }
 
 /** Tx message types that can come from chronik */
@@ -2030,6 +2117,7 @@ export type TxMsgType =
     | 'TX_REMOVED_FROM_MEMPOOL'
     | 'TX_CONFIRMED'
     | 'TX_FINALIZED'
+    | 'TX_INVALIDATED'
     | 'UNRECOGNIZED';
 
 const TX_MSG_TYPES: TxMsgType[] = [
@@ -2037,6 +2125,19 @@ const TX_MSG_TYPES: TxMsgType[] = [
     'TX_REMOVED_FROM_MEMPOOL',
     'TX_CONFIRMED',
     'TX_FINALIZED',
+    'TX_INVALIDATED',
+    'UNRECOGNIZED',
+];
+
+/** Reasons a tx can be finalized by Avalanche */
+export type TxFinalizationReasonType =
+    | 'TX_FINALIZATION_REASON_POST_CONSENSUS'
+    | 'TX_FINALIZATION_REASON_PRE_CONSENSUS'
+    | 'UNRECOGNIZED';
+
+const TX_FINALIZATION_REASON_TYPES: TxFinalizationReasonType[] = [
+    'TX_FINALIZATION_REASON_POST_CONSENSUS',
+    'TX_FINALIZATION_REASON_PRE_CONSENSUS',
     'UNRECOGNIZED',
 ];
 
@@ -2143,6 +2244,8 @@ interface WsSubscriptions {
     tokens: string[];
     /** Subscriptions to lokadIds */
     lokadIds: string[];
+    /** Subscriptions to txids */
+    txids: string[];
     /** Subscriptions to plugins */
     plugins: WsSubPluginClient[];
     /** Subscription to blocks */

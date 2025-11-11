@@ -68,9 +68,11 @@ void AppTests::appTests() {
         // framework when it tries to look up unimplemented cocoa functions,
         // and fails to handle returned nulls
         // (https://bugreports.qt.io/browse/QTBUG-49686).
-        QWARN("Skipping AppTests on mac build with 'minimal' platform set due "
-              "to Qt bugs. To run AppTests, invoke with 'QT_QPA_PLATFORM=cocoa "
-              "test_bitcoin-qt' on mac, or else use a linux or windows build.");
+        qWarning()
+            << "Skipping AppTests on mac build with 'minimal' platform set due "
+               "to Qt bugs. To run AppTests, invoke with "
+               "'QT_QPA_PLATFORM=cocoa test_bitcoin-qt' on mac, or else use a "
+               "linux or windows build.";
         return;
     }
 #endif
@@ -90,7 +92,7 @@ void AppTests::appTests() {
     QScopedPointer<const NetworkStyle> style(
         NetworkStyle::instantiate(Params().GetChainType()));
     m_app.setupPlatformStyle();
-    m_app.createWindow(&config, style.data());
+    m_app.createWindow(config, style.data());
     connect(&m_app, &BitcoinApplication::windowShown, this,
             &AppTests::guiTests);
     expectCallback("guiTests");
@@ -101,7 +103,7 @@ void AppTests::appTests() {
     HTTPRPCRequestProcessor httpRPCRequestProcessor(config, rpcServer, context);
     m_app.requestInitialize(config, rpcServer, httpRPCRequestProcessor);
     m_app.exec();
-    m_app.requestShutdown(config);
+    m_app.requestShutdown();
     m_app.exec();
 
     // Reset global state to avoid interfering with later tests.
@@ -131,6 +133,6 @@ AppTests::HandleCallback::~HandleCallback() {
     assert(it != callbacks.end());
     callbacks.erase(it);
     if (callbacks.empty()) {
-        m_app_tests.m_app.quit();
+        m_app_tests.m_app.exit(0);
     }
 }

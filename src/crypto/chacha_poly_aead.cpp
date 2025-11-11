@@ -31,8 +31,10 @@ ChaCha20Poly1305AEAD::ChaCha20Poly1305AEAD(const uint8_t *K_1, size_t K_1_len,
                                            const uint8_t *K_2, size_t K_2_len) {
     assert(K_1_len == CHACHA20_POLY1305_AEAD_KEY_LEN);
     assert(K_2_len == CHACHA20_POLY1305_AEAD_KEY_LEN);
-    m_chacha_main.SetKey(K_1, CHACHA20_POLY1305_AEAD_KEY_LEN);
-    m_chacha_header.SetKey(K_2, CHACHA20_POLY1305_AEAD_KEY_LEN);
+
+    static_assert(CHACHA20_POLY1305_AEAD_KEY_LEN == 32);
+    m_chacha_header.SetKey32(K_1);
+    m_chacha_main.SetKey32(K_2);
 
     // set the cached sequence number to uint64 max which hints for an unset
     // cache. we can't hit uint64 max since the rekey rule (which resets the
@@ -60,12 +62,11 @@ bool ChaCha20Poly1305AEAD::Crypt(
 
     uint8_t expected_tag[POLY1305_TAGLEN], poly_key[POLY1305_KEYLEN];
     memset(poly_key, 0, sizeof(poly_key));
-    m_chacha_main.SetIV(seqnr_payload);
 
     // block counter 0 for the poly1305 key
     // use lower 32bytes for the poly1305 key
     // (throws away 32 unused bytes (upper 32) from this ChaCha20 round)
-    m_chacha_main.Seek(0);
+    m_chacha_main.Seek64({0, seqnr_payload}, 0);
     m_chacha_main.Crypt(poly_key, poly_key, sizeof(poly_key));
 
     // if decrypting, verify the tag prior to decryption
@@ -89,8 +90,7 @@ bool ChaCha20Poly1305AEAD::Crypt(
     // number is not yet the cache
     if (m_cached_aad_seqnr != seqnr_aad) {
         m_cached_aad_seqnr = seqnr_aad;
-        m_chacha_header.SetIV(seqnr_aad);
-        m_chacha_header.Seek(0);
+        m_chacha_header.Seek64({0, seqnr_aad}, 0);
         m_chacha_header.Keystream(m_aad_keystream_buffer,
                                   CHACHA20_ROUND_OUTPUT);
     }
@@ -101,7 +101,7 @@ bool ChaCha20Poly1305AEAD::Crypt(
     dest[2] = src[2] ^ m_aad_keystream_buffer[aad_pos + 2];
 
     // Set the playload ChaCha instance block counter to 1 and crypt the payload
-    m_chacha_main.Seek(1);
+    m_chacha_main.Seek64({0, seqnr_payload}, 1);
     m_chacha_main.Crypt(src + CHACHA20_POLY1305_AEAD_AAD_LEN,
                         dest + CHACHA20_POLY1305_AEAD_AAD_LEN,
                         src_len - CHACHA20_POLY1305_AEAD_AAD_LEN);
@@ -129,9 +129,7 @@ bool ChaCha20Poly1305AEAD::GetLength(uint32_t *len24_out, uint64_t seqnr_aad,
         // aad sequence number
         m_cached_aad_seqnr = seqnr_aad;
         // use LE for the nonce
-        m_chacha_header.SetIV(seqnr_aad);
-        // block counter 0
-        m_chacha_header.Seek(0);
+        m_chacha_header.Seek64({0, seqnr_aad}, 0);
         // write keystream to the cache
         m_chacha_header.Keystream(m_aad_keystream_buffer,
                                   CHACHA20_ROUND_OUTPUT);

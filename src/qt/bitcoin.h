@@ -74,7 +74,7 @@ public:
     /// Initialize prune setting
     void InitializePruneSetting(bool prune);
     /// Create main window
-    void createWindow(const Config *, const NetworkStyle *networkStyle);
+    void createWindow(const Config &, const NetworkStyle *networkStyle);
     /// Create splash screen
     void createSplashScreen(const NetworkStyle *networkStyle);
     /// Basic initialization, before starting initialization/shutdown thread.
@@ -84,11 +84,6 @@ public:
     /// Request core initialization
     void requestInitialize(Config &config, RPCServer &rpcServer,
                            HTTPRPCRequestProcessor &httpRPCRequestProcessor);
-    /// Request core shutdown
-    void requestShutdown(Config &config);
-
-    /// Get process return value
-    int getReturnValue() const { return returnValue; }
 
     /// Get window identifier of QMainWindow (BitcoinGUI)
     WId getMainWinId() const;
@@ -105,7 +100,8 @@ public:
 public Q_SLOTS:
     void initializeResult(bool success,
                           interfaces::BlockAndHeaderTipInfo tip_info);
-    void shutdownResult();
+    /// Request core shutdown
+    void requestShutdown();
     /// Handle runaway exceptions. Shows a message box with the problem and
     /// quits the program.
     void handleRunawayException(const QString &message);
@@ -117,6 +113,9 @@ Q_SIGNALS:
     void splashFinished();
     void windowShown(BitcoinGUI *window);
 
+protected:
+    bool event(QEvent *e) override;
+
 private:
     QThread *coreThread;
     OptionsModel *optionsModel;
@@ -127,7 +126,6 @@ private:
     PaymentServer *paymentServer{nullptr};
     WalletController *m_wallet_controller{nullptr};
 #endif
-    int returnValue;
     const PlatformStyle *platformStyle;
     std::unique_ptr<QWidget> shutdownWindow;
     SplashScreen *m_splash = nullptr;

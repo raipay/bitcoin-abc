@@ -7,7 +7,7 @@
 # 2) Node image for prod deployment of ecash-lib
 
 # 1) rust image for ecash-lib
-FROM rust:1.76.0 AS wasmbuilder
+FROM rust:1.87.0 AS wasmbuilder
 
 RUN apt-get update \
   && apt-get install clang binaryen -y \
@@ -31,6 +31,14 @@ COPY web/explorer/ .
 WORKDIR /app/modules/bitcoinsuite-chronik-client
 COPY modules/bitcoinsuite-chronik-client/ .
 
+# avalanche-lib-wasm must be in place to to run ./build-wasm as it is a workspace member
+WORKDIR /app/modules/avalanche-lib-wasm
+COPY modules/avalanche-lib-wasm/ .
+
+# proof-manager-cli must be in place to to run ./build-wasm as it is a workspace member
+WORKDIR /app/apps/proof-manager-cli
+COPY apps/proof-manager-cli/ .
+
 # Copy secp256k1 to same directory structure as monorepo
 WORKDIR /app/src/secp256k1
 COPY src/secp256k1/ .
@@ -50,7 +58,7 @@ RUN CC=clang ./build-wasm.sh
 
 # Node image for prod deployment of ecash-herald
 
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # Copy static assets from wasmbuilder stage (ecash-lib-wasm and ecash-lib, with wasm built in place)
 WORKDIR /app/modules
@@ -70,11 +78,6 @@ COPY modules/chronik-client/ .
 RUN npm ci
 RUN npm run build
 
-# ecash-script
-WORKDIR /app/modules/ecash-script
-COPY modules/ecash-script/ .
-RUN npm ci
-
 # b58-ts (required for ecash-lib)
 WORKDIR /app/modules/b58-ts
 COPY modules/b58-ts .
@@ -82,6 +85,12 @@ RUN npm ci
 
 # ecash-lib
 WORKDIR /app/modules/ecash-lib
+RUN npm ci
+RUN npm run build
+
+# ecash-wallet, a dev dep of ecash-agora
+WORKDIR /app/modules/ecash-wallet
+COPY modules/ecash-wallet/ .
 RUN npm ci
 RUN npm run build
 

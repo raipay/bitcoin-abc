@@ -18,6 +18,7 @@ Invalid tx cases not covered here can be found by running:
       <(grep -IEho "bad-txns[a-zA-Z-]+" test/functional/data/invalid_txs.py | sort -u)
 
 """
+
 import abc
 from typing import Optional
 
@@ -60,7 +61,7 @@ class BadTxTemplate:
     def __init__(self, *, spend_tx=None, spend_block=None):
         self.spend_tx = spend_block.vtx[0] if spend_block else spend_tx
         self.spend_avail = sum(o.nValue for o in self.spend_tx.vout)
-        self.valid_txin = CTxIn(COutPoint(self.spend_tx.sha256, 0), b"", 0xFFFFFFFF)
+        self.valid_txin = CTxIn(COutPoint(self.spend_tx.txid_int, 0), b"", 0xFFFFFFFF)
 
     @abc.abstractmethod
     def get_tx(self, *args, **kwargs):
@@ -75,7 +76,6 @@ class OutputMissing(BadTxTemplate):
     def get_tx(self):
         tx = CTransaction()
         tx.vin.append(self.valid_txin)
-        tx.calc_sha256()
         return tx
 
 
@@ -86,7 +86,6 @@ class InputMissing(BadTxTemplate):
     def get_tx(self):
         tx = CTransaction()
         tx.vout.append(CTxOut(0, sc.CScript([sc.OP_TRUE] * 100)))
-        tx.calc_sha256()
         return tx
 
 
@@ -99,7 +98,6 @@ class SizeTooSmall(BadTxTemplate):
         tx = CTransaction()
         tx.vin.append(self.valid_txin)
         tx.vout.append(CTxOut(0, sc.CScript([sc.OP_TRUE])))
-        tx.calc_sha256()
         return tx
 
 
@@ -115,9 +113,10 @@ class BadInputOutpointIndex(BadTxTemplate):
         bad_idx = num_indices + 100
 
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(self.spend_tx.sha256, bad_idx), b"", 0xFFFFFFFF))
+        tx.vin.append(
+            CTxIn(COutPoint(self.spend_tx.txid_int, bad_idx), b"", 0xFFFFFFFF)
+        )
         tx.vout.append(CTxOut(0, basic_p2sh))
-        tx.calc_sha256()
         return tx
 
 
@@ -130,7 +129,6 @@ class DuplicateInput(BadTxTemplate):
         tx.vin.append(self.valid_txin)
         tx.vin.append(self.valid_txin)
         tx.vout.append(CTxOut(1, basic_p2sh))
-        tx.calc_sha256()
         return tx
 
 
@@ -143,7 +141,6 @@ class PrevoutNullInput(BadTxTemplate):
         tx.vin.append(self.valid_txin)
         tx.vin.append(CTxIn(COutPoint(txid=0, n=0xFFFFFFFF)))
         tx.vout.append(CTxOut(1, basic_p2sh))
-        tx.calc_sha256()
         return tx
 
 
@@ -154,10 +151,9 @@ class NonexistentInput(BadTxTemplate):
 
     def get_tx(self):
         tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(self.spend_tx.sha256 + 1, 0), b"", 0xFFFFFFFF))
+        tx.vin.append(CTxIn(COutPoint(self.spend_tx.txid_int + 1, 0), b"", 0xFFFFFFFF))
         tx.vin.append(self.valid_txin)
         tx.vout.append(CTxOut(1, basic_p2sh))
-        tx.calc_sha256()
         return tx
 
 
@@ -194,7 +190,6 @@ class CreateSumTooLarge(BadTxTemplate):
     def get_tx(self):
         tx = create_tx_with_script(self.spend_tx, 0, amount=MAX_MONEY)
         tx.vout = [tx.vout[0]] * 2
-        tx.calc_sha256()
         return tx
 
 
@@ -219,7 +214,6 @@ def getDisabledOpcodeTemplate(opcode):
         tx.vin.append(vin)
         tx.vout.append(CTxOut(1, basic_p2sh))
         pad_tx(tx)
-        tx.calc_sha256()
         return tx
 
     return type(

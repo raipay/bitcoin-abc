@@ -39,7 +39,7 @@ ALLOWED_EXECUTABLE_SHEBANG = {
 
 # JS files are treated as common files rather than source files, as they frequently
 # use mixedCase in their names.
-ALLOWED_FILENAME_EXCEPTION = "web/e.cash/pages/blog/[slug].js"
+ALLOWED_FILENAME_EXCEPTION = "web/e.cash/app/blog/[slug]/page.tsx"
 ALLOWED_SOURCE_FILENAME_EXCEPTION_REGEXPS = (
     "^src/(secp256k1/|test/fuzz/FuzzedDataProvider.h)",
     "^cmake/utils/EventCheckVersion.cpp$",

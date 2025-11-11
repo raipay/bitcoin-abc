@@ -2,7 +2,6 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the real time targeting policy."""
-import time
 
 from test_framework.avatools import (
     assert_response,
@@ -17,6 +16,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 
 QUORUM_NODE_COUNT = 16
+THE_FUTURE = 2100000000
 
 
 class AvalancheRTTTest(BitcoinTestFramework):
@@ -32,18 +32,23 @@ class AvalancheRTTTest(BitcoinTestFramework):
                 "-avacooldown=0",
                 "-avaminquorumstake=0",
                 "-avaminavaproofsnodecount=0",
+                "-persistavapeers=0",
+                f"-shibusawaactivationtime={THE_FUTURE}",
             ],
-            [],
+            [
+                f"-shibusawaactivationtime={THE_FUTURE}",
+            ],
         ]
 
-    def run_test(self):
+    def check_rtt_policy(self, now, shibusawa):
         node = self.nodes[0]
 
         def set_mocktimes(t):
             [n.setmocktime(t) for n in self.nodes]
 
-        now = int(time.time())
         set_mocktimes(now)
+
+        self.generate(node, 6)
 
         node.add_p2p_connection(P2PInterface())
         self.nodes[1].add_p2p_connection(P2PInterface())
@@ -90,35 +95,36 @@ class AvalancheRTTTest(BitcoinTestFramework):
             block.solve()
             assert_equal(node.submitblock(ToHex(block)), None)
 
-            expected_tip = block.hash if expect_initially_accepted else tip
+            expected_tip = block.hash_hex if expect_initially_accepted else tip
             assert_equal(node.getbestblockhash(), expected_tip)
 
             # Poll and check the node votes what we expect
-            poll_node.send_poll([block.sha256])
+            poll_node.send_poll([block.hash_int])
             expected_vote = (
                 AvalancheVoteError.ACCEPTED
                 if expect_initially_accepted
                 else AvalancheVoteError.PARKED
             )
             assert_response(
-                poll_node, avakey, [AvalancheVote(expected_vote, block.sha256)]
+                poll_node, avakey, [AvalancheVote(expected_vote, block.hash_int)]
             )
 
             # Vote yes on this block until the node accepts it
-            self.wait_until(lambda: has_accepted_tip(block.hash))
-            assert_equal(node.getbestblockhash(), block.hash)
+            self.wait_until(lambda: has_accepted_tip(block.hash_hex))
+            assert_equal(node.getbestblockhash(), block.hash_hex)
 
-            poll_node.send_poll([block.sha256])
+            poll_node.send_poll([block.hash_int])
             assert_response(
                 poll_node,
                 avakey,
-                [AvalancheVote(AvalancheVoteError.ACCEPTED, block.sha256)],
+                [AvalancheVote(AvalancheVoteError.ACCEPTED, block.hash_int)],
             )
 
         self.log.info("Check the node rejects blocks that doesn't match RTT")
         height = node.getblockcount()
-        # First block is accepted because RTT uses the 2 blocks window
-        check_and_accept_new_block(node.getbestblockhash(), True)
+        # First block is accepted because RTT uses the 2 blocks window before
+        # Shibusawa upgrade
+        check_and_accept_new_block(node.getbestblockhash(), not shibusawa)
         # Create another block with the regtest target, not accounting for RTT.
         # This time it gets rejected.
         check_and_accept_new_block(node.getbestblockhash(), False)
@@ -149,6 +155,15 @@ class AvalancheRTTTest(BitcoinTestFramework):
         self.start_node(0, extra_args=self.extra_args[0] + [f"-mocktime={now}"])
         self.connect_nodes(0, 1)
         self.sync_blocks()
+
+    def run_test(self):
+        now = THE_FUTURE - 100000
+        self.check_rtt_policy(now, False)
+
+        now = THE_FUTURE
+        self.restart_node(0, extra_args=self.extra_args[0] + [f"-mocktime={now}"])
+        self.connect_nodes(0, 1)
+        self.check_rtt_policy(now, True)
 
 
 if __name__ == "__main__":

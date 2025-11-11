@@ -53,10 +53,10 @@ static const struct {
 };
 
 struct CCoin {
-    uint32_t nHeight;
+    uint32_t nHeight{0};
     CTxOut out;
 
-    CCoin() : nHeight(0) {}
+    CCoin() = default;
     explicit CCoin(Coin in)
         : nHeight(in.GetHeight()), out(std::move(in.GetTxOut())) {}
 
@@ -259,7 +259,7 @@ static bool rest_headers(Config &config, const std::any &context,
         case RetFormat::JSON: {
             UniValue jsonHeaders(UniValue::VARR);
             for (const CBlockIndex *pindex : headers) {
-                jsonHeaders.push_back(blockheaderToJSON(tip, pindex));
+                jsonHeaders.push_back(blockheaderToJSON(*tip, *pindex));
             }
             std::string strJSON = jsonHeaders.write() + "\n";
             req->WriteHeader("Content-Type", "application/json");
@@ -306,8 +306,7 @@ static bool rest_block(const Config &config, const std::any &context,
         if (!pblockindex) {
             return RESTERR(req, HTTP_NOT_FOUND, hashStr + " not found");
         }
-
-        if (chainman.m_blockman.IsBlockPruned(pblockindex)) {
+        if (chainman.m_blockman.IsBlockPruned(*pblockindex)) {
             return RESTERR(req, HTTP_NOT_FOUND,
                            hashStr + " not available (pruned data)");
         }
@@ -338,8 +337,8 @@ static bool rest_block(const Config &config, const std::any &context,
         }
 
         case RetFormat::JSON: {
-            UniValue objBlock = blockToJSON(chainman.m_blockman, block, tip,
-                                            pblockindex, showTxDetails);
+            UniValue objBlock = blockToJSON(chainman.m_blockman, block, *tip,
+                                            *pblockindex, showTxDetails);
             std::string strJSON = objBlock.write() + "\n";
             req->WriteHeader("Content-Type", "application/json");
             req->WriteReply(HTTP_OK, strJSON);

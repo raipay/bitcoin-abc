@@ -293,10 +293,18 @@ bool BlockManager::LoadBlockIndex(
     std::sort(vSortedByHeight.begin(), vSortedByHeight.end(),
               CBlockIndexHeightOnlyComparator());
 
+    CBlockIndex *previous_index{nullptr};
     for (CBlockIndex *pindex : vSortedByHeight) {
         if (ShutdownRequested()) {
             return false;
         }
+        if (previous_index && pindex->nHeight > previous_index->nHeight + 1) {
+            return error(
+                "%s: block index is non-contiguous, index of height %d missing",
+                __func__, previous_index->nHeight + 1);
+        }
+        previous_index = pindex;
+
         pindex->nChainWork = (pindex->pprev ? pindex->pprev->nChainWork : 0) +
                              GetBlockProof(*pindex);
         pindex->nTimeMax =
@@ -461,10 +469,9 @@ BlockManager::GetLastCheckpoint(const CCheckpointData &data) {
     return nullptr;
 }
 
-bool BlockManager::IsBlockPruned(const CBlockIndex *pblockindex) {
+bool BlockManager::IsBlockPruned(const CBlockIndex &block) const {
     AssertLockHeld(::cs_main);
-    return (m_have_pruned && !pblockindex->nStatus.hasData() &&
-            pblockindex->nTx > 0);
+    return (m_have_pruned && !block.nStatus.hasData() && block.nTx > 0);
 }
 
 const CBlockIndex *
@@ -535,7 +542,7 @@ void BlockManager::CleanupBlockRevFiles() const {
     // removing block files.
     int contiguousCounter = 0;
     for (const auto &item : mapBlockFiles) {
-        if (atoi(item.first) == contiguousCounter) {
+        if (LocaleIndependentAtoi<int>(item.first) == contiguousCounter) {
             contiguousCounter++;
             continue;
         }
@@ -1176,9 +1183,8 @@ void ImportBlocks(ChainstateManager &chainman,
              WITH_LOCK(::cs_main, return chainman.GetAll())) {
             BlockValidationState state;
             if (!chainstate->ActivateBestChain(state, nullptr, avalanche)) {
-                LogPrintf("Failed to connect best block (%s)\n",
-                          state.ToString());
-                StartShutdown();
+                AbortNode(strprintf("Failed to connect best block (%s)",
+                                    state.ToString()));
                 return;
             }
         }

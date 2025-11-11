@@ -4,8 +4,14 @@
 """
 Test Chronik's electrum interface
 """
+
+import json
+
+import websocket
 from test_framework.address import ADDRESS_ECREG_UNSPENDABLE
+from test_framework.blocktools import GENESIS_BLOCK_HASH
 from test_framework.test_framework import BitcoinTestFramework
+from test_framework.test_node import ErrorMatch
 from test_framework.util import assert_equal, chronikelectrum_port, get_cli_version
 
 ELECTRUM_PROTOCOL_VERSION = "1.4"
@@ -14,13 +20,27 @@ ELECTRUM_PROTOCOL_VERSION = "1.4"
 class ChronikElectrumBasic(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
-        self.num_nodes = 1
+        self.num_nodes = 3
+        self.chronik_url = "localhost"
+        self.chronik_port = [chronikelectrum_port(i) for i in range(self.num_nodes)]
         self.extra_args = [
             [
                 "-chronik",
-                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}",
-                "-chronikscripthashindex=1",
-            ]
+                f"-chronikelectrumbind=127.0.0.1:{self.chronik_port[0]}:t",
+                f"-chronikelectrumurl={self.chronik_url}",
+                # Validate the peers as fast as possible for the test
+                "-chronikelectrumpeersvalidationinterval=1",
+            ],
+            [
+                "-chronik",
+                f"-chronikelectrumbind=127.0.0.1:{self.chronik_port[1]}:t",
+                "-chronikelectrumpeersvalidationinterval=1",
+            ],
+            [
+                "-chronik",
+                f"-chronikelectrumbind=127.0.0.1:{self.chronik_port[2]}:w",
+                f"-chronikelectrumurl={self.chronik_url}",
+            ],
         ]
 
     def skip_test_if_missing_module(self):
@@ -33,6 +53,10 @@ class ChronikElectrumBasic(BitcoinTestFramework):
         self.test_donation_address()
         self.test_ping()
         self.test_server_version()
+        self.test_server_peers()
+        self.test_server_features()
+        self.test_server_banner()
+        self.test_ws()
         # Run this last as it invalidates self.client
         self.test_init_errors()
 
@@ -123,20 +147,281 @@ class ChronikElectrumBasic(BitcoinTestFramework):
             {"code": 1, "message": "Unsupported protocol version"},
         )
 
-    def test_init_errors(self):
-        self.node.stop_node()
-        self.node.assert_start_raises_init_error(
-            ["-chronik", f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}"],
-            "Error: The -chronikelectrumbind option requires -chronikscripthashindex to be true.",
+    def test_server_peers(self):
+        self.log.info("Testing the server.peers endpoints")
+
+        # For now peers.subscribe always returns an empty array. This is so
+        # while peer validation is not implemented. After this is completed the
+        # below calls to subscribe can be uncommented.
+        assert_equal(
+            self.client.server.peers.subscribe().result,
+            [],
         )
+
+        features = {
+            "genesis_hash": GENESIS_BLOCK_HASH,
+            "hash_function": "sha256",
+            "server_version": "Test framework v1.2.3",
+            "protocol_min": "1.4",
+            "protocol_max": "1.4.5",
+            "pruning": 1000,
+            "hosts": {
+                "localhost": {
+                    "tcp_port": self.chronik_port[0],
+                },
+            },
+            "dsproof": False,
+        }
+
+        assert_equal(
+            self.client.server.add_peer(features).result,
+            True,
+        )
+
+        self.wait_until(
+            lambda: self.client.server.peers.subscribe().result
+            == [
+                [
+                    "127.0.0.1",
+                    "localhost",
+                    [
+                        "v1.4.5",
+                        "p1000",
+                        f"t{self.chronik_port[0]}",
+                    ],
+                ],
+            ],
+        )
+
+        # Re-submitting is forbidden
+        assert_equal(
+            self.client.server.add_peer(features).result,
+            False,
+        )
+
+        # All optional fields are absent but the tcp port,
+        # use an ip address as the host
+        features = {
+            "genesis_hash": GENESIS_BLOCK_HASH,
+            "hash_function": "sha256",
+            "server_version": "Test framework v1.2.3",
+            "protocol_min": "1.4",
+            "protocol_max": "1.4.5",
+            "hosts": {
+                "127.0.0.1": {
+                    "tcp_port": self.chronik_port[1],
+                },
+            },
+            "dsproof": False,
+        }
+        assert_equal(
+            self.client.server.add_peer(features).result,
+            True,
+        )
+        self.wait_until(
+            lambda: self.client.server.peers.subscribe().result
+            == [
+                [
+                    "127.0.0.1",
+                    "localhost",
+                    [
+                        "v1.4.5",
+                        "p1000",
+                        f"t{self.chronik_port[0]}",
+                    ],
+                ],
+                [
+                    "127.0.0.1",
+                    "127.0.0.1",
+                    [
+                        "v1.4.5",
+                        f"t{self.chronik_port[1]}",
+                    ],
+                ],
+            ],
+        )
+
+        # No host
+        features = {
+            "genesis_hash": GENESIS_BLOCK_HASH,
+            "hash_function": "sha256",
+            "server_version": "Test framework v1.2.3",
+            "protocol_min": "1.4",
+            "protocol_max": "1.4.5",
+            "pruning": 1000,
+            "dsproof": False,
+        }
+        assert_equal(
+            self.client.server.add_peer(features).result,
+            False,
+        )
+
+        # Missing protocol max version
+        features = {
+            "genesis_hash": GENESIS_BLOCK_HASH,
+            "hash_function": "sha256",
+            "server_version": "Test framework v1.2.3",
+            "protocol_min": "1.4",
+            "hosts": {
+                "0.0.0.1": {},
+            },
+            "dsproof": False,
+        }
+        assert_equal(
+            self.client.server.add_peer(features).result,
+            False,
+        )
+
+        # Check we can disable peer validation
+        self.stop_node(1)
+        with self.nodes[1].assert_debug_log(
+            [
+                "Electrum peers validation is disabled, server.peers.subscribe will not share any peer"
+            ]
+        ):
+            self.start_node(
+                1,
+                extra_args=self.extra_args[1]
+                + ["-chronikelectrumpeersvalidationinterval=0"],
+            )
+
+    def test_server_features(self):
+        version = f"{self.config['environment']['PACKAGE_NAME']} {get_cli_version(self, self.node)}"
+        assert_equal(
+            self.client.server.features().result,
+            {
+                "genesis_hash": GENESIS_BLOCK_HASH,
+                "hash_function": "sha256",
+                "server_version": version,
+                "protocol_min": "1.4",
+                "protocol_max": "1.4.5",
+                "pruning": None,
+                "hosts": {
+                    self.chronik_url: {
+                        "tcp_port": chronikelectrum_port(0),
+                    },
+                },
+                "dsproof": False,
+            },
+        )
+
+    def test_server_banner(self):
+        version = f"{self.config['environment']['PACKAGE_NAME']} {get_cli_version(self, self.node)}"
+        assert_equal(
+            self.client.server.banner().result,
+            f"Connected to {version} server",
+        )
+
+    def test_ws(self):
+        self.log.info("Test the websocket transport")
+
+        features_request = {
+            "jsonrpc": "2.0",
+            "method": "server.features",
+            "params": [],
+            "id": 42,
+        }
+
+        ws = websocket.WebSocket()
+        ws.connect(f"ws://127.0.0.1:{self.chronik_port[2]}", timeout=60)
+        ws.send(json.dumps(features_request))
+
+        features_reponse = json.loads(ws.recv())
+
+        assert_equal(features_reponse["id"], 42)
+        version = f"{self.config['environment']['PACKAGE_NAME']} {get_cli_version(self, self.node)}"
+        assert_equal(
+            features_reponse["result"],
+            {
+                "genesis_hash": GENESIS_BLOCK_HASH,
+                "hash_function": "sha256",
+                "server_version": version,
+                "protocol_min": "1.4",
+                "protocol_max": "1.4.5",
+                "pruning": None,
+                "hosts": {
+                    self.chronik_url: {
+                        "ws_port": self.chronik_port[2],
+                    },
+                },
+                "dsproof": False,
+            },
+        )
+
+        ws.close()
+
+    def test_init_errors(self):
         self.node.stop_node()
         self.node.assert_start_raises_init_error(
             [
                 "-chronik",
-                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}",
+                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}:t",
                 "-chronikscripthashindex=0",
             ],
             "Error: The -chronikelectrumbind option requires -chronikscripthashindex to be true.",
+        )
+
+        # Chronik Electrum default to TLS if the protocol is not set
+        self.node.assert_start_raises_init_error(
+            [
+                "-chronik",
+                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}",
+            ],
+            "Error: Chronik Electrum TLS configuration requires a certificate chain file (see -chronikelectrumcert)",
+        )
+        # Same result when the 's' protocol is explicitly set
+        self.node.assert_start_raises_init_error(
+            [
+                "-chronik",
+                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}:s",
+            ],
+            "Error: Chronik Electrum TLS configuration requires a certificate chain file (see -chronikelectrumcert)",
+        )
+        self.node.assert_start_raises_init_error(
+            [
+                "-chronik",
+                "-chronikelectrumcert=dummy",
+                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}",
+            ],
+            "Error: The -chronikelectrumcert and -chronikelectrumprivkey options should both be set or unset.",
+        )
+        self.node.assert_start_raises_init_error(
+            [
+                "-chronik",
+                "-chronikelectrumprivkey=dummy",
+                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}",
+            ],
+            "Error: The -chronikelectrumcert and -chronikelectrumprivkey options should both be set or unset.",
+        )
+        self.node.assert_start_raises_init_error(
+            [
+                "-chronik",
+                "-chronikelectrumcert=dummy",
+                "-chronikelectrumprivkey=dummy",
+                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}",
+            ],
+            "Error: Chronik Electrum TLS configuration failed to open the certificate chain file dummy",
+            match=ErrorMatch.PARTIAL_REGEX,
+        )
+
+        # The peers validation interval must be within range
+        self.node.assert_start_raises_init_error(
+            [
+                "-chronik",
+                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}:t",
+                "-chronikelectrumpeersvalidationinterval=-1",
+            ],
+            "Error: The -chronikelectrumpeersvalidationinterval value should be "
+            "within the range [1, 4294967295]",
+        )
+        self.node.assert_start_raises_init_error(
+            [
+                "-chronik",
+                f"-chronikelectrumbind=127.0.0.1:{chronikelectrum_port(0)}:t",
+                "-chronikelectrumpeersvalidationinterval=4294967296",
+            ],
+            "Error: The -chronikelectrumpeersvalidationinterval value should be "
+            "within the range [1, 4294967295]",
         )
 
         self.start_node(0, self.extra_args[0])

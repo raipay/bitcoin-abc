@@ -862,7 +862,7 @@ def matches_p2pkh_scriptsig(script_ops: List[Tuple[OpCodes, Optional[bytes]]]) -
 
 
 def matches_p2sh_ecdsa_multisig_scriptsig(
-    script_ops: List[Tuple[OpCodes, Optional[bytes]]]
+    script_ops: List[Tuple[OpCodes, Optional[bytes]]],
 ) -> bool:
     """Return True if the script operations match a P2SH multisig scriptSig:
 
@@ -1824,7 +1824,7 @@ class Transaction:
                                 repr(e),
                             )
 
-                    for txid, l in need_dl_txids.items():
+                    for txid, _prevout_n in need_dl_txids.items():
                         wallet.network.queue_request(
                             "blockchain.transaction.get",
                             [txid],

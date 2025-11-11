@@ -27,7 +27,6 @@ using kernel::DumpMempool;
 using node::DEFAULT_MAX_RAW_TX_FEE_RATE;
 using node::MempoolPath;
 using node::NodeContext;
-using node::ShouldPersistMempool;
 
 static RPCHelpMan sendrawtransaction() {
     return RPCHelpMan{
@@ -179,9 +178,13 @@ static RPCHelpMan testmempoolaccept() {
                                          "transaction txid in hex"},
                            }},
                       }},
-                     {RPCResult::Type::STR, "reject-reason",
+                     {RPCResult::Type::STR, "reject-reason", /*optional=*/true,
                       "Rejection string (only present when 'allowed' is "
                       "false)"},
+                     {RPCResult::Type::STR, "reject-details", /*optional=*/true,
+                      "Rejection details (only present when 'allowed' is false "
+                      "and rejection details exist)"},
+
                  }},
             }},
         RPCExamples{
@@ -308,6 +311,7 @@ static RPCHelpMan testmempoolaccept() {
                     } else {
                         result_inner.pushKV("reject-reason",
                                             state.GetRejectReason());
+                        result_inner.pushKV("reject-details", state.ToString());
                     }
                 }
                 rpc_result.push_back(result_inner);

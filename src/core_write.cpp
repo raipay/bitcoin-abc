@@ -120,8 +120,13 @@ std::string ScriptToAsmStr(const CScript &script,
         }
 
         if (0 <= opcode && opcode <= OP_PUSHDATA4) {
-            if (vch.size() <= static_cast<std::vector<uint8_t>::size_type>(4)) {
-                str += strprintf("%d", CScriptNum(vch, false).getint());
+            if (CScriptNum::IsMinimallyEncoded(
+                    vch, MAX_SCRIPTNUM_BYTE_SIZE_63_BIT)) {
+                // Only render decimal number if minimally encoded and <8 bytes.
+                // Avoids rendering legitimate byte strings as decimal number.
+                str += strprintf(
+                    "%d", CScriptNum(vch, false, MAX_SCRIPTNUM_BYTE_SIZE_63_BIT)
+                              .getint());
             } else {
                 // the IsUnspendable check makes sure not to try to decode
                 // OP_RETURN data that may match the format of a signature

@@ -160,9 +160,9 @@ namespace chronik_bridge {
 
 void log_print(const rust::Str logging_function, const rust::Str source_file,
                const uint32_t source_line, const rust::Str msg) {
-    LogInstance().LogPrintStr(std::string(msg), std::string(logging_function),
-                              std::string(source_file), source_line,
-                              BCLog::LogFlags::NONE, BCLog::Level::None);
+    LogInstance().LogPrintStr(std::string(msg), std::source_location::current(),
+                              BCLog::LogFlags::NONE, BCLog::Level::Info,
+                              /*should_ratelimit=*/false);
 }
 
 void log_print_chronik(const rust::Str logging_function,
@@ -304,6 +304,12 @@ rust::Vec<uint8_t> ChronikBridge::load_raw_tx(uint32_t file_num,
     return chronik::util::ToRustVec<uint8_t>(MakeUCharSpan(raw_tx));
 }
 
+bool ChronikBridge::is_avalanche_finalized_preconsensus(
+    const std::array<uint8_t, 32> &mempool_txid) const {
+    TxId txid{chronik::util::ArrayToHash(mempool_txid)};
+    return m_node.mempool->isAvalancheFinalizedPreConsensus(txid);
+}
+
 Tx bridge_tx(const CTransaction &tx, const std::vector<::Coin> &spent_coins) {
     return BridgeTx(false, tx, spent_coins);
 }
@@ -396,6 +402,50 @@ bool ChronikBridge::shutdown_requested() const {
     return ShutdownRequested();
 }
 
+WrappedBlockHash ChronikBridge::get_genesis_hash() const {
+    const CBlock &genesis = m_node.chainman->GetParams().GenesisBlock();
+    return WrappedBlockHash{.data =
+                                chronik::util::HashToArray(genesis.GetHash())};
+}
+
+int64_t ChronikBridge::estimate_feerate_sats_per_kb() const {
+    if (!m_node.mempool) {
+        return -1;
+    }
+
+    const Amount feeRateSatsPerK = m_node.mempool->estimateFee().GetFeePerK();
+    return feeRateSatsPerK / Amount::satoshi();
+}
+
+int64_t ChronikBridge::min_relay_feerate_sats_per_kb() const {
+    if (!m_node.mempool) {
+        return -1;
+    }
+
+    return m_node.mempool->m_min_relay_feerate.GetFeePerK() / Amount::satoshi();
+}
+
+bool ChronikBridge::get_feerate_info(std::array<uint8_t, 32> mempool_txid,
+                                     int64_t &modified_fee_rate_sats_per_kb,
+                                     uint32_t &virtual_size_bytes) const {
+    TxId txid{chronik::util::ArrayToHash(mempool_txid)};
+
+    if (!m_node.mempool) {
+        return false;
+    }
+
+    auto iter = m_node.mempool->GetIter(txid);
+    if (!iter) {
+        return false;
+    }
+
+    modified_fee_rate_sats_per_kb =
+        (**iter)->GetModifiedFeeRate().GetFeePerK() / Amount::satoshi();
+    virtual_size_bytes = (**iter)->GetTxVirtualSize();
+
+    return true;
+}
+
 std::unique_ptr<ChronikBridge> make_bridge(const node::NodeContext &node) {
     return std::make_unique<ChronikBridge>(node);
 }
@@ -460,6 +510,10 @@ void sync_with_validation_interface_queue() {
 
 bool init_error(const rust::Str msg) {
     return InitError(Untranslated(std::string(msg)));
+}
+
+rust::String client_name() {
+    return CLIENT_NAME;
 }
 
 rust::String format_full_version() {

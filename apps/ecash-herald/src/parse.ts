@@ -4,7 +4,14 @@
 
 import config from '../config';
 import opReturn from '../constants/op_return';
-import { consume, consumeNextPush, swapEndianness } from 'ecash-script';
+import {
+    fromHex,
+    consume,
+    consumeNextPush,
+    swapEndianness,
+    Script,
+    OP_0,
+} from 'ecash-lib';
 import knownMinersJson, { KnownMiners, MinerInfo } from '../constants/miners';
 import cachedTokenInfoMap from '../constants/tokens';
 import {
@@ -22,6 +29,7 @@ import BigNumber from 'bignumber.js';
 import {
     TOKEN_SERVER_OUTPUTSCRIPT,
     BINANCE_OUTPUTSCRIPT,
+    COINEX_OUTPUTSCRIPT,
 } from '../constants/senders';
 import { prepareStringForTelegramHTML, splitOverflowTgMsg } from './telegram';
 import { OutputscriptInfo } from './chronik';
@@ -34,7 +42,6 @@ import {
 import { CoinDanceStaker } from './events';
 import lokadMap from '../constants/lokad';
 import { scriptOps } from 'ecash-agora';
-import { Script, fromHex, OP_0 } from 'ecash-lib';
 import {
     ChronikClient,
     CoinbaseData,
@@ -398,7 +405,7 @@ export const parseSlpTwo = (slpTwoPush: string): string => {
                     : prepareStringForTelegramHTML(cachedTokenInfo.tokenTicker)
             }</a>`;
 
-            const numOutputs = consume(stack, 1);
+            const numOutputs = parseInt(consume(stack, 1), 16);
             // Iterate over number of outputs to get total amount sent
             // Note: this should be handled with an indexer, as we are not parsing for validity here
             // However, it's still useful information for the herald
@@ -459,10 +466,9 @@ export const parseMultipushStack = (
             // Since we don't know any spec or parsing rules for other types of EMPP pushes,
             // Just add an ASCII decode of the whole thing if you see one
             msgs.push(
-                `${'Unknown App:'}${Buffer.from(
-                    emppStackArray[i],
-                    'hex',
-                ).toString('ascii')}`,
+                `${'Unknown App:'}${prepareStringForTelegramHTML(
+                    Buffer.from(emppStackArray[i], 'hex').toString('ascii'),
+                )}`,
             );
         }
         // Do not parse any other empp (haven't seen any in the wild, no existing specs to follow)
@@ -2424,6 +2430,8 @@ export const summarizeTxHistory = (
     let cashtabCachetRewardCount = 0;
     let binanceWithdrawalCount = 0;
     let binanceWithdrawalSats = 0n;
+    let coinexWithdrawalCount = 0;
+    let coinexWithdrawalSats = 0n;
 
     let fungibleTokenTxs = 0;
     let appTxs = 0;
@@ -2544,6 +2552,21 @@ export const summarizeTxHistory = (
                 }
             }
         }
+        if (senderOutputScript === COINEX_OUTPUTSCRIPT) {
+            // Tx sent by CoinEx
+            // Make sure it's not just a utxo consolidation
+            for (const output of outputs) {
+                const { sats, outputScript } = output;
+                if (outputScript !== COINEX_OUTPUTSCRIPT) {
+                    // If we have an output that is not sending to the coinex hot wallet
+                    // Increment total value amount withdrawn
+                    coinexWithdrawalSats += sats;
+                    // We also call this a withdrawal
+                    // Note that 1 tx from the hot wallet may include more than 1 withdrawal
+                    coinexWithdrawalCount += 1;
+                }
+            }
+        }
 
         // Other token actions
         if (tokenEntries.length > 0) {
@@ -2559,6 +2582,17 @@ export const summarizeTxHistory = (
                     actualBurnAtoms,
                 } = tokenEntry;
                 const { type } = tokenType;
+                if (type == 'UNKNOWN') {
+                    // TODO handle unknown protocol types
+                    invalidTokenEntries += 1;
+                    // Log to console so if we see this tx, we can analyze it for parsing
+                    console.info(
+                        `Unparsed unknown protocol tokenEntry in tx: ${tx.txid}`,
+                    );
+                    // No other parsing for this tokenEntry
+                    continue;
+                }
+
                 tokenTypeMap.set(tokenId, type);
 
                 if (isInvalid) {
@@ -3997,6 +4031,20 @@ export const summarizeTxHistory = (
         );
     }
 
+    if (coinexWithdrawalCount > 0) {
+        // CoinEx hot wallet
+        const renderedCoinexWithdrawalQty = satsToFormattedValue(
+            coinexWithdrawalSats,
+            xecPriceUsd,
+        );
+        tgMsg.push(`${config.emojis.bank} <b><i>CoinEx</i></b>`);
+        tgMsg.push(
+            `<b>${coinexWithdrawalCount}</b> withdrawal${
+                coinexWithdrawalCount > 1 ? 's' : ''
+            }, ${renderedCoinexWithdrawalQty}`,
+        );
+    }
+
     return splitOverflowTgMsg(tgMsg);
 };
 
@@ -4024,20 +4072,21 @@ export const parseStaker = (
         // Nothing to do
         return;
     }
-    // Find thisStaker in activeStakers
-    const thisStaker = activeStakers.find(
+    // Find all the matching stakers in activeStakers
+    const matchingStakers = activeStakers.filter(
         activeStaker => activeStaker.payoutAddress === staker.staker,
     );
 
-    // If we can't find thisStaker, do not return a parsedStaker
-    // Should never happen. Could happen in edge cases of API errors,
-    // race conditions
-    // So, if we hit such a condition, we do not report on stakers
-    if (typeof thisStaker === 'undefined') {
+    // If we can't find any matching staker, do not return a parsedStaker.
+    // Should never happen. Could happen in edge cases of API errors, race
+    // conditions, ...
+    // So, if we hit such a condition, we do not report on stakers.
+    if (typeof matchingStakers === 'undefined' || matchingStakers.length == 0) {
         return;
     }
 
-    const totalSatsStaked = activeStakers.reduce((acc, current) => {
+    // Compute the stakers total from all matching payouts
+    const stakerTotal = matchingStakers.reduce((acc, current) => {
         // Parse the stake string to float for addition.
         // Note: Assuming stake is always a string with 2 decimal places
         // Cursory review shows values like "stake": "22000000000.00",
@@ -4045,17 +4094,20 @@ export const parseStaker = (
         return acc + BigInt(current.stake.replace('.', ''));
     }, 0n);
 
+    // Compute the network staked total
+    const totalSatsStaked = activeStakers.reduce((acc, current) => {
+        return acc + BigInt(current.stake.replace('.', ''));
+    }, 0n);
+
     // This staker's percent of all staked
     // Also the staker's odds of winning any given block staking reward
     const thisTakerPercentStake =
-        (
-            (100 * parseFloat(thisStaker.stake)) /
-            (Number(totalSatsStaked) / 100)
-        ).toFixed(2) + '%';
+        ((100 * Number(stakerTotal)) / Number(totalSatsStaked)).toFixed(2) +
+        '%';
 
     return {
         oddsThisWinner: thisTakerPercentStake,
-        stakedSatoshisThisWinner: BigInt(thisStaker.stake.replace('.', '')),
+        stakedSatoshisThisWinner: stakerTotal,
         stakedSatoshisTotal: totalSatsStaked,
     };
 };

@@ -353,7 +353,7 @@ class MiniWallet:
 
         pad_tx(tx, target_size or 100, deterministic=True)
 
-        txid = tx.rehash()
+        txid = tx.txid_hex
         return {
             "new_utxos": [
                 self._create_utxo(
@@ -396,6 +396,8 @@ class MiniWallet:
             size = 168
         else:
             assert False
+
+        size = target_size or size
 
         send_value = satoshi_round(
             utxo_to_spend["value"] - (fee or (fee_rate * (Decimal(size) / 1000)))

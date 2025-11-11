@@ -5,7 +5,6 @@
 #include <test/util/setup_common.h>
 
 #include <kernel/mempool_entry.h>
-#include <kernel/validation_cache_sizes.h>
 
 #include <addrman.h>
 #include <banman.h>
@@ -22,7 +21,6 @@
 #include <logging.h>
 #include <mempool_args.h>
 #include <net.h>
-#include <net_processing.h>
 #include <node/blockstorage.h>
 #include <node/chainstate.h>
 #include <node/chainstatemanager_args.h>
@@ -30,7 +28,6 @@
 #include <node/kernel_notifications.h>
 #include <node/miner.h>
 #include <node/peerman_args.h>
-#include <node/validation_cache_args.h>
 #include <noui.h>
 #include <pow/pow.h>
 #include <random.h>
@@ -51,7 +48,6 @@
 #include <util/thread.h>
 #include <util/threadnames.h>
 #include <util/time.h>
-#include <util/translation.h>
 #include <util/vector.h>
 #include <validation.h>
 #include <validationinterface.h>
@@ -64,12 +60,9 @@
 #include <functional>
 #include <memory>
 
-using kernel::ValidationCacheSizes;
 using node::ApplyArgsManOptions;
 using node::BlockAssembler;
 using node::BlockManager;
-using node::CalculateCacheSizes;
-using node::fReindex;
 using node::KernelNotifications;
 using node::LoadChainstate;
 using node::NodeContext;
@@ -82,16 +75,6 @@ const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
  * g_insecure_rand_ctx, which can be seeded from a const env var
  */
 static FastRandomContext g_insecure_rand_ctx_temp_path;
-
-std::ostream &operator<<(std::ostream &os, const uint256 &num) {
-    os << num.ToString();
-    return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const ScriptError &err) {
-    os << ScriptErrorString(err);
-    return os;
-}
 
 std::vector<const char *> fixture_extra_args{};
 
@@ -108,6 +91,7 @@ BasicTestingSetup::BasicTestingSetup(
             "-printtoconsole=0",
             "-logsourcelocations",
             "-logtimemicros",
+            "-loglevel=trace",
             "-debug",
             "-debugexclude=libevent",
             "-debugexclude=leveldb",
@@ -137,12 +121,6 @@ BasicTestingSetup::BasicTestingSetup(
     m_node.kernel = std::make_unique<kernel::Context>();
     SetupEnvironment();
     SetupNetworking();
-
-    ValidationCacheSizes validation_cache_sizes{};
-    ApplyArgsManOptions(*m_node.args, validation_cache_sizes);
-    Assert(InitSignatureCache(validation_cache_sizes.signature_cache_bytes));
-    Assert(InitScriptExecutionCache(
-        validation_cache_sizes.script_execution_cache_bytes));
 
     m_node.chain = interfaces::MakeChain(m_node, config.GetChainParams());
     g_wallet_init_interface.Construct(m_node);
@@ -187,8 +165,6 @@ ChainTestingSetup::ChainTestingSetup(
     m_node.mempool =
         std::make_unique<CTxMemPool>(config, MemPoolOptionsForTest(m_node));
 
-    m_cache_sizes = CalculateCacheSizes(m_args);
-
     m_node.notifications = std::make_unique<KernelNotifications>();
 
     ChainstateManager::Options chainman_opts{
@@ -206,10 +182,10 @@ ChainTestingSetup::ChainTestingSetup(
     m_node.chainman =
         std::make_unique<ChainstateManager>(chainman_opts, blockman_opts);
     m_node.chainman->m_blockman.m_block_tree_db =
-        std::make_unique<CBlockTreeDB>(DBParams{
-            .path = m_args.GetDataDirNet() / "blocks" / "index",
-            .cache_bytes = static_cast<size_t>(m_cache_sizes.block_tree_db),
-            .memory_only = true});
+        std::make_unique<CBlockTreeDB>(
+            DBParams{.path = m_args.GetDataDirNet() / "blocks" / "index",
+                     .cache_bytes = m_kernel_cache_sizes.block_tree_db,
+                     .memory_only = true});
     // Call Upgrade on the block database so that the version field is set,
     // else LoadBlockIndexGuts will fail (see D8319).
     m_node.chainman->m_blockman.m_block_tree_db->Upgrade();
@@ -249,7 +225,8 @@ void TestingSetup::LoadVerifyActivateChainstate() {
     options.check_level = m_args.GetIntArg("-checklevel", DEFAULT_CHECKLEVEL);
     options.require_full_verification =
         m_args.IsArgSet("-checkblocks") || m_args.IsArgSet("-checklevel");
-    auto [status, error] = LoadChainstate(chainman, m_cache_sizes, options);
+    auto [status, error] =
+        LoadChainstate(chainman, m_kernel_cache_sizes, options);
     assert(status == node::ChainstateLoadStatus::SUCCESS);
 
     std::tie(status, error) = VerifyLoadedChainstate(chainman, options);
@@ -469,16 +446,15 @@ TestChain100Setup::PopulateMempool(FastRandomContext &det_rand,
             unspent_prevouts.pop_front();
         }
         const size_t num_outputs = det_rand.randrange(24) + 1;
-        // Approximately 1000sat "fee," equal output amounts.
-        const Amount amount_per_output =
-            (total_in - 1000 * SATOSHI) / int(num_outputs);
+        const Amount fee = int64_t(det_rand.randrange(30)) * 100 * SATOSHI;
+        const Amount amount_per_output = (total_in - fee) / int(num_outputs);
         for (size_t n{0}; n < num_outputs; ++n) {
             CScript spk = CScript() << CScriptNum(num_transactions + n);
             mtx.vout.push_back(CTxOut(amount_per_output, spk));
         }
         CTransactionRef ptx = MakeTransactionRef(mtx);
         mempool_transactions.push_back(ptx);
-        if (amount_per_output > 2000 * SATOSHI) {
+        if (amount_per_output > 3000 * SATOSHI) {
             // If the value is high enough to fund another transaction + fees,
             // keep track of it so it can be used to build a more complex
             // transaction graph. Insert randomly into unspent_prevouts for
@@ -492,10 +468,12 @@ TestChain100Setup::PopulateMempool(FastRandomContext &det_rand,
             }
         }
         if (submit) {
-            LOCK2(m_node.mempool->cs, cs_main);
+            LOCK2(cs_main, m_node.mempool->cs);
             LockPoints lp;
-            m_node.mempool->addUnchecked(
-                CTxMemPoolEntryRef::make(ptx, 1000 * SATOSHI, 0, 1, 4, lp));
+            m_node.mempool->addUnchecked(CTxMemPoolEntryRef::make(
+                ptx,
+                /*fee=*/(total_in - int64_t(num_outputs) * amount_per_output),
+                /*time=*/0, /*entry_height=*/1, /*sigchecks=*/4, lp));
         }
         --num_transactions;
     }
@@ -659,3 +637,19 @@ DummyConfig::DummyConfig()
 DummyConfig::DummyConfig(std::string net)
     : chainParams(
           CreateChainParams(ArgsManager{}, ChainTypeFromString(net).value())) {}
+
+std::ostream &operator<<(std::ostream &os, const arith_uint256 &num) {
+    return os << ArithToUint256(num).ToString();
+}
+
+std::ostream &operator<<(std::ostream &os, const uint160 &num) {
+    return os << num.ToString();
+}
+
+std::ostream &operator<<(std::ostream &os, const uint256 &num) {
+    return os << num.ToString();
+}
+
+std::ostream &operator<<(std::ostream &os, const ScriptError &err) {
+    return os << ScriptErrorString(err);
+}

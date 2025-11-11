@@ -168,8 +168,9 @@ pub async fn handle_script_utxos(
     script_type: &str,
     payload: &str,
     indexer: &ChronikIndexer,
+    node: &Node,
 ) -> Result<proto::ScriptUtxos> {
-    let script_utxos = indexer.script_utxos()?;
+    let script_utxos = indexer.script_utxos(node)?;
     let member = get_group_member(script_type, payload)?;
     let script = script_utxos.script(member, indexer.decompress_script_fn)?;
     let utxos = script_utxos.utxos(&script)?;
@@ -232,9 +233,10 @@ pub async fn handle_token_id_unconfirmed_txs(
 pub async fn handle_token_id_utxos(
     token_id_hex: &str,
     indexer: &ChronikIndexer,
+    node: &Node,
 ) -> Result<proto::Utxos> {
     let token_id = token_id_hex.parse::<TokenId>()?;
-    let token_id_utxos = indexer.token_id_utxos();
+    let token_id_utxos = indexer.token_id_utxos(node);
     let utxos = token_id_utxos.utxos(token_id)?;
     Ok(proto::Utxos { utxos })
 }
@@ -293,10 +295,11 @@ pub async fn handle_plugin_utxos(
     plugin_name: &str,
     group_hex: &str,
     indexer: &ChronikIndexer,
+    node: &Node,
 ) -> Result<proto::Utxos> {
     let group = parse_hex(group_hex)?;
     let plugin = indexer.plugins();
-    let utxos = plugin.utxos(plugin_name, &group)?;
+    let utxos = plugin.utxos(node, plugin_name, &group)?;
     Ok(proto::Utxos { utxos })
 }
 
@@ -432,6 +435,6 @@ pub async fn handle_block_headers(
     let checkpoint_height: i32 =
         get_param(query_params, "checkpoint_height")?.unwrap_or(0);
     blocks
-        .headers_by_range(start_height, end_height, checkpoint_height)
+        .headers_by_range(start_height, end_height, checkpoint_height, true)
         .await
 }

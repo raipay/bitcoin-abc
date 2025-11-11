@@ -15,15 +15,15 @@
 #include <kernel/chainstatemanager_opts.h>
 #include <kernel/checks.h>
 #include <kernel/context.h>
-#include <kernel/validation_cache_sizes.h>
 
 #include <chainparams.h>
 #include <common/args.h>
 #include <config.h>
 #include <consensus/validation.h>
 #include <core_io.h>
+#include <kernel/caches.h>
+#include <logging.h>
 #include <node/blockstorage.h>
-#include <node/caches.h>
 #include <node/chainstate.h>
 #include <scheduler.h>
 #include <script/scriptcache.h>
@@ -42,6 +42,12 @@
 #include <memory>
 
 int main(int argc, char *argv[]) {
+    // We do not enable logging for this app, so explicitly disable it.
+    // To enable logging instead, replace with:
+    //    LogInstance().m_print_to_console = true;
+    //    LogInstance().StartLogging();
+    LogInstance().DisableLogging();
+
     // SETUP: Argument parsing and handling
     if (argc != 2) {
         std::cerr << "Usage: " << argv[0] << " DATADIR" << std::endl
@@ -74,14 +80,6 @@ int main(int argc, char *argv[]) {
     // things instantiated so far requires running the epilogue to be torn down
     // properly
     assert(kernel::SanityChecks(kernel_context));
-
-    // Necessary for CheckInputScripts (eventually called by ProcessNewBlock),
-    // which will try the script cache first and fall back to actually
-    // performing the check with the signature cache.
-    kernel::ValidationCacheSizes validation_cache_sizes{};
-    Assert(InitSignatureCache(validation_cache_sizes.signature_cache_bytes));
-    Assert(InitScriptExecutionCache(
-        validation_cache_sizes.script_execution_cache_bytes));
 
     // SETUP: Scheduling and Background Signals
     CScheduler scheduler{};
@@ -134,10 +132,7 @@ int main(int argc, char *argv[]) {
     };
     ChainstateManager chainman{chainman_opts, blockman_opts};
 
-    node::CacheSizes cache_sizes;
-    cache_sizes.block_tree_db = 2 << 20;
-    cache_sizes.coins_db = 2 << 22;
-    cache_sizes.coins = (450 << 20) - (2 << 20) - (2 << 22);
+    kernel::CacheSizes cache_sizes{DEFAULT_KERNEL_CACHE};
     node::ChainstateLoadOptions options;
     options.check_interrupt = [] { return false; };
     auto [status, error] = node::LoadChainstate(chainman, cache_sizes, options);

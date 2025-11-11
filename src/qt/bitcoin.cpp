@@ -6,6 +6,7 @@
 
 #include <chainparams.h>
 #include <common/args.h>
+#include <common/init.h>
 #include <config.h>
 #include <httprpc.h>
 #include <init.h>
@@ -25,8 +26,10 @@
 #include <qt/splashscreen.h>
 #include <qt/utilitydialog.h>
 #include <qt/winshutdownmonitor.h>
+#include <rpc/server.h>
 #include <uint256.h>
 #include <util/exception.h>
+#include <util/string.h>
 #include <util/threadnames.h>
 #include <util/translation.h>
 #include <validation.h>
@@ -45,6 +48,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QTranslator>
+#include <QWindow>
 
 #include <boost/signals2/connection.hpp>
 
@@ -65,6 +69,8 @@ Q_IMPORT_PLUGIN(QMacStylePlugin);
 // Declare meta types used for QMetaObject::invokeMethod
 Q_DECLARE_METATYPE(bool *)
 Q_DECLARE_METATYPE(Amount)
+Q_DECLARE_METATYPE(HTTPRPCRequestProcessor *)
+Q_DECLARE_METATYPE(RPCServer *)
 Q_DECLARE_METATYPE(SynchronizationState)
 Q_DECLARE_METATYPE(SyncType)
 Q_DECLARE_METATYPE(uint256)
@@ -100,6 +106,10 @@ static void RegisterMetaTypes() {
     // copy-construct non-pointers to objects for invoking slots
     // behind-the-scenes in the 'Queued' connection case.
     qRegisterMetaType<Config *>();
+    qRegisterMetaType<RPCServer *>();
+    qRegisterMetaType<HTTPRPCRequestProcessor *>();
+
+    // TODO: apply core-gui#623 if we ever backport core-gui#556
 }
 
 static QString GetLangTerritory() {
@@ -142,17 +152,20 @@ static void initTranslations(QTranslator &qtTranslatorBase,
     // - First load the translator for the base language, without territory
     // - Then load the more specific locale translator
 
+#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
+    const QString translation_path{
+        QLibraryInfo::location(QLibraryInfo::TranslationsPath)};
+#else
+    const QString translation_path{
+        QLibraryInfo::path(QLibraryInfo::TranslationsPath)};
+#endif
     // Load e.g. qt_de.qm
-    if (qtTranslatorBase.load(
-            "qt_" + lang,
-            QLibraryInfo::location(QLibraryInfo::TranslationsPath))) {
+    if (qtTranslatorBase.load("qt_" + lang, translation_path)) {
         QApplication::installTranslator(&qtTranslatorBase);
     }
 
     // Load e.g. qt_de_DE.qm
-    if (qtTranslator.load(
-            "qt_" + lang_territory,
-            QLibraryInfo::location(QLibraryInfo::TranslationsPath))) {
+    if (qtTranslator.load("qt_" + lang_territory, translation_path)) {
         QApplication::installTranslator(&qtTranslator);
     }
 
@@ -169,70 +182,49 @@ static void initTranslations(QTranslator &qtTranslatorBase,
     }
 }
 
-static std::string JoinErrors(const std::vector<std::string> &errors) {
-    return Join(errors, "\n",
-                [](const std::string &error) { return "- " + error; });
+static bool ErrorSettingsRead(const bilingual_str &error,
+                              const std::vector<std::string> &details) {
+    QMessageBox messagebox(
+        QMessageBox::Critical, PACKAGE_NAME,
+        QString::fromStdString(strprintf("%s.", error.translated)),
+        QMessageBox::Reset | QMessageBox::Abort);
+    // Explanatory text shown on startup when the settings file cannot
+    // be read. Prompts user to make a choice between resetting or aborting.
+    messagebox.setInformativeText(
+        QObject::tr("Do you want to reset settings to default values, or to "
+                    "abort without making changes?"));
+    messagebox.setDetailedText(
+        QString::fromStdString(MakeUnorderedList(details)));
+    messagebox.setTextFormat(Qt::PlainText);
+    messagebox.setDefaultButton(QMessageBox::Reset);
+    switch (messagebox.exec()) {
+        case QMessageBox::Reset:
+            return false;
+        case QMessageBox::Abort:
+            return true;
+        default:
+            assert(false);
+    }
 }
 
-static bool InitSettings() {
-    gArgs.EnsureDataDir();
-    if (!gArgs.GetSettingsPath()) {
-        // Do nothing if settings file disabled.
-        return true;
-    }
-
-    std::vector<std::string> errors;
-    if (!gArgs.ReadSettingsFile(&errors)) {
-        bilingual_str error = _("Settings file could not be read");
-        InitError(Untranslated(
-            strprintf("%s:\n%s\n", error.original, JoinErrors(errors))));
-
-        QMessageBox messagebox(
-            QMessageBox::Critical, PACKAGE_NAME,
-            QString::fromStdString(strprintf("%s.", error.translated)),
-            QMessageBox::Reset | QMessageBox::Abort);
-        // Explanatory text shown on startup when the settings file cannot
-        // be read. Prompts user to make a choice between resetting or aborting.
-        messagebox.setInformativeText(
-            QObject::tr("Do you want to reset settings to default values, or "
-                        "to abort without making changes?"));
-        messagebox.setDetailedText(QString::fromStdString(JoinErrors(errors)));
-        messagebox.setTextFormat(Qt::PlainText);
-        messagebox.setDefaultButton(QMessageBox::Reset);
-        switch (messagebox.exec()) {
-            case QMessageBox::Reset:
-                break;
-            case QMessageBox::Abort:
-                return false;
-            default:
-                assert(false);
-        }
-    }
-
-    errors.clear();
-    if (!gArgs.WriteSettingsFile(&errors)) {
-        bilingual_str error = _("Settings file could not be written");
-        InitError(Untranslated(
-            strprintf("%s:\n%s\n", error.original, JoinErrors(errors))));
-
-        QMessageBox messagebox(
-            QMessageBox::Critical, PACKAGE_NAME,
-            QString::fromStdString(strprintf("%s.", error.translated)),
-            QMessageBox::Ok);
-        // Explanatory text shown on startup when the settings file could
-        // not be written. Prompts user to check that we have the ability to
-        // write to the file. Explains that the user has the option of running
-        // without a settings file.
-        messagebox.setInformativeText(
-            QObject::tr("A fatal error occurred. Check that settings file is "
-                        "writable, or try running with -nosettings."));
-        messagebox.setDetailedText(QString::fromStdString(JoinErrors(errors)));
-        messagebox.setTextFormat(Qt::PlainText);
-        messagebox.setDefaultButton(QMessageBox::Ok);
-        messagebox.exec();
-        return false;
-    }
-    return true;
+static void ErrorSettingsWrite(const bilingual_str &error,
+                               const std::vector<std::string> &details) {
+    QMessageBox messagebox(
+        QMessageBox::Critical, PACKAGE_NAME,
+        QString::fromStdString(strprintf("%s.", error.translated)),
+        QMessageBox::Ok);
+    // Explanatory text shown on startup when the settings file could
+    // not be written. Prompts user to check that we have the ability to
+    // write to the file. Explains that the user has the option of running
+    // without a settings file.
+    messagebox.setInformativeText(
+        QObject::tr("A fatal error occurred. Check that settings file is "
+                    "writable, or try running with -nosettings."));
+    messagebox.setDetailedText(
+        QString::fromStdString(MakeUnorderedList(details)));
+    messagebox.setTextFormat(Qt::PlainText);
+    messagebox.setDefaultButton(QMessageBox::Ok);
+    messagebox.exec();
 }
 
 /* qDebug() message handler --> debug.log */
@@ -289,7 +281,7 @@ static const char *qt_argv = "bitcoin-qt";
 BitcoinApplication::BitcoinApplication()
     : QApplication(qt_argc, const_cast<char **>(&qt_argv)), coreThread(nullptr),
       optionsModel(nullptr), clientModel(nullptr), window(nullptr),
-      pollShutdownTimer(nullptr), returnValue(0), platformStyle(nullptr) {
+      pollShutdownTimer(nullptr), platformStyle(nullptr) {
     // Qt runs setlocale(LC_ALL, "") on initialization.
     RegisterMetaTypes();
     setQuitOnLastWindowClosed(false);
@@ -334,14 +326,19 @@ void BitcoinApplication::createOptionsModel(bool resetSettings) {
     optionsModel = new OptionsModel(this, resetSettings);
 }
 
-void BitcoinApplication::createWindow(const Config *config,
+void BitcoinApplication::createWindow(const Config &config,
                                       const NetworkStyle *networkStyle) {
     window =
         new BitcoinGUI(node(), config, platformStyle, networkStyle, nullptr);
+    connect(window, &BitcoinGUI::quitRequested, this,
+            &BitcoinApplication::requestShutdown);
 
     pollShutdownTimer = new QTimer(window);
-    connect(pollShutdownTimer, &QTimer::timeout, window,
-            &BitcoinGUI::detectShutdown);
+    connect(pollShutdownTimer, &QTimer::timeout, [this] {
+        if (!QApplication::activeModalWidget()) {
+            window->detectShutdown();
+        }
+    });
 }
 
 void BitcoinApplication::createSplashScreen(const NetworkStyle *networkStyle) {
@@ -386,7 +383,7 @@ void BitcoinApplication::startThread() {
     connect(executor, &BitcoinABC::initializeResult, this,
             &BitcoinApplication::initializeResult);
     connect(executor, &BitcoinABC::shutdownResult, this,
-            &BitcoinApplication::shutdownResult);
+            [] { QCoreApplication::exit(0); });
     connect(executor, &BitcoinABC::runawayException, this,
             &BitcoinApplication::handleRunawayException);
 
@@ -440,7 +437,11 @@ void BitcoinApplication::requestInitialize(
     Q_EMIT requestedInitialize(&config, &rpcServer, &httpRPCRequestProcessor);
 }
 
-void BitcoinApplication::requestShutdown(Config &config) {
+void BitcoinApplication::requestShutdown() {
+    for (const auto w : QGuiApplication::topLevelWindows()) {
+        w->hide();
+    }
+
     // Show a simple window indicating shutdown status. Do this first as some of
     // the steps may take some time below, for example the RPC console may still
     // be executing a command.
@@ -448,7 +449,7 @@ void BitcoinApplication::requestShutdown(Config &config) {
 
     qDebug() << __func__ << ": Requesting shutdown";
     startThread();
-    window->hide();
+
     // Must disconnect node signals otherwise current thread can deadlock since
     // no event loop is running.
     window->unsubscribeFromCoreSignals();
@@ -486,12 +487,10 @@ void BitcoinApplication::requestShutdown(Config &config) {
 void BitcoinApplication::initializeResult(
     bool success, interfaces::BlockAndHeaderTipInfo tip_info) {
     qDebug() << __func__ << ": Initialization result: " << success;
-    returnValue = success ? EXIT_SUCCESS : EXIT_FAILURE;
     if (!success) {
         // Make sure splash screen doesn't stick around during shutdown.
         Q_EMIT splashFinished();
-        // Exit first main loop invocation.
-        quit();
+        requestedShutdown();
         return;
     }
     // Log this only after AppInitMain finishes, as then logging setup is
@@ -548,11 +547,6 @@ void BitcoinApplication::initializeResult(
     pollShutdownTimer->start(200);
 }
 
-void BitcoinApplication::shutdownResult() {
-    // Exit second main loop invocation after shutdown finished.
-    quit();
-}
-
 void BitcoinApplication::handleRunawayException(const QString &message) {
     QMessageBox::critical(
         nullptr, "Runaway exception",
@@ -569,6 +563,15 @@ WId BitcoinApplication::getMainWinId() const {
     }
 
     return window->winId();
+}
+
+bool BitcoinApplication::event(QEvent *e) {
+    if (e->type() == QEvent::Quit) {
+        requestShutdown();
+        return true;
+    }
+
+    return QApplication::event(e);
 }
 
 static void SetupUIArgs(ArgsManager &argsman) {
@@ -635,9 +638,11 @@ int GuiMain(int argc, char *argv[]) {
     Q_INIT_RESOURCE(bitcoin);
     Q_INIT_RESOURCE(bitcoin_locale);
 
+#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
     // Generate high-dpi pixmaps
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+#endif
 
     BitcoinApplication app;
 
@@ -649,7 +654,7 @@ int GuiMain(int argc, char *argv[]) {
     std::string error;
     if (!gArgs.ParseParameters(argc, argv, error)) {
         InitError(strprintf(
-            Untranslated("Error parsing command line arguments: %s\n"), error));
+            Untranslated("Error parsing command line arguments: %s"), error));
         // Create a message box, because the gui has neither been created nor
         // has subscribed to core signals
         QMessageBox::critical(
@@ -701,55 +706,33 @@ int GuiMain(int argc, char *argv[]) {
         return EXIT_SUCCESS;
     }
 
-    /// 6. Determine availability of data directory and parse
-    /// bitcoin.conf
-    /// - Do not call gArgs.GetDataDirNet() before this step finishes.
-    if (!CheckDataDirOption(gArgs)) {
-        InitError(strprintf(
-            Untranslated("Specified data directory \"%s\" does not exist.\n"),
-            gArgs.GetArg("-datadir", "")));
-        QMessageBox::critical(
-            nullptr, PACKAGE_NAME,
-            QObject::tr(
-                "Error: Specified data directory \"%1\" does not exist.")
-                .arg(QString::fromStdString(gArgs.GetArg("-datadir", ""))));
-        return EXIT_FAILURE;
-    }
-    if (!gArgs.ReadConfigFiles(error)) {
-        InitError(strprintf(
-            Untranslated("Error reading configuration file: %s\n"), error));
-        QMessageBox::critical(
-            nullptr, PACKAGE_NAME,
-            QObject::tr("Error: Cannot parse configuration file: %1.")
-                .arg(QString::fromStdString(error)));
-        return EXIT_FAILURE;
-    }
-
-    /// 7. Determine network (and switch to network specific options)
-    // - Do not call Params() before this step.
-    // - Do this after parsing the configuration file, as the network can be
-    // switched there.
+    /// 6-7. Parse bitcoin.conf, determine network, switch to network specific
+    /// options, and create datadir and settings.json.
+    // - Do not call gArgs.GetDataDirNet() before this step finishes
+    // - Do not call Params() before this step
     // - QSettings() will use the new application name after this, resulting in
-    // network-specific settings.
-    // - Needs to be done before createOptionsModel.
-
-    // Check for -chain, -testnet or -regtest parameter (Params() calls are only
-    // valid after this clause)
-    try {
-        SelectParams(gArgs.GetChainType());
-    } catch (std::exception &e) {
-        InitError(Untranslated(strprintf("%s\n", e.what())));
-        QMessageBox::critical(nullptr, PACKAGE_NAME,
-                              QObject::tr("Error: %1").arg(e.what()));
+    // network-specific settings
+    // - Needs to be done before createOptionsModel
+    if (auto err = common::InitConfig(gArgs, ErrorSettingsRead)) {
+        InitError(err->message, err->details);
+        if (err->status == common::ConfigStatus::FAILED_WRITE) {
+            // Show a custom error message to provide more information in the
+            // case of a datadir write error.
+            ErrorSettingsWrite(err->message, err->details);
+        } else if (err->status != common::ConfigStatus::ABORTED) {
+            // Show a generic message in other cases, and no additional error
+            // message in the case of a read error if the user decided to abort.
+            QMessageBox::critical(
+                nullptr, PACKAGE_NAME,
+                QObject::tr("Error: %1")
+                    .arg(QString::fromStdString(err->message.translated)));
+        }
         return EXIT_FAILURE;
     }
 #ifdef ENABLE_WALLET
     // Parse URIs on command line -- this can affect Params()
     PaymentServer::ipcParseCommandLine(argc, argv);
 #endif
-    if (!InitSettings()) {
-        return EXIT_FAILURE;
-    }
 
     QScopedPointer<const NetworkStyle> networkStyle(
         NetworkStyle::instantiate(Params().GetChainType()));
@@ -819,7 +802,7 @@ int GuiMain(int argc, char *argv[]) {
     HTTPRPCRequestProcessor httpRPCRequestProcessor(config, rpcServer, context);
 
     try {
-        app.createWindow(&config, networkStyle.data());
+        app.createWindow(config, networkStyle.data());
         // Perform base initialization before spinning up
         // initialization/shutdown thread. This is acceptable because this
         // function only contains steps that are quick to execute, so the GUI
@@ -835,9 +818,6 @@ int GuiMain(int argc, char *argv[]) {
             (HWND)app.getMainWinId());
 #endif
         app.exec();
-        app.requestShutdown(config);
-        app.exec();
-        return app.getReturnValue();
     } catch (const std::exception &e) {
         PrintExceptionContinue(&e, "Runaway exception");
         app.handleRunawayException(
@@ -847,5 +827,5 @@ int GuiMain(int argc, char *argv[]) {
         app.handleRunawayException(
             QString::fromStdString(app.node().getWarnings().translated));
     }
-    return EXIT_FAILURE;
+    return app.node().getExitStatus();
 }

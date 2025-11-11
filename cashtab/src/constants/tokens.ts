@@ -21,6 +21,27 @@ interface TokenConst {
 export const XECX_SWEEPER_ADDRESS =
     'ecash:qqrjf6n3gvavhw3f35zd0p96m3heujujcs4458vcwf';
 
+export const FIRMA_REDEEM_ADDRESS =
+    'ecash:qr8hdk8rxjc5nj6f450eth3nnslxa8k4gysrtyfxc5';
+
+/** firma.cash min fee for redemptions */
+export const FIRMA_REDEEM_FEE_MIN = 2;
+
+/** firma.cash charges 1% for redemptions */
+export const FIRMA_REDEEM_FEE_PCT = 0.01;
+
+/**
+ * Amounts >  FIRMA_REDEEM_AMOUNT_THRESHOLD are charged (FIRMA_REDEEM_FEE_PCT*redeemAmountFirma)
+ * Amounts <= FIRMA_REDEEM_AMOUNT_THRESHOLD are charged FIRMA_REDEEM_FEE_MIN
+ *
+ * Calc here as useful for getFirmaRedeemFee and depends on the above constants
+ */
+export const FIRMA_REDEEM_AMOUNT_THRESHOLD =
+    FIRMA_REDEEM_FEE_MIN / FIRMA_REDEEM_FEE_PCT;
+
+// 8-char lokad + 64-char for 32-byte sol pk
+export const FIRMA_REDEEM_EMPP_RAW_LENGTH = 72;
+
 export const FIRMA: TokenConst = {
     tokenId: '0387947fd575db4fb19a3e322f635dec37fd192b5941625b66bc4b2c3008cbf0',
     token: {

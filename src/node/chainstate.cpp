@@ -7,10 +7,12 @@
 #include <chainparams.h>
 #include <config.h>
 #include <consensus/params.h>
+#include <kernel/caches.h>
 #include <node/blockstorage.h>
-#include <node/caches.h>
 #include <util/fs.h>
 #include <validation.h>
+
+using kernel::CacheSizes;
 
 namespace node {
 // Complete initialization of chainstates after the initial call has been made
@@ -24,7 +26,7 @@ static ChainstateLoadResult CompleteChainstateInitialization(
     pblocktree.reset();
     pblocktree = std::make_unique<CBlockTreeDB>(
         DBParams{.path = chainman.m_options.datadir / "blocks" / "index",
-                 .cache_bytes = static_cast<size_t>(cache_sizes.block_tree_db),
+                 .cache_bytes = cache_sizes.block_tree_db,
                  .memory_only = options.block_tree_db_in_memory,
                  .wipe_data = options.reindex,
                  .options = chainman.m_options.block_tree_db});

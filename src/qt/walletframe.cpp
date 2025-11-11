@@ -60,7 +60,7 @@ WalletFrame::WalletFrame(const PlatformStyle *_platformStyle, BitcoinGUI *_gui)
     walletStack->addWidget(no_wallet_group);
 }
 
-WalletFrame::~WalletFrame() {}
+WalletFrame::~WalletFrame() = default;
 
 void WalletFrame::setClientModel(ClientModel *_clientModel) {
     this->clientModel = _clientModel;
@@ -209,6 +209,7 @@ void WalletFrame::gotoLoadPSBT() {
     if (walletView) {
         walletView->gotoLoadPSBT();
     }
+    // TODO: apply core-gui#336 when adding PSBTOperationsDialog
 }
 
 void WalletFrame::encryptWallet() {

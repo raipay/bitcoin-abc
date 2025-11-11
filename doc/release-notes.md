@@ -1,7 +1,9 @@
-# Bitcoin ABC 0.31.3 Release Notes
+# Bitcoin ABC 0.32.3 Release Notes
 
-Bitcoin ABC version 0.31.3 is now available from:
+Bitcoin ABC version 0.32.3 is now available from:
 
-  <https://download.bitcoinabc.org/0.31.3/>
+  <https://download.bitcoinabc.org/0.32.3/>
 
-This release contains minor bugfixes and performance improvements.
+This release includes the following features and fixes:
+ - The RPC `testmempoolaccept` response now includes a "reject-details" field in some cases,
+   similar to the complete error messages returned by `sendrawtransaction`.

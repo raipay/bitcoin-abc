@@ -34,6 +34,7 @@ QT_BEGIN_NAMESPACE
 class QAbstractItemView;
 class QAction;
 class QDateTime;
+class QDialog;
 class QFont;
 class QLineEdit;
 class QMenu;
@@ -117,6 +118,16 @@ void setClipboard(const QString &str);
  * Determine default data directory for operating system.
  */
 QString getDefaultDataDirectory();
+
+/**
+ * Extract first suffix from filter pattern "Description (*.foo)" or
+ * "Description (*.foo *.bar ...).
+ *
+ * @param[in] filter Filter specification such as
+ *                   "Comma Separated Files (*.csv)"
+ * @return QString
+ */
+QString ExtractFirstSuffixFromFilter(const QString &filter);
 
 /** Get save filename, mimics QFileDialog::getSaveFileName, except that it
   appends a default suffix
@@ -353,6 +364,11 @@ void PopupMenu(QMenu *menu, const QPoint &point, QAction *at_action = nullptr);
 
 // Fix known bugs in QProgressDialog class.
 void PolishProgressDialog(QProgressDialog *dialog);
+
+/**
+ * Shows a QDialog instance asynchronously, and deletes it on close.
+ */
+void ShowModalDialogAsynchronously(QDialog *dialog);
 } // namespace GUIUtil
 
 #endif // BITCOIN_QT_GUIUTIL_H

@@ -141,6 +141,8 @@ pub fn render_miner(coinbase_data: &[u8]) -> askama::Result<String> {
         "Cminors-Pools",
         "with Om Power",
         "nodeStratum",
+        "90 01 Pte Ltd",
+        "LSoftware DMCC",
     ];
 
     for &str_to_match in &self_identified_miners {
@@ -468,6 +470,26 @@ mod tests {
         assert_eq!(
             render_miner(nodestratum_coinbase_hex).unwrap(),
             "nodeStratum"
+        );
+
+        // 90 01 Pte Ltd 899450
+        let pteltd_coinbase_hex = b"\x03z\xb9\r\x04\xe2\xd5<h\x0c\xfa\xbemm\
+        x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+        x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\
+        x00\x00\x00\x00\x00\x00h\x00\x00\x06a\xc4\xde\xe1\xef\n\x00\x00\
+        x1690 01 Pte Ltd 6d203925";
+        assert_eq!(render_miner(pteltd_coinbase_hex).unwrap(), "90 01 Pte Ltd");
+
+        // LSoftware DMCC 917134
+        let lsoftware_dmcc_coinbase_hex =
+            b"\x03\x8e\xfe\r\x04KB\xdfh\x0c\xfa\xbemm\
+        x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+        x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\
+        x00\x00\x00\x00\x00\x00\x00\x00\x00\x8d\xaf\x87\x1e\xd1\xe6-\x00\x00\
+        x17LSoftware DMCC bfc59867";
+        assert_eq!(
+            render_miner(lsoftware_dmcc_coinbase_hex).unwrap(),
+            "LSoftware DMCC"
         );
 
         // Unknown miner

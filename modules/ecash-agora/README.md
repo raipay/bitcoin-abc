@@ -125,7 +125,7 @@ await chronik.broadcastTx(acceptTx.ser());
 ```
 mkdir build/
 cd build/
-cmake -GNinja .. -DBUILD_BITCOIN_CHRONIK=ON -DBUILD_BITCOIN_CHRONIK_PLUGINS=ON
+cmake -GNinja .. -DBUILD_CHRONIK=ON -DBUILD_CHRONIK_PLUGINS=ON
 ninja
 ```
 
@@ -192,6 +192,50 @@ Running from `bitcoin-abc/modules/ecash-agora` if your build dir is `bitcoin-abc
 -   Improve types and shapes in line with chronik proto updates [D17650](https://reviews.bitcoinabc.org/D17650)
 -   Introduce 'atoms' as term for base unit of tokens. Implement in lib. The term "token" is ambiguous as it is not clear that we are talking about base tokens.
 
-# 2.0.1
+### 2.0.1
 
 -   Ensure special case of agora partial offers where `minAcceptedAtoms` should equal `offeredAtoms` will work out this way [D17776](https://reviews.bitcoinabc.org/D17776)
+
+### 2.1.0
+
+-   Add support for "UNKNOWN" token protocol type in chronik-client [D18155](https://reviews.bitcoinabc.org/D18155)
+
+### 2.2.0
+
+-   Add `src/actions.ts` to support preparing payment Actions for `ecash-wallet`, and add `actions.test.ts` to show implementation [D18673](https://reviews.bitcoinabc.org/D18673)
+
+### 2.3.0
+
+-   Expose precision param to allow app creation of 64-bit int offers [D18829](https://reviews.bitcoinabc.org/D18829)
+
+### 2.4.0
+
+-   Add new `take` method to `AgoraOffer` that will automatically build and broadcast an agora acceptTx given a `Wallet` from `ecash-wallet` [D18833](https://reviews.bitcoinabc.org/D18833)
+
+### 2.5.0
+
+-   Add new `cancel` method to `AgoraOffer` that will automatically build and broadcast an agora cancelTx given a `Wallet` from `ecash-wallet` [D18842](https://reviews.bitcoinabc.org/D18842)
+
+### 2.5.1
+
+-   Improve flaky behavior by better organizing sats for the test taker wallet [D18846](https://reviews.bitcoinabc.org/D18846)
+
+### 2.5.2
+
+-   Enforce `take()` method accepting agora offer at calling wallet param [D18846](https://reviews.bitcoinabc.org/D18846)
+
+### 2.6.0
+
+-   Add new `relist` method to `AgoraOffer` that will automatically build and broadcast an agora tx that cancels an existing offer and relists the same token at new terms (updated price, quantity, and/or other params) [D18847](https://reviews.bitcoinabc.org/D18847)
+
+### 2.6.1
+
+-   `ecash-wallet` is now a dependency and not a dev dependency, and must be specified as such for apps that use `ecash-agora` to avoid missing dep errors. [D18852](https://reviews.bitcoinabc.org/D18852)
+
+### 2.6.2
+
+-   Patch deployment to make sure we actually get our dependencies installed [D18854](https://reviews.bitcoinabc.org/D18854)
+
+### 2.6.3
+
+-   Another deployment patch; make sure we pin our versions to latest instead of using "latest" [D18857](https://reviews.bitcoinabc.org/D18857)

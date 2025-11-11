@@ -213,10 +213,10 @@ case "$HOST" in
         ;;
 esac
 
-curl -sSf https://static.rust-lang.org/rustup/archive/1.26.0/x86_64-unknown-linux-gnu/rustup-init -o rustup-init
-echo "0b2f6c8f85a3d02fde2efc0ced4657869d73fccfce59defb4e8d29233116e6db rustup-init" | sha256sum -c
+curl -sSf https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init -o rustup-init
+echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c rustup-init" | sha256sum -c
 chmod +x rustup-init
-./rustup-init -y --default-toolchain=1.76.0
+./rustup-init -y --default-toolchain=1.87.0
 rm ./rustup-init
 # shellcheck disable=SC1091
 source "$HOME/.cargo/env"
@@ -231,10 +231,10 @@ mkdir -p source_package
 pushd source_package
 cmake -GNinja .. \
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE} \
-    -DBUILD_BITCOIN_WALLET=OFF \
-    -DBUILD_BITCOIN_CHRONIK=OFF \
-    -DBUILD_BITCOIN_QT=OFF \
-    -DBUILD_BITCOIN_ZMQ=OFF \
+    -DBUILD_WALLET=OFF \
+    -DBUILD_CHRONIK=OFF \
+    -DBUILD_QT=OFF \
+    -DBUILD_ZMQ=OFF \
     -DENABLE_QRCODE=OFF \
     -DENABLE_NATPMP=OFF \
     -DENABLE_UPNP=OFF \
@@ -297,7 +297,7 @@ export LD_LIBRARY_PATH="${LIBRARY_PATH}"
 # CMake flags
 case "$HOST" in
     *mingw*)
-        CMAKE_EXTRA_OPTIONS=(-DBUILD_BITCOIN_SEEDER=OFF -DCPACK_STRIP_FILES=ON -DCPACK_PACKAGE_FILE_NAME="${DISTNAME}-win64-setup-unsigned")
+        CMAKE_EXTRA_OPTIONS=(-DBUILD_SEEDER=OFF -DCPACK_STRIP_FILES=ON -DCPACK_PACKAGE_FILE_NAME="${DISTNAME}-win64-setup-unsigned")
         ;;
     *linux*)
         CMAKE_EXTRA_OPTIONS=(-DENABLE_STATIC_LIBSTDCXX=ON -DUSE_LINKER=)
@@ -365,7 +365,7 @@ mkdir -p "$DISTSRC"
       -DENABLE_REDUCE_EXPORTS=ON \
       -DCMAKE_INSTALL_PREFIX="${INSTALLPATH}" \
       -DCCACHE=OFF \
-      -DBUILD_BITCOIN_CHRONIK=ON \
+      -DBUILD_CHRONIK=ON \
       "${CMAKE_EXTRA_OPTIONS[@]}" \
       "${CMAKE_C_FLAGS}" \
       "${CMAKE_CXX_FLAGS}" \

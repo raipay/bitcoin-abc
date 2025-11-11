@@ -8,6 +8,73 @@ import { Script, fromHex } from 'ecash-lib';
 // Test vectors for opreturn output generating functions
 
 export const opReturnVectors = {
+    parseNFToaAuth: {
+        expectedReturns: [
+            {
+                description: 'valid NFToa Authentication tx',
+                tx: {
+                    txid: 'nftoa-auth-example',
+                    outputs: [
+                        {
+                            // 6a = OP_RETURN, then payload
+                            outputScript:
+                                '6a044e465400134c6f67696e20746f2047617564696f2041707008eb0c601b84975437',
+                            sats: 0n,
+                        },
+                    ],
+                },
+                hashes: [],
+                parsed: {
+                    appActions: [
+                        {
+                            lokadId: '4e465400', // "NFT\0" in hex
+                            app: 'NFToa',
+                            isValid: true,
+                            action: {
+                                type: 'Authentication',
+                                data: 'Login to Gaudio App',
+                                nonce: 'eb0c601b84975437',
+                            },
+                        },
+                    ],
+                },
+            },
+        ],
+        expectedErrors: [
+            {
+                description:
+                    'NFToa tx missing message or nonce (invalid format)',
+                tx: {
+                    txid: 'nftoa-auth-invalid',
+                    outputs: [
+                        {
+                            // hanya Lokad ID tanpa pushdata berikutnya
+                            outputScript: '6a044e465400',
+                            sats: 0n,
+                        },
+                    ],
+                },
+                hashes: [],
+                msg: 'Invalid NFToa transaction format',
+            },
+            {
+                description: 'NFToa tx missing nonce field',
+                tx: {
+                    txid: 'nftoa-auth-missing-nonce',
+                    outputs: [
+                        {
+                            // tidak ada segmen nonce terakhir (08 <nonce>)
+                            outputScript:
+                                '6a044e465400134c6f67696e20746f2047617564696f20417070',
+                            sats: 0n,
+                        },
+                    ],
+                },
+                hashes: [],
+                msg: 'Invalid NFToa transaction format',
+            },
+        ],
+    },
     cashtabMsgs: {
         expectedReturns: [
             {
@@ -424,6 +491,55 @@ export const opReturnVectors = {
             },
         ],
     },
+    parseFirma: {
+        expectedReturns: [
+            {
+                description:
+                    'Returns protocol identifier and decoded solana address for a valid SOL0 firma push',
+                firma: '534f4c304ebabba2b443691c1a9180426004d5fd3419e9f9c64e5839b853cecdaacbf745',
+                returned: {
+                    protocol: 'Solana Address',
+                    data: '6JKwz43wDTgk5n8eNCJrtsnNtkDdKd1XUZAvB9WkiEQ4',
+                },
+            },
+            {
+                description:
+                    'Returns protocol identifier and error warning for an invalid SOL0 firma push',
+                firma: '534f4c304ebabba2b443691c1a9180426004d5fd3419e9f9c64e5839b853cecdaacbf7',
+                returned: {
+                    protocol: 'Solana Address',
+                    data: 'Invalid Solana address: raw pk 4ebabba2b443691c1a9180426004d5fd3419e9f9c64e5839b853cecdaacbf7',
+                },
+            },
+            {
+                description:
+                    'Returns protocol identifier and decoded message for a valid Cashtab msg',
+                firma: '007461626c6574277320676f6f6f6f6f6f6f206543617368203d20656c656374726f6e696320436173680a58e3858ce384b7757272656e6379',
+                returned: {
+                    protocol: 'Cashtab Msg',
+                    data: `let's gooooooo eCash = electronic Cash\nXㅌㄷurrency`,
+                },
+            },
+            {
+                description:
+                    'Returns unknown lokad firma push with unknown lokad',
+                firma: 'deadbeef',
+                returned: {
+                    protocol: 'Unknown Lokad',
+                    data: 'deadbeef',
+                },
+            },
+            {
+                description:
+                    'Returns unknown lokad firma push that is too short for a lokadId',
+                firma: 'beef',
+                returned: {
+                    protocol: 'Unknown Lokad',
+                    data: 'beef',
+                },
+            },
+        ],
+    },
     getXecxAppAction: {
         expectedReturns: [
             {
@@ -502,6 +618,31 @@ export const opReturnVectors = {
                     },
                     app: 'unknown',
                     lokadId: 'deadbeef',
+                },
+            },
+            {
+                description: 'Parses valid Solana address',
+                push: '534f4c304ebabba2b443691c1a9180426004d5fd3419e9f9c64e5839b853cecdaacbf745',
+                returned: {
+                    action: {
+                        solAddr: '6JKwz43wDTgk5n8eNCJrtsnNtkDdKd1XUZAvB9WkiEQ4',
+                    },
+                    app: 'Solana Address',
+                    isValid: true,
+                    lokadId: '534f4c30',
+                },
+            },
+            {
+                description: 'Parses invalid Solana address',
+                push: '534f4c304ebabba2b443691c1a9180426004d5fd3419e9f9c64e5839b853cecdaacbf7',
+                returned: {
+                    action: {
+                        solAddr:
+                            'Invalid SOL pk: 4ebabba2b443691c1a9180426004d5fd3419e9f9c64e5839b853cecdaacbf7',
+                    },
+                    app: 'Solana Address',
+                    isValid: false,
+                    lokadId: '534f4c30',
                 },
             },
             {

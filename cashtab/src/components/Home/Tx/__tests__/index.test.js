@@ -34,6 +34,9 @@ import {
     PayButtonYesDataNoNonce,
     PayButtonOffSpec,
     PayButtonBadVersion,
+    NFToaAuthYesNonce,
+    NFToaMsgNoNonce,
+    NFToaOffSpec,
     MsgFromEcashChat,
     offSpecEcashChat,
     SlpV1Mint,
@@ -73,13 +76,12 @@ import {
     xecxTx,
     invalidXecxTx,
     firmaYieldTx,
+    firmaRedeemTx,
 } from 'chronik/fixtures/mocks';
 import CashtabState from 'config/CashtabState';
 import { MemoryRouter } from 'react-router-dom';
 import { getHashes } from 'wallet';
 import userEvent from '@testing-library/user-event';
-
-const AVALANCHE_FINALIZED_CHAINTIP = 800000;
 
 describe('<Tx />', () => {
     it('Incoming XEC-only, avalanche finalized', async () => {
@@ -91,7 +93,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                 </ThemeProvider>
             </MemoryRouter>,
@@ -123,18 +124,19 @@ describe('<Tx />', () => {
         expect(screen.getByText('42.00 XEC')).toBeInTheDocument();
     });
     it('Incoming XEC-only, not yet finalized by Avalanche', async () => {
-        const AVALANCHE_UNFINALIZED_CHAINTIP = 0;
-
         render(
             <MemoryRouter>
                 <ThemeProvider theme={theme}>
                     <Tx
-                        tx={{ ...incomingXec.tx, parsed: incomingXec.parsed }}
+                        tx={{
+                            ...incomingXec.tx,
+                            parsed: incomingXec.parsed,
+                            isFinal: false,
+                        }}
                         hashes={getHashes(mockParseTxWallet)}
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_UNFINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -177,7 +179,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -223,7 +224,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -255,7 +255,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -291,7 +290,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -332,7 +330,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -379,7 +376,6 @@ describe('<Tx />', () => {
                             ...new CashtabState(),
                             cashtabCache: { tokens: mockParseTxTokenCache },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -434,7 +430,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -490,7 +485,6 @@ describe('<Tx />', () => {
                             ...new CashtabState(),
                             cashtabCache: { tokens: mockParseTxTokenCache },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -545,7 +539,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -598,7 +591,6 @@ describe('<Tx />', () => {
                             ...new CashtabState(),
                             cashtabCache: { tokens: mockParseTxTokenCache },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -651,7 +643,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -708,7 +699,6 @@ describe('<Tx />', () => {
                             ...new CashtabState(),
                             cashtabCache: { tokens: mockParseTxTokenCache },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -761,7 +751,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -815,7 +804,6 @@ describe('<Tx />', () => {
                             ...new CashtabState(),
                             cashtabCache: { tokens: mockParseTxTokenCache },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -875,7 +863,6 @@ describe('<Tx />', () => {
                             ...new CashtabState(),
                             cashtabCache: { tokens: mockLargeTokenCache },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -914,6 +901,17 @@ describe('<Tx />', () => {
 
         // We see airdrop label
         expect(screen.getByText('Airdrop (XEC)')).toBeInTheDocument();
+
+        // We see an info button and can click it for more info
+        await userEvent.click(
+            await screen.findByRole('button', {
+                name: 'Airdrop Msg Info',
+            }),
+        );
+        expect(
+            screen.getByText('Beware of scams in links!'),
+        ).toBeInTheDocument();
+
         // We see the airdrop msg
         expect(
             screen.getByText(
@@ -937,7 +935,6 @@ describe('<Tx />', () => {
                             ...new CashtabState(),
                             cashtabCache: { tokens: mockLargeTokenCache },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -983,7 +980,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1029,7 +1025,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1073,7 +1068,6 @@ describe('<Tx />', () => {
                             ...new CashtabState(),
                             cashtabCache: { tokens: mockParseTxTokenCache },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1126,7 +1120,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1185,7 +1178,6 @@ describe('<Tx />', () => {
                             ...new CashtabState(),
                             cashtabCache: { tokens: mockParseTxTokenCache },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1242,7 +1234,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1256,7 +1247,7 @@ describe('<Tx />', () => {
         expect(screen.getByText(/Sent to self/)).toBeInTheDocument();
 
         // We render the timestamp
-        expect(screen.getByText('Apr 8, 2024, 24:18:59')).toBeInTheDocument();
+        expect(screen.getByText('Apr 8, 2024, 00:18:59')).toBeInTheDocument();
 
         // We see the expected self-send amount
         expect(screen.getByText('-')).toBeInTheDocument();
@@ -1286,7 +1277,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1330,7 +1320,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1377,7 +1366,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1424,7 +1412,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1471,7 +1458,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1515,7 +1501,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1544,6 +1529,117 @@ describe('<Tx />', () => {
         // We see expected protocol label
         expect(screen.getByText('Invalid PayButton')).toBeInTheDocument();
     });
+    it('Received NFToa Authentication TX (Proof of Access, with nonce)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{
+                            ...NFToaAuthYesNonce.tx,
+                            parsed: NFToaAuthYesNonce.parsed,
+                        }}
+                        hashes={['c73d119dede21aca5b3f1d959634bb6fee878996']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                    />
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // Icon (received)
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
+
+        // Label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // Amount
+        expect(screen.getByText('5.50 XEC')).toBeInTheDocument();
+        expect(screen.getByText('$0.00')).toBeInTheDocument();
+
+        // NFToa logo
+        expect(screen.getByTitle('tx-nftoa')).toBeInTheDocument();
+
+        // Nonce
+        expect(screen.getByText('eb0c601b84975437')).toBeInTheDocument();
+
+        // App action
+        expect(screen.getByText('Login to Gaudio App')).toBeInTheDocument();
+    });
+    it('Received NFToa Message TX (without nonce)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{
+                            ...NFToaMsgNoNonce.tx,
+                            parsed: NFToaMsgNoNonce.parsed,
+                        }}
+                        hashes={['c73d119dede21aca5b3f1d959634bb6fee878996']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                    />
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // Icon (received)
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
+
+        // Label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // Amount
+        expect(screen.getByText('5.50 XEC')).toBeInTheDocument();
+        expect(screen.getByText('$0.00')).toBeInTheDocument();
+
+        // NFToa logo
+        expect(screen.getByTitle('tx-nftoa')).toBeInTheDocument();
+
+        // App action
+        expect(screen.getByText('Hello World from NFToa')).toBeInTheDocument();
+    });
+    it('Off-spec NFToa TX (invalid format)', async () => {
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{
+                            ...NFToaOffSpec.tx,
+                            parsed: NFToaOffSpec.parsed,
+                        }}
+                        hashes={['c73d119dede21aca5b3f1d959634bb6fee878996']}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                        }}
+                    />
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // Icon (received)
+        expect(screen.getByTitle('tx-received')).toBeInTheDocument();
+
+        // Label
+        expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+        // Amount
+        expect(screen.getByText('5.50 XEC')).toBeInTheDocument();
+        expect(screen.getByText('$0.00')).toBeInTheDocument();
+
+        // NFToa logo
+        expect(screen.getByTitle('tx-nftoa')).toBeInTheDocument();
+
+        // App action
+        expect(screen.getByText('Invalid NFToa')).toBeInTheDocument();
+    });
     it('eCash chat tx', async () => {
         render(
             <MemoryRouter>
@@ -1559,7 +1655,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1611,7 +1706,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1655,7 +1749,6 @@ describe('<Tx />', () => {
                                 tokens: mockTxHistorySupportingTokenCache,
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1708,7 +1801,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1764,7 +1856,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1813,7 +1904,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1871,7 +1961,6 @@ describe('<Tx />', () => {
                                 tokens: mockTxHistorySupportingTokenCache,
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1919,7 +2008,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -1966,7 +2054,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2020,7 +2107,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2067,7 +2153,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(SlpNftParentFanTx.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2129,7 +2214,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(SlpNftMint.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2194,7 +2278,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(SlpParentGenesisTxMock.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2253,7 +2336,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2296,7 +2378,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2335,7 +2416,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2377,7 +2457,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2413,7 +2492,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2449,7 +2527,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2485,7 +2562,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2530,7 +2606,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(agoraAdSetupTxSlpNft.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2588,7 +2663,6 @@ describe('<Tx />', () => {
                         cashtabState={{
                             ...new CashtabState(),
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2647,7 +2721,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(agoraOneshotSaleTx.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2701,7 +2774,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2754,7 +2826,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(agoraOneshotSaleTx.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2811,7 +2882,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2864,7 +2934,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(AgoraOneshotCancelTx.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2918,7 +2987,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -2963,7 +3031,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(thisMock.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3020,7 +3087,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3064,7 +3130,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(agoraPartialBuxBuyTx.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3130,7 +3195,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3188,7 +3252,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(agoraPartialBuxBuyTx.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3257,7 +3320,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(thisMock.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3321,7 +3383,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(thisMock.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3390,7 +3451,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3445,7 +3505,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(thisMock.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3513,7 +3572,6 @@ describe('<Tx />', () => {
                         fiatPrice={0.00003}
                         fiatCurrency="usd"
                         cashtabState={new CashtabState()}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3570,7 +3628,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(thisMock.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3634,7 +3691,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(thisMock.cache),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3699,7 +3755,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3758,7 +3813,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3772,7 +3826,7 @@ describe('<Tx />', () => {
         expect(screen.getByText(/Received from/)).toBeInTheDocument();
 
         // We render the timestamp
-        expect(screen.getByText('Dec 27, 2024, 24:00:01')).toBeInTheDocument();
+        expect(screen.getByText('Dec 27, 2024, 00:00:01')).toBeInTheDocument();
 
         // We see the expected received amount
         expect(screen.getByText('312.5k XEC')).toBeInTheDocument();
@@ -3809,7 +3863,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3823,7 +3876,7 @@ describe('<Tx />', () => {
         expect(screen.getByText(/Received from/)).toBeInTheDocument();
 
         // We render the timestamp
-        expect(screen.getByText('Dec 27, 2024, 24:00:01')).toBeInTheDocument();
+        expect(screen.getByText('Dec 27, 2024, 00:00:01')).toBeInTheDocument();
 
         // We see the expected received amount
         expect(screen.getByText('312.5k XEC')).toBeInTheDocument();
@@ -3853,7 +3906,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3897,7 +3949,6 @@ describe('<Tx />', () => {
                                 tokens: new Map(),
                             },
                         }}
-                        chaintipBlockheight={AVALANCHE_FINALIZED_CHAINTIP}
                     />
                     ,
                 </ThemeProvider>
@@ -3924,5 +3975,54 @@ describe('<Tx />', () => {
 
         // We see Firma yield app action
         expect(screen.getByText(`Firma yield payment`)).toBeInTheDocument();
+    });
+    it('Outgoing FIRMA-USDT conversion tx', async () => {
+        const thisMock = firmaRedeemTx;
+        render(
+            <MemoryRouter>
+                <ThemeProvider theme={theme}>
+                    <Tx
+                        tx={{ ...thisMock.tx, parsed: thisMock.parsedSend }}
+                        hashes={[thisMock.sendingHash]}
+                        fiatPrice={0.00003}
+                        fiatCurrency="usd"
+                        cashtabState={{
+                            ...new CashtabState(),
+                            cashtabCache: {
+                                tokens: new Map(),
+                            },
+                        }}
+                    />
+                    ,
+                </ThemeProvider>
+            </MemoryRouter>,
+        );
+
+        // We see a conventional tx-sent icon for the XEC action
+        expect(screen.getByTitle('tx-sent')).toBeInTheDocument();
+
+        // We see expected label
+        expect(screen.getByText(/Sent to/)).toBeInTheDocument();
+
+        // We render the timestamp
+        expect(screen.getByText('May 13, 2025, 20:56:03')).toBeInTheDocument();
+
+        // We see the expected sent amount
+        expect(screen.getByText('-5.46 XEC')).toBeInTheDocument();
+
+        // We see the a fiat amount
+        expect(screen.getByText('-$0.00')).toBeInTheDocument();
+
+        // We see Firma icon
+        expect(screen.getByAltText(`Firma reward`)).toBeInTheDocument();
+
+        // We see the USDT icon
+        expect(screen.getByAltText(`USDT Tether logo`)).toBeInTheDocument();
+
+        // We see the SOL logo
+        expect(screen.getByAltText(`SOL logo`)).toBeInTheDocument();
+
+        // We see Firma redeem app action
+        expect(screen.getByText(`Firma USDT conversion`)).toBeInTheDocument();
     });
 });

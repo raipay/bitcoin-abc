@@ -31,11 +31,7 @@ constexpr int64_t SYNC_LOCATOR_WRITE_INTERVAL = 30; // seconds
 
 template <typename... Args>
 static void FatalError(const char *fmt, const Args &...args) {
-    std::string strMessage = tfm::format(fmt, args...);
-    SetMiscWarning(Untranslated(strMessage));
-    LogPrintf("*** %s\n", strMessage);
-    AbortError(_("A fatal internal error occurred, see debug.log for details"));
-    StartShutdown();
+    AbortNode(tfm::format(fmt, args...));
 }
 
 CBlockLocator GetLocator(interfaces::Chain &chain,
@@ -256,18 +252,14 @@ bool BaseIndex::Rewind(const CBlockIndex *current_tip,
     assert(current_tip == m_best_block_index);
     assert(current_tip->GetAncestor(new_tip->nHeight) == new_tip);
 
-    // In the case of a reorg, ensure persisted block locator is not stale.
+    // Don't commit here - the committed index state must never be ahead of the
+    // flushed chainstate, otherwise unclean restarts would lead to index
+    // corruption.
     // Pruning has a minimum of 288 blocks-to-keep and getting the index
     // out of sync may be possible but a users fault.
     // In case we reorg beyond the pruned depth, ReadBlockFromDisk would
     // throw and lead to a graceful shutdown
     SetBestBlockIndex(new_tip);
-    if (!Commit()) {
-        // If commit fails, revert the best block index to avoid corruption.
-        SetBestBlockIndex(current_tip);
-        return false;
-    }
-
     return true;
 }
 

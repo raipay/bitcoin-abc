@@ -11,11 +11,11 @@
 
 #include <interfaces/node.h>
 #include <netbase.h>
+#include <node/caches.h>
 #include <qt/bitcoinunits.h>
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
-#include <txdb.h>       // for -dbcache defaults
 #include <validation.h> // for DEFAULT_SCRIPTCHECK_THREADS and MAX_SCRIPTCHECK_THREADS
 
 #include <QDataWidgetMapper>
@@ -33,8 +33,8 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet)
     ui->setupUi(this);
 
     /* Main elements init */
-    ui->databaseCache->setMinimum(MIN_DB_CACHE_MB);
-    ui->databaseCache->setMaximum(MAX_DB_CACHE_MB);
+    ui->databaseCache->setRange(MIN_DB_CACHE >> 20,
+                                std::numeric_limits<int>::max());
     ui->threadsScriptVerif->setMinimum(-GetNumCores());
     ui->threadsScriptVerif->setMaximum(MAX_SCRIPTCHECK_THREADS);
     ui->pruneWarning->setVisible(false);
@@ -115,11 +115,18 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet)
 
         /** check if the locale name consists of 2 parts (language_country) */
         if (langStr.contains("_")) {
-            /** display language strings as "native language - native country
-             * (locale name)", e.g. "Deutsch - Deutschland (de)" */
+            /**
+             * display language strings as "native language - native
+             * country/territory (locale name)", e.g.
+             * "Deutsch - Deutschland (de)"
+             */
             ui->lang->addItem(locale.nativeLanguageName() + QString(" - ") +
-                                  locale.nativeCountryName() + QString(" (") +
-                                  langStr + QString(")"),
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 2, 0))
+                                  locale.nativeTerritoryName() +
+#else
+                                  locale.nativeCountryName() +
+#endif
+                                  QString(" (") + langStr + QString(")"),
                               QVariant(langStr));
         } else {
             /** display language strings as "native language (locale name)",
@@ -314,7 +321,8 @@ void OptionsDialog::on_resetButton_clicked() {
 
         /* reset all options and close GUI */
         model->Reset();
-        QApplication::quit();
+        close();
+        Q_EMIT quitOnReset();
     }
 }
 

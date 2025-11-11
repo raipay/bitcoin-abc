@@ -12,6 +12,7 @@
 #include <avalanche/voterecord.h>
 #include <chain.h>
 #include <common/args.h>
+#include <consensus/activation.h>
 #include <key_io.h> // For DecodeSecret
 #include <net.h>
 #include <netbase.h>
@@ -206,6 +207,7 @@ Processor::Processor(Config avaconfigIn, interfaces::Chain &chain,
 }
 
 Processor::~Processor() {
+    chainNotificationsHandler->disconnect();
     chainNotificationsHandler.reset();
     stopEventLoop();
 
@@ -488,6 +490,16 @@ int Processor::getConfidence(const AnyVoteItem &item) const {
     return it->second.getConfidence();
 }
 
+bool Processor::isPolled(const AnyVoteItem &item) const {
+    if (isNull(item)) {
+        return false;
+    }
+
+    auto r = voteRecords.getReadView();
+    auto it = r->find(item);
+    return it != r.end();
+}
+
 bool Processor::isRecentlyFinalized(const uint256 &itemId) const {
     return WITH_LOCK(cs_finalizedItems, return finalizedItems.contains(itemId));
 }
@@ -757,9 +769,34 @@ ProofRef Processor::getLocalProof() const {
 }
 
 ProofRegistrationState Processor::getLocalProofRegistrationState() const {
-    return peerData
-               ? WITH_LOCK(peerData->cs_proofState, return peerData->proofState)
-               : ProofRegistrationState();
+    AssertLockNotHeld(cs_peerManager);
+
+    ProofRegistrationState state;
+    if (!peerData) {
+        return state;
+    }
+
+    if (peerData->proof) {
+        LOCK(cs_peerManager);
+
+        const ProofId &proofid = peerData->proof->getId();
+
+        if (peerManager->isInConflictingPool(proofid)) {
+            state.Invalid(ProofRegistrationResult::CONFLICTING,
+                          "conflicting-utxos");
+            return state;
+        }
+
+        if (peerManager->isInvalid(proofid)) {
+            // If proof is invalid but verifies valid, it's been rejected by
+            // avalanche
+            state.Invalid(ProofRegistrationResult::INVALID,
+                          "avalanche-invalidated");
+            return state;
+        }
+    }
+
+    return WITH_LOCK(peerData->cs_proofState, return peerData->proofState);
 }
 
 bool Processor::startEventLoop(CScheduler &scheduler) {
@@ -868,7 +905,7 @@ bool Processor::isQuorumEstablished() {
     if (pprev && IsStakingRewardsActivated(chainman.GetConsensus(), pprev)) {
         computedRewards = computeStakingReward(pprev);
     }
-    if (pprev && m_stakingPreConsensus && !computedRewards) {
+    if (pprev && isStakingPreconsensusActivated(pprev) && !computedRewards) {
         // It's possible to have quorum shortly after startup if peers were
         // loaded from disk, but staking rewards may not be ready yet. In this
         // case, we can still promote and poll for contenders.
@@ -924,7 +961,7 @@ bool Processor::computeStakingReward(const CBlockIndex *pindex) {
                     .second;
         }
 
-        if (m_stakingPreConsensus) {
+        if (isStakingPreconsensusActivated(pindex)) {
             promoteAndPollStakeContenders(pindex);
         }
     }
@@ -955,10 +992,8 @@ void Processor::cleanupStakingRewards(const int minHeight) {
         }
     }
 
-    if (m_stakingPreConsensus) {
-        WITH_LOCK(cs_peerManager,
-                  return peerManager->cleanupStakeContenders(minHeight));
-    }
+    WITH_LOCK(cs_peerManager,
+              return peerManager->cleanupStakeContenders(minHeight));
 }
 
 bool Processor::getStakingRewardWinners(
@@ -1002,7 +1037,7 @@ bool Processor::setStakingRewardWinners(const CBlockIndex *pprev,
         stakingReward.winners.push_back({ProofId(), payout});
     }
 
-    if (m_stakingPreConsensus) {
+    if (isStakingPreconsensusActivated(pprev)) {
         LOCK(cs_peerManager);
         peerManager->setStakeContenderWinners(pprev, payouts);
     }
@@ -1172,17 +1207,16 @@ void Processor::updatedBlockTip() {
         reconcileOrFinalize(proof);
     }
 
-    if (m_stakingPreConsensus) {
-        const CBlockIndex *activeTip =
-            WITH_LOCK(cs_main, return chainman.ActiveTip());
-        if (activeTip) {
-            promoteAndPollStakeContenders(activeTip);
-        }
+    const CBlockIndex *activeTip =
+        WITH_LOCK(cs_main, return chainman.ActiveTip());
+    if (activeTip && isStakingPreconsensusActivated(activeTip)) {
+        promoteAndPollStakeContenders(activeTip);
     }
 }
 
 void Processor::transactionAddedToMempool(const CTransactionRef &tx) {
-    if (m_preConsensus) {
+    if (isPreconsensusActivated(
+            WITH_LOCK(cs_main, return chainman.ActiveTip()))) {
         addToReconcile(tx);
     }
 }
@@ -1475,6 +1509,15 @@ bool Processor::GetLocalAcceptance::operator()(
 
     return WITH_LOCK(processor.mempool->cs,
                      return processor.mempool->exists(tx->GetId()));
+}
+
+bool Processor::isPreconsensusActivated(const CBlockIndex *pprev) const {
+    return m_preConsensus && IsShibusawaEnabled(chainman.GetConsensus(), pprev);
+}
+
+bool Processor::isStakingPreconsensusActivated(const CBlockIndex *pprev) const {
+    return m_stakingPreConsensus &&
+           IsShibusawaEnabled(chainman.GetConsensus(), pprev);
 }
 
 } // namespace avalanche

@@ -7,6 +7,7 @@
 
 #include <interfaces/chain.h>
 #include <interfaces/node.h>
+#include <qt/addressbookpage.h>
 #include <qt/clientmodel.h>
 #include <qt/editaddressdialog.h>
 #include <qt/optionsmodel.h>
@@ -22,7 +23,10 @@
 #include <walletinitinterface.h>
 
 #include <QApplication>
+#include <QDebug>
+#include <QLineEdit>
 #include <QMessageBox>
+#include <QTableView>
 #include <QTimer>
 
 #include <memory>
@@ -93,11 +97,13 @@ void TestAddAddressesToSendBook(interfaces::Node &node) {
     QString s_label("already here (s)");
 
     // Define a new address (which should add to the address book successfully).
-    QString new_address;
+    QString new_address_a;
+    QString new_address_b;
 
     std::tie(r_key_dest, preexisting_r_address) = build_address();
     std::tie(s_key_dest, preexisting_s_address) = build_address();
-    std::tie(std::ignore, new_address) = build_address();
+    std::tie(std::ignore, new_address_a) = build_address();
+    std::tie(std::ignore, new_address_b) = build_address();
 
     {
         LOCK(wallet->cs_wallet);
@@ -127,6 +133,13 @@ void TestAddAddressesToSendBook(interfaces::Node &node) {
     EditAddressDialog editAddressDialog(EditAddressDialog::NewSendingAddress);
     editAddressDialog.setModel(walletModel.getAddressTableModel());
 
+    AddressBookPage address_book{platformStyle.get(),
+                                 AddressBookPage::ForEditing,
+                                 AddressBookPage::SendingTab};
+    address_book.setModel(walletModel.getAddressTableModel());
+    auto table_view = address_book.findChild<QTableView *>("tableView");
+    QCOMPARE(table_view->model()->rowCount(), 1);
+
     EditAddressAndSubmit(
         &editAddressDialog, QString("uhoh"), preexisting_r_address,
         QString(
@@ -134,8 +147,8 @@ void TestAddAddressesToSendBook(interfaces::Node &node) {
             "\"%2\" and so cannot be added as a sending address.")
             .arg(preexisting_r_address)
             .arg(r_label));
-
     check_addbook_size(2);
+    QCOMPARE(table_view->model()->rowCount(), 1);
 
     EditAddressAndSubmit(
         &editAddressDialog, QString("uhoh, different"), preexisting_s_address,
@@ -144,15 +157,58 @@ void TestAddAddressesToSendBook(interfaces::Node &node) {
             "label \"%2\".")
             .arg(preexisting_s_address)
             .arg(s_label));
-
     check_addbook_size(2);
+    QCOMPARE(table_view->model()->rowCount(), 1);
 
     // Submit a new address which should add successfully - we expect the
     // warning message to be blank.
-    EditAddressAndSubmit(&editAddressDialog, QString("new"), new_address,
-                         QString(""));
-
+    EditAddressAndSubmit(&editAddressDialog, QString("io - new A"),
+                         new_address_a, QString(""));
     check_addbook_size(3);
+    QCOMPARE(table_view->model()->rowCount(), 2);
+
+    EditAddressAndSubmit(&editAddressDialog, QString("io - new B"),
+                         new_address_b, QString(""));
+    check_addbook_size(4);
+    QCOMPARE(table_view->model()->rowCount(), 3);
+
+    auto search_line = address_book.findChild<QLineEdit *>("searchLineEdit");
+
+    search_line->setText(r_label);
+    QCOMPARE(table_view->model()->rowCount(), 0);
+
+    search_line->setText(s_label);
+    QCOMPARE(table_view->model()->rowCount(), 1);
+
+    search_line->setText("io");
+    QCOMPARE(table_view->model()->rowCount(), 2);
+
+    // Check wilcard "?".
+    search_line->setText("io?new");
+    QCOMPARE(table_view->model()->rowCount(), 0);
+    search_line->setText("io???new");
+    QCOMPARE(table_view->model()->rowCount(), 2);
+
+    // Check wilcard "*".
+    search_line->setText("io*new");
+    QCOMPARE(table_view->model()->rowCount(), 2);
+    search_line->setText("*");
+    QCOMPARE(table_view->model()->rowCount(), 3);
+
+    search_line->setText(preexisting_r_address);
+    QCOMPARE(table_view->model()->rowCount(), 0);
+
+    search_line->setText(preexisting_s_address);
+    QCOMPARE(table_view->model()->rowCount(), 1);
+
+    search_line->setText(new_address_a);
+    QCOMPARE(table_view->model()->rowCount(), 1);
+
+    search_line->setText(new_address_b);
+    QCOMPARE(table_view->model()->rowCount(), 1);
+
+    search_line->setText("");
+    QCOMPARE(table_view->model()->rowCount(), 3);
 }
 
 } // namespace
@@ -164,10 +220,11 @@ void AddressBookTests::addressBookTests() {
         // framework when it tries to look up unimplemented cocoa functions,
         // and fails to handle returned nulls
         // (https://bugreports.qt.io/browse/QTBUG-49686).
-        QWARN("Skipping AddressBookTests on mac build with 'minimal' platform "
-              "set due to Qt bugs. To run AppTests, invoke with "
-              "'QT_QPA_PLATFORM=cocoa test_bitcoin-qt' on mac, or else use a "
-              "linux or windows build.");
+        qWarning()
+            << "Skipping AddressBookTests on mac build with 'minimal' platform "
+               "set due to Qt bugs. To run AppTests, invoke with "
+               "'QT_QPA_PLATFORM=cocoa test_bitcoin-qt' on mac, or else use a "
+               "linux or windows build.";
         return;
     }
 #endif

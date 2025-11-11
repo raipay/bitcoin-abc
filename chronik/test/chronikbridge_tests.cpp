@@ -90,11 +90,10 @@ BOOST_FIXTURE_TEST_CASE(test_find_fork, TestChain100Setup) {
     mineBlocks(100);
 
     // Fork of old tip is block 49
-    BOOST_CHECK_EQUAL(
-        bridge.find_fork(*tip).GetBlockHash(),
-        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip())
-            ->GetAncestor(49)
-            ->GetBlockHash());
+    auto new_tip = WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip());
+    BOOST_REQUIRE(new_tip);
+    BOOST_CHECK_EQUAL(bridge.find_fork(*tip).GetBlockHash(),
+                      new_tip->GetAncestor(49)->GetBlockHash());
 }
 
 BOOST_FIXTURE_TEST_CASE(test_lookup_spent_coin, TestChain100Setup) {
@@ -126,13 +125,29 @@ BOOST_FIXTURE_TEST_CASE(test_lookup_spent_coin, TestChain100Setup) {
                       MempoolAcceptResult::ResultType::VALID);
     TxId txid = tx.GetId();
 
-    // Tx we look up coins for
+    // Tx we look up coins for. Only the prev_out field is relevant so the other
+    // ones are default
     chronik_bridge::Tx query_tx = {
-        .inputs = {
-            {.prev_out = {chronik::util::HashToArray(txid), 0}},
-            {.prev_out = {chronik::util::HashToArray(txid), 1}},
-            {.prev_out = {{}, 0x12345678}},
-        }};
+        .txid = {},
+        .version = 2,
+        .inputs =
+            {
+                {.prev_out = {chronik::util::HashToArray(txid), 0},
+                 .script = {},
+                 .sequence = 0,
+                 .coin = {}},
+                {.prev_out = {chronik::util::HashToArray(txid), 1},
+                 .script = {},
+                 .sequence = 0,
+                 .coin = {}},
+                {.prev_out = {{}, 0x12345678},
+                 .script = {},
+                 .sequence = 0,
+                 .coin = {}},
+            },
+        .outputs = {},
+        .locktime = 0,
+    };
 
     // Do lookup
     rust::Vec<chronik_bridge::OutPoint> not_found;
@@ -305,10 +320,11 @@ BOOST_FIXTURE_TEST_CASE(test_bridge_broadcast_tx, TestChain100Setup) {
         BOOST_CHECK_EXCEPTION(
             bridge.broadcast_tx(raw_tx, 10000), std::runtime_error,
             [](const std::runtime_error &ex) {
-                BOOST_CHECK_EQUAL(
-                    ex.what(), "Transaction rejected by mempool: "
-                               "mandatory-script-verify-flag-failed (Operation "
-                               "not valid with the current stack size)");
+                std::string_view error{ex.what()};
+                BOOST_CHECK(error.starts_with(
+                    "Transaction rejected by mempool: "
+                    "mandatory-script-verify-flag-failed (Operation "
+                    "not valid with the current stack size)"));
                 return true;
             });
     }

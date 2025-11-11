@@ -20,10 +20,11 @@ import {
     isValidMultiSendUserInput,
     shouldSendXecBeDisabled,
     parseAddressInput,
-    isValidCashtabWallet,
+    isValidStoredCashtabWallet,
     isValidTokenSendOrBurnAmount,
     isValidTokenMintAmount,
     getOpReturnRawError,
+    getFirmaPushError,
     nodeWillAcceptOpReturnRaw,
     getContactNameError,
     getContactAddressError,
@@ -239,6 +240,12 @@ describe('Cashtab validation functions', () => {
     it(`isProbablyNotAScam prevents new genesis tx of "Firma" as token name`, () => {
         expect(isProbablyNotAScam('Firma')).toBe(false);
     });
+    it(`isProbablyNotAScam prevents new genesis tx of "MUSD" as token ticker`, () => {
+        expect(isProbablyNotAScam('MUSD')).toBe(false);
+    });
+    it(`isProbablyNotAScam prevents new genesis tx of "Marianas U.S. Dollar" as token name`, () => {
+        expect(isProbablyNotAScam('Marianas U.S. Dollar')).toBe(false);
+    });
     it(`isProbablyNotAScam recognizes "bitcoin" is probably a scam token name`, () => {
         expect(isProbablyNotAScam('bitcoin')).toBe(false);
     });
@@ -376,11 +383,11 @@ describe('Cashtab validation functions', () => {
         });
     });
     describe('Determines if a cashtab wallet is valid or invalid', () => {
-        const { expectedReturns } = vectors.isValidCashtabWallet;
+        const { expectedReturns } = vectors.isValidStoredCashtabWallet;
         expectedReturns.forEach(expectedReturn => {
             const { description, wallet, returned } = expectedReturn;
-            it(`isValidCashtabWallet: ${description}`, () => {
-                expect(isValidCashtabWallet(wallet)).toBe(returned);
+            it(`isValidStoredCashtabWallet: ${description}`, () => {
+                expect(isValidStoredCashtabWallet(wallet)).toBe(returned);
             });
         });
     });
@@ -471,6 +478,15 @@ describe('Cashtab validation functions', () => {
             const { description, opReturnRaw, returned } = expectedReturn;
             it(`getOpReturnRawError: ${description}`, () => {
                 expect(getOpReturnRawError(opReturnRaw)).toBe(returned);
+            });
+        });
+    });
+    describe('Can tell if a string is valid bip21 firma input, or why it is not', () => {
+        const { expectedReturns } = vectors.getFirmaPushError;
+        expectedReturns.forEach(expectedReturn => {
+            const { description, firmaPush, returned } = expectedReturn;
+            it(`getFirmaPushError: ${description}`, () => {
+                expect(getFirmaPushError(firmaPush)).toBe(returned);
             });
         });
     });

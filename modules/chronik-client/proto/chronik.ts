@@ -250,6 +250,46 @@ export function blockMsgTypeToJSON(object: BlockMsgType): string {
     }
 }
 
+/** Type of tx finalization */
+export enum TxFinalizationReasonType {
+    /** TX_FINALIZATION_REASON_POST_CONSENSUS - The transaction is finalized by post-consensus */
+    TX_FINALIZATION_REASON_POST_CONSENSUS = 0,
+    /** TX_FINALIZATION_REASON_PRE_CONSENSUS - The transaction is finalized by pre-consensus */
+    TX_FINALIZATION_REASON_PRE_CONSENSUS = 1,
+    UNRECOGNIZED = -1,
+}
+
+export function txFinalizationReasonTypeFromJSON(
+    object: any,
+): TxFinalizationReasonType {
+    switch (object) {
+        case 0:
+        case 'TX_FINALIZATION_REASON_POST_CONSENSUS':
+            return TxFinalizationReasonType.TX_FINALIZATION_REASON_POST_CONSENSUS;
+        case 1:
+        case 'TX_FINALIZATION_REASON_PRE_CONSENSUS':
+            return TxFinalizationReasonType.TX_FINALIZATION_REASON_PRE_CONSENSUS;
+        case -1:
+        case 'UNRECOGNIZED':
+        default:
+            return TxFinalizationReasonType.UNRECOGNIZED;
+    }
+}
+
+export function txFinalizationReasonTypeToJSON(
+    object: TxFinalizationReasonType,
+): string {
+    switch (object) {
+        case TxFinalizationReasonType.TX_FINALIZATION_REASON_POST_CONSENSUS:
+            return 'TX_FINALIZATION_REASON_POST_CONSENSUS';
+        case TxFinalizationReasonType.TX_FINALIZATION_REASON_PRE_CONSENSUS:
+            return 'TX_FINALIZATION_REASON_PRE_CONSENSUS';
+        case TxFinalizationReasonType.UNRECOGNIZED:
+        default:
+            return 'UNRECOGNIZED';
+    }
+}
+
 /** Type of message for a tx */
 export enum TxMsgType {
     /** TX_ADDED_TO_MEMPOOL - Tx added to the mempool */
@@ -260,6 +300,8 @@ export enum TxMsgType {
     TX_CONFIRMED = 2,
     /** TX_FINALIZED - Tx finalized by Avalanche */
     TX_FINALIZED = 3,
+    /** TX_INVALIDATED - Tx invalidated by Avalanche */
+    TX_INVALIDATED = 4,
     UNRECOGNIZED = -1,
 }
 
@@ -277,6 +319,9 @@ export function txMsgTypeFromJSON(object: any): TxMsgType {
         case 3:
         case 'TX_FINALIZED':
             return TxMsgType.TX_FINALIZED;
+        case 4:
+        case 'TX_INVALIDATED':
+            return TxMsgType.TX_INVALIDATED;
         case -1:
         case 'UNRECOGNIZED':
         default:
@@ -294,6 +339,8 @@ export function txMsgTypeToJSON(object: TxMsgType): string {
             return 'TX_CONFIRMED';
         case TxMsgType.TX_FINALIZED:
             return 'TX_FINALIZED';
+        case TxMsgType.TX_INVALIDATED:
+            return 'TX_INVALIDATED';
         case TxMsgType.UNRECOGNIZED:
         default:
             return 'UNRECOGNIZED';
@@ -741,6 +788,8 @@ export interface WsSub {
     lokadId?: WsSubLokadId | undefined;
     /** Subscription to a plugin group */
     plugin?: WsPlugin | undefined;
+    /** Subscription to a txid */
+    txid?: WsSubTxId | undefined;
 }
 
 /**
@@ -794,6 +843,12 @@ export interface WsPlugin {
     group: Uint8Array;
 }
 
+/** Subscription to a txid. They will be sent every time a tx status confirmation changes. */
+export interface WsSubTxId {
+    /** Hex txid to subscribe to. */
+    txid: string;
+}
+
 /** Message coming from the WebSocket */
 export interface WsMsg {
     /** Error, e.g. when a bad message has been sent into the WebSocket. */
@@ -829,12 +884,23 @@ export interface MsgBlock {
     coinbaseData: CoinbaseData | undefined;
 }
 
+/** The reason that caused a tx to finalize */
+export interface TxFinalizationReason {
+    /** What kind of finalization occured */
+    finalizationType: TxFinalizationReasonType;
+}
+
 /** Tx got added to/removed from mempool, or confirmed in a block, etc. */
 export interface MsgTx {
     /** What happened to the tx */
     msgType: TxMsgType;
     /** Txid of the tx (little-endian) */
     txid: Uint8Array;
+    /**
+     * If the transaction is finalized, whether it's from pre-consensus or
+     * post-consensus
+     */
+    finalizationReason: TxFinalizationReason | undefined;
 }
 
 /** Empty msg without any data */
@@ -5455,6 +5521,7 @@ function createBaseWsSub(): WsSub {
         tokenId: undefined,
         lokadId: undefined,
         plugin: undefined,
+        txid: undefined,
     };
 }
 
@@ -5492,6 +5559,9 @@ export const WsSub = {
         }
         if (message.plugin !== undefined) {
             WsPlugin.encode(message.plugin, writer.uint32(50).fork()).ldelim();
+        }
+        if (message.txid !== undefined) {
+            WsSubTxId.encode(message.txid, writer.uint32(58).fork()).ldelim();
         }
         return writer;
     },
@@ -5558,6 +5628,13 @@ export const WsSub = {
 
                     message.plugin = WsPlugin.decode(reader, reader.uint32());
                     continue;
+                case 7:
+                    if (tag !== 58) {
+                        break;
+                    }
+
+                    message.txid = WsSubTxId.decode(reader, reader.uint32());
+                    continue;
             }
             if ((tag & 7) === 4 || tag === 0) {
                 break;
@@ -5587,6 +5664,9 @@ export const WsSub = {
             plugin: isSet(object.plugin)
                 ? WsPlugin.fromJSON(object.plugin)
                 : undefined,
+            txid: isSet(object.txid)
+                ? WsSubTxId.fromJSON(object.txid)
+                : undefined,
         };
     },
 
@@ -5609,6 +5689,9 @@ export const WsSub = {
         }
         if (message.plugin !== undefined) {
             obj.plugin = WsPlugin.toJSON(message.plugin);
+        }
+        if (message.txid !== undefined) {
+            obj.txid = WsSubTxId.toJSON(message.txid);
         }
         return obj;
     },
@@ -5638,6 +5721,10 @@ export const WsSub = {
         message.plugin =
             object.plugin !== undefined && object.plugin !== null
                 ? WsPlugin.fromPartial(object.plugin)
+                : undefined;
+        message.txid =
+            object.txid !== undefined && object.txid !== null
+                ? WsSubTxId.fromPartial(object.txid)
                 : undefined;
         return message;
     },
@@ -6002,6 +6089,71 @@ export const WsPlugin = {
     },
 };
 
+function createBaseWsSubTxId(): WsSubTxId {
+    return { txid: '' };
+}
+
+export const WsSubTxId = {
+    encode(
+        message: WsSubTxId,
+        writer: _m0.Writer = _m0.Writer.create(),
+    ): _m0.Writer {
+        if (message.txid !== '') {
+            writer.uint32(10).string(message.txid);
+        }
+        return writer;
+    },
+
+    decode(input: _m0.Reader | Uint8Array, length?: number): WsSubTxId {
+        const reader =
+            input instanceof _m0.Reader ? input : _m0.Reader.create(input);
+        let end = length === undefined ? reader.len : reader.pos + length;
+        const message = createBaseWsSubTxId();
+        while (reader.pos < end) {
+            const tag = reader.uint32();
+            switch (tag >>> 3) {
+                case 1:
+                    if (tag !== 10) {
+                        break;
+                    }
+
+                    message.txid = reader.string();
+                    continue;
+            }
+            if ((tag & 7) === 4 || tag === 0) {
+                break;
+            }
+            reader.skipType(tag & 7);
+        }
+        return message;
+    },
+
+    fromJSON(object: any): WsSubTxId {
+        return {
+            txid: isSet(object.txid) ? globalThis.String(object.txid) : '',
+        };
+    },
+
+    toJSON(message: WsSubTxId): unknown {
+        const obj: any = {};
+        if (message.txid !== '') {
+            obj.txid = message.txid;
+        }
+        return obj;
+    },
+
+    create<I extends Exact<DeepPartial<WsSubTxId>, I>>(base?: I): WsSubTxId {
+        return WsSubTxId.fromPartial(base ?? ({} as any));
+    },
+    fromPartial<I extends Exact<DeepPartial<WsSubTxId>, I>>(
+        object: I,
+    ): WsSubTxId {
+        const message = createBaseWsSubTxId();
+        message.txid = object.txid ?? '';
+        return message;
+    },
+};
+
 function createBaseWsMsg(): WsMsg {
     return { error: undefined, block: undefined, tx: undefined };
 }
@@ -6360,8 +6512,86 @@ export const MsgBlock = {
     },
 };
 
+function createBaseTxFinalizationReason(): TxFinalizationReason {
+    return { finalizationType: 0 };
+}
+
+export const TxFinalizationReason = {
+    encode(
+        message: TxFinalizationReason,
+        writer: _m0.Writer = _m0.Writer.create(),
+    ): _m0.Writer {
+        if (message.finalizationType !== 0) {
+            writer.uint32(8).int32(message.finalizationType);
+        }
+        return writer;
+    },
+
+    decode(
+        input: _m0.Reader | Uint8Array,
+        length?: number,
+    ): TxFinalizationReason {
+        const reader =
+            input instanceof _m0.Reader ? input : _m0.Reader.create(input);
+        let end = length === undefined ? reader.len : reader.pos + length;
+        const message = createBaseTxFinalizationReason();
+        while (reader.pos < end) {
+            const tag = reader.uint32();
+            switch (tag >>> 3) {
+                case 1:
+                    if (tag !== 8) {
+                        break;
+                    }
+
+                    message.finalizationType = reader.int32() as any;
+                    continue;
+            }
+            if ((tag & 7) === 4 || tag === 0) {
+                break;
+            }
+            reader.skipType(tag & 7);
+        }
+        return message;
+    },
+
+    fromJSON(object: any): TxFinalizationReason {
+        return {
+            finalizationType: isSet(object.finalizationType)
+                ? txFinalizationReasonTypeFromJSON(object.finalizationType)
+                : 0,
+        };
+    },
+
+    toJSON(message: TxFinalizationReason): unknown {
+        const obj: any = {};
+        if (message.finalizationType !== 0) {
+            obj.finalizationType = txFinalizationReasonTypeToJSON(
+                message.finalizationType,
+            );
+        }
+        return obj;
+    },
+
+    create<I extends Exact<DeepPartial<TxFinalizationReason>, I>>(
+        base?: I,
+    ): TxFinalizationReason {
+        return TxFinalizationReason.fromPartial(base ?? ({} as any));
+    },
+    fromPartial<I extends Exact<DeepPartial<TxFinalizationReason>, I>>(
+        object: I,
+    ): TxFinalizationReason {
+        const message = createBaseTxFinalizationReason();
+        message.finalizationType = object.finalizationType ?? 0;
+        return message;
+    },
+};
+
 function createBaseMsgTx(): MsgTx {
-    return { msgType: 0, txid: new Uint8Array(0) };
+    return {
+        msgType: 0,
+        txid: new Uint8Array(0),
+        finalizationReason: undefined,
+    };
 }
 
 export const MsgTx = {
@@ -6374,6 +6604,12 @@ export const MsgTx = {
         }
         if (message.txid.length !== 0) {
             writer.uint32(18).bytes(message.txid);
+        }
+        if (message.finalizationReason !== undefined) {
+            TxFinalizationReason.encode(
+                message.finalizationReason,
+                writer.uint32(26).fork(),
+            ).ldelim();
         }
         return writer;
     },
@@ -6400,6 +6636,16 @@ export const MsgTx = {
 
                     message.txid = reader.bytes();
                     continue;
+                case 3:
+                    if (tag !== 26) {
+                        break;
+                    }
+
+                    message.finalizationReason = TxFinalizationReason.decode(
+                        reader,
+                        reader.uint32(),
+                    );
+                    continue;
             }
             if ((tag & 7) === 4 || tag === 0) {
                 break;
@@ -6417,6 +6663,9 @@ export const MsgTx = {
             txid: isSet(object.txid)
                 ? bytesFromBase64(object.txid)
                 : new Uint8Array(0),
+            finalizationReason: isSet(object.finalizationReason)
+                ? TxFinalizationReason.fromJSON(object.finalizationReason)
+                : undefined,
         };
     },
 
@@ -6428,6 +6677,11 @@ export const MsgTx = {
         if (message.txid.length !== 0) {
             obj.txid = base64FromBytes(message.txid);
         }
+        if (message.finalizationReason !== undefined) {
+            obj.finalizationReason = TxFinalizationReason.toJSON(
+                message.finalizationReason,
+            );
+        }
         return obj;
     },
 
@@ -6438,6 +6692,11 @@ export const MsgTx = {
         const message = createBaseMsgTx();
         message.msgType = object.msgType ?? 0;
         message.txid = object.txid ?? new Uint8Array(0);
+        message.finalizationReason =
+            object.finalizationReason !== undefined &&
+            object.finalizationReason !== null
+                ? TxFinalizationReason.fromPartial(object.finalizationReason)
+                : undefined;
         return message;
     },
 };

@@ -412,12 +412,13 @@ void SendCoinsDialog::on_sendButton_clicked() {
     const QString confirmButtonText = model->wallet().privateKeysDisabled()
                                           ? tr("Create Unsigned")
                                           : tr("Send");
-    SendConfirmationDialog confirmationDialog(
+    auto confirmationDialog = new SendConfirmationDialog(
         confirmation, question_string, informative_text, detailed_text,
         SEND_CONFIRM_DELAY, confirmButtonText, this);
-    confirmationDialog.exec();
-    QMessageBox::StandardButton retval =
-        static_cast<QMessageBox::StandardButton>(confirmationDialog.result());
+    confirmationDialog->setAttribute(Qt::WA_DeleteOnClose);
+    // TODO: Replace QDialog::exec() with safer QDialog::show().
+    const auto retval =
+        static_cast<QMessageBox::StandardButton>(confirmationDialog->exec());
 
     if (retval != QMessageBox::Yes) {
         fNewRecipientAllowed = true;
@@ -881,9 +882,10 @@ void SendCoinsDialog::coinControlFeatureChanged(bool checked) {
 
 // Coin Control: button inputs -> show actual coin control dialog
 void SendCoinsDialog::coinControlButtonClicked() {
-    CoinControlDialog dlg(*m_coin_control, model, platformStyle);
-    dlg.exec();
-    coinControlUpdateLabels();
+    auto dlg = new CoinControlDialog(*m_coin_control, model, platformStyle);
+    connect(dlg, &QDialog::finished, this,
+            &SendCoinsDialog::coinControlUpdateLabels);
+    GUIUtil::ShowModalDialogAsynchronously(dlg);
 }
 
 // Coin Control: checkbox custom change address

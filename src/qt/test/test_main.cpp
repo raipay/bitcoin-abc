@@ -31,6 +31,7 @@
 #include <test/util/setup_common.h>
 
 #include <QApplication>
+#include <QDebug>
 #include <QObject>
 #include <QTest>
 
@@ -58,13 +59,22 @@ int main(int argc, char *argv[]) {
     // regtest params.
     //
     // All tests must use their own testing setup (if needed).
-    { BasicTestingSetup dummy{ChainType::REGTEST}; }
+    fs::create_directories([] {
+        BasicTestingSetup dummy{ChainType::REGTEST};
+
+        // This is extracted from gui#602, please remove this comment after this
+        // has been backported.
+        return gArgs.GetDataDirNet() / "blocks";
+    }());
 
     NodeContext node_context;
     std::unique_ptr<interfaces::Node> node =
         interfaces::MakeNode(&node_context);
 
-    bool fInvalid = false;
+    std::string error;
+    if (!gArgs.ReadConfigFiles(error, true)) {
+        qWarning() << error.c_str();
+    }
 
     // Prefer the "minimal" platform for the test instead of the normal default
     // platform ("xcb", "windows", or "cocoa") so tests can't unintentionally
@@ -80,50 +90,46 @@ int main(int argc, char *argv[]) {
     // Make gArgs available in the NodeContext
     app.node().context()->args = &gArgs;
 
+    int num_test_failures{0};
+
     AppTests app_tests(app);
-    if (QTest::qExec(&app_tests) != 0) {
-        fInvalid = true;
-    }
+    num_test_failures += QTest::qExec(&app_tests);
+
     OptionTests options_tests(app.node());
-    if (QTest::qExec(&options_tests) != 0) {
-        fInvalid = true;
-    }
+    num_test_failures += QTest::qExec(&options_tests);
+
     URITests test1;
-    if (QTest::qExec(&test1) != 0) {
-        fInvalid = true;
-    }
+    num_test_failures += QTest::qExec(&test1);
+
 #if defined(ENABLE_WALLET) && defined(ENABLE_BIP70)
     PaymentServerTests test2;
-    if (QTest::qExec(&test2) != 0) {
-        fInvalid = true;
-    }
-#endif
-    RPCNestedTests test3(app.node());
-    if (QTest::qExec(&test3) != 0) {
-        fInvalid = true;
-    }
-    CompatTests test4;
-    if (QTest::qExec(&test4) != 0) {
-        fInvalid = true;
-    }
-    GUIUtilTests test5;
-    if (QTest::qExec(&test5) != 0) {
-        fInvalid = true;
-    }
-    BitcoinAddressValidatorTests test6;
-    if (QTest::qExec(&test6) != 0) {
-        fInvalid = true;
-    }
-#ifdef ENABLE_WALLET
-    WalletTests test7(app.node());
-    if (QTest::qExec(&test7) != 0) {
-        fInvalid = true;
-    }
-    AddressBookTests test8(app.node());
-    if (QTest::qExec(&test8) != 0) {
-        fInvalid = true;
-    }
+    num_test_failures += QTest::qExec(&test2);
 #endif
 
-    return fInvalid;
+    RPCNestedTests test3(app.node());
+    num_test_failures += QTest::qExec(&test3);
+
+    CompatTests test4;
+    num_test_failures += QTest::qExec(&test4);
+
+    GUIUtilTests test5;
+    num_test_failures += QTest::qExec(&test5);
+
+    BitcoinAddressValidatorTests test6;
+    num_test_failures += QTest::qExec(&test6);
+
+#ifdef ENABLE_WALLET
+    WalletTests test7(app.node());
+    num_test_failures += QTest::qExec(&test7);
+
+    AddressBookTests test8(app.node());
+    num_test_failures += QTest::qExec(&test8);
+#endif
+
+    if (num_test_failures) {
+        qWarning("\nFailed tests: %d\n", num_test_failures);
+    } else {
+        qDebug("\nAll tests passed.\n");
+    }
+    return num_test_failures;
 }

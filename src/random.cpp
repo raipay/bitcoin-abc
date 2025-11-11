@@ -265,14 +265,15 @@ static void SeedHardwareSlow(CSHA512 &hasher) noexcept {
  * Use repeated SHA512 to strengthen the randomness in seed32, and feed into
  * hasher.
  */
-static void Strengthen(const uint8_t (&seed)[32], int microseconds,
+static void Strengthen(const uint8_t (&seed)[32], SteadyClock::duration dur,
                        CSHA512 &hasher) noexcept {
     CSHA512 inner_hasher;
     inner_hasher.Write(seed, sizeof(seed));
 
     // Hash loop
     uint8_t buffer[64];
-    int64_t stop = GetTimeMicros() + microseconds;
+
+    const auto stop{SteadyClock::now() + dur};
     do {
         for (int i = 0; i < 1000; ++i) {
             inner_hasher.Finalize(buffer);
@@ -282,7 +283,7 @@ static void Strengthen(const uint8_t (&seed)[32], int microseconds,
         // Benchmark operation and feed it into outer hasher.
         int64_t perf = GetPerformanceCounter();
         hasher.Write((const uint8_t *)&perf, sizeof(perf));
-    } while (GetTimeMicros() < stop);
+    } while (SteadyClock::now() < stop);
 
     // Produce output from inner state and feed it to outer hasher.
     inner_hasher.Finalize(buffer);
@@ -419,7 +420,7 @@ class RNGState {
 public:
     RNGState() noexcept { InitHardwareRand(); }
 
-    ~RNGState() {}
+    ~RNGState() = default;
 
     void AddEvent(uint32_t event_info) noexcept
         EXCLUSIVE_LOCKS_REQUIRED(!m_events_mutex) {
@@ -550,14 +551,14 @@ static void SeedSlow(CSHA512 &hasher, RNGState &rng) noexcept {
 
 /** Extract entropy from rng, strengthen it, and feed it into hasher. */
 static void SeedStrengthen(CSHA512 &hasher, RNGState &rng,
-                           int microseconds) noexcept {
+                           SteadyClock::duration dur) noexcept {
     // Generate 32 bytes of entropy from the RNG, and a copy of the entropy
     // already in hasher.
     uint8_t strengthen_seed[32];
     rng.MixExtract(strengthen_seed, sizeof(strengthen_seed), CSHA512(hasher),
                    false);
     // Strengthen the seed, and feed it into hasher.
-    Strengthen(strengthen_seed, microseconds, hasher);
+    Strengthen(strengthen_seed, dur, hasher);
 }
 
 static void SeedPeriodic(CSHA512 &hasher, RNGState &rng) noexcept {
@@ -577,8 +578,8 @@ static void SeedPeriodic(CSHA512 &hasher, RNGState &rng) noexcept {
              "Feeding %i bytes of dynamic environment data into RNG\n",
              hasher.Size() - old_size);
 
-    // Strengthen for 10ms
-    SeedStrengthen(hasher, rng, 10000);
+    // Strengthen for 10 ms
+    SeedStrengthen(hasher, rng, 10ms);
 }
 
 static void SeedStartup(CSHA512 &hasher, RNGState &rng) noexcept {
@@ -597,8 +598,8 @@ static void SeedStartup(CSHA512 &hasher, RNGState &rng) noexcept {
     LogPrint(BCLog::RAND, "Feeding %i bytes of environment data into RNG\n",
              hasher.Size() - old_size);
 
-    // Strengthen for 100ms
-    SeedStrengthen(hasher, rng, 100000);
+    // Strengthen for 100 ms
+    SeedStrengthen(hasher, rng, 100ms);
 }
 
 enum class RNGLevel {
@@ -664,27 +665,25 @@ uint256 GetRandHash() noexcept {
 
 void FastRandomContext::RandomSeed() {
     uint256 seed = GetRandHash();
-    rng.SetKey(seed.begin(), 32);
+    rng.SetKey32(seed.begin());
     requires_seed = false;
 }
 
 uint160 FastRandomContext::rand160() noexcept {
-    if (bytebuf_size < 20) {
-        FillByteBuffer();
+    if (requires_seed) {
+        RandomSeed();
     }
     uint160 ret;
-    memcpy(ret.begin(), bytebuf + 64 - bytebuf_size, 20);
-    bytebuf_size -= 20;
+    rng.Keystream(ret.data(), ret.size());
     return ret;
 }
 
 uint256 FastRandomContext::rand256() noexcept {
-    if (bytebuf_size < 32) {
-        FillByteBuffer();
+    if (requires_seed) {
+        RandomSeed();
     }
     uint256 ret;
-    memcpy(ret.begin(), bytebuf + 64 - bytebuf_size, 32);
-    bytebuf_size -= 32;
+    rng.Keystream(ret.data(), ret.size());
     return ret;
 }
 std::vector<uint8_t> FastRandomContext::randbytes(size_t len) {
@@ -699,8 +698,8 @@ std::vector<uint8_t> FastRandomContext::randbytes(size_t len) {
 }
 
 FastRandomContext::FastRandomContext(const uint256 &seed) noexcept
-    : requires_seed(false), bytebuf_size(0), bitbuf_size(0) {
-    rng.SetKey(seed.begin(), 32);
+    : requires_seed(false), bitbuf_size(0) {
+    rng.SetKey32(seed.begin());
 }
 
 bool Random_SanityCheck() {
@@ -760,25 +759,21 @@ bool Random_SanityCheck() {
 }
 
 FastRandomContext::FastRandomContext(bool fDeterministic) noexcept
-    : requires_seed(!fDeterministic), bytebuf_size(0), bitbuf_size(0) {
+    : requires_seed(!fDeterministic), bitbuf_size(0) {
     if (!fDeterministic) {
         return;
     }
     uint256 seed;
-    rng.SetKey(seed.begin(), 32);
+    rng.SetKey32(seed.begin());
 }
 
 FastRandomContext &
 FastRandomContext::operator=(FastRandomContext &&from) noexcept {
     requires_seed = from.requires_seed;
     rng = from.rng;
-    std::copy(std::begin(from.bytebuf), std::end(from.bytebuf),
-              std::begin(bytebuf));
-    bytebuf_size = from.bytebuf_size;
     bitbuf = from.bitbuf;
     bitbuf_size = from.bitbuf_size;
     from.requires_seed = true;
-    from.bytebuf_size = 0;
     from.bitbuf_size = 0;
     return *this;
 }

@@ -88,18 +88,20 @@ CScript ParseScript(const std::string &s) {
             (w.front() == '-' && w.size() > 1 &&
              std::all_of(w.begin() + 1, w.end(), ::IsDigit))) {
             // Number
-            int64_t n = atoi64(w);
+            const auto num{ToIntegral<int64_t>(w)};
 
-            // limit the range of numbers ParseScript accepts in decimal
-            // since numbers outside -0xFFFFFFFF...0xFFFFFFFF are illegal in
-            // scripts
-            if (n > int64_t{0xffffffff} || n < -1 * int64_t{0xffffffff}) {
-                throw std::runtime_error("script parse error: decimal numeric "
-                                         "value only allowed in the "
-                                         "range -0xFFFFFFFF...0xFFFFFFFF");
+            // Limit the range of numbers ParseScript accepts in decimal
+            // since numbers outside -0x7FFFFFFFFFFFFFFF...0x7FFFFFFFFFFFFFFF
+            // are illegal in scripts.
+            // This means, only the int64_t -0x8000000000000000 is illegal.
+            if (!num.has_value() ||
+                num == std::numeric_limits<int64_t>::min()) {
+                throw std::runtime_error(
+                    "script parse error: decimal numeric value only allowed in "
+                    "the range -0x7FFFFFFFFFFFFFFF...0x7FFFFFFFFFFFFFFF");
             }
 
-            result << n;
+            result << num.value();
             goto next;
         }
 

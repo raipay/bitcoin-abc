@@ -262,6 +262,12 @@ mod ffi_inner {
             data_pos: u32,
         ) -> Result<Vec<u8>>;
 
+        /// Check if the transaction is finalized via avalanche pre-consensus.
+        fn is_avalanche_finalized_preconsensus(
+            self: &ChronikBridge,
+            mempool_txid: &[u8; 32],
+        ) -> bool;
+
         /// Find at which block the given block_index forks off from the node.
         fn find_fork(
             self: &ChronikBridge,
@@ -310,6 +316,25 @@ mod ffi_inner {
         /// See `ShutdownRequested` in `shutdown.h`.
         fn shutdown_requested(self: &ChronikBridge) -> bool;
 
+        /// Returns the genesis block hash for the current chain
+        fn get_genesis_hash(self: &ChronikBridge) -> WrappedBlockHash;
+
+        /// Return the estimated fee rate for a tx to be mined in the next block
+        /// in sats/kB
+        fn estimate_feerate_sats_per_kb(self: &ChronikBridge) -> i64;
+
+        /// Return the minimum relay fee rate for a tx to be accepted into the
+        /// node mempool in sats/kB
+        fn min_relay_feerate_sats_per_kb(self: &ChronikBridge) -> i64;
+
+        /// Return the feerate information for the mempool tx
+        fn get_feerate_info(
+            self: &ChronikBridge,
+            mempool_txid: [u8; 32],
+            modified_fee_rate_sats_per_kb: &mut i64,
+            virtual_size_bytes: &mut u32,
+        ) -> bool;
+
         /// Bridge CTransaction -> ffi::Tx, using the given spent coins.
         fn bridge_tx(
             tx: &CTransaction,
@@ -354,6 +379,9 @@ mod ffi_inner {
         /// Calls `InitError` from `node/ui_interface.h` to report an error to
         /// the user and then gracefully shut down the node.
         fn init_error(msg: &str) -> bool;
+
+        /// Returns CLIENT_NAME from clientversion.cpp
+        fn client_name() -> String;
 
         /// Calls FormatFullVersion from clientversion.cpp
         fn format_full_version() -> String;

@@ -3,7 +3,7 @@
 # 2) nginx stage to serve frontend assets
 
 # Stage 1
-FROM node:20-bookworm-slim AS builder
+FROM node:22-bookworm AS builder
 
 # Build ecashaddrjs, local dependency of chronik-client
 WORKDIR /app/modules/ecashaddrjs
@@ -21,6 +21,7 @@ RUN npm run build
 WORKDIR /app/web/chronik.e.cash/
 COPY web/chronik.e.cash/package.json .
 COPY web/chronik.e.cash/package-lock.json .
+RUN npm update ecashaddrjs && npm update chronik-client
 RUN npm ci
 
 # Copy everything in web/chronik.e.cash

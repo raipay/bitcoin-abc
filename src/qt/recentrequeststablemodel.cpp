@@ -30,9 +30,7 @@ RecentRequestsTableModel::RecentRequestsTableModel(WalletModel *parent)
             this, &RecentRequestsTableModel::updateDisplayUnit);
 }
 
-RecentRequestsTableModel::~RecentRequestsTableModel() {
-    /* Intentionally left empty */
-}
+RecentRequestsTableModel::~RecentRequestsTableModel() = default;
 
 int RecentRequestsTableModel::rowCount(const QModelIndex &parent) const {
     Q_UNUSED(parent);
@@ -229,7 +227,8 @@ bool RecentRequestEntryLessThan::operator()(
 
     switch (column) {
         case RecentRequestsTableModel::Date:
-            return pLeft->date.toTime_t() < pRight->date.toTime_t();
+            return pLeft->date.toSecsSinceEpoch() <
+                   pRight->date.toSecsSinceEpoch();
         case RecentRequestsTableModel::Label:
             return pLeft->recipient.label < pRight->recipient.label;
         case RecentRequestsTableModel::Message:

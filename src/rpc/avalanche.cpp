@@ -1533,7 +1533,9 @@ static RPCHelpMan isfinaltransaction() {
                 return false;
             }
 
-            if (mempool.isAvalancheFinalized(txid)) {
+            if (WITH_LOCK(
+                    mempool.cs,
+                    return mempool.isAvalancheFinalizedPreConsensus(txid))) {
                 // The transaction is finalized
                 return true;
             }
@@ -1872,6 +1874,126 @@ static RPCHelpMan getstakecontendervote() {
     };
 }
 
+static RPCHelpMan finalizetransaction() {
+    return RPCHelpMan{
+        "finalizetransaction",
+        "Force finalize a mempool transaction. No attempt is made to poll for "
+        "this transaction and this could cause the node to disagree with the "
+        "network. This can fail if the transaction to be finalized would "
+        "overflow the block size. Upon success it will be included in the "
+        "block template.\n",
+        {
+            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The id of the transaction to be finalized."},
+        },
+        RPCResult{RPCResult::Type::ARR,
+                  "finalized_txids",
+                  "The list of the successfully finalized txids if any (it can "
+                  "include ancestors of the target txid).",
+                  {{
+                      RPCResult::Type::STR_HEX,
+                      "txid",
+                      "The finalized transaction id.",
+                  }}},
+        RPCExamples{HelpExampleRpc("finalizetransaction", "<txid>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            const NodeContext &node = EnsureAnyNodeContext(request.context);
+            CTxMemPool &mempool = EnsureAnyMemPool(request.context);
+            const ChainstateManager &chainman = EnsureChainman(node);
+
+            const TxId txid(ParseHashV(request.params[0], "txid"));
+
+            LOCK2(cs_main, mempool.cs);
+            auto entry = mempool.GetIter(txid);
+            if (!entry) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "The transaction is not in the mempool.");
+            }
+
+            const CBlockIndex *tip = chainman.ActiveTip();
+            if (!tip) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR,
+                                   "There is no active chain tip.");
+            }
+
+            UniValue ret(UniValue::VARR);
+
+            std::vector<TxId> finalizedTxids;
+            if (!mempool.setAvalancheFinalized(**entry, chainman.GetConsensus(),
+                                               *tip, finalizedTxids)) {
+                // If the function returned false, the finalizedTxids vector
+                // should not be relied upon
+                return ret;
+            }
+
+            for (TxId &finalizedTxid : finalizedTxids) {
+                ret.push_back(finalizedTxid.ToString());
+
+                // FIXME we might want to remove from the recent rejects as well
+                // if it exists so we don't vote against this tx anymore. For
+                // now this is a private data from the PeerManager and can only
+                // be cleared entirely. Also a rejected transaction is not
+                // expected to be in the mempool in the first place so this is
+                // probably safe.
+            }
+
+            return ret;
+        },
+    };
+}
+
+static RPCHelpMan removetransaction() {
+    return RPCHelpMan{
+        "removetransaction",
+        "Remove a transaction and all its descendants from the mempool. If the "
+        "transaction is final it is removed anyway. No attempt is made to poll "
+        "for this transaction and this could cause the node to disagree with "
+        "the network.\n",
+        {
+            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The id of the transaction to be removed."},
+        },
+        RPCResult{RPCResult::Type::ARR,
+                  "removed_txids",
+                  "The list of the removed txids if any (it can include "
+                  "descendants of the target txid).",
+                  {{
+                      RPCResult::Type::STR_HEX,
+                      "txid",
+                      "The removed transaction id.",
+                  }}},
+        RPCExamples{HelpExampleRpc("removetransaction", "<txid>")},
+        [&](const RPCHelpMan &self, const Config &config,
+            const JSONRPCRequest &request) -> UniValue {
+            CTxMemPool &mempool = EnsureAnyMemPool(request.context);
+
+            const TxId txid(ParseHashV(request.params[0], "txid"));
+
+            LOCK(mempool.cs);
+            auto iter = mempool.GetIter(txid);
+            if (!iter) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "The transaction is not in the mempool.");
+            }
+
+            // This mostly mimics the CTxMemPool::removeRecursive function so we
+            // can return the list of removed txids
+            CTxMemPool::setEntries setDescendants;
+            mempool.CalculateDescendants(*iter, setDescendants);
+
+            UniValue ret(UniValue::VARR);
+            for (auto &it : setDescendants) {
+                ret.push_back((*it)->GetSharedTx()->GetId().ToString());
+            }
+
+            mempool.RemoveStaged(setDescendants, MemPoolRemovalReason::MANUAL);
+
+            return ret;
+        },
+    };
+}
+
 void RegisterAvalancheRPCCommands(CRPCTable &t) {
     // clang-format off
     static const CRPCCommand commands[] = {
@@ -1900,6 +2022,8 @@ void RegisterAvalancheRPCCommands(CRPCTable &t) {
         { "avalanche",         verifyavalanchedelegation, },
         { "avalanche",         setflakyproof,             },
         { "avalanche",         getflakyproofs,            },
+        { "avalanche",         finalizetransaction,       },
+        { "avalanche",         removetransaction,         },
         { "hidden",            getavailabilityscore,      },
         { "hidden",            getstakecontendervote,     },
     };

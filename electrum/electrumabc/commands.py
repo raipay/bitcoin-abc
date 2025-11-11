@@ -38,6 +38,7 @@ from functools import wraps
 
 from . import alias, bitcoin, util, web
 from .address import Address, AddressError
+from .amount import format_satoshis
 from .bitcoin import CASH, TYPE_ADDRESS
 from .constants import PROJECT_NAME, SCRIPT_NAME, XEC
 from .crypto import hash_160
@@ -56,7 +57,7 @@ from .transaction import (
     multisig_script,
     rawtx_from_str,
 )
-from .util import format_satoshis, to_bytes
+from .util import to_bytes
 from .version import PACKAGE_VERSION
 from .wallet import create_new_wallet, restore_wallet_from_text
 
@@ -645,7 +646,7 @@ class Commands:
     def _resolver(self, x):
         if x is None:
             return None
-        out = alias.resolve(x)
+        out = alias.resolve(x, self.config)
         if (
             out.get("type") == "openalias"
             and self.nocheck is False
@@ -898,7 +899,7 @@ class Commands:
     @command("w")
     def getalias(self, key):
         """Retrieve alias. Lookup in your list of contacts, and for an OpenAlias DNS record."""
-        return alias.resolve(key)
+        return alias.resolve(key, self.config)
 
     @command("w")
     def searchcontacts(self, query):
@@ -1088,7 +1089,7 @@ class Commands:
         alias_ = self.config.get("alias")
         if not alias_:
             raise ValueError("No alias in your configuration")
-        data = alias.resolve(alias_)
+        data = alias.resolve(alias_, self.config)
         alias_addr = (data and data.get("address")) or None
         if not alias_addr:
             raise RuntimeError("Alias could not be resolved")

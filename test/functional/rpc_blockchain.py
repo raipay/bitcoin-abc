@@ -130,6 +130,7 @@ class BlockchainTest(BitcoinTestFramework):
             "chain",
             "chainwork",
             "difficulty",
+            "finalized_blockhash",
             "headers",
             "initialblockdownload",
             "mediantime",
@@ -289,7 +290,7 @@ class BlockchainTest(BitcoinTestFramework):
         assert_equal(res["transactions"], HEIGHT)
         assert_equal(res["height"], HEIGHT)
         assert_equal(res["txouts"], HEIGHT)
-        assert_equal(res["bogosize"], 14600),
+        assert_equal(res["bogosize"], 14600)
         assert_equal(res["bestblock"], node.getblockhash(HEIGHT))
         size = res["disk_size"]
         assert size > 6400
@@ -308,7 +309,7 @@ class BlockchainTest(BitcoinTestFramework):
         assert_equal(res2["total_amount"], Decimal("0"))
         assert_equal(res2["height"], 0)
         assert_equal(res2["txouts"], 0)
-        assert_equal(res2["bogosize"], 0),
+        assert_equal(res2["bogosize"], 0)
         assert_equal(res2["bestblock"], node.getblockhash(0))
         assert_equal(len(res2["hash_serialized"]), 64)
 
@@ -399,8 +400,7 @@ class BlockchainTest(BitcoinTestFramework):
         assert_is_hex_string(header_hex)
 
         header = FromHex(CBlockHeader(), header_hex)
-        header.calc_sha256()
-        assert_equal(header.hash, besthash)
+        assert_equal(header.hash_hex, besthash)
 
         assert "previousblockhash" not in node.getblockheader(node.getblockhash(0))
         assert "nextblockhash" not in node.getblockheader(node.getbestblockhash())
@@ -479,9 +479,9 @@ class BlockchainTest(BitcoinTestFramework):
         b1 = solve_and_send_block(
             int(fork_hash, 16), fork_height + 1, fork_block["time"] + 1
         )
-        b2 = solve_and_send_block(b1.sha256, fork_height + 1, b1.nTime + 1)
+        b2 = solve_and_send_block(b1.hash_int, fork_height + 1, b1.nTime + 1)
 
-        node.invalidateblock(b2.hash)
+        node.invalidateblock(b2.hash_hex)
 
         def assert_waitforheight(height, timeout=2):
             assert_equal(
