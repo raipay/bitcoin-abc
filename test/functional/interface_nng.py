@@ -219,7 +219,6 @@ class NngInterfaceTest(BitcoinTestFramework):
         coinbase = create_coinbase(new_height)
         coinbase.vout[0].scriptPubKey = CScript([OP_RETURN, bytes(100)])
         coinbase.vout[1].scriptPubKey = CScript([OP_HASH160, bytes(20), OP_EQUAL])
-        coinbase.rehash()
         return create_block(
             int(bestblock['hash'], 16), coinbase, bestblock['time'] + 1)
 
@@ -256,8 +255,7 @@ class NngInterfaceTest(BitcoinTestFramework):
             block_header = block.Header()
             header = CBlockHeader()
             header.deserialize(BytesIO(get_fb_bytes(block_header, 'Raw')))
-            header.rehash()
-            assert_equal(header.hash, rpc_genesis_blockhash)
+            assert_equal(header.hash_hex, rpc_genesis_blockhash)
             assert_equal(bytes(block_header.PrevBlockHash().Hash().Data())[::-1].hex(), '0'*64)
             assert_equal(bytes(block_header.BlockHash().Hash().Data())[::-1].hex(), rpc_genesis_blockhash)
             assert_equal(block_header.Timestamp(), rpc_genesis_block['time'])
@@ -313,8 +311,7 @@ class NngInterfaceTest(BitcoinTestFramework):
         block = response.Block()
         header = CBlockHeader()
         header.deserialize(BytesIO(get_fb_bytes(block.Header(), 'Raw')))
-        header.rehash()
-        assert_equal(header.hash, blockhash[::-1].hex())
+        assert_equal(header.hash_hex, blockhash[::-1].hex())
         assert_equal(bytes(block.Header().BlockHash().Hash().Data())[::-1].hex(),
                      blockhash[::-1].hex())
         assert_equal(block.MetadataLength(), 0)
@@ -322,7 +319,6 @@ class NngInterfaceTest(BitcoinTestFramework):
         tx_raw = get_fb_bytes(block.Txs(0).Tx(), 'Raw')
         coinbase_tx = CTransaction()
         coinbase_tx.deserialize(BytesIO(tx_raw))
-        coinbase_tx.rehash()
         assert_equal(block.FileNum(), 0)
         assert_equal(block.Txs(0).DataPos(), 382)
         assert_equal(block.Txs(0).UndoPos(), 0)
@@ -336,7 +332,7 @@ class NngInterfaceTest(BitcoinTestFramework):
         coinbase_value = coinbase_tx.vout[0].nValue
         tx = CTransaction()
         tx.vin.append(
-            CTxIn(COutPoint(coinbase_tx.sha256, 0), CScript([b'\x51'])))
+            CTxIn(COutPoint(coinbase_tx.txid_int, 0), CScript([b'\x51'])))
         tx.vout.append(CTxOut(coinbase_value - 1000, CScript.fromhex(self.anyone_script2)))
         pad_tx(tx)
 
@@ -350,7 +346,7 @@ class NngInterfaceTest(BitcoinTestFramework):
         # Broadcast tx
         node.sendrawtransaction(tx.serialize().hex())
         # Mempool now has tx
-        assert_equal(node.getrawmempool(), [tx.hash])
+        assert_equal(node.getrawmempool(), [tx.txid_hex])
         await self._send_request(rpc_sock, self._make_get_mempool_request_fbs())
         response = await self._recv_response(rpc_sock)
         response = GetMempoolResponse.GetMempoolResponse.GetRootAs(response, 0)
@@ -367,13 +363,12 @@ class NngInterfaceTest(BitcoinTestFramework):
         # add 1 more tx for undo data calc
         p2sh_script = CScript([OP_HASH160, bytes(20), OP_EQUAL])
         other_tx = CTransaction()
-        other_tx.vin.append(CTxIn(COutPoint(tx.sha256, 0), CScript([b'\x52']), 0xffff_ffff))
+        other_tx.vin.append(CTxIn(COutPoint(tx.txid_int, 0), CScript([b'\x52']), 0xffff_ffff))
         other_tx.vout.append(CTxOut(coinbase_value - 2000, p2sh_script))
         pad_tx(other_tx)
         # grind txid to be higher than tx (for CTOR)
-        while other_tx.sha256 < tx.sha256:
+        while other_tx.txid_int < tx.txid_int:
             other_tx.nLockTime += 1
-            other_tx.rehash()
         node.sendrawtransaction(other_tx.serialize().hex())
 
         await self._send_request(rpc_sock, self._make_get_mempool_request_fbs())
@@ -383,7 +378,7 @@ class NngInterfaceTest(BitcoinTestFramework):
         other_tx_fbb = [
             response.Txs(i)
             for i in range(0, 2)
-            if bytes(response.Txs(i).Tx().Txid().Hash().Data()[::-1]).hex() == other_tx.hash
+            if bytes(response.Txs(i).Tx().Txid().Hash().Data()[::-1]).hex() == other_tx.txid_hex
         ][0]
         assert_equal(get_fb_bytes(other_tx_fbb.Tx(), 'Raw').hex(), other_tx.serialize().hex())
         assert_equal(other_tx_fbb.Tx().SpentCoinsLength(), 1)
@@ -428,9 +423,9 @@ class NngInterfaceTest(BitcoinTestFramework):
         tx1_raw = get_fb_bytes(block.Txs(1).Tx(), 'Raw')
         tx2_raw = get_fb_bytes(block.Txs(2).Tx(), 'Raw')
         assert_equal(tx1_raw.hex(), tx.serialize().hex())
-        assert_equal(bytes(block.Txs(1).Tx().Txid().Hash().Data())[::-1].hex(), tx.hash)
+        assert_equal(bytes(block.Txs(1).Tx().Txid().Hash().Data())[::-1].hex(), tx.txid_hex)
         assert_equal(tx2_raw.hex(), other_tx.serialize().hex())
-        assert_equal(bytes(block.Txs(2).Tx().Txid().Hash().Data())[::-1].hex(), other_tx.hash)
+        assert_equal(bytes(block.Txs(2).Tx().Txid().Hash().Data())[::-1].hex(), other_tx.txid_hex)
         await self._check_block_slice(rpc_sock, block.FileNum(), block.Txs(0).DataPos(), tx0_raw)
         await self._check_block_slice(rpc_sock, block.FileNum(), block.Txs(1).DataPos(), tx1_raw)
         amount = 50_000_000_00
@@ -516,7 +511,7 @@ class NngInterfaceTest(BitcoinTestFramework):
         msg = await self._recv_message(pub_sock, 'mempooltxadd')
         msg = TransactionAddedToMempool.GetRootAs(msg, 0)
         assert_equal(get_fb_bytes(msg.MempoolTx().Tx(), 'Raw').hex(), tx.serialize().hex())
-        assert_equal(bytes(msg.MempoolTx().Tx().Txid().Hash().Data())[::-1].hex(), tx.hash)
+        assert_equal(bytes(msg.MempoolTx().Tx().Txid().Hash().Data())[::-1].hex(), tx.txid_hex)
         assert_equal(msg.MempoolTx().Time(), self.TIMESTAMP)
         assert_equal(msg.MempoolTx().Tx().SpentCoinsLength(), 1)
         spent_coins = msg.MempoolTx().Tx().SpentCoins(0)
@@ -541,8 +536,7 @@ class NngInterfaceTest(BitcoinTestFramework):
         pad_tx(tx)
         conflicted_txid = node.sendrawtransaction(tx.serialize().hex())
         tx.vout[0].nValue -= 1 # tweak transaction
-        tx.rehash()
-        assert conflicted_txid != tx.hash
+        assert conflicted_txid != tx.txid_hex
         block = self._create_block(node)
         block.vtx.append(tx)
         block.hashMerkleRoot = block.calc_merkle_root()
@@ -579,8 +573,8 @@ class NngInterfaceTest(BitcoinTestFramework):
         node.sendrawtransaction(tx_notify.serialize().hex())
         msg = await self._recv_message(pub_sock, 'mempooltxrem', timeout=5)
         msg = TransactionRemovedFromMempool.GetRootAs(msg, 0)
-        assert_equal(bytes(msg.Txid().Hash().Data())[::-1].hex(), tx.hash)
-        assert_equal(node.getrawmempool(), [tx_notify.hash])
+        assert_equal(bytes(msg.Txid().Hash().Data())[::-1].hex(), tx.txid_hex)
+        assert_equal(node.getrawmempool(), [tx_notify.txid_hex])
         pub_sock.unsubscribe('mempooltxrem')
 
     async def _test_block_connected(self, node, pub_sock):
@@ -599,7 +593,7 @@ class NngInterfaceTest(BitcoinTestFramework):
         assert_equal(node.submitblock(block.serialize().hex()), None)
         msg = await self._recv_message(pub_sock, 'blkconnected')
         msg = BlockConnected.GetRootAs(msg, 0)
-        assert_equal(bytes(msg.Block().Header().BlockHash().Hash().Data())[::-1].hex(), block.hash)
+        assert_equal(bytes(msg.Block().Header().BlockHash().Hash().Data())[::-1].hex(), block.hash_hex)
         assert_equal(get_fb_bytes(msg.Block().Header(), 'Raw').hex(),
                      CBlockHeader(block).serialize().hex())
         assert_equal(msg.Block().MetadataLength(), 0)
@@ -629,7 +623,7 @@ class NngInterfaceTest(BitcoinTestFramework):
         block1.solve()
         assert_equal(node.submitblock(block1.serialize().hex()), 'inconclusive')
         block2 = create_block(
-            int(block1.hash, 16),
+            block1.hash_int,
             create_coinbase(tipblock['height'] + 2, pubkey=b'\x03'*33),
             tipblock['time'] + 2,
         )
